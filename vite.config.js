@@ -10,14 +10,14 @@ function copyStaticFiles() {
       const distDir = resolve(__dirname, 'dist')
       const srcDir = resolve(__dirname, 'src')
 
-      // 确保 dist 目录存在
       if (!existsSync(distDir)) {
         mkdirSync(distDir, { recursive: true })
       }
 
-      // 复制 JS 文件
-      const filesToCopy = ['app.js', 'voiceover-workflow.js']
-      filesToCopy.forEach(file => {
+      // 复制所有 JS 文件（Vite 不会打包非 module 的 script）
+      const { readdirSync } = require('fs')
+      const jsFiles = readdirSync(srcDir).filter(f => f.endsWith('.js'))
+      jsFiles.forEach(file => {
         const src = resolve(srcDir, file)
         const dest = resolve(distDir, file)
         if (existsSync(src)) {
@@ -25,6 +25,7 @@ function copyStaticFiles() {
           console.log(`Copied ${file} to dist/`)
         }
       })
+      console.log(`✅ Copied ${jsFiles.length} JS files to dist/`)
     }
   }
 }

@@ -11,6 +11,15 @@ const os = require('os');
 const DEFAULT_TIMEOUT = 600000; // 10 分钟
 const PROBE_TIMEOUT = 30000;    // 30 秒
 
+function expandHomePath(p) {
+    if (!p || typeof p !== 'string') return p;
+    if (p === '~') return os.homedir();
+    if (p.startsWith('~/') || p.startsWith('~\\')) {
+        return path.join(os.homedir(), p.slice(2));
+    }
+    return p;
+}
+
 /**
  * 解析命令路径 - 优先使用环境变量中配置的路径
  */
@@ -464,6 +473,331 @@ async function generateBlackMp4(filePath, outputPath, start = 0, duration = null
     }
 }
 
+function isImageMedia(filePath) {
+    const ext = path.extname(filePath || '').toLowerCase();
+    return ext === '.jpg' || ext === '.jpeg' || ext === '.png' || ext === '.webp';
+}
+
+function escapeAssPathForFilter(assPath) {
+    return String(assPath || '')
+        .replace(/\\/g, '/')
+        .replace(/:/g, '\\:')
+        .replace(/'/g, "'\\''");
+}
+
+function resolveLibassFontsDir() {
+    const candidates = [];
+    try {
+        const { app } = require('electron');
+        if (app && app.isPackaged && process.resourcesPath) {
+            candidates.push(path.join(process.resourcesPath, 'assets', 'fonts'));
+        }
+    } catch { }
+    candidates.push(path.join(__dirname, '..', '..', 'assets', 'fonts'));
+    for (const dir of candidates) {
+        try {
+            if (dir && fs.existsSync(dir)) return dir;
+        } catch { }
+    }
+    return '';
+}
+
+function parseResolutionText(resolutionText) {
+    const m = String(resolutionText || '').trim().match(/^(\d+)\s*x\s*(\d+)$/i);
+    if (!m) return null;
+    const w = parseInt(m[1], 10);
+    const h = parseInt(m[2], 10);
+    if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return null;
+    return { width: w, height: h };
+}
+
+function alignAssPlayRes(assContent, width, height) {
+    if (!assContent || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+        return assContent;
+    }
+    const text = String(assContent);
+    const hasX = /(^|\n)\s*PlayResX\s*:/i.test(text);
+    const hasY = /(^|\n)\s*PlayResY\s*:/i.test(text);
+    const withX = text.replace(/(^|\n)\s*PlayResX\s*:[^\n]*/i, `$1PlayResX: ${Math.round(width)}`);
+    const withXY = withX.replace(/(^|\n)\s*PlayResY\s*:[^\n]*/i, `$1PlayResY: ${Math.round(height)}`);
+    if (hasX && hasY) return withXY;
+    return withXY;
+}
+
+function buildPortraitCoverFilter(width = 1080, height = 1920) {
+    const w = Math.max(2, parseInt(width, 10) || 1080);
+    const h = Math.max(2, parseInt(height, 10) || 1920);
+    // 先等比放大到覆盖目标，再中心裁切，最后校正像素宽高比
+    return `scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},setsar=1`;
+}
+
+const DEFAULT_LOOP_FADE_DUR = 1.0;
+const MAX_LOOP_FADE_SEGMENTS = 32;
+const DEFAULT_VOICE_VOLUME = 1.0;
+const DEFAULT_BG_VOLUME = 0.1;
+
+function sanitizeLoopFadeDuration(value) {
+    const n = parseFloat(value);
+    if (!Number.isFinite(n) || n <= 0) return DEFAULT_LOOP_FADE_DUR;
+    return Math.max(0.1, Math.min(3, n));
+}
+
+function calcLoopFadeSegmentCount(voiceDuration, bgDuration, fadeDuration) {
+    if (!Number.isFinite(voiceDuration) || voiceDuration <= 0) return 0;
+    if (!Number.isFinite(bgDuration) || bgDuration <= 0) return 0;
+    if (voiceDuration <= bgDuration) return 1;
+    const step = bgDuration - fadeDuration;
+    if (step <= 0.05) return 0;
+    return Math.ceil((voiceDuration - bgDuration) / step) + 1;
+}
+
+function sanitizeVolumeGain(value, fallback) {
+    const n = parseFloat(value);
+    if (!Number.isFinite(n) || n < 0) return fallback;
+    return Math.max(0, Math.min(2, n));
+}
+
+async function getPrimaryStreamDuration(filePath, streamSelector) {
+    try {
+        const { stdout } = await runCommand('ffprobe', [
+            '-v', 'error',
+            '-select_streams', streamSelector,
+            '-show_entries', 'stream=duration',
+            '-of', 'default=noprint_wrappers=1:nokey=1',
+            filePath
+        ], { timeout: PROBE_TIMEOUT });
+
+        for (const line of String(stdout || '').split('\n')) {
+            const v = parseFloat(line.trim());
+            if (Number.isFinite(v) && v > 0) return v;
+        }
+    } catch (e) {
+        console.warn(`[getPrimaryStreamDuration] ${streamSelector} 失败: ${e.message}`);
+    }
+    return null;
+}
+
+async function hasAudioStream(filePath) {
+    try {
+        const { stdout } = await runCommand('ffprobe', [
+            '-v', 'error',
+            '-select_streams', 'a:0',
+            '-show_entries', 'stream=index',
+            '-of', 'default=noprint_wrappers=1:nokey=1',
+            filePath
+        ], { timeout: PROBE_TIMEOUT });
+        return String(stdout || '').trim().length > 0;
+    } catch (e) {
+        return false;
+    }
+}
+
+/**
+ * Reels 合成:
+ * - 背景素材自动循环（视频）或静态保持（图片）
+ * - 使用人声音频作为主时长
+ * - 烧录 ASS 字幕
+ */
+async function composeReel({
+    backgroundPath,
+    voicePath,
+    assContent,
+    outputPath,
+    crf = 23,
+    useGPU = false,
+    loopFade = true,
+    loopFadeDur = DEFAULT_LOOP_FADE_DUR,
+    voiceVolume = DEFAULT_VOICE_VOLUME,
+    bgVolume = DEFAULT_BG_VOLUME,
+    forcePortrait = true,
+    targetWidth = 1080,
+    targetHeight = 1920,
+}) {
+    backgroundPath = expandHomePath(backgroundPath);
+    voicePath = expandHomePath(voicePath);
+    outputPath = expandHomePath(outputPath);
+
+    if (!backgroundPath) throw new Error('缺少 backgroundPath');
+    if (!voicePath) throw new Error('缺少 voicePath');
+    if (!assContent) throw new Error('缺少 assContent');
+    if (!outputPath) throw new Error('缺少 outputPath');
+    if (!fs.existsSync(backgroundPath)) throw new Error(`背景素材不存在: ${backgroundPath}`);
+    if (!fs.existsSync(voicePath)) throw new Error(`音频不存在: ${voicePath}`);
+
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+
+    const portraitCoverFilter = buildPortraitCoverFilter(targetWidth, targetHeight);
+
+    // 关键：让 ASS PlayRes 与最终输出分辨率一致，避免导出字号相对预览被放大/缩小。
+    let assFinal = assContent;
+    try {
+        if (forcePortrait) {
+            assFinal = alignAssPlayRes(assContent, targetWidth, targetHeight);
+        } else {
+            const bgRes = parseResolutionText(await getResolution(backgroundPath));
+            if (bgRes) {
+                assFinal = alignAssPlayRes(assContent, bgRes.width, bgRes.height);
+            }
+        }
+    } catch (e) {
+        console.warn(`[composeReel] 对齐 ASS PlayRes 失败，继续使用原始 ASS: ${e.message}`);
+    }
+
+    const assPath = path.join(os.tmpdir(), `reels_compose_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.ass`);
+    fs.writeFileSync(assPath, assFinal, 'utf-8');
+
+    let vcodec = 'libx264';
+    let preset = 'medium';
+    const platform = process.platform;
+    if (useGPU) {
+        if (platform === 'darwin') {
+            vcodec = 'h264_videotoolbox';
+            preset = null;
+        } else if (platform === 'win32') {
+            vcodec = 'h264_nvenc';
+            preset = 'p4';
+        }
+    }
+
+    const fontsDir = resolveLibassFontsDir();
+    const subtitleFilter = fontsDir
+        ? `subtitles='${escapeAssPathForFilter(assPath)}':fontsdir='${escapeAssPathForFilter(fontsDir)}'`
+        : `subtitles='${escapeAssPathForFilter(assPath)}'`;
+    const args = ['-y'];
+    const imageBackground = isImageMedia(backgroundPath);
+    const fadeEnabled = loopFade !== false && !imageBackground;
+    const fadeDuration = sanitizeLoopFadeDuration(loopFadeDur);
+    const voiceGain = sanitizeVolumeGain(voiceVolume, DEFAULT_VOICE_VOLUME);
+    const bgGain = sanitizeVolumeGain(bgVolume, DEFAULT_BG_VOLUME);
+    const needBgMix = !imageBackground && bgGain > 0;
+    const hasBgMixAudio = needBgMix ? await hasAudioStream(backgroundPath) : false;
+
+    let usingFadeLoop = false;
+    if (fadeEnabled) {
+        const [voiceDuration, bgVideoDuration, bgFallbackDuration] = await Promise.all([
+            getDuration(voicePath),
+            getPrimaryStreamDuration(backgroundPath, 'v:0'),
+            getDuration(backgroundPath),
+        ]);
+        const bgDuration = (Number.isFinite(bgVideoDuration) && bgVideoDuration > 0)
+            ? bgVideoDuration
+            : bgFallbackDuration;
+        const segCount = calcLoopFadeSegmentCount(voiceDuration, bgDuration, fadeDuration);
+
+        if (segCount >= 2 && segCount <= MAX_LOOP_FADE_SEGMENTS) {
+            for (let i = 0; i < segCount; i++) {
+                args.push('-i', backgroundPath);
+            }
+            const bgAudioInputIdx = hasBgMixAudio ? segCount : -1;
+            const audioInputIdx = hasBgMixAudio ? (segCount + 1) : segCount;
+            if (hasBgMixAudio) {
+                args.push('-stream_loop', '-1', '-i', backgroundPath);
+            }
+            args.push('-i', voicePath);
+
+            const step = bgDuration - fadeDuration;
+            const filterGraph = ['[0:v]setpts=PTS-STARTPTS[v0]'];
+            let prevLabel = 'v0';
+
+            for (let i = 1; i < segCount; i++) {
+                const inLabel = `v${i}`;
+                const outLabel = i === segCount - 1 ? 'vxf' : `vx${i}`;
+                // 避免落在边界导致某些素材在转场点出现“空帧”
+                const offset = Math.max(0, (i * step) - 0.01).toFixed(3);
+                filterGraph.push(`[${i}:v]setpts=PTS-STARTPTS[${inLabel}]`);
+                filterGraph.push(
+                    `[${prevLabel}][${inLabel}]xfade=transition=fade:duration=${fadeDuration.toFixed(3)}:offset=${offset}[${outLabel}]`
+                );
+                prevLabel = outLabel;
+            }
+            if (forcePortrait) {
+                filterGraph.push(`[${prevLabel}]${portraitCoverFilter}[vfit]`);
+                filterGraph.push(`[vfit]${subtitleFilter}[vout]`);
+            } else {
+                filterGraph.push(`[${prevLabel}]${subtitleFilter}[vout]`);
+            }
+
+            let audioMap = `${audioInputIdx}:a:0`;
+            if (hasBgMixAudio) {
+                filterGraph.push(`[${bgAudioInputIdx}:a]volume=${bgGain.toFixed(3)}[bgmix]`);
+                filterGraph.push(`[${audioInputIdx}:a]volume=${voiceGain.toFixed(3)}[vomix]`);
+                filterGraph.push('[bgmix][vomix]amix=inputs=2:duration=shortest:dropout_transition=0[aout]');
+                audioMap = '[aout]';
+            } else if (Math.abs(voiceGain - 1.0) > 0.001) {
+                filterGraph.push(`[${audioInputIdx}:a]volume=${voiceGain.toFixed(3)}[aout]`);
+                audioMap = '[aout]';
+            }
+
+            args.push(
+                '-filter_complex', filterGraph.join(';'),
+                '-map', '[vout]',
+                '-map', audioMap
+            );
+            usingFadeLoop = true;
+        } else if (segCount > MAX_LOOP_FADE_SEGMENTS) {
+            console.warn(`[composeReel] 循环转场片段过多(${segCount})，回退到普通循环模式`);
+        }
+    }
+
+    if (!usingFadeLoop) {
+        if (imageBackground) {
+            args.push('-loop', '1', '-i', backgroundPath);
+        } else {
+            args.push('-stream_loop', '-1', '-i', backgroundPath);
+        }
+        args.push('-i', voicePath);
+        const needAudioFilter = hasBgMixAudio || Math.abs(voiceGain - 1.0) > 0.001;
+        if (needAudioFilter) {
+            const vf = forcePortrait ? `${portraitCoverFilter},${subtitleFilter}` : subtitleFilter;
+            const filterGraph = [`[0:v]${vf}[vout]`];
+            if (hasBgMixAudio) {
+                filterGraph.push(`[0:a]volume=${bgGain.toFixed(3)}[bgmix]`);
+                filterGraph.push(`[1:a]volume=${voiceGain.toFixed(3)}[vomix]`);
+                filterGraph.push('[bgmix][vomix]amix=inputs=2:duration=shortest:dropout_transition=0[aout]');
+            } else {
+                filterGraph.push(`[1:a]volume=${voiceGain.toFixed(3)}[aout]`);
+            }
+            args.push(
+                '-filter_complex', filterGraph.join(';'),
+                '-map', '[vout]',
+                '-map', '[aout]'
+            );
+        } else {
+            args.push(
+                '-vf', forcePortrait ? `${portraitCoverFilter},${subtitleFilter}` : subtitleFilter,
+                '-map', '0:v:0',
+                '-map', '1:a:0'
+            );
+        }
+    }
+
+    args.push('-c:v', vcodec);
+
+    if (vcodec === 'h264_videotoolbox') {
+        args.push('-b:v', '8M');
+    } else {
+        args.push('-crf', String(crf || 23));
+        if (preset) args.push('-preset', preset);
+    }
+
+    args.push(
+        '-pix_fmt', 'yuv420p',
+        '-c:a', 'aac',
+        '-b:a', '192k',
+        '-shortest',
+        '-movflags', '+faststart',
+        outputPath
+    );
+
+    try {
+        await runCommand('ffmpeg', args, { timeout: Math.max(DEFAULT_TIMEOUT, 3600000) });
+    } finally {
+        try { fs.unlinkSync(assPath); } catch (e) { /* ignore */ }
+    }
+
+    return { output_path: outputPath };
+}
+
 /**
  * 媒体转换
  */
@@ -769,4 +1103,5 @@ module.exports = {
     buildSegments,
     buildBlackMp4Args,
     batchCut,
+    composeReel,
 };

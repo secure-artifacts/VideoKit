@@ -294,7 +294,7 @@ function initSubTabs() {
             // 有独立文件输入的子模块，隐藏顶部通用文件输入区域
             const mediaFileSection = document.getElementById('media-file-section');
             if (mediaFileSection) {
-                const tabsWithOwnInput = ['media-scene', 'media-thumbnail', 'media-classify', 'media-lipsync', 'media-batchcut'];
+                const tabsWithOwnInput = ['media-scene', 'media-thumbnail', 'media-classify', 'media-lipsync', 'media-batchcut', 'media-batchtxt', 'media-unirename'];
                 mediaFileSection.style.display = tabsWithOwnInput.includes(tab.dataset.subtab) ? 'none' : '';
             }
 
@@ -5709,6 +5709,207 @@ async function openSceneOutputDir() {
     }
 }
 
+// ==================== 一键场景帧 ====================
+
+let sceneFramesOutputDir = '';
+
+// 一键场景帧：批量对所有已添加的视频执行 场景检测 + 导出首帧
+async function startSceneDetectFrames() {
+    if (sceneFiles.length === 0) {
+        showToast('请先选择视频文件', 'error');
+        return;
+    }
+
+    const btn = document.getElementById('scene-frames-btn');
+    const statusEl = document.getElementById('scene-detect-status');
+    const exportSection = document.getElementById('scene-export-status');
+    const exportText = document.getElementById('scene-export-text');
+    const progressBar = document.getElementById('scene-export-progress');
+
+    btn.disabled = true;
+    btn.textContent = '⏳ 正在检测导出...';
+    exportSection.classList.remove('hidden');
+
+    const threshold = parseFloat(document.getElementById('scene-threshold').value);
+    const minInterval = parseFloat(document.getElementById('scene-min-interval').value);
+    const framesPerScene = parseInt(document.getElementById('scene-frames-per-scene').value) || 1;
+    const imageFormat = document.getElementById('scene-frame-format').value;
+    const quality = parseInt(document.getElementById('scene-frame-quality').value);
+    const outputDir = document.getElementById('media-output-path')?.value || '';
+
+    let totalFrames = 0;
+    let successCount = 0;
+    let failCount = 0;
+    let allFrameResults = [];
+
+    for (let i = 0; i < sceneFiles.length; i++) {
+        const file = sceneFiles[i];
+        exportText.textContent = `[${i + 1}/${sceneFiles.length}] 正在处理: ${file.name}...`;
+        progressBar.querySelector('.progress-bar-inner').style.width = `${((i) / sceneFiles.length) * 100}%`;
+        statusEl.textContent = `处理中 (${i + 1}/${sceneFiles.length})`;
+        statusEl.style.color = 'var(--accent)';
+
+        // 更新卡片状态
+        const statusTag = document.getElementById(`scene-status-${i}`);
+        if (statusTag) {
+            statusTag.textContent = '⏳ 场景帧导出...';
+            statusTag.style.background = 'rgba(240, 147, 251, 0.15)';
+            statusTag.style.color = '#f093fb';
+        }
+
+        try {
+            const response = await apiFetch(`${API_BASE}/media/scene-detect-frames`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    file_path: file.path,
+                    threshold: threshold,
+                    min_interval: minInterval,
+                    frames_per_scene: framesPerScene,
+                    format: imageFormat,
+                    quality: quality,
+                    output_dir: outputDir || ''
+                })
+            });
+
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || '导出失败');
+
+            // 同步更新 sceneResults（兼容已有的场景检测数据）
+            sceneResults[file.path] = data;
+            sceneFramesOutputDir = data.output_dir || sceneFramesOutputDir;
+            sceneOutputDir = data.output_dir || sceneOutputDir;
+
+            totalFrames += data.success || 0;
+            successCount++;
+
+            // 更新卡片状态
+            if (statusTag) {
+                statusTag.textContent = `✅ ${data.total_scenes} 场景 · ${data.success} 帧`;
+                statusTag.style.background = 'rgba(0, 217, 165, 0.15)';
+                statusTag.style.color = '#00d9a5';
+            }
+
+            // 将帧结果收集起来
+            if (data.frames) {
+                allFrameResults.push({
+                    fileName: file.name,
+                    frames: data.frames,
+                    outputDir: data.output_dir
+                });
+            }
+
+        } catch (error) {
+            failCount++;
+            if (statusTag) {
+                statusTag.textContent = `❌ ${error.message}`;
+                statusTag.style.background = 'rgba(255, 71, 87, 0.15)';
+                statusTag.style.color = '#ff4757';
+            }
+        }
+    }
+
+    progressBar.querySelector('.progress-bar-inner').style.width = '100%';
+
+    const msg = `场景帧导出完成: ${successCount}/${sceneFiles.length} 个视频，共 ${totalFrames} 帧`;
+    exportText.textContent = msg;
+    statusEl.textContent = msg;
+    statusEl.style.color = failCount > 0 ? 'var(--warning)' : 'var(--success)';
+
+    btn.disabled = false;
+    btn.textContent = '🎞️ 一键场景帧';
+
+    showToast(msg, successCount > 0 ? 'success' : 'error');
+
+    // 渲染帧预览
+    renderSceneFramesPreview(allFrameResults);
+
+    // 同步刷新卡片（显示片段列表等）
+    renderSceneFileCards();
+    updateSceneExportAllBtn();
+}
+
+// 渲染场景帧预览网格
+function renderSceneFramesPreview(allResults) {
+    const container = document.getElementById('scene-frames-result');
+    const grid = document.getElementById('scene-frames-grid');
+    const countEl = document.getElementById('scene-frames-count');
+
+    if (!allResults || allResults.length === 0) {
+        container.classList.add('hidden');
+        return;
+    }
+
+    container.classList.remove('hidden');
+
+    let totalCount = 0;
+    let html = '';
+
+    allResults.forEach(({ fileName, frames, outputDir }) => {
+        const okFrames = frames.filter(f => f.status === 'ok');
+        totalCount += okFrames.length;
+
+        // 文件名分隔标题
+        if (allResults.length > 1) {
+            html += `<div style="grid-column: 1 / -1; font-size: 13px; font-weight: 600; color: var(--text-secondary); padding: 8px 0 4px; border-bottom: 1px solid rgba(255,255,255,0.06);">🎬 ${escapeHtml(fileName)} (${okFrames.length} 帧)</div>`;
+        }
+
+        // 按场景分组显示
+        let lastScene = -1;
+        const hasMultiFrames = okFrames.some(f => f.scene);
+
+        okFrames.forEach(frame => {
+            // 场景分组标题（当每场景多帧时显示）
+            if (hasMultiFrames && frame.scene && frame.scene !== lastScene) {
+                lastScene = frame.scene;
+                const sceneFrameCount = okFrames.filter(f => f.scene === frame.scene).length;
+                html += `<div style="grid-column: 1 / -1; font-size: 12px; color: var(--accent); padding: 6px 0 2px; display: flex; align-items: center; gap: 6px;">
+                    <span style="background: var(--accent); color: #fff; padding: 1px 8px; border-radius: 10px; font-size: 11px; font-weight: 600;">场景 ${frame.scene}</span>
+                    <span style="color: var(--text-muted); font-size: 11px;">${sceneFrameCount} 帧</span>
+                </div>`;
+            }
+
+            // 使用 file:// 协议展示本地图片
+            const imgSrc = `file://${frame.output}`;
+            const sceneLabel = frame.scene ? `S${frame.scene}` : '';
+            const frameLabel = frame.frame ? `f${frame.frame}` : `#${frame.index}`;
+            html += `
+                <div style="position: relative; background: var(--bg-tertiary); border-radius: 8px; overflow: hidden; border: 1px solid rgba(255,255,255,0.06); transition: transform 0.15s; cursor: pointer;" 
+                     onmouseenter="this.style.transform='scale(1.02)'" onmouseleave="this.style.transform='scale(1)'"
+                     title="${frame.filename}\n时间: ${frame.time_str}">
+                    <img src="${imgSrc}" style="width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block;" loading="lazy"
+                         onerror="this.style.display='none'; this.parentElement.querySelector('.img-fallback').style.display='flex'">
+                    <div class="img-fallback" style="display: none; width: 100%; aspect-ratio: 16/9; align-items: center; justify-content: center; background: var(--bg-secondary); color: var(--text-muted); font-size: 11px;">加载失败</div>
+                    <div style="position: absolute; bottom: 0; left: 0; right: 0; padding: 4px 8px; background: linear-gradient(transparent, rgba(0,0,0,0.7)); display: flex; justify-content: space-between; align-items: center;">
+                        <span style="font-family: monospace; font-size: 11px; color: #fff;">${sceneLabel} ${frameLabel}</span>
+                        <span style="font-family: monospace; font-size: 10px; color: rgba(255,255,255,0.7);">${frame.time_str}</span>
+                    </div>
+                </div>`;
+        });
+    });
+
+    countEl.textContent = `共 ${totalCount} 帧`;
+    grid.innerHTML = html;
+}
+
+// 打开场景帧输出目录
+async function openSceneFramesDir() {
+    const dir = sceneFramesOutputDir || sceneOutputDir;
+    if (!dir) {
+        showToast('没有输出目录', 'error');
+        return;
+    }
+    try {
+        await apiFetch(`${API_BASE}/open-folder`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: dir })
+        });
+    } catch (error) {
+        showToast('打开目录失败', 'error');
+    }
+}
+
 // ==================== 手动裁切弹窗模块 ====================
 
 let trimState = {
@@ -8285,7 +8486,7 @@ async function exportBatchCutFcpxml() {
         const statusEl = document.getElementById('batchcut-status');
         if (statusEl) {
             const markerInfo = data.marker_edl_path ? ` | 标签EDL: ${data.marker_edl_path}` : '';
-            statusEl.textContent = `✅ FCPXML: ${data.file_path}${markerInfo}`;
+            statusEl.textContent = `✅ FCPXML: ${data.path || data.file_path}${markerInfo}`;
             statusEl.style.color = 'var(--success)';
         }
     } catch (e) {
@@ -8402,3 +8603,493 @@ async function sendBatchCutToDaVinci() {
         if (statusEl) { statusEl.textContent = '❌ ' + e.message; statusEl.style.color = 'var(--error)'; }
     }
 }
+
+// ═══════════════════════════════════════════════════════
+// 📋 批量 TXT 导出
+// ═══════════════════════════════════════════════════════
+
+let _batchTxtCells = [];
+let _batchTxtRawCells = []; // 保存原始未断行的数据
+
+/**
+ * 智能断行 —— 如果文本没有换行符，按语言规则自动插入换行
+ * 英文: ~5 个单词一行 | 中文: ~16 个字符一行
+ */
+function _smartLineBreakBatchTxt(text) {
+    if (!text || typeof text !== 'string') return text;
+    const autoBreak = document.getElementById('batchtxt-auto-break')?.checked ?? true;
+    if (!autoBreak) return text;
+
+    const trimmed = text.trim();
+    // 已有换行 → 保留
+    if (trimmed.includes('\n')) return trimmed;
+    // 很短不断
+    if (trimmed.length <= 10) return trimmed;
+
+    // 从 UI 读取自定义参数
+    const wordsPerLine = parseInt(document.getElementById('batchtxt-words-per-line')?.value, 10) || 5;
+    const maxChars = parseInt(document.getElementById('batchtxt-chars-per-line')?.value, 10) || 16;
+
+    // CJK 检测
+    const cjkCount = (trimmed.match(/[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]/g) || []).length;
+    const isCJK = cjkCount / trimmed.length > 0.3;
+
+    if (isCJK) {
+        const lines = [];
+        let pos = 0;
+        while (pos < trimmed.length) {
+            let end = Math.min(pos + maxChars, trimmed.length);
+            if (end < trimmed.length) {
+                const chunk = trimmed.slice(pos, end + 4);
+                const breakAt = chunk.search(/[，。！？；、\s,\.!?;]/g);
+                if (breakAt > maxChars * 0.5) end = pos + breakAt + 1;
+            }
+            lines.push(trimmed.slice(pos, end).trim());
+            pos = end;
+            while (pos < trimmed.length && trimmed[pos] === ' ') pos++;
+        }
+        return lines.filter(l => l).join('\n');
+    } else {
+        const words = trimmed.split(/\s+/);
+        if (words.length <= wordsPerLine) return trimmed;
+        const lines = [];
+        for (let i = 0; i < words.length; i += wordsPerLine) {
+            lines.push(words.slice(i, i + wordsPerLine).join(' '));
+        }
+        return lines.join('\n');
+    }
+}
+
+/** 切换自动断行时重新处理 */
+function batchTxtToggleAutoBreak() {
+    if (_batchTxtRawCells.length > 0) {
+        _batchTxtCells = _batchTxtRawCells.map(cell => _smartLineBreakBatchTxt(cell));
+        _renderBatchTxtTable();
+    }
+}
+
+async function selectBatchTxtOutputDir() {
+    if (window.electronAPI && window.electronAPI.selectDirectory) {
+        const dir = await window.electronAPI.selectDirectory();
+        if (dir) document.getElementById('batchtxt-output-dir').value = dir;
+    }
+}
+
+/**
+ * 从文案内容生成文件名（与一键配音命名规则一致）
+ */
+function _batchTxtMakeFileName(text, num, padding) {
+    const today = new Date();
+    const dateSuffix = `${String(today.getMonth() + 1).padStart(2, '0')}${String(today.getDate()).padStart(2, '0')}`;
+    const numStr = padding > 0 ? String(num).padStart(padding, '0') : String(num);
+
+    const firstLine = text.split('\n')[0];
+    const cleanText = firstLine.replace(/<[^>]+>/g, '').replace(/\[[^\]]+\]/g, '').replace(/[<>\[\]()]/g, '');
+    let textPrefix = cleanText.split(/\s+/).slice(0, 15).join('_').slice(0, 60);
+    textPrefix = textPrefix.replace(/[^a-zA-Z0-9\u4e00-\u9fff _-]/g, '').replace(/\s+/g, '_').trim();
+    if (!textPrefix) textPrefix = 'text';
+
+    return `${numStr}-${textPrefix}_${dateSuffix}.txt`;
+}
+
+/**
+ * 解析 Google Sheets 粘贴的纯文本，正确处理含换行的单元格
+ */
+function _parseGoogleSheetsCells(rawText) {
+    const results = [];
+    const len = rawText.length;
+    let i = 0;
+
+    while (i < len) {
+        while (i < len && rawText[i] === ' ') i++;
+        if (i >= len) break;
+
+        let cell = '';
+        if (rawText[i] === '"') {
+            i++;
+            while (i < len) {
+                if (rawText[i] === '"') {
+                    if (i + 1 < len && rawText[i + 1] === '"') { cell += '"'; i += 2; }
+                    else { i++; break; }
+                } else { cell += rawText[i]; i++; }
+            }
+        } else {
+            while (i < len && rawText[i] !== '\t' && rawText[i] !== '\n' && rawText[i] !== '\r') {
+                cell += rawText[i]; i++;
+            }
+        }
+
+        // 跳过其他列
+        while (i < len && rawText[i] === '\t') {
+            i++;
+            if (i < len && rawText[i] === '"') {
+                i++;
+                while (i < len) {
+                    if (rawText[i] === '"') {
+                        if (i + 1 < len && rawText[i + 1] === '"') { i += 2; }
+                        else { i++; break; }
+                    } else { i++; }
+                }
+            } else {
+                while (i < len && rawText[i] !== '\t' && rawText[i] !== '\n' && rawText[i] !== '\r') i++;
+            }
+        }
+
+        if (i < len && rawText[i] === '\r') i++;
+        if (i < len && rawText[i] === '\n') i++;
+
+        const trimmed = cell.trim();
+        if (trimmed) results.push(trimmed);
+    }
+
+    return results;
+}
+
+/**
+ * 从剪贴板粘贴并解析
+ */
+async function batchTxtPaste() {
+    try {
+        const clipboardItems = await navigator.clipboard.read();
+        let parsed = [];
+
+        for (const item of clipboardItems) {
+            // 优先尝试 HTML（谷歌表格会带 HTML 格式）
+            if (item.types.includes('text/html')) {
+                const blob = await item.getType('text/html');
+                const html = await blob.text();
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(html, 'text/html');
+                const rows = doc.querySelectorAll('tr');
+
+                if (rows.length > 0) {
+                    rows.forEach(tr => {
+                        const cell = tr.querySelector('td, th');
+                        if (!cell) return;
+                        // 保留 <br> 换行
+                        let clone = cell.cloneNode(true);
+                        clone.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
+                        clone.querySelectorAll('p, div').forEach(el => el.insertAdjacentText('beforebegin', '\n'));
+                        const text = clone.textContent.trim();
+                        if (text) parsed.push(text);
+                    });
+                }
+            }
+
+            // 如果 HTML 没解析到，用纯文本
+            if (parsed.length === 0 && item.types.includes('text/plain')) {
+                const blob = await item.getType('text/plain');
+                const rawText = await blob.text();
+                parsed = _parseGoogleSheetsCells(rawText);
+            }
+        }
+
+        if (parsed.length === 0) {
+            showToast('未识别到有效文案', 'warning');
+            return;
+        }
+
+        _batchTxtRawCells = [...parsed];
+        _batchTxtCells = parsed.map(cell => _smartLineBreakBatchTxt(cell));
+        _renderBatchTxtTable();
+        showToast(`已识别 ${parsed.length} 条文案`, 'success');
+    } catch (err) {
+        showToast('粘贴失败: ' + err.message, 'error');
+    }
+}
+
+function batchTxtClear() {
+    _batchTxtCells = [];
+    _renderBatchTxtTable();
+}
+
+function batchTxtRemoveCell(idx) {
+    _batchTxtCells.splice(idx, 1);
+    _renderBatchTxtTable();
+}
+
+function _renderBatchTxtTable() {
+    const listEl = document.getElementById('batchtxt-list');
+    const countEl = document.getElementById('batchtxt-count');
+    if (!listEl) return;
+
+    if (_batchTxtCells.length === 0) {
+        listEl.innerHTML = `<div style="padding:30px;text-align:center;color:var(--text-muted);font-size:13px;">
+            点击「📋 粘贴文案」从谷歌表格粘贴内容</div>`;
+        if (countEl) countEl.textContent = '';
+        return;
+    }
+
+    const startNum = parseInt(document.getElementById('batchtxt-start-num')?.value || '1', 10) || 1;
+    const padding = parseInt(document.getElementById('batchtxt-padding')?.value || '2', 10);
+
+    const escHtml = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    listEl.innerHTML = _batchTxtCells.map((cell, i) => {
+        const num = startNum + i;
+        const lineCount = cell.split('\n').length;
+        const fileName = _batchTxtMakeFileName(cell, num, padding);
+
+        return `<div style="background:var(--bg-secondary);border-radius:6px;padding:10px 12px;position:relative;">
+            <div style="display:flex;align-items:flex-start;gap:10px;">
+                <span style="background:var(--accent-color);color:#fff;font-size:11px;font-weight:600;
+                    padding:2px 8px;border-radius:10px;flex-shrink:0;margin-top:1px;">${num}</span>
+                <div style="flex:1;min-width:0;">
+                    <div style="font-size:12px;white-space:pre-wrap;word-break:break-word;line-height:1.5;
+                        color:var(--text-primary);margin-bottom:6px;">${escHtml(cell)}</div>
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                        <span style="font-size:10px;font-family:monospace;color:var(--accent-color);
+                            background:rgba(233,69,96,0.1);padding:2px 6px;border-radius:4px;
+                            overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;"
+                            title="${escHtml(fileName)}">📄 ${escHtml(fileName)}</span>
+                        <span style="font-size:10px;color:var(--text-muted);">${lineCount}行</span>
+                    </div>
+                </div>
+                <button class="btn" style="padding:2px 6px;font-size:11px;flex-shrink:0;"
+                    onclick="batchTxtRemoveCell(${i})">✕</button>
+            </div>
+        </div>`;
+    }).join('');
+
+    if (countEl) countEl.textContent = `共 ${_batchTxtCells.length} 条文案`;
+}
+
+async function startBatchTxtExport() {
+    const statusEl = document.getElementById('batchtxt-status');
+
+    if (_batchTxtCells.length === 0) {
+        if (statusEl) { statusEl.textContent = '⚠️ 请先粘贴文案'; statusEl.style.color = 'var(--warning)'; }
+        return;
+    }
+
+    let outputDir = (document.getElementById('batchtxt-output-dir')?.value || '').trim();
+    if (!outputDir) {
+        if (window.electronAPI && window.electronAPI.selectDirectory) {
+            outputDir = await window.electronAPI.selectDirectory();
+            if (outputDir) document.getElementById('batchtxt-output-dir').value = outputDir;
+        }
+    }
+    if (!outputDir) {
+        if (statusEl) { statusEl.textContent = '⚠️ 请选择输出目录'; statusEl.style.color = 'var(--warning)'; }
+        return;
+    }
+
+    const startNum = parseInt(document.getElementById('batchtxt-start-num')?.value || '1', 10) || 1;
+    const padding = parseInt(document.getElementById('batchtxt-padding')?.value || '2', 10);
+    const cells = _batchTxtCells;
+
+    if (statusEl) { statusEl.textContent = `导出中... 0/${cells.length}`; statusEl.style.color = ''; }
+
+    let okCount = 0;
+    try {
+        for (let i = 0; i < cells.length; i++) {
+            const num = startNum + i;
+            const fileName = _batchTxtMakeFileName(cells[i], num, padding);
+            const filePath = outputDir + (outputDir.includes('\\') ? '\\' : '/') + fileName;
+
+            await window.electronAPI.apiCall('file/write-text', {
+                path: filePath,
+                content: cells[i],
+            });
+            okCount++;
+            if (statusEl) statusEl.textContent = `导出中... ${okCount}/${cells.length}`;
+        }
+        if (statusEl) {
+            statusEl.textContent = `✅ 成功导出 ${okCount} 个 TXT 文件`;
+            statusEl.style.color = 'var(--success)';
+        }
+        showToast(`批量导出完成: ${okCount} 个 TXT 文件`, 'success');
+    } catch (err) {
+        if (statusEl) {
+            statusEl.textContent = `❌ 导出失败: ${err.message}`;
+            statusEl.style.color = 'var(--error)';
+        }
+    }
+}
+
+// 编号/补零变化时刷新表格预览
+document.addEventListener('DOMContentLoaded', () => {
+    setTimeout(() => {
+        const startNumEl = document.getElementById('batchtxt-start-num');
+        const paddingEl = document.getElementById('batchtxt-padding');
+        if (startNumEl) startNumEl.addEventListener('change', () => _renderBatchTxtTable());
+        if (paddingEl) paddingEl.addEventListener('change', () => _renderBatchTxtTable());
+    }, 300);
+});
+
+// ═══════════════════════════════════════════════════════
+// 🏷️ 统一命名工具
+// ═══════════════════════════════════════════════════════
+
+let _uniRenameFiles = [];
+
+function _initUniRename() {
+    const fileInput = document.getElementById('unirename-file-input');
+    const dropZone = document.getElementById('unirename-drop-zone');
+
+    if (fileInput) {
+        fileInput.addEventListener('change', (e) => {
+            const files = Array.from(e.target.files || []);
+            _addUniRenameFiles(files);
+            e.target.value = '';
+        });
+    }
+
+    if (dropZone) {
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.style.borderColor = 'var(--accent-color)';
+            dropZone.style.backgroundColor = 'rgba(233, 69, 96, 0.08)';
+        });
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.style.borderColor = '';
+            dropZone.style.backgroundColor = '';
+        });
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.style.borderColor = '';
+            dropZone.style.backgroundColor = '';
+            const files = Array.from(e.dataTransfer.files || []);
+            _addUniRenameFiles(files);
+        });
+    }
+}
+
+function _addUniRenameFiles(files) {
+    for (const f of files) {
+        // 避免重复
+        if (_uniRenameFiles.some(x => x.path === (f.path || f.name))) continue;
+        _uniRenameFiles.push({
+            name: f.name,
+            path: f.path || f.name,
+            ext: (f.name.match(/\.[^.]+$/) || [''])[0],
+        });
+    }
+    _renderUniRenameList();
+    _updateUniRenamePickSelect();
+}
+
+function _renderUniRenameList() {
+    const container = document.getElementById('unirename-file-list');
+    if (!container) return;
+    if (_uniRenameFiles.length === 0) {
+        container.innerHTML = '';
+        return;
+    }
+    container.innerHTML = _uniRenameFiles.map((f, i) => `
+        <div style="display:flex;align-items:center;gap:6px;padding:3px 0;">
+            <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${f.name}</span>
+            <span style="color:var(--text-muted);font-size:11px;">${f.ext}</span>
+            <button class="btn" style="padding:1px 5px;font-size:10px;" onclick="_removeUniRenameFile(${i})">✕</button>
+        </div>
+    `).join('') + `<div style="margin-top:6px;font-size:11px;color:var(--text-muted);">${_uniRenameFiles.length} 个文件</div>`;
+}
+
+function _removeUniRenameFile(idx) {
+    _uniRenameFiles.splice(idx, 1);
+    _renderUniRenameList();
+    _updateUniRenamePickSelect();
+}
+
+/**
+ * 更新「以文件名为准」的下拉列表
+ */
+function _updateUniRenamePickSelect() {
+    const sel = document.getElementById('unirename-pick-select');
+    if (!sel) return;
+    const prevVal = sel.value;
+    sel.innerHTML = _uniRenameFiles.length === 0
+        ? '<option value="">— 请先添加文件 —</option>'
+        : _uniRenameFiles.map((f, i) => {
+            const base = f.name.replace(/\.[^.]+$/, '');
+            return `<option value="${i}">${base} (${f.ext})</option>`;
+        }).join('');
+    // 恢复之前的选择
+    if (prevVal && sel.querySelector(`option[value="${prevVal}"]`)) {
+        sel.value = prevVal;
+    } else if (_uniRenameFiles.length > 0) {
+        // 默认优先选 .txt 文件
+        const txtIdx = _uniRenameFiles.findIndex(f => f.ext.toLowerCase() === '.txt');
+        sel.value = String(txtIdx >= 0 ? txtIdx : 0);
+    }
+}
+
+/**
+ * 切换命名模式：pick / custom
+ */
+function uniRenameToggleMode() {
+    const mode = document.querySelector('input[name="unirename-mode"]:checked')?.value || 'pick';
+    const pickRow = document.getElementById('unirename-pick-row');
+    const customRow = document.getElementById('unirename-custom-row');
+    if (pickRow) pickRow.style.display = mode === 'pick' ? 'flex' : 'none';
+    if (customRow) customRow.style.display = mode === 'custom' ? 'flex' : 'none';
+}
+
+/**
+ * 下拉选择文件名改变时的处理
+ */
+function uniRenameOnPickChange() {
+    // 无需额外处理，startUniRename 会从下拉框读取
+}
+
+async function startUniRename() {
+    const statusEl = document.getElementById('unirename-status');
+    const mode = document.querySelector('input[name="unirename-mode"]:checked')?.value || 'pick';
+
+    let baseName = '';
+    if (mode === 'pick') {
+        const pickIdx = parseInt(document.getElementById('unirename-pick-select')?.value, 10);
+        if (isNaN(pickIdx) || !_uniRenameFiles[pickIdx]) {
+            if (statusEl) { statusEl.textContent = '⚠️ 请选择一个文件名'; statusEl.style.color = 'var(--warning)'; }
+            return;
+        }
+        baseName = _uniRenameFiles[pickIdx].name.replace(/\.[^.]+$/, '');
+    } else {
+        baseName = (document.getElementById('unirename-basename')?.value || '').trim();
+        if (!baseName) {
+            if (statusEl) { statusEl.textContent = '⚠️ 请输入统一名称'; statusEl.style.color = 'var(--warning)'; }
+            return;
+        }
+    }
+
+    if (_uniRenameFiles.length === 0) {
+        if (statusEl) { statusEl.textContent = '⚠️ 请先添加文件'; statusEl.style.color = 'var(--warning)'; }
+        return;
+    }
+
+    const copyMode = document.getElementById('unirename-copy-mode')?.checked ?? true;
+    if (statusEl) { statusEl.textContent = `处理中... 0/${_uniRenameFiles.length}`; statusEl.style.color = ''; }
+
+    let okCount = 0;
+    try {
+        for (let i = 0; i < _uniRenameFiles.length; i++) {
+            const f = _uniRenameFiles[i];
+            const dir = f.path.replace(/[\\/][^\\/]+$/, '');
+            const sep = dir.includes('\\') ? '\\' : '/';
+            const newPath = `${dir}${sep}${baseName}${f.ext}`;
+
+            const result = await window.electronAPI.apiCall('file/rename', {
+                source: f.path,
+                target: newPath,
+                copy: copyMode,
+            });
+            okCount++;
+            if (statusEl) statusEl.textContent = `处理中... ${okCount}/${_uniRenameFiles.length}`;
+        }
+        if (statusEl) {
+            statusEl.textContent = `✅ 成功${copyMode ? '复制' : '重命名'} ${okCount} 个文件 → ${baseName}.*`;
+            statusEl.style.color = 'var(--success)';
+        }
+        showToast(`统一命名完成: ${okCount} 个文件`, 'success');
+    } catch (err) {
+        if (statusEl) {
+            statusEl.textContent = `❌ 失败: ${err.message}`;
+            statusEl.style.color = 'var(--error)';
+        }
+    }
+}
+
+// 初始化统一命名模块
+document.addEventListener('DOMContentLoaded', () => {
+    setTimeout(_initUniRename, 200);
+});

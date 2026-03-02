@@ -60,8 +60,9 @@ async function vwPasteFromClipboard() {
                         const ttsText = getCellTextWithBreaks(cells[0]);
                         const subtitleText = getCellTextWithBreaks(cells[1]);
                         const voiceId = cells[2]?.textContent.trim() || '';
+                        const bgmPath = cells[3]?.textContent.trim() || '';
                         if (ttsText) {
-                            rows.push({ ttsText, subtitleText, voiceId, split: defaultSplit, exportMp4: defaultMp4 });
+                            rows.push({ ttsText, subtitleText, voiceId, bgmPath, split: defaultSplit, exportMp4: defaultMp4 });
                         }
                     }
                 });
@@ -80,6 +81,7 @@ async function vwPasteFromClipboard() {
                             ttsText: parts[0]?.trim() || '',
                             subtitleText: parts[1]?.trim() || '',
                             voiceId: parts[2]?.trim() || '',
+                            bgmPath: parts[3]?.trim() || '',
                             split: defaultSplit,
                             exportMp4: defaultMp4
                         });
@@ -96,9 +98,13 @@ async function vwPasteFromClipboard() {
         vwTasks = rows.map((row, idx) => ({
             id: idx,
             ...row,
+            selected: false,
+            bgmPath: row.bgmPath || '',
             status: 'pending',
             error: null,
             audioPath: null,
+            srtPath: null,
+            subtitleTxtPath: null,
             mp4Path: null,
             segments: null
         }));
@@ -127,6 +133,10 @@ function renderVWTasks() {
         <div class="vw-task-card" data-id="${task.id}" style="background: var(--bg-secondary); border-radius: 6px; padding: 10px; margin-bottom: 8px; border-left: 3px solid ${getStatusColor(task.status)};">
             <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
                 <span style="font-size: 11px; color: var(--text-muted);">#${idx + 1}</span>
+                <label style="display: flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer; user-select: none;" title="用于批量设置配乐">
+                    <input type="checkbox" class="vw-row-checkbox" data-id="${task.id}" ${task.selected ? 'checked' : ''} onchange="vwToggleRowSelect(${task.id}, this.checked)" style="cursor: pointer;">
+                    <span>选中</span>
+                </label>
                 <label style="display: flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer; user-select: none;" title="拆分后不能导出黑屏MP4">
                     <input type="checkbox" class="vw-split-checkbox" data-id="${task.id}" ${task.split ? 'checked' : ''} onchange="vwToggleSplit(${task.id}, this.checked)" style="cursor: pointer;">
                     <span>拆分</span>
@@ -146,11 +156,20 @@ function renderVWTasks() {
                 <strong>字幕:</strong> ${escapeHtml(task.subtitleText.substring(0, 60).replace(/\n/g, ' | '))}${task.subtitleText.length > 60 ? '...' : ''}
             </div>
             ${task.voiceId ? `<div style="font-size: 10px; color: var(--text-muted); margin-top: 2px;">音色: ${task.voiceId}</div>` : ''}
+            <div style="display:flex;align-items:center;gap:6px;margin-top:4px;font-size:10px;color:var(--text-muted);">
+                <span style="min-width:30px;">配乐:</span>
+                <span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${escapeHtml(task.bgmPath || '')}">
+                    ${task.bgmPath ? escapeHtml(vwGetFileName(task.bgmPath)) : '未设置'}
+                </span>
+                <button class="btn btn-secondary" style="padding:1px 6px;font-size:10px;" onclick="vwPickTaskBgm(${task.id})">选择</button>
+                ${task.bgmPath ? `<button class="btn btn-secondary" style="padding:1px 6px;font-size:10px;" onclick="vwClearTaskBgm(${task.id})">清空</button>` : ''}
+            </div>
             ${task.error ? `<div style="font-size: 10px; color: #ff6b6b; margin-top: 4px;">❌ ${escapeHtml(task.error)}</div>` : ''}
             ${task.mp4Path ? `<div style="font-size: 10px; color: #51cf66; margin-top: 4px;">🎬 MP4: ${escapeHtml(task.mp4Path)}</div>` : ''}
             ${task.segments ? `<div style="font-size: 10px; color: #51cf66; margin-top: 4px;">✅ ${task.segments.length} 个片段</div>` : ''}
         </div>
     `).join('');
+    updateSelectAllState();
 }
 
 function getStatusColor(status) {
@@ -183,6 +202,89 @@ function getStatusText(status) {
 
 function escapeHtml(str) {
     return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function vwGetFileName(filePath) {
+    if (!filePath) return '';
+    return String(filePath).split(/[\\/]/).pop() || String(filePath);
+}
+
+function vwPickAudioFilePath() {
+    return new Promise((resolve) => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.mp3,.wav,.m4a,.aac,.flac,.ogg';
+        input.onchange = () => {
+            const f = input.files && input.files[0];
+            if (!f) return resolve(null);
+            const pickedPath = f.path || '';
+            if (!pickedPath) {
+                showToast('无法读取本地文件路径，请在 Electron 桌面版中使用此功能', 'warning');
+                return resolve(null);
+            }
+            resolve(pickedPath || null);
+        };
+        input.click();
+    });
+}
+
+async function vwPickTaskBgm(id) {
+    const task = vwTasks.find(t => t.id === id);
+    if (!task) return;
+    const picked = await vwPickAudioFilePath();
+    if (!picked) return;
+    task.bgmPath = picked;
+    renderVWTasks();
+    updateVWTaskCount();
+}
+
+function vwClearTaskBgm(id) {
+    const task = vwTasks.find(t => t.id === id);
+    if (!task) return;
+    task.bgmPath = '';
+    renderVWTasks();
+    updateVWTaskCount();
+}
+
+function vwToggleRowSelect(id, checked) {
+    const task = vwTasks.find(t => t.id === id);
+    if (!task) return;
+    task.selected = !!checked;
+    updateSelectAllState();
+    updateVWTaskCount();
+}
+
+function vwToggleAllRows() {
+    const checked = document.getElementById('vw-select-all-rows')?.checked || false;
+    vwTasks.forEach(t => { t.selected = checked; });
+    renderVWTasks();
+    updateVWTaskCount();
+}
+
+async function vwApplyBgmToSelected() {
+    const selected = vwTasks.filter(t => t.selected);
+    if (selected.length === 0) {
+        showToast('请先勾选要批量设置的行', 'warning');
+        return;
+    }
+    const picked = await vwPickAudioFilePath();
+    if (!picked) return;
+    selected.forEach(t => { t.bgmPath = picked; });
+    renderVWTasks();
+    updateVWTaskCount();
+    showToast(`已为 ${selected.length} 条任务设置配乐`, 'success');
+}
+
+function vwClearBgmForSelected() {
+    const selected = vwTasks.filter(t => t.selected);
+    if (selected.length === 0) {
+        showToast('请先勾选要清空的行', 'warning');
+        return;
+    }
+    selected.forEach(t => { t.bgmPath = ''; });
+    renderVWTasks();
+    updateVWTaskCount();
+    showToast(`已清空 ${selected.length} 条任务的配乐`, 'success');
 }
 
 // 切换单个任务的拆分状态
@@ -257,13 +359,16 @@ function vwToggleAllMp4() {
 
 // 更新全选复选框状态（根据当前任务状态）
 function updateSelectAllState() {
-    const allSplit = vwTasks.every(t => t.split);
+    const allSplit = vwTasks.length > 0 && vwTasks.every(t => t.split);
     const noneSplit = vwTasks.every(t => !t.split);
-    const allMp4 = vwTasks.every(t => t.exportMp4);
+    const allMp4 = vwTasks.length > 0 && vwTasks.every(t => t.exportMp4);
     const noneMp4 = vwTasks.every(t => !t.exportMp4);
+    const allRows = vwTasks.length > 0 && vwTasks.every(t => t.selected);
+    const noneRows = vwTasks.every(t => !t.selected);
 
     const splitCb = document.getElementById('vw-select-all-split');
     const mp4Cb = document.getElementById('vw-select-all-mp4');
+    const rowCb = document.getElementById('vw-select-all-rows');
 
     if (splitCb) {
         splitCb.checked = allSplit;
@@ -272,6 +377,10 @@ function updateSelectAllState() {
     if (mp4Cb) {
         mp4Cb.checked = allMp4;
         mp4Cb.indeterminate = !allMp4 && !noneMp4;
+    }
+    if (rowCb) {
+        rowCb.checked = allRows;
+        rowCb.indeterminate = !allRows && !noneRows;
     }
 }
 
@@ -290,6 +399,7 @@ function vwClearAll() {
     vwTasks = [];
     renderVWTasks();
     updateVWTaskCount();
+    updateSelectAllState();
     document.getElementById('vw-start-btn').disabled = true;
 }
 
@@ -299,7 +409,9 @@ function updateVWTaskCount() {
     if (countEl) {
         const splitCount = vwTasks.filter(t => t.split).length;
         const mp4Count = vwTasks.filter(t => t.exportMp4).length;
-        countEl.textContent = `共 ${vwTasks.length} 条，${splitCount} 条拆分，${mp4Count} 条黑屏MP4`;
+        const selectedCount = vwTasks.filter(t => t.selected).length;
+        const bgmCount = vwTasks.filter(t => !!t.bgmPath).length;
+        countEl.textContent = `共 ${vwTasks.length} 条，已选 ${selectedCount} 条，${splitCount} 条拆分，${mp4Count} 条黑屏MP4，${bgmCount} 条配乐`;
     }
 }
 
@@ -367,6 +479,7 @@ async function startVoiceoverWorkflow() {
                         need_split: task.exportMp4 ? false : task.split,
                         max_duration: maxDuration,
                         subtitle_text: task.subtitleText,
+                        bgm_path: task.bgmPath || '',
                         export_mp4: task.exportMp4,  // 从任务读取
                         export_fcpxml: exportFcpxml,  // 导出达芬奇字幕
                         seamless_fcpxml: true,  // 默认无缝字幕
@@ -381,6 +494,8 @@ async function startVoiceoverWorkflow() {
                 }
 
                 task.audioPath = ttsData.audio_path;
+                task.srtPath = ttsData.srt_path || null;
+                task.subtitleTxtPath = ttsData.subtitle_txt_path || null;
                 task.outputFolder = ttsData.output_folder;
                 task.mp4Path = ttsData.mp4_path || null;
                 task.segments = ttsData.segments;

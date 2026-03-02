@@ -8,11 +8,19 @@ on:
 jobs:
   build:
     strategy:
-      fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: macos-latest
+            platform: mac
+            build_cmd: npm run pack:mac-arm64
+            artifact_pattern: dist-electron/*.dmg
+          - os: windows-latest
+            platform: win
+            build_cmd: npm run pack:win-x64
+            artifact_pattern: dist-electron/*.zip
+
     runs-on: ${{ matrix.os }}
-    
+
     permissions:
       id-token: write
       contents: write
@@ -30,46 +38,33 @@ jobs:
         run: npm ci
 
       - name: Build Electron App
-        run: npx electron-builder --publish never
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ${{ matrix.build_cmd }}
 
       - name: Attest Build Provenance
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: |
-            dist-electron/*.exe
-            dist-electron/*.dmg
-            dist-electron/*.zip
-            dist-electron/*.AppImage
-        continue-on-error: true
+          subject-path: ${{ matrix.artifact_pattern }}
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: electron-${{ matrix.os }}
+          name: electron-${{ matrix.platform }}
           path: |
-            dist-electron/*.exe
             dist-electron/*.dmg
             dist-electron/*.zip
-            dist-electron/*.AppImage
-          if-no-files-found: ignore
 
   release:
     needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      
     steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
-          path: release-assets
+          path: dist
           merge-multiple: true
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v2
         with:
-          files: release-assets/*
+          files: dist/*
           generate_release_notes: true

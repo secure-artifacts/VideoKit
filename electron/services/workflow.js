@@ -11,6 +11,15 @@ const ffmpeg = require('./ffmpeg');
 const gladia = require('./gladia');
 const settings = require('./settings');
 
+function expandHomePath(p) {
+    if (!p || typeof p !== 'string') return '';
+    if (p === '~') return os.homedir();
+    if (p.startsWith('~/') || p.startsWith('~\\')) {
+        return path.join(os.homedir(), p.slice(2));
+    }
+    return p;
+}
+
 /**
  * 一键配音工作流
  */
@@ -20,6 +29,8 @@ async function ttsWorkflow(data) {
         need_split: rawNeedSplit = true,
         max_duration = 29.0,
         subtitle_text = '',
+        bgm_path = '',
+        bgm_volume = 0.12,
         export_mp4 = false,
         export_fcpxml = true,
         seamless_fcpxml = true,
@@ -62,7 +73,7 @@ async function ttsWorkflow(data) {
 
     // 创建分组目录
     const videoGroup = path.join(outputDir, '_视频文案');
-    const audioGroup = path.join(outputDir, '_音频字幕', taskPrefix);
+    const audioGroup = path.join(outputDir, '_音频字幕');
     const metadataGroup = path.join(outputDir, '_metadata', taskPrefix);
     fs.mkdirSync(videoGroup, { recursive: true });
     fs.mkdirSync(audioGroup, { recursive: true });
@@ -77,8 +88,34 @@ async function ttsWorkflow(data) {
     const usedPrefix = maskKey(usedKey);
     console.log(`[一键配音] 任务 ${task_index + 1} 使用 Key: ${usedPrefix}`);
 
-    const sourcePath = path.join(audioGroup, `${taskPrefix}-source.mp3`);
+    // 统一导出命名：同一任务使用同一 basename（.mp3/.txt/.srt）
+    const sourcePath = path.join(audioGroup, `${taskPrefix}.mp3`);
     fs.writeFileSync(sourcePath, audio);
+
+    const bgmPath = expandHomePath(String(bgm_path || '').trim());
+    if (bgmPath) {
+        if (!fs.existsSync(bgmPath)) {
+            throw new Error(`配乐文件不存在: ${bgmPath}`);
+        }
+        const bgmGain = Math.max(0, Math.min(2, parseFloat(bgm_volume)));
+        const safeBgmGain = Number.isFinite(bgmGain) ? bgmGain : 0.12;
+        const mixedTempPath = path.join(metadataGroup, `${taskPrefix}_mixed_tmp.mp3`);
+        await ffmpeg.runCommand('ffmpeg', [
+            '-y',
+            '-i', sourcePath,
+            '-stream_loop', '-1',
+            '-i', bgmPath,
+            '-filter_complex',
+            `[0:a]volume=1.000[voice];[1:a]volume=${safeBgmGain.toFixed(3)}[bgm];[voice][bgm]amix=inputs=2:duration=first:dropout_transition=0[aout]`,
+            '-map', '[aout]',
+            '-c:a', 'libmp3lame',
+            '-b:a', '192k',
+            '-ac', '2',
+            mixedTempPath,
+        ]);
+        fs.copyFileSync(mixedTempPath, sourcePath);
+        try { fs.unlinkSync(mixedTempPath); } catch (_) { }
+    }
 
     let segments = [];
 
@@ -119,6 +156,7 @@ async function ttsWorkflow(data) {
 
     // Step 3: 生成字幕
     let srtPath = null;
+    let subtitleTxtPath = null;
     if (subtitle_text) {
         try {
             const gladiaKeysData = settings.loadGladiaKeys();
@@ -129,8 +167,8 @@ async function ttsWorkflow(data) {
             }
 
             // 保存断行字幕文本
-            const subtitleTextPath = path.join(videoGroup, `${taskPrefix}.txt`);
-            fs.writeFileSync(subtitleTextPath, subtitle_text, 'utf-8');
+            subtitleTxtPath = path.join(videoGroup, `${taskPrefix}.txt`);
+            fs.writeFileSync(subtitleTxtPath, subtitle_text, 'utf-8');
 
             // 转录
             const fileName = path.parse(sourcePath).name;
@@ -146,8 +184,10 @@ async function ttsWorkflow(data) {
             const subtitleUtils = require('./subtitleUtils');
             const { audioSubtitleSearchDifferentStrong } = require('./subtitleAlignment');
 
-            const sourceTextWithInfo = subtitleUtils.readTextWithGoogleDoc(subtitleTextPath);
+            const sourceTextWithInfo = subtitleUtils.readTextWithGoogleDoc(subtitleTxtPath);
             const translateTextDict = {};
+            const targetSrtPath = path.join(audioGroup, `${taskPrefix}.srt`);
+            const targetFcpxmlPath = export_fcpxml ? path.join(audioGroup, `${taskPrefix}.fcpxml`) : null;
 
             const alignResult = audioSubtitleSearchDifferentStrong(
                 'en', audioGroup, taskPrefix,
@@ -156,12 +196,13 @@ async function ttsWorkflow(data) {
                 false, // genMergeSrt
                 true,  // sourceUpOrder
                 export_fcpxml,
-                seamless_fcpxml
+                seamless_fcpxml,
+                targetSrtPath,
+                targetFcpxmlPath
             );
 
             console.log(`[一键配音] 字幕对齐结果: ${alignResult}`);
 
-            const targetSrtPath = path.join(audioGroup, `${taskPrefix}_en_source.srt`);
             if (fs.existsSync(targetSrtPath)) {
                 srtPath = targetSrtPath;
             }
@@ -179,6 +220,9 @@ async function ttsWorkflow(data) {
 
     return {
         audio_path: sourcePath,
+        subtitle_txt_path: subtitleTxtPath,
+        srt_path: srtPath,
+        bgm_path: bgmPath || null,
         output_folder: outputDir,
         task_prefix: taskPrefix,
         mp4_path: mp4Path,

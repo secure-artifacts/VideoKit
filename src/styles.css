@@ -33,47 +33,51 @@ body {
     height: 100vh;
 }
 
-/* 标题栏 */
+/* 标题栏 (现在和导航栏合并为一行) */
 .titlebar {
-    height: 52px;
-    background: rgba(0, 0, 0, 0.3);
+    height: 44px; /* 从52px缩减，并容纳标签页 */
+    background: rgba(0, 0, 0, 0.4);
     display: flex;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
+    padding-left: 80px; /* 避开Mac左侧红绿灯 */
+    padding-right: 16px;
     -webkit-app-region: drag;
-    position: relative;
-}
-
-.titlebar-drag-region {
-    position: absolute;
-    top: 0;
-    left: 80px;
-    right: 0;
-    height: 100%;
-}
-
-.app-title {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text-secondary);
-}
-
-/* 标签页 */
-.tabs {
-    display: flex;
-    gap: 4px;
-    padding: 12px 20px;
-    background: rgba(0, 0, 0, 0.2);
     border-bottom: 1px solid var(--border-color);
 }
 
+.titlebar-drag-region {
+    display: none; /* 不再需要遮罩，直接在外层拖拽 */
+}
+
+.app-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    margin: 0;
+    margin-right: 20px;
+    flex-shrink: 0;
+}
+
+/* 标签页 (内嵌在标题栏中) */
+.tabs {
+    display: flex;
+    gap: 2px;
+    padding: 0;
+    background: transparent;
+    border-bottom: none;
+    -webkit-app-region: no-drag;
+    flex-wrap: wrap;
+    overflow: hidden;
+}
+
 .tab {
-    padding: 10px 24px;
+    padding: 4px 12px;
     background: transparent;
     border: none;
-    border-radius: 8px;
+    border-radius: 6px;
     color: var(--text-secondary);
-    font-size: 14px;
+    font-size: 12px;
     font-weight: 500;
     cursor: pointer;
     transition: all 0.2s ease;

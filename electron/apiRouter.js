@@ -284,6 +284,24 @@ async function routeAPI(endpoint, data) {
                 data.precise !== false
             );
 
+        case 'media/reels-compose':
+            if (!data.background_path) throw new Error('缺少背景素材路径');
+            if (!data.voice_path) throw new Error('缺少配音音频路径');
+            if (!data.ass_content) throw new Error('缺少 ASS 字幕内容');
+            if (!data.output_path) throw new Error('缺少输出路径');
+            return await ffmpegService.composeReel({
+                backgroundPath: data.background_path,
+                voicePath: data.voice_path,
+                assContent: data.ass_content,
+                outputPath: data.output_path,
+                crf: parseInt(data.crf || 23, 10),
+                useGPU: data.use_gpu === true,
+                loopFade: data.loop_fade !== false,
+                loopFadeDur: parseFloat(data.loop_fade_dur ?? 1.0),
+                voiceVolume: parseFloat(data.voice_volume ?? 1.0),
+                bgVolume: parseFloat(data.bg_volume ?? 0.0),
+            });
+
         case 'media/export-fcpxml-timeline': {
             if (!data.file_path) throw new Error('缺少文件路径');
             if (!data.segments || data.segments.length === 0) throw new Error('缺少剪辑片段');
@@ -564,6 +582,31 @@ async function routeAPI(endpoint, data) {
                     }
                 },
             });
+        }
+
+        // ==================== 文件工具 ====================
+        case 'file/write-text': {
+            const filePath = data.path;
+            const content = data.content || '';
+            if (!filePath) throw new Error('缺少文件路径');
+            const dir = path.dirname(filePath);
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+            fs.writeFileSync(filePath, content, 'utf-8');
+            return { message: '写入成功', path: filePath };
+        }
+
+        case 'file/rename': {
+            const source = data.source;
+            const target = data.target;
+            const copyMode = data.copy !== false;
+            if (!source || !target) throw new Error('缺少源文件或目标路径');
+            if (!fs.existsSync(source)) throw new Error(`文件不存在: ${source}`);
+            if (copyMode) {
+                fs.copyFileSync(source, target);
+            } else {
+                fs.renameSync(source, target);
+            }
+            return { message: copyMode ? '复制成功' : '重命名成功', target };
         }
 
         default:

@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog, powerSaveBlocker } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const ffmpegService = require('./services/ffmpeg');
 
 // Node.js API 路由器 —— 替代 Python Flask 后端
 const { registerAPIHandlers } = require('./apiRouter');
@@ -112,6 +113,7 @@ function createWindow() {
             nodeIntegration: false,
             contextIsolation: true,
             sandbox: false,
+            webSecurity: false,  // 允许从本地路径加载视频预览
             preload: path.join(__dirname, 'preload.js')
         },
         titleBarStyle: 'hiddenInset',
@@ -130,18 +132,6 @@ function createWindow() {
     });
 }
 
-// IPC 处理 - 基本功能
-ipcMain.handle('select-directory', async () => {
-    const result = await dialog.showOpenDialog(mainWindow, {
-        properties: ['openDirectory', 'createDirectory'],
-        title: '选择输出目录'
-    });
-    if (!result.canceled && result.filePaths.length > 0) {
-        return result.filePaths[0];
-    }
-    return null;
-});
-
 // 应用启动
 app.whenReady().then(async () => {
     appIsReady = true;
@@ -150,6 +140,188 @@ app.whenReady().then(async () => {
     // 设置 FFmpeg 环境
     setupFFmpegPath();
     log(`FFmpeg PATH configured`);
+
+    // ==================== IPC 处理 - 基本功能 ====================
+    ipcMain.handle('select-directory', async () => {
+        const result = await dialog.showOpenDialog(mainWindow, {
+            properties: ['openDirectory', 'createDirectory'],
+            title: '选择输出目录'
+        });
+        if (!result.canceled && result.filePaths.length > 0) {
+            return result.filePaths[0];
+        }
+        return null;
+    });
+
+    ipcMain.handle('get-downloads-path', async () => {
+        try {
+            return app.getPath('downloads');
+        } catch (e) {
+            return null;
+        }
+    });
+
+    // IPC: 批量Reels - 烧录字幕到视频
+    ipcMain.handle('burn-subtitles', async (event, { videoPath, assContent, outputPath, crf }) => {
+        const os = require('os');
+        const { execFile } = require('child_process');
+        const tmpDir = os.tmpdir();
+        const assPath = path.join(tmpDir, `reels_sub_${Date.now()}.ass`);
+
+        // Write ASS content to temp file
+        fs.writeFileSync(assPath, assContent, 'utf-8');
+        log(`[Reels] Burning subtitles: ${videoPath} → ${outputPath}`);
+
+        return new Promise((resolve, reject) => {
+            const args = [
+                '-i', videoPath,
+                '-vf', `ass='${assPath.replace(/'/g, "'\\''")}' `,
+                '-c:a', 'copy',
+                '-c:v', 'libx264',
+                '-crf', String(crf || 23),
+                '-preset', 'medium',
+                '-y',
+                outputPath
+            ];
+            execFile('ffmpeg', args, { maxBuffer: 50 * 1024 * 1024 }, (err, stdout, stderr) => {
+                // Clean up temp ASS file
+                try { fs.unlinkSync(assPath); } catch (e) { /* ignore */ }
+                if (err) {
+                    log(`[Reels] FFmpeg error: ${stderr}`);
+                    reject(new Error(stderr || err.message));
+                } else {
+                    log(`[Reels] Export done: ${outputPath}`);
+                    resolve({ success: true, outputPath });
+                }
+            });
+        });
+    });
+
+    // IPC: 批量Reels - 合成背景+配音+字幕（直连通道，避免依赖 apiRouter 路由版本）
+    ipcMain.handle('reels-compose', async (event, payload) => {
+        const data = payload || {};
+        if (!data.background_path) throw new Error('缺少背景素材路径');
+        if (!data.voice_path) throw new Error('缺少配音音频路径');
+        if (!data.ass_content) throw new Error('缺少 ASS 字幕内容');
+        if (!data.output_path) throw new Error('缺少输出路径');
+        const res = await ffmpegService.composeReel({
+            backgroundPath: data.background_path,
+            voicePath: data.voice_path,
+            assContent: data.ass_content,
+            outputPath: data.output_path,
+            crf: parseInt(data.crf || 23, 10),
+            useGPU: data.use_gpu === true,
+            loopFade: data.loop_fade !== false,
+            loopFadeDur: parseFloat(data.loop_fade_dur ?? 1.0),
+            voiceVolume: parseFloat(data.voice_volume ?? 1.0),
+            bgVolume: parseFloat(data.bg_volume ?? 0.0),
+        });
+        return { success: true, data: res };
+    });
+
+    // IPC: WYSIWYG 逐帧渲染导出（与 Canvas 预览 100% 一致）
+    const { handleWysiwygIPC } = require('./services/ffmpeg-rawvideo');
+    ipcMain.handle('reels-compose-wysiwyg', async (event, action, data) => {
+        return handleWysiwygIPC(action, data);
+    });
+
+    // IPC: 获取媒体时长
+    ipcMain.handle('get-media-duration', async (event, filePath) => {
+        return ffmpegService.getDuration(filePath);
+    });
+
+    // IPC: 扫描本地字体目录
+    ipcMain.handle('scan-fonts', async () => {
+        try {
+            const fontsDir = app.isPackaged
+                ? path.join(process.resourcesPath, 'assets', 'fonts')
+                : path.join(__dirname, '..', 'assets', 'fonts');
+
+            if (!fs.existsSync(fontsDir)) {
+                log(`[Fonts] directory not found: ${fontsDir}`);
+                return [];
+            }
+
+            const fontExts = new Set(['.ttf', '.otf', '.woff', '.woff2']);
+
+            function inferWeightAndStyle(fileName) {
+                const base = path.parse(fileName).name.toLowerCase();
+                const style = /(italic|oblique)/.test(base) ? 'italic' : 'normal';
+                let weight = '400';
+                let hasExplicit = false;
+
+                const rules = [
+                    [/extra[\s_-]*black|ultra[\s_-]*black/, '900'],
+                    [/\bblack\b/, '900'],
+                    [/extra[\s_-]*bold|ultra[\s_-]*bold|heavy/, '800'],
+                    [/\bsemi[\s_-]*bold\b|\bdemi[\s_-]*bold\b/, '600'],
+                    [/\bbold\b/, '700'],
+                    [/\bmedium\b/, '500'],
+                    [/\bbook\b|\bregular\b|\bnormal\b/, '400'],
+                    [/extra[\s_-]*light|ultra[\s_-]*light/, '200'],
+                    [/\blight\b/, '300'],
+                    [/\bthin\b|\bhairline\b/, '100'],
+                ];
+                for (const [re, w] of rules) {
+                    if (re.test(base)) {
+                        weight = w;
+                        hasExplicit = true;
+                        break;
+                    }
+                }
+
+                if (!hasExplicit && /variablefont/.test(base)) {
+                    weight = '100 900';
+                }
+                return { weight, style };
+            }
+
+            function cleanFamilyNameFromFile(fileName) {
+                const raw = path.parse(fileName).name.replace(/[_-]+/g, ' ');
+                const cleaned = raw
+                    .replace(/\b(italic|oblique|regular|normal|book|medium|semibold|semi bold|demibold|demi bold|bold|extrabold|extra bold|ultrabold|ultra bold|black|extrablack|extra black|ultrablack|ultra black|heavy|light|extralight|extra light|ultralight|ultra light|thin|hairline|variablefont|wght|wdth|opsz)\b/gi, '')
+                    .replace(/\s{2,}/g, ' ')
+                    .trim();
+                return cleaned || raw.trim();
+            }
+
+            const fontList = [];
+            const items = fs.readdirSync(fontsDir, { withFileTypes: true });
+            for (const item of items) {
+                if (item.isDirectory()) {
+                    const familyName = item.name.replace(/_/g, ' ');
+                    const dirPath = path.join(fontsDir, item.name);
+                    const files = fs.readdirSync(dirPath);
+
+                    for (const fontFile of files) {
+                        const ext = path.extname(fontFile).toLowerCase();
+                        if (!fontExts.has(ext)) continue;
+                        const meta = inferWeightAndStyle(fontFile);
+                        fontList.push({
+                            family: familyName,
+                            path: path.join(dirPath, fontFile),
+                            weight: meta.weight,
+                            style: meta.style,
+                        });
+                    }
+                } else if (item.isFile() && fontExts.has(path.extname(item.name).toLowerCase())) {
+                    const familyName = cleanFamilyNameFromFile(item.name).replace(/_/g, ' ');
+                    const meta = inferWeightAndStyle(item.name);
+                    fontList.push({
+                        family: familyName,
+                        path: path.join(fontsDir, item.name),
+                        weight: meta.weight,
+                        style: meta.style,
+                    });
+                }
+            }
+            log(`[Fonts] scanned ${fontList.length} fonts from ${fontsDir}`);
+            return fontList;
+        } catch (err) {
+            log(`[Fonts] scanning error: ${err.message}`);
+            return [];
+        }
+    });
 
     // 注册 API 路由（替代 Python Flask 后端）
     registerAPIHandlers();

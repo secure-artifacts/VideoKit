@@ -43,6 +43,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
     // 选择目录
     selectDirectory: () => ipcRenderer.invoke('select-directory'),
+    getDownloadsPath: () => ipcRenderer.invoke('get-downloads-path'),
+
+    // 批量Reels - 烧录字幕
+    burnSubtitles: (opts) => ipcRenderer.invoke('burn-subtitles', opts),
+    reelsCompose: (opts) => ipcRenderer.invoke('reels-compose', opts),
+    reelsComposeWysiwyg: (action, data) => ipcRenderer.invoke('reels-compose-wysiwyg', action, data),
+    getMediaDuration: (filePath) => ipcRenderer.invoke('get-media-duration', filePath),
+
+    // 扫描本地字体
+    scanFonts: () => ipcRenderer.invoke('scan-fonts'),
+
+    // 读取文本文件
+    readFileText: (filePath) => {
+        try { return fs.readFileSync(filePath, 'utf-8'); } catch { return ''; }
+    },
 
     // ==================== 统一 API 调用接口 ====================
     // 替代 fetch(`${API_BASE}/endpoint`, ...) 的调用方式

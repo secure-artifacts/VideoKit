@@ -3200,6 +3200,187 @@ def scene_split():
         return jsonify({"error": f"场景拆分失败: {str(e)}"}), 500
 
 
+@app.route('/api/media/scene-detect-frames', methods=['POST', 'OPTIONS'])
+def scene_detect_frames():
+    """场景检测 + 导出场景帧：检测场景后在每个场景内平均截取指定数量的帧"""
+    if request.method == 'OPTIONS':
+        return '', 204
+
+    data = request.json
+    file_path = data.get('file_path', '')
+    threshold = float(data.get('threshold', 0.3))
+    min_interval = float(data.get('min_interval', 0.5))
+    frames_per_scene = max(1, int(data.get('frames_per_scene', 1)))  # 每个场景截取的帧数
+    output_dir = data.get('output_dir', '')
+    image_format = data.get('format', 'jpg')  # jpg 或 png
+    quality = int(data.get('quality', 2))      # FFmpeg -q:v
+
+    if not file_path or not os.path.exists(file_path):
+        return jsonify({"error": "文件不存在"}), 400
+
+    try:
+        base_name = os.path.splitext(os.path.basename(file_path))[0]
+
+        # --- 1) 获取视频时长 ---
+        duration = _get_audio_duration(file_path)
+        if not duration:
+            return jsonify({"error": "无法获取视频时长"}), 400
+
+        # --- 2) 场景检测 ---
+        print(f"[场景帧] 开始场景检测: {file_path}, 阈值={threshold}, 最小间隔={min_interval}s, 每场景={frames_per_scene}帧")
+
+        cmd = [
+            'ffmpeg', '-hide_banner',
+            '-i', file_path,
+            '-vf', f"select='gt(scene,{threshold})',showinfo",
+            '-f', 'null', '-'
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+
+        stderr_output = result.stderr or ''
+        if result.returncode != 0 and not stderr_output.strip():
+            return jsonify({"error": f"FFmpeg 场景检测失败 (returncode={result.returncode})"}), 500
+
+        scene_boundaries = [0.0]  # 第一个场景永远从 0 秒开始
+        last_time = -min_interval
+
+        import re as _re
+        for line in stderr_output.splitlines():
+            if 'showinfo' in line and 'pts_time' in line:
+                pts_match = _re.search(r'pts_time:\s*([0-9.]+)', line)
+                if pts_match:
+                    pts_time = float(pts_match.group(1))
+                    if pts_time < 0.3:
+                        continue
+                    if pts_time - last_time < min_interval:
+                        continue
+                    scene_boundaries.append(pts_time)
+                    last_time = pts_time
+        scene_boundaries.append(duration)  # 末尾
+
+        num_scenes = len(scene_boundaries) - 1
+        print(f"[场景帧] 检测到 {num_scenes} 个场景")
+
+        # --- 3) 在每个场景内计算要截取的时间点 ---
+        extract_points = []  # [(scene_idx, frame_idx_in_scene, time), ...]
+        for s in range(num_scenes):
+            seg_start = scene_boundaries[s]
+            seg_end = scene_boundaries[s + 1]
+            seg_dur = seg_end - seg_start
+
+            if seg_dur <= 0:
+                continue
+
+            if frames_per_scene == 1:
+                # 只截 1 帧 → 取场景起始处
+                extract_points.append((s + 1, 1, seg_start))
+            else:
+                # N 帧 → 在 [seg_start, seg_end) 内平均分布
+                for f in range(frames_per_scene):
+                    t = seg_start + (seg_dur * f / frames_per_scene)
+                    extract_points.append((s + 1, f + 1, t))
+
+        print(f"[场景帧] 共需截取 {len(extract_points)} 帧 ({num_scenes} 场景 × {frames_per_scene} 帧/场景)")
+
+        # --- 4) 输出目录 ---
+        if not output_dir:
+            output_dir = os.path.join(os.path.dirname(file_path), f"{base_name}_scene_frames")
+        os.makedirs(output_dir, exist_ok=True)
+
+        # --- 5) 逐帧导出 ---
+        out_ext = 'png' if image_format == 'png' else 'jpg'
+        total = len(extract_points)
+        success = 0
+        failed = 0
+        results = []
+
+        for idx, (scene_idx, frame_idx, t) in enumerate(extract_points):
+            time_label = _format_scene_time(t).replace(':', '.')
+            if frames_per_scene == 1:
+                output_filename = f"{base_name}_scene{scene_idx:03d}_{time_label}.{out_ext}"
+            else:
+                output_filename = f"{base_name}_scene{scene_idx:03d}_f{frame_idx}_{time_label}.{out_ext}"
+            output_path = os.path.join(output_dir, output_filename)
+
+            try:
+                cmd = [
+                    'ffmpeg', '-y',
+                    '-ss', f'{t:.3f}',
+                    '-i', file_path,
+                    '-frames:v', '1'
+                ]
+                if out_ext == 'jpg':
+                    cmd.extend(['-q:v', str(quality)])
+                cmd.append(output_path)
+
+                subprocess.run(cmd, check=True, capture_output=True, timeout=30)
+                success += 1
+                results.append({
+                    "scene": scene_idx,
+                    "frame": frame_idx,
+                    "index": idx + 1,
+                    "time": round(t, 3),
+                    "time_str": _format_scene_time(t),
+                    "output": output_path,
+                    "filename": output_filename,
+                    "status": "ok"
+                })
+            except subprocess.TimeoutExpired:
+                failed += 1
+                results.append({"scene": scene_idx, "frame": frame_idx, "index": idx + 1, "time": round(t, 3), "status": "timeout"})
+            except subprocess.CalledProcessError as e:
+                failed += 1
+                results.append({
+                    "scene": scene_idx, "frame": frame_idx, "index": idx + 1,
+                    "time": round(t, 3),
+                    "status": "error",
+                    "error": e.stderr.decode('utf-8', errors='replace')[:200] if e.stderr else str(e)
+                })
+
+            if (idx + 1) % 50 == 0 or (idx + 1) == total:
+                print(f"[场景帧] 进度: {idx+1}/{total}, 成功={success}, 失败={failed}")
+
+        print(f"[场景帧] 完成! 成功={success}, 失败={failed}, 总计={total}")
+
+        # 构建片段信息（与 scene-detect 兼容）
+        segments = []
+        for i in range(num_scenes):
+            seg_start = scene_boundaries[i]
+            seg_end = scene_boundaries[i + 1]
+            seg_duration = seg_end - seg_start
+            segments.append({
+                "index": i + 1,
+                "start": round(seg_start, 3),
+                "end": round(seg_end, 3),
+                "start_str": _format_scene_time(seg_start),
+                "end_str": _format_scene_time(seg_end),
+                "duration": round(seg_duration, 3),
+                "duration_str": _format_scene_time(seg_duration)
+            })
+
+        return jsonify({
+            "message": f"场景帧导出完成: {num_scenes} 个场景 × {frames_per_scene} 帧，成功导出 {success} 帧",
+            "file": file_path,
+            "duration": round(duration, 3),
+            "threshold": threshold,
+            "frames_per_scene": frames_per_scene,
+            "output_dir": output_dir,
+            "total_scenes": num_scenes,
+            "success": success,
+            "failed": failed,
+            "scene_points": [{"time": round(t, 3), "time_str": _format_scene_time(t)} for t in scene_boundaries[1:-1]],
+            "segments": segments,
+            "frames": results[:500]
+        })
+
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "场景检测超时（超过 10 分钟）"}), 500
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"场景帧导出失败: {str(e)}"}), 500
+
+
 @app.route('/api/audio/smart-split-analyze', methods=['POST', 'OPTIONS'])
 def smart_split_analyze():
     """智能分析音频分割点（基于静音检测）"""
