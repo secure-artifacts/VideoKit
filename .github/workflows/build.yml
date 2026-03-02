@@ -282,6 +282,11 @@ jobs:
     needs: [build-mac, build-windows, build-linux]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
+
+    permissions:
+      id-token: write
+      contents: write
+      attestations: write
     
     steps:
       - name: 📥 下载所有产物
@@ -292,12 +297,15 @@ jobs:
       
       - name: 📋 列出文件
         run: ls -la all-builds/
+
+      - name: Attest Build Provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'all-builds/*'
       
       - name: 🎉 创建 Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: all-builds/*
           draft: true
           generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

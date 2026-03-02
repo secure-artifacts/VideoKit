@@ -12,12 +12,8 @@ jobs:
         include:
           - os: macos-latest
             platform: mac
-            build_cmd: npm run pack:mac-arm64
-            artifact_pattern: dist-electron/*.dmg
           - os: windows-latest
             platform: win
-            build_cmd: npm run pack:win-x64
-            artifact_pattern: dist-electron/*.zip
 
     runs-on: ${{ matrix.os }}
 
@@ -37,13 +33,21 @@ jobs:
       - name: Install Dependencies
         run: npm ci
 
-      - name: Build Electron App
-        run: ${{ matrix.build_cmd }}
+      - name: Build App
+        run: npm run build
+
+      - name: Package Electron App
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --${{ matrix.platform }} --publish never
 
       - name: Attest Build Provenance
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: ${{ matrix.artifact_pattern }}
+          subject-path: |
+            dist-electron/*.dmg
+            dist-electron/*.zip
+            dist-electron/*.exe
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
@@ -52,6 +56,7 @@ jobs:
           path: |
             dist-electron/*.dmg
             dist-electron/*.zip
+            dist-electron/*.exe
 
   release:
     needs: build
