@@ -1,6 +1,6 @@
 {
   "name": "pymediatools",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "description": "统一媒体工具包 - 字幕对齐 + 媒体转换",
   "author": {
     "name": "TimCode",
@@ -86,6 +86,7 @@
         "nsis",
         "zip"
       ],
+      "artifactName": "${productName}-Setup-${version}.${ext}",
       "icon": "assets/icon.ico",
       "extraResources": [
         {
