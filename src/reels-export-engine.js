@@ -22,10 +22,10 @@ const EXPORT_MODES = {
 };
 
 const QUALITY_PRESETS = {
-    high: { crf: 18, preset: 'slow', label: '高质量', bitrate: null },
-    medium: { crf: 23, preset: 'medium', label: '中等质量', bitrate: null },
-    low: { crf: 28, preset: 'fast', label: '快速导出', bitrate: null },
-    custom: { crf: 20, preset: 'medium', label: '自定义', bitrate: '8M' },
+    high: { crf: 15, preset: 'slow', label: '高质量', bitrate: null },
+    medium: { crf: 18, preset: 'medium', label: '中等质量', bitrate: null },
+    low: { crf: 23, preset: 'fast', label: '快速导出', bitrate: null },
+    custom: { crf: 18, preset: 'medium', label: '自定义', bitrate: '8M' },
 };
 
 // ═══════════════════════════════════════════════════════
@@ -161,7 +161,7 @@ function buildAudioMixCommand(params) {
         filterComplex = `${filterParts[0]};[a0]anull[aout]`;
     } else {
         const mixInputs = audioTracks.map((_, i) => `[a${i}]`).join('');
-        filterComplex = filterParts.join(';') + `;${mixInputs}amix=inputs=${audioTracks.length}:duration=first:dropout_transition=2[aout]`;
+        filterComplex = filterParts.join(';') + `;${mixInputs}amix=inputs=${audioTracks.length}:duration=first:dropout_transition=2:normalize=0[aout]`;
     }
 
     args.push(

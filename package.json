@@ -1,6 +1,6 @@
 {
   "name": "pymediatools",
-  "version": "2.1.2",
+  "version": "2.1.3",
   "description": "统一媒体工具包 - 字幕对齐 + 媒体转换",
   "author": {
     "name": "TimCode",
@@ -27,12 +27,13 @@
     "archiver": "^7.0.1",
     "diff-match-patch": "^1.0.5",
     "electron-store": "^8.1.0",
-    "electron-updater": "^6.8.3"
+    "electron-updater": "^6.8.3",
+    "node-web-audio-api": "^1.0.8"
   },
   "devDependencies": {
     "concurrently": "^8.2.2",
-    "electron": "^28.3.3",
-    "electron-builder": "^24.9.1",
+    "electron": "^33.4.11",
+    "electron-builder": "^26.8.1",
     "vite": "^5.0.0",
     "wait-on": "^7.2.0"
   },

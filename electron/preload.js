@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
@@ -40,6 +40,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     platform: process.platform,
     resolveAssetUrl,
     toFileUrl,
+    // 获取 File 对象的本地完整路径（contextIsolation 下 File.path 不可用）
+    getFilePath: (file) => {
+        try {
+            const p = webUtils.getPathForFile(file);
+            console.log('[preload.getFilePath] success:', p);
+            return p;
+        } catch (e) {
+            console.error('[preload.getFilePath] FAILED:', e.message, 'file:', typeof file, file?.name);
+            return '';
+        }
+    },
     getAppVersion: () => ipcRenderer.invoke('get-app-version'),
 
     // 选择目录
@@ -52,11 +63,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     reelsCompose: (opts) => ipcRenderer.invoke('reels-compose', opts),
     reelsComposeWysiwyg: (action, data) => ipcRenderer.invoke('reels-compose-wysiwyg', action, data),
     getMediaDuration: (filePath) => ipcRenderer.invoke('get-media-duration', filePath),
+    saveRenderedAudio: (wavData) => ipcRenderer.invoke('save-rendered-audio', wavData),
+    readFileBuffer: (filePath) => ipcRenderer.invoke('read-file-buffer', filePath),
 
     // 自动更新
     checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
     downloadUpdate: () => ipcRenderer.invoke('download-update'),
     installUpdate: () => ipcRenderer.invoke('install-update'),
+    getUpdateChannel: () => ipcRenderer.invoke('get-update-channel'),
+    setUpdateChannel: (channel) => ipcRenderer.invoke('set-update-channel', channel),
     onUpdateStatus: (callback) => {
         const handler = (_, data) => callback(data);
         ipcRenderer.on('update-status', handler);
@@ -84,5 +99,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // Wav2Lip 进度事件监听
     onWav2LipProgress: (callback) => {
         ipcRenderer.on('wav2lip-progress', (event, data) => callback(data));
+    },
+
+    // 批量下载进度事件监听
+    onBatchDownloadProgress: (callback) => {
+        ipcRenderer.on('batch-download-progress', (event, data) => callback(data));
     },
 });

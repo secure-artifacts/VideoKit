@@ -128,9 +128,9 @@ class ReelsFontManager {
     async _registerLocalFont(fontInfo) {
         if (!fontInfo.path || !fontInfo.family) return;
         try {
-            const fontUrl = fontInfo.path.startsWith('file://')
-                ? fontInfo.path
-                : `file://${fontInfo.path}`;
+            const fontUrl = (window.electronAPI && window.electronAPI.toFileUrl)
+                ? window.electronAPI.toFileUrl(fontInfo.path)
+                : (fontInfo.path.startsWith('file://') ? fontInfo.path : `file://${fontInfo.path}`);
 
             const descriptors = {};
             if (fontInfo.weight) descriptors.weight = String(fontInfo.weight);

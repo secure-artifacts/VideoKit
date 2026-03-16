@@ -161,6 +161,16 @@ function _initReelsModule() {
     bindMix(voiceVolumeEl);
     bindMix(bgVolumeEl);
 
+    // ── 混响 / 立体声控件 ──
+    const reverbIds = ['reels-reverb-enabled', 'reels-reverb-preset', 'reels-reverb-mix', 'reels-stereo-width'];
+    for (const rid of reverbIds) {
+        const el = document.getElementById(rid);
+        if (el) {
+            el.addEventListener('change', _setupPreviewReverb);
+            el.addEventListener('input', _setupPreviewReverb);
+        }
+    }
+
     const video = document.getElementById('reels-preview-video');
     if (video) {
         video.addEventListener('timeupdate', _onVideoTimeUpdate);
@@ -266,6 +276,91 @@ function _initReelsModule() {
     _reelsUpdateLastOutputUI('');
     _reelsUpdateExportProgressUI(0, 0);
     _reelsUpdateLastErrorUI('');
+
+    // ═══ 面板拖拽调整宽度 ═══
+    _initReelsColumnResize();
+}
+
+function _initReelsColumnResize() {
+    const handles = document.querySelectorAll('.reels-resize-handle');
+    if (!handles.length) return;
+
+    // Restore saved widths
+    const saved = localStorage.getItem('reels-col-widths');
+    if (saved) {
+        try {
+            const widths = JSON.parse(saved);
+            for (const [id, w] of Object.entries(widths)) {
+                const el = document.getElementById(id);
+                if (el && el.id !== 'reels-col-preview') {
+                    el.style.width = w + 'px';
+                    el.style.flex = 'none';
+                }
+            }
+        } catch (e) { }
+    }
+
+    handles.forEach(handle => {
+        handle.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            const leftId = handle.dataset.left;
+            const rightId = handle.dataset.right;
+            const leftEl = document.getElementById(leftId);
+            const rightEl = document.getElementById(rightId);
+            if (!leftEl || !rightEl) return;
+
+            handle.classList.add('active');
+            const startX = e.clientX;
+            const leftW0 = leftEl.getBoundingClientRect().width;
+            const rightW0 = rightEl.getBoundingClientRect().width;
+            const leftMin = parseInt(getComputedStyle(leftEl).minWidth) || 100;
+            const rightMin = parseInt(getComputedStyle(rightEl).minWidth) || 100;
+
+            // Prevent text selection during drag
+            const overlay = document.createElement('div');
+            overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;cursor:col-resize;';
+            document.body.appendChild(overlay);
+
+            const onMove = (ev) => {
+                const dx = ev.clientX - startX;
+                const newLeft = Math.max(leftMin, leftW0 + dx);
+                const newRight = Math.max(rightMin, rightW0 - dx);
+                // Only apply if both panels stay above minimum
+                if (newLeft >= leftMin && newRight >= rightMin) {
+                    leftEl.style.width = newLeft + 'px';
+                    leftEl.style.flex = 'none';
+                    // For the preview (flex:1) column, set flex instead
+                    if (rightId === 'reels-col-preview') {
+                        rightEl.style.flex = '1';
+                    } else {
+                        rightEl.style.width = newRight + 'px';
+                        rightEl.style.flex = 'none';
+                    }
+                    if (leftId === 'reels-col-preview') {
+                        leftEl.style.flex = '1';
+                    }
+                }
+            };
+
+            const onUp = () => {
+                handle.classList.remove('active');
+                overlay.remove();
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+
+                // Save column widths
+                const cols = {};
+                ['reels-col-tasks', 'reels-col-subtitle', 'reels-col-overlay'].forEach(id => {
+                    const el = document.getElementById(id);
+                    if (el) cols[id] = Math.round(el.getBoundingClientRect().width);
+                });
+                localStorage.setItem('reels-col-widths', JSON.stringify(cols));
+            };
+
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+        });
+    });
 }
 
 async function _getSystemDownloadsPath() {
@@ -1237,6 +1332,16 @@ function reelsUpdatePreview() {
         }
     }
 
+    // Calculate max overlay end time for cycle period
+    let maxOverlayEnd = 0;
+    if (_reelsState.overlayProxy && _reelsState.overlayProxy.overlayMgr) {
+        const overlays = _reelsState.overlayProxy.overlayMgr.overlays || [];
+        for (const ov of overlays) {
+            const end = parseFloat(ov.end || 0);
+            if (end > maxOverlayEnd) maxOverlayEnd = end;
+        }
+    }
+
     let cycleTime = _getPreviewCurrentTime();
     if (!(cycleTime > 0)) {
         const now = performance.now() / 1000;
@@ -1244,13 +1349,16 @@ function reelsUpdatePreview() {
         const maxSegEnd = selectedTask && selectedTask.segments && selectedTask.segments.length > 0
             ? selectedTask.segments[selectedTask.segments.length - 1].end || 0
             : 0;
+
         if (maxSegEnd > 0) {
-            cycleTime = now % maxSegEnd;
+            const period = Math.max(maxSegEnd, maxOverlayEnd);
+            cycleTime = now % period;
         } else {
             const demoWords = previewText.split(/\s+/).filter(Boolean);
             const wordCount = demoWords.length || 1;
             const totalDur = Math.max(3, wordCount * 0.6);
-            cycleTime = now % (totalDur + 1.0);
+            const period = Math.max(totalDur + 1.0, maxOverlayEnd + 1.0);
+            cycleTime = now % period;
         }
     }
 
@@ -1301,7 +1409,12 @@ function reelsUpdatePreview() {
         const overlays = ovMgr.overlays || [];
         if (overlays.length > 0 && window.ReelsOverlay) {
             for (const ov of overlays) {
-                ReelsOverlay.drawOverlay(ctx, ov, cycleTime, w, h);
+                // "显示终点" 模式：滚动字幕用终点时间渲染
+                let ovTime = cycleTime;
+                if (_reelsState._scrollPreviewEnd && ov.type === 'scroll') {
+                    ovTime = parseFloat(ov.end || 10); // 用 end 时间，确保在时间范围内
+                }
+                ReelsOverlay.drawOverlay(ctx, ov, ovTime, w, h);
             }
         }
         // ── 选中框 + 拖拽手柄 ──
@@ -1310,6 +1423,11 @@ function reelsUpdatePreview() {
 
     // ── AI 水印 ──
     _drawWatermarks(ctx, w, h);
+
+    // ── 更新时间显示 (覆层预览时间) ──
+    if (!_getPreviewCurrentTime()) {
+        _updatePreviewTimeUI(cycleTime, maxOverlayEnd || totalDur);
+    }
 
     if (_reelsState.previewRAF) cancelAnimationFrame(_reelsState.previewRAF);
     const panel = document.getElementById('batch-reels-panel');
@@ -1540,7 +1658,17 @@ function _getPreviewDuration() {
         : 0;
     const aDur = audio && isFinite(audio.duration) ? (audio.duration || 0) : 0;
     const vDur = video && isFinite(video.duration) ? (video.duration || 0) : 0;
-    return Math.max(aDur, vDur, subDur, 0);
+
+    // 自定义时长优先
+    if (task && task.customDuration && task.customDuration > 0) {
+        return task.customDuration;
+    }
+    // 有音频时以音频时长为准（背景自动循环）
+    if (aDur > 0) {
+        return Math.max(aDur, subDur);
+    }
+    // 无音频时以视频时长为准
+    return Math.max(vDur, subDur, 0);
 }
 
 function _getPreviewLoopFadeConfig() {
@@ -1555,7 +1683,7 @@ function _getPreviewLoopFadeConfig() {
 
 function _getPreviewAudioMixConfig() {
     let voiceVolume = parseFloat((document.getElementById('reels-voice-volume') || {}).value || '100');
-    let bgVolume = parseFloat((document.getElementById('reels-bg-volume') || {}).value || '15');
+    let bgVolume = parseFloat((document.getElementById('reels-bg-volume') || {}).value || '5');
     if (!Number.isFinite(voiceVolume)) voiceVolume = 100;
     if (!Number.isFinite(bgVolume)) bgVolume = 10;
     voiceVolume = Math.max(0, Math.min(200, voiceVolume));
@@ -1589,7 +1717,7 @@ function _applyPreviewAudioMix() {
     const bgmAudio = _reelsState._bgmAudioEl;
     if (bgmAudio) {
         if (task && task.bgmPath && bgmAudio.src) {
-            const bgmVol = (task.bgmVolume != null ? task.bgmVolume : 30) / 100;
+            const bgmVol = (task.bgmVolume != null ? task.bgmVolume : 10) / 100;
             bgmAudio.volume = Math.max(0, Math.min(1, bgmVol));
             bgmAudio.muted = bgmVol <= 0.001;
         } else {
@@ -1597,6 +1725,169 @@ function _applyPreviewAudioMix() {
             bgmAudio.muted = true;
         }
     }
+}
+
+// ═══════════════════════════════════════════════════════
+// 预览音频混响 + 立体声增强 (Web Audio API)
+// ═══════════════════════════════════════════════════════
+
+const _REVERB_PRESETS = {
+    room:   { decay: 0.8, duration: 0.6, density: 3000, lpFreq: 8000 },
+    hall:   { decay: 2.0, duration: 1.5, density: 5000, lpFreq: 6000 },
+    church: { decay: 4.0, duration: 3.0, density: 8000, lpFreq: 4000 },
+    plate:  { decay: 1.2, duration: 1.0, density: 6000, lpFreq: 10000 },
+    echo:   { decay: 1.5, duration: 0.8, density: 1500, lpFreq: 5000 },
+};
+
+// 确定性伪随机数生成器（mulberry32），保证相同preset的IR在预览和导出中一致
+function _mulberry32(seed) {
+    return function() {
+        seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+        let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+        t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+        return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+}
+
+// 将 preset 名字转为固定种子
+function _presetSeed(preset) {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < preset.length; i++) {
+        h ^= preset.charCodeAt(i);
+        h = Math.imul(h, 0x01000193);
+    }
+    return h >>> 0;
+}
+
+function _generateImpulseResponse(ctx, preset) {
+    const p = _REVERB_PRESETS[preset] || _REVERB_PRESETS.hall;
+    const presetKey = preset || 'hall';
+    const sampleRate = ctx.sampleRate;
+    const length = Math.ceil(sampleRate * p.duration);
+    const buffer = ctx.createBuffer(2, length, sampleRate);
+    for (let ch = 0; ch < 2; ch++) {
+        // 每个声道用不同的种子，但同一 preset 始终相同
+        const rng = _mulberry32(_presetSeed(presetKey) + ch * 0xDEAD);
+        const data = buffer.getChannelData(ch);
+        for (let i = 0; i < length; i++) {
+            const t = i / sampleRate;
+            const envelope = Math.exp(-t / (p.decay * 0.3));
+            data[i] = (rng() * 2 - 1) * envelope;
+        }
+    }
+    return buffer;
+}
+
+function _setupPreviewReverb() {
+    const audio = document.getElementById('reels-preview-audio');
+    if (!audio) return;
+
+    const enabled = document.getElementById('reels-reverb-enabled')?.checked || false;
+
+    // 如果已有 context 和连接，先断开
+    if (_reelsState._audioCtx) {
+        try {
+            if (_reelsState._audioSource) {
+                _reelsState._audioSource.disconnect();
+            }
+            if (_reelsState._reverbGainWet) _reelsState._reverbGainWet.disconnect();
+            if (_reelsState._reverbGainDry) _reelsState._reverbGainDry.disconnect();
+            if (_reelsState._convolver) _reelsState._convolver.disconnect();
+            if (_reelsState._stereoDelay) _reelsState._stereoDelay.disconnect();
+        } catch (e) { }
+    }
+
+    if (!enabled) {
+        // 清理 Web Audio 连接，让音频恢复原始播放
+        if (_reelsState._audioSource && _reelsState._audioCtx) {
+            try {
+                _reelsState._audioSource.connect(_reelsState._audioCtx.destination);
+            } catch (e) { }
+        }
+        return;
+    }
+
+    // 创建或复用 AudioContext
+    if (!_reelsState._audioCtx) {
+        _reelsState._audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    const ctx = _reelsState._audioCtx;
+
+    // 创建 source（只能创建一次，所以需要记录）
+    if (!_reelsState._audioSource || _reelsState._audioSourceEl !== audio) {
+        try {
+            _reelsState._audioSource = ctx.createMediaElementSource(audio);
+            _reelsState._audioSourceEl = audio;
+        } catch (e) {
+            // 已经连接过了
+            console.warn('[Reverb] MediaElementSource already exists');
+        }
+    }
+    const source = _reelsState._audioSource;
+    if (!source) return;
+
+    const preset = document.getElementById('reels-reverb-preset')?.value || 'hall';
+    const mix = (parseFloat(document.getElementById('reels-reverb-mix')?.value) || 30) / 100;
+    const stereoWidth = (parseFloat(document.getElementById('reels-stereo-width')?.value) || 100) / 100;
+
+    // 干声通道
+    const dryGain = ctx.createGain();
+    dryGain.gain.value = 1 - mix * 0.5; // 保留大部分干声
+
+    // 湿声通道 (混响)
+    const convolver = ctx.createConvolver();
+    convolver.buffer = _generateImpulseResponse(ctx, preset);
+    const wetGain = ctx.createGain();
+    wetGain.gain.value = mix;
+
+    // 立体声增强：用微小延迟差创造宽度
+    const merger = ctx.createChannelMerger(2);
+    const splitter = ctx.createChannelSplitter(2);
+    const delayL = ctx.createDelay(0.05);
+    const delayR = ctx.createDelay(0.05);
+    const widthFactor = Math.max(0, (stereoWidth - 1)) * 0.015; // 扩展量
+    delayL.delayTime.value = widthFactor * 0.3;
+    delayR.delayTime.value = widthFactor * 0.7;
+
+    // 连接: source → splitter → delays → merger → destination
+    //        source → convolver → wetGain ──┘
+    //        source → dryGain ──────────────┘
+    const masterGain = ctx.createGain();
+    masterGain.gain.value = 1.0;
+
+    source.connect(dryGain);
+    source.connect(convolver);
+    convolver.connect(wetGain);
+
+    dryGain.connect(masterGain);
+    wetGain.connect(masterGain);
+
+    // 立体声扩展
+    if (stereoWidth > 1.05) {
+        masterGain.connect(splitter);
+        splitter.connect(delayL, 0);
+        splitter.connect(delayR, 1);
+        delayL.connect(merger, 0, 0);
+        delayR.connect(merger, 0, 1);
+        merger.connect(ctx.destination);
+    } else {
+        masterGain.connect(ctx.destination);
+    }
+
+    // 保存引用
+    _reelsState._convolver = convolver;
+    _reelsState._reverbGainWet = wetGain;
+    _reelsState._reverbGainDry = dryGain;
+    _reelsState._stereoDelay = { delayL, delayR, splitter, merger, masterGain };
+}
+
+function _getReverbConfig() {
+    return {
+        enabled: document.getElementById('reels-reverb-enabled')?.checked || false,
+        preset: document.getElementById('reels-reverb-preset')?.value || 'hall',
+        mix: parseFloat(document.getElementById('reels-reverb-mix')?.value || '30'),
+        stereoWidth: parseFloat(document.getElementById('reels-stereo-width')?.value || '100'),
+    };
 }
 
 function _resetPreviewFadeVideo() {
@@ -1772,7 +2063,30 @@ function _getOrCreateTaskByBase(baseName, fallbackName = '') {
 
 function _buildFileInfo(file) {
     const name = file.name || '';
-    const filePath = file.path || name;
+    let filePath = name;
+    
+    // 1. 尝试 Electron API（最可靠）
+    if (window.electronAPI && window.electronAPI.getFilePath) {
+        try {
+            const p = window.electronAPI.getFilePath(file);
+            if (p) filePath = p;
+            console.log(`[_buildFileInfo] electronAPI.getFilePath("${name}") → "${p}"`);
+        } catch (e) {
+            console.warn(`[_buildFileInfo] electronAPI.getFilePath error:`, e);
+        }
+    }
+    
+    // 2. 回退: file.path（旧 Electron / contextIsolation:false）
+    if (filePath === name && file.path) {
+        filePath = file.path;
+        console.log(`[_buildFileInfo] fallback to file.path: "${filePath}"`);
+    }
+    
+    // 3. 最终回退: 仅文件名
+    if (filePath === name) {
+        console.warn(`[_buildFileInfo] ⚠️ 无法获取完整路径，仅文件名: "${name}"`);
+    }
+    
     return {
         name,
         path: filePath,
@@ -2321,11 +2635,13 @@ function reelsClearTasks() {
 function _renderTaskList() {
     const container = document.getElementById('reels-task-list');
     const countEl = document.getElementById('reels-task-count');
+    const countPanelEl = document.getElementById('reels-task-count-panel');
     if (!container) return;
 
     const tasks = _reelsState.tasks;
     const workMode = _getWorkMode();
     if (countEl) countEl.textContent = `${tasks.length} 个任务`;
+    if (countPanelEl) countPanelEl.textContent = tasks.length > 0 ? `${tasks.length}` : '0';
 
     if (tasks.length === 0) {
         const hint = workMode === 'srt'
@@ -2333,7 +2649,7 @@ function _renderTaskList() {
             : workMode === 'dubbed_text'
                 ? '添加背景素材 + 配音 + TXT（或手动输入），然后点击「🔗 对齐」生成字幕时间轴。'
                 : '添加带声视频 + TXT（或手动输入），然后点击「🔗 对齐」生成字幕时间轴。';
-        container.innerHTML = `<p class="hint">${hint}</p>`;
+        container.innerHTML = `<p class="hint" style="font-size:11px;">${hint}</p>`;
         return;
     }
 
@@ -2346,52 +2662,83 @@ function _renderTaskList() {
 
         let statusParts;
         if (workMode === 'voiced_bg') {
-            // 带声视频模式
             statusParts = [
-                hasBg ? '<span style="color:#4ecdc4;">BG(声)</span>' : '<span style="color:#ff6b6b;">BG(声)</span>',
+                hasBg ? '<span style="color:#4ecdc4;">BG</span>' : '<span style="color:#ff6b6b;">BG</span>',
             ];
             if (hasSrt) {
-                statusParts.push(`<span style="color:#4ecdc4;">SRT ${(task.segments || []).length}</span>`);
+                statusParts.push(`<span style="color:#4ecdc4;">SRT</span>`);
             } else if (hasTxt) {
-                statusParts.push(`<span style="color:#ffa502;">TXT ⏳</span>`);
+                statusParts.push(`<span style="color:#ffa502;">TXT</span>`);
             } else {
                 statusParts.push('<span style="color:#ff6b6b;">TXT</span>');
             }
         } else if (workMode === 'dubbed_text') {
-            // 配音+文本模式
             statusParts = [
                 hasBg ? '<span style="color:#4ecdc4;">BG</span>' : '<span style="color:#ff6b6b;">BG</span>',
                 hasAudio ? '<span style="color:#4ecdc4;">VO</span>' : '<span style="color:#ff6b6b;">VO</span>',
             ];
             if (hasSrt) {
-                statusParts.push(`<span style="color:#4ecdc4;">SRT ${(task.segments || []).length}</span>`);
+                statusParts.push(`<span style="color:#4ecdc4;">SRT</span>`);
             } else if (hasTxt) {
-                statusParts.push(`<span style="color:#ffa502;">TXT ⏳</span>`);
+                statusParts.push(`<span style="color:#ffa502;">TXT</span>`);
             } else {
                 statusParts.push('<span style="color:#ff6b6b;">TXT</span>');
             }
         } else {
-            // SRT 模式（默认）
             statusParts = [
                 hasBg ? '<span style="color:#4ecdc4;">BG</span>' : '<span style="color:#ff6b6b;">BG</span>',
                 hasAudio ? '<span style="color:#4ecdc4;">VO</span>' : '<span style="color:#ff6b6b;">VO</span>',
-                hasSrt ? `<span style="color:#4ecdc4;">SRT ${(task.segments || []).length}</span>` : '<span style="color:#ff6b6b;">SRT</span>',
+                hasSrt ? `<span style="color:#4ecdc4;">SRT</span>` : '<span style="color:#ff6b6b;">SRT</span>',
             ];
         }
-        const statusText = statusParts.join(' · ');
+        const statusText = statusParts.join(' ');
+        // Shorten filename for compact display
+        const baseName = task.fileName.replace(/\.[^.]+$/, '');
+        const shortName = baseName.length > 18 ? baseName.substring(0, 16) + '…' : baseName;
+
+        // 覆层内容预览
+        let ovPreview = '';
+        if (task.overlays && task.overlays.length > 0) {
+            const ov0 = task.overlays[0];
+            let ovTitle = '', ovBody = '';
+            if (ov0.type === 'scroll') {
+                ovTitle = (ov0.scroll_title || '').trim();
+                ovBody = (ov0.content || '').trim().replace(/\n/g, ' ');
+            } else if (ov0.type === 'textcard') {
+                ovTitle = (ov0.title_text || '').trim();
+                ovBody = (ov0.body_text || '').trim().replace(/\n/g, ' ');
+            }
+            if (ovTitle || ovBody) {
+                const icon = ov0.type === 'scroll' ? '🔄' : '📝';
+                const tSnip = ovTitle.length > 12 ? ovTitle.substring(0, 10) + '…' : ovTitle;
+                const bSnip = ovBody.length > 20 ? ovBody.substring(0, 18) + '…' : ovBody;
+                const parts = [];
+                if (tSnip) parts.push(`<b>${tSnip}</b>`);
+                if (bSnip) parts.push(bSnip);
+                ovPreview = `<div style="font-size:10px;color:#8899aa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:160px;" title="${ovTitle}\n${ovBody}">${icon} ${parts.join(' | ')}</div>`;
+            }
+        }
+
         return `
             <div class="reels-task-item ${selected ? 'reels-task-selected' : ''}"
                  onclick="reelsSelectTask(${i})"
-                 style="display:flex; align-items:center; gap:8px; padding:6px 10px; margin-bottom:4px;
-                        border-radius:6px; cursor:pointer;
-                        background: ${selected ? 'var(--accent-color-dim)' : 'transparent'};
-                        border: 1px solid ${selected ? 'var(--accent-color)' : 'transparent'};">
-                <span style="flex:1; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${task.fileName}</span>
-                <span style="font-size:11px; white-space:nowrap;">${statusText}</span>
-                <button class="btn" style="padding:2px 6px; font-size:11px;" onclick="event.stopPropagation(); reelsRemoveTask(${i})">✕</button>
+                 title="${task.fileName}"
+                 style="display:flex; align-items:center; gap:4px; padding:5px 6px; margin-bottom:2px;
+                        border-radius:5px; cursor:pointer; transition:background .12s;
+                        background: ${selected ? 'rgba(0,212,255,0.15)' : 'transparent'};
+                        border-left: 3px solid ${selected ? '#00D4FF' : 'transparent'};
+                        ${selected ? 'box-shadow: inset 0 0 0 1px rgba(0,212,255,0.3);' : ''}">
+                <span style="font-size:12px; font-weight:${selected ? '600' : '400'}; color:${selected ? '#fff' : 'var(--text-primary)'}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:60px; max-width:120px;">${shortName}</span>
+                ${ovPreview}
+                <span style="font-size:10px; white-space:nowrap; opacity:0.8; margin-left:auto;">${statusText}</span>
+                <button class="btn" style="padding:1px 4px; font-size:10px; opacity:0.5; border:none; background:transparent; color:var(--text-secondary);" onclick="event.stopPropagation(); reelsRemoveTask(${i})" title="删除">✕</button>
             </div>
         `;
     }).join('');
+
+    // Auto-scroll selected task into view
+    const selectedEl = container.querySelector('.reels-task-selected');
+    if (selectedEl) selectedEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 }
 
 function reelsSelectTask(idx) {
@@ -3039,9 +3386,9 @@ async function reelsStartExport() {
         const bgPath = t.bgPath || t.videoPath;
         const hasBg = !!bgPath;
         const hasVoice = !!t.audioPath;
-        // 有文案卡片覆层（title 或 body 非空）则不强制要求字幕
+        // 有覆层（文案卡片 或 滚动字幕）则不强制要求字幕
         const ov = (t.overlays && t.overlays.length > 0) ? t.overlays[0] : null;
-        const hasOverlay = ov && (ov.title_text || ov.body_text);
+        const hasOverlay = ov && (ov.title_text || ov.body_text || ov.content || ov.scroll_title);
 
         if (workMode === 'voiced_bg') {
             // 带声视频模式：需要背景 + (字幕 或 文案卡片)
@@ -3093,14 +3440,14 @@ async function reelsStartExport() {
     const quality = document.getElementById('reels-quality').value;
     const suffix = document.getElementById('reels-suffix').value || '_subtitled';
     const style = _readStyleFromUI();
-    const crfMap = { high: 18, medium: 23, low: 28 };
-    const crf = crfMap[quality] || 23;
+    const crfMap = { high: 15, medium: 18, low: 23 };
+    const crf = crfMap[quality] || 18;
     const useKaraoke = document.getElementById('reels-karaoke-hl');
     const karaokeHL = useKaraoke ? useKaraoke.checked : false;
     let voiceVolume = parseFloat((document.getElementById('reels-voice-volume') || {}).value || '100');
-    let bgVolume = parseFloat((document.getElementById('reels-bg-volume') || {}).value || '15');
+    let bgVolume = parseFloat((document.getElementById('reels-bg-volume') || {}).value || '5');
     if (!Number.isFinite(voiceVolume)) voiceVolume = 100;
-    if (!Number.isFinite(bgVolume)) bgVolume = 10;
+    if (!Number.isFinite(bgVolume)) bgVolume = 5;
     voiceVolume = Math.max(0, Math.min(200, voiceVolume));
     bgVolume = Math.max(0, Math.min(200, bgVolume));
     const loopFadeEl = document.getElementById('reels-loop-fade');
@@ -3155,7 +3502,76 @@ async function reelsStartExport() {
         try {
             const baseName = (task.fileName || `${task.baseName || 'reel'}.mp4`).replace(/\.[^.]+$/, '');
             const outputPath = `${outputDirTrimmed}${outputJoinSep}${baseName}${suffix}.mp4`;
-            const bgPath = task.bgPath || task.videoPath;
+            let bgPath = task.bgPath || task.videoPath;
+            
+            // ── 路径修复：如果 bgPath 仅为文件名（非绝对路径），尝试自动补全 ──
+            if (bgPath && !bgPath.startsWith('/') && !/^[A-Z]:\\/i.test(bgPath)) {
+                const bareFileName = bgPath.replace(/\\/g, '/').split('/').pop();
+                let fixedPath = null;
+                
+                // 策略1: 从背景素材库中找同名文件的完整路径
+                const library = _reelsState.backgroundLibrary || [];
+                for (const bg of library) {
+                    if (bg.path && (bg.path.startsWith('/') || /^[A-Z]:\\/i.test(bg.path))) {
+                        const libName = bg.path.replace(/\\/g, '/').split('/').pop();
+                        if (libName === bareFileName) { fixedPath = bg.path; break; }
+                    }
+                }
+                
+                // 策略2: 从其他任务中找同文件名的绝对路径
+                if (!fixedPath) {
+                    for (const t of _reelsState.tasks) {
+                        const p = t.bgPath || t.videoPath;
+                        if (p && (p.startsWith('/') || /^[A-Z]:\\/i.test(p))) {
+                            const tName = p.replace(/\\/g, '/').split('/').pop();
+                            if (tName === bareFileName) { fixedPath = p; break; }
+                        }
+                    }
+                }
+                
+                // 策略3: 如果找到了任何绝对路径的任务，取其目录 + 当前文件名
+                if (!fixedPath) {
+                    for (const t of _reelsState.tasks) {
+                        const p = t.bgPath || t.videoPath;
+                        if (p && (p.startsWith('/') || /^[A-Z]:\\/i.test(p))) {
+                            const dir = p.replace(/\\/g, '/').replace(/\/[^/]+$/, '');
+                            fixedPath = `${dir}/${bareFileName}`;
+                            break;
+                        }
+                    }
+                }
+                
+                // 策略4: 从批量表格的素材文件夹 materialDir 中搜索
+                if (!fixedPath && typeof _batchTableState !== 'undefined' && _batchTableState.tabs) {
+                    const activeTab = _batchTableState.tabs[_batchTableState.activeIdx || 0];
+                    const matDir = activeTab?.materialDir;
+                    if (matDir) {
+                        // 拼接 materialDir + bareFileName
+                        const candidate = matDir.replace(/\\/g, '/').replace(/\/$/, '') + '/' + bareFileName;
+                        fixedPath = candidate;
+                        console.log(`[Reels] 策略4: 尝试素材文件夹路径: "${fixedPath}"`);
+                    }
+                }
+                
+                // 策略5: 从输出目录的父级目录搜索
+                if (!fixedPath && outputDirTrimmed) {
+                    const parentDir = outputDirTrimmed.replace(/\\/g, '/').replace(/\/[^/]+$/, '');
+                    if (parentDir) {
+                        fixedPath = parentDir + '/' + bareFileName;
+                        console.log(`[Reels] 策略5: 尝试输出目录同级路径: "${fixedPath}"`);
+                    }
+                }
+                
+                if (fixedPath) {
+                    console.warn(`[Reels] 自动修复 bgPath: "${bgPath}" → "${fixedPath}"`);
+                    bgPath = fixedPath;
+                    task.bgPath = fixedPath;
+                    task.videoPath = fixedPath;
+                } else {
+                    console.error(`[Reels] bgPath 不是绝对路径且无法自动修复: "${bgPath}"`);
+                }
+            }
+            
             const hasVoiceAudio = !!task.audioPath || workMode === 'voiced_bg';
             // For voiced_bg mode, use the background video's audio track as the voice source
             const voiceSource = task.audioPath || (workMode === 'voiced_bg' ? bgPath : null);
@@ -3182,13 +3598,19 @@ async function reelsStartExport() {
                     targetWidth: 1080,
                     targetHeight: 1920,
                     fps: 30,
-                    voiceVolume: voiceVolume / 100,
+                    // voiced_bg 模式: 背景音频作为主音轨，用 bgVolume 控制
+                    voiceVolume: (workMode === 'voiced_bg' && !task.audioPath) ? bgVolume / 100 : voiceVolume / 100,
                     bgVolume: bgVolume / 100,
                     loopFade,
                     loopFadeDur,
                     customDuration: task.customDuration || customDuration || 0,
                     bgmPath: task.bgmPath || '',
-                    bgmVolume: (task.bgmVolume != null ? task.bgmVolume : 30) / 100,
+                    bgmVolume: (task.bgmVolume != null ? task.bgmVolume : 10) / 100,
+                    reverbEnabled: (() => { const rc = _getReverbConfig(); console.log('[Export] Reverb config:', JSON.stringify(rc)); return rc.enabled; })(),
+                    reverbPreset: _getReverbConfig().preset,
+                    reverbMix: _getReverbConfig().mix,
+                    stereoWidth: _getReverbConfig().stereoWidth,
+                    useGPU: gpuEnabled,
                     isCancelled: () => !_reelsState.isExporting,
                     onProgress: (pct) => {
                         if (statusEl) statusEl.textContent = `导出中 ${i + 1}/${tasks.length}: ${task.fileName} (${pct}%)`;
@@ -3221,7 +3643,7 @@ async function reelsStartExport() {
                     voice_volume: voiceVolume / 100,
                     bg_volume: bgVolume / 100,
                     bgm_path: task.bgmPath || '',
-                    bgm_volume: (task.bgmVolume != null ? task.bgmVolume : 30) / 100,
+                    bgm_volume: (task.bgmVolume != null ? task.bgmVolume : 10) / 100,
                 });
             } else if (window.electronAPI && window.electronAPI.burnSubtitles) {
                 const assContent = window.ReelsSubtitleProcessor
@@ -3374,12 +3796,16 @@ function reelsSaveProject() {
         quality: (document.getElementById('reels-quality') || {}).value || 'medium',
         suffix: (document.getElementById('reels-suffix') || {}).value || '_subtitled',
         voiceVolume: parseFloat((document.getElementById('reels-voice-volume') || {}).value || '100') || 100,
-        bgVolume: parseFloat((document.getElementById('reels-bg-volume') || {}).value || '15') || 15,
+        bgVolume: parseFloat((document.getElementById('reels-bg-volume') || {}).value || '5') || 5,
         useGPU: (document.getElementById('reels-use-gpu') || {}).checked || false,
         loopFade: (document.getElementById('reels-loop-fade') || {}).checked !== false,
         loopFadeDuration: parseFloat((document.getElementById('reels-loop-fade-dur') || {}).value || '1') || 1,
         introPath: (document.getElementById('reels-intro-path') || {}).value || '',
         karaokeHighlight: (document.getElementById('reels-karaoke-hl') || {}).checked || false,
+        reverbEnabled: (document.getElementById('reels-reverb-enabled') || {}).checked || false,
+        reverbPreset: (document.getElementById('reels-reverb-preset') || {}).value || 'hall',
+        reverbMix: parseFloat((document.getElementById('reels-reverb-mix') || {}).value || '30') || 30,
+        stereoWidth: parseFloat((document.getElementById('reels-stereo-width') || {}).value || '100') || 100,
     };
     ReelsProject.saveProject({
         tasks: _reelsState.tasks,
@@ -3421,6 +3847,10 @@ async function reelsLoadProject() {
         }
         if (opts.introPath) setVal('reels-intro-path', opts.introPath);
         setCheck('reels-karaoke-hl', opts.karaokeHighlight);
+        setCheck('reels-reverb-enabled', opts.reverbEnabled);
+        if (opts.reverbPreset) setVal('reels-reverb-preset', opts.reverbPreset);
+        if (opts.reverbMix !== undefined) setVal('reels-reverb-mix', String(opts.reverbMix));
+        if (opts.stereoWidth !== undefined) setVal('reels-stereo-width', String(opts.stereoWidth));
     }
 
     _renderTaskList();

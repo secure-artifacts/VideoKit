@@ -59,9 +59,66 @@ function runCommand(cmd, args, options = {}) {
     });
 }
 
+// 递归搜索文件（限深度，跳过隐藏目录）
+function _findFileRecursive(dir, fileName, maxDepth) {
+    if (maxDepth <= 0) return null;
+    try {
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+            if (entry.isFile() && entry.name === fileName) {
+                return path.join(dir, entry.name);
+            }
+        }
+        for (const entry of entries) {
+            if (entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== 'node_modules') {
+                const found = _findFileRecursive(path.join(dir, entry.name), fileName, maxDepth - 1);
+                if (found) return found;
+            }
+        }
+    } catch (e) { }
+    return null;
+}
+
+// 通用媒体路径修复：搜索常见目录
+function _resolveMediaPath(filePath) {
+    const bareFileName = path.basename(filePath);
+    const searchDirs = [
+        path.join(os.homedir(), 'Downloads'),
+        path.join(os.homedir(), 'Desktop'),
+        path.join(os.homedir(), 'Documents'),
+    ];
+    for (const searchDir of searchDirs) {
+        if (!fs.existsSync(searchDir)) continue;
+        const found = _findFileRecursive(searchDir, bareFileName, 4);
+        if (found) {
+            console.log(`[PathResolve] 自动修复: "${filePath}" → "${found}"`);
+            return found;
+        }
+    }
+    return null;
+}
+
 
 /** 获取音频/视频时长（秒） */
 async function getDuration(filePath) {
+    // 路径自动修复：如果不是绝对路径或文件不存在，尝试搜索
+    if (filePath && (!path.isAbsolute(filePath) || !fs.existsSync(filePath))) {
+        const bareFileName = path.basename(filePath);
+        const searchDirs = [
+            path.join(os.homedir(), 'Downloads'),
+            path.join(os.homedir(), 'Desktop'),
+            path.join(os.homedir(), 'Documents'),
+        ];
+        for (const searchDir of searchDirs) {
+            if (!fs.existsSync(searchDir)) continue;
+            const found = _findFileRecursive(searchDir, bareFileName, 4);
+            if (found) {
+                console.log(`[getDuration] 自动修复路径: "${filePath}" → "${found}"`);
+                filePath = found;
+                break;
+            }
+        }
+    }
     // 方法1: 通过 format=duration 获取
     try {
         const { stdout, stderr } = await runCommand('ffprobe', [
@@ -331,7 +388,7 @@ async function sceneSplit(filePath, segments, outputDir) {
             '-y', '-i', filePath,
             '-ss', start.toFixed(3),
             '-to', end.toFixed(3),
-            '-c:v', 'libx264', '-crf', '18', '-preset', 'fast',
+            '-c:v', 'libx264', '-crf', '15', '-preset', 'medium',
             '-c:a', 'aac', '-b:a', '192k',
             '-avoid_negative_ts', 'make_zero',
             outputPath
@@ -369,7 +426,7 @@ async function mediaTrim(filePath, startTime, endTime, outputDir, precise = true
         args = [
             '-y', '-i', filePath,
             '-ss', startTime.toFixed(3), '-to', endTime.toFixed(3),
-            '-c:v', 'libx264', '-crf', '18', '-preset', 'fast',
+            '-c:v', 'libx264', '-crf', '15', '-preset', 'medium',
             '-c:a', 'aac', '-b:a', '192k',
             '-avoid_negative_ts', 'make_zero',
             outputPath
@@ -397,8 +454,8 @@ async function mediaTrim(filePath, startTime, endTime, outputDir, precise = true
     };
 }
 
-/** 批量提取视频首帧截图 */
-async function batchThumbnail(videoFiles, outputDir, format = 'jpg', quality = 2) {
+/** 批量提取视频截图（支持首帧/尾帧模式） */
+async function batchThumbnail(videoFiles, outputDir, format = 'jpg', quality = 2, mode = 'first') {
     fs.mkdirSync(outputDir, { recursive: true });
     const results = [];
 
@@ -408,7 +465,15 @@ async function batchThumbnail(videoFiles, outputDir, format = 'jpg', quality = 2
         const outFile = path.join(outputDir, `${baseName}.${format}`);
 
         try {
-            const args = ['-y', '-i', filePath, '-vframes', '1'];
+            let args;
+            if (mode === 'last') {
+                // 尾帧模式：-sseof -3 定位到最后3秒，-update 1 持续覆盖输出
+                // 最终文件就是绝对最后一帧
+                args = ['-y', '-sseof', '-3', '-i', filePath, '-update', '1'];
+            } else {
+                // 首帧模式（默认）
+                args = ['-y', '-i', filePath, '-vframes', '1'];
+            }
             if (format === 'jpg') {
                 args.push('-q:v', String(quality));
             }
@@ -448,7 +513,7 @@ function buildBlackMp4Args(filePath, outputPath, start, duration, size = '1280x7
 
     // 编码设置
     args.push(
-        '-c:v', 'libx264', '-preset', 'fast',
+        '-c:v', 'libx264', '-crf', '15', '-preset', 'medium',
         '-c:a', 'aac', '-ac', '2', '-b:a', '192k',
         '-shortest',
         outputPath
@@ -607,7 +672,7 @@ async function composeReel({
     voicePath,
     assContent,
     outputPath,
-    crf = 23,
+    crf = 18,
     useGPU = false,
     loopFade = true,
     loopFadeDur = DEFAULT_LOOP_FADE_DUR,
@@ -622,6 +687,16 @@ async function composeReel({
     backgroundPath = expandHomePath(backgroundPath);
     voicePath = expandHomePath(voicePath);
     outputPath = expandHomePath(outputPath);
+
+    // 路径自动修复
+    if (backgroundPath && (!path.isAbsolute(backgroundPath) || !fs.existsSync(backgroundPath))) {
+        const found = _resolveMediaPath(backgroundPath);
+        if (found) backgroundPath = found;
+    }
+    if (voicePath && (!path.isAbsolute(voicePath) || !fs.existsSync(voicePath))) {
+        const found = _resolveMediaPath(voicePath);
+        if (found) voicePath = found;
+    }
 
     if (!backgroundPath) throw new Error('缺少 backgroundPath');
     if (!voicePath) throw new Error('缺少 voicePath');
@@ -746,7 +821,8 @@ async function composeReel({
                 audioMixLabels.push('[bgmmus]');
             }
             if (audioMixLabels.length >= 2) {
-                filterGraph.push(`${audioMixLabels.join('')}amix=inputs=${audioMixLabels.length}:duration=shortest:dropout_transition=0[aout]`);
+                // Keep additive loudness behavior aligned with preview playback.
+                filterGraph.push(`${audioMixLabels.join('')}amix=inputs=${audioMixLabels.length}:duration=shortest:dropout_transition=0:normalize=0[aout]`);
                 audioMap = '[aout]';
             } else if (Math.abs(voiceGain - 1.0) > 0.001) {
                 audioMap = '[vomix]';
@@ -792,7 +868,8 @@ async function composeReel({
                 mixLabels.push('[bgmmus]');
             }
             if (mixLabels.length >= 2) {
-                filterGraph.push(`${mixLabels.join('')}amix=inputs=${mixLabels.length}:duration=shortest:dropout_transition=0[aout]`);
+                // Keep additive loudness behavior aligned with preview playback.
+                filterGraph.push(`${mixLabels.join('')}amix=inputs=${mixLabels.length}:duration=shortest:dropout_transition=0:normalize=0[aout]`);
             } else {
                 filterGraph.push('[vomix]anull[aout]');
             }
@@ -815,7 +892,7 @@ async function composeReel({
     if (vcodec === 'h264_videotoolbox') {
         args.push('-b:v', '8M');
     } else {
-        args.push('-crf', String(crf || 23));
+        args.push('-crf', String(crf || 18));
         if (preset) args.push('-preset', preset);
     }
 
@@ -887,10 +964,10 @@ async function mediaConvert(filePath, mode, outDir, options = {}) {
         let args;
         switch (mode) {
             case 'mp4':
-                args = ['-y', '-i', filePath, '-c:v', 'libx264', '-crf', '23', '-c:a', 'aac', outputPath];
+                args = ['-y', '-i', filePath, '-c:v', 'libx264', '-crf', '18', '-preset', 'medium', '-c:a', 'aac', outputPath];
                 break;
             case 'mov':
-                args = ['-y', '-i', filePath, '-c:v', 'libx264', '-crf', '23', '-c:a', 'aac', outputPath];
+                args = ['-y', '-i', filePath, '-c:v', 'libx264', '-crf', '18', '-preset', 'medium', '-c:a', 'aac', outputPath];
                 break;
             case 'webm':
                 args = ['-y', '-i', filePath, '-c:v', 'libvpx-vp9', '-crf', '30', '-b:v', '0', '-c:a', 'libopus', outputPath];
@@ -1037,7 +1114,7 @@ async function batchCut(filePath, segments, outputDir, precise = true) {
             args = [
                 '-y', '-i', filePath,
                 '-ss', start.toFixed(3), '-to', end.toFixed(3),
-                '-c:v', 'libx264', '-crf', '18', '-preset', 'fast',
+                '-c:v', 'libx264', '-crf', '15', '-preset', 'medium',
                 '-c:a', 'aac', '-b:a', '192k',
                 '-avoid_negative_ts', 'make_zero',
                 outputPath
@@ -1122,6 +1199,82 @@ function buildSegments(cutPoints) {
     return segments;
 }
 
+async function applyAudioFx(filePath, outDir, data) {
+    const rawVideo = require('./ffmpeg-rawvideo');
+    const settings = require('./settings');
+    const { reverbEnabled, reverbPreset, reverbMix, stereoWidth } = data;
+    
+    console.log('[AudioFX] 开始处理:', filePath);
+    console.log('[AudioFX] 参数:', { reverbEnabled, reverbPreset, reverbMix, stereoWidth });
+    
+    const baseName = path.parse(filePath).name;
+    const ext = path.extname(filePath).toLowerCase();
+    const isVideo = ['.mp4', '.mov', '.webm', '.mkv', '.avi'].includes(ext);
+    
+    // 如果是视频文件，先用 FFmpeg 提取音频为 WAV（Chromium decodeAudioData 无法解码视频容器）
+    let audioInputPath = filePath;
+    let tmpExtractedWav = null;
+    
+    if (isVideo) {
+        tmpExtractedWav = settings.secureTmpFile('audiofx_extracted', '.wav');
+        console.log('[AudioFX] 视频文件，先提取音频:', tmpExtractedWav);
+        await runCommand('ffmpeg', [
+            '-y', '-i', filePath,
+            '-vn', '-c:a', 'pcm_s16le', '-ar', '48000', '-ac', '2',
+            tmpExtractedWav
+        ]);
+        audioInputPath = tmpExtractedWav;
+    }
+    
+    // WebAudio render
+    console.log('[AudioFX] 开始 Chromium Web Audio 渲染...');
+    const wavPath = await rawVideo.renderChromiumAudioWav({
+        filePath: audioInputPath,
+        reverbEnabled: reverbEnabled || false,
+        reverbPreset: reverbPreset || 'hall',
+        reverbMix: reverbMix || 30,
+        stereoWidth: stereoWidth || 100
+    });
+    console.log('[AudioFX] Chromium 渲染完成:', wavPath);
+    
+    // 清理提取的临时音频
+    if (tmpExtractedWav) {
+        try { fs.unlinkSync(tmpExtractedWav); } catch(e) {}
+    }
+
+    let outputPath = '';
+    
+    if (isVideo) {
+        outputPath = path.join(outDir, `${baseName}_audioFX${ext}`);
+        console.log('[AudioFX] 视频模式，重新封装:', outputPath);
+        await runCommand('ffmpeg', [
+            '-y', 
+            '-i', filePath, 
+            '-i', wavPath,
+            '-map', '0:v', 
+            '-map', '1:a', 
+            '-c:v', 'copy', 
+            '-c:a', 'aac', '-b:a', '192k', 
+            outputPath
+        ]);
+    } else {
+        const outExt = ['.mp3', '.wav', '.flac', '.m4a'].includes(ext) ? ext : '.mp3';
+        outputPath = path.join(outDir, `${baseName}_audioFX${outExt}`);
+        console.log('[AudioFX] 音频模式，输出:', outputPath);
+        if (outExt === '.wav') {
+            await runCommand('ffmpeg', ['-y', '-i', wavPath, '-c:a', 'copy', outputPath]);
+        } else if (outExt === '.mp3') {
+            await runCommand('ffmpeg', ['-y', '-i', wavPath, '-c:a', 'libmp3lame', '-b:a', '192k', '-ac', '2', outputPath]);
+        } else {
+            await runCommand('ffmpeg', ['-y', '-i', wavPath, '-c:a', 'aac', '-b:a', '192k', outputPath]);
+        }
+    }
+
+    try { fs.unlinkSync(wavPath); } catch(e) {}
+    console.log('[AudioFX] 完成:', outputPath);
+    return [outputPath];
+}
+
 module.exports = {
     resolveCommand,
     runCommand,
@@ -1137,6 +1290,7 @@ module.exports = {
     mediaConvert,
     detectSilence,
     smartSplitAnalyze,
+    applyAudioFx,
     formatSceneTime,
     parseTimecode,
     parseCutPoints,

@@ -1,5 +1,11 @@
 /**
  * 自动更新模块 — 基于 GitHub Releases + electron-updater
+ * 
+ * 双通道发布：
+ *   - 正式版 (stable): tag 格式 v2.2.0 → GitHub Release (非 prerelease)
+ *   - 测试版 (beta):   tag 格式 v2.3.0-beta.1 → GitHub Release (prerelease)
+ * 
+ * 用户可在设置中切换是否接收测试版更新。
  */
 const { autoUpdater } = require('electron-updater');
 const { ipcMain, dialog } = require('electron');
@@ -8,6 +14,59 @@ const path = require('path');
 
 let mainWindow = null;
 let log = console.log;
+
+// 使用 electron-store 持久化更新通道偏好
+let store = null;
+try {
+    const Store = require('electron-store');
+    store = new Store({ name: 'updater-settings' });
+} catch (e) {
+    // fallback: 无持久化，默认 stable
+}
+
+/**
+ * 获取当前更新通道
+ * @returns {'stable' | 'beta'}
+ */
+function getUpdateChannel() {
+    if (store) {
+        return store.get('updateChannel', 'stable');
+    }
+    return 'stable';
+}
+
+/**
+ * 设置更新通道
+ * @param {'stable' | 'beta'} channel
+ */
+function setUpdateChannel(channel) {
+    const valid = ['stable', 'beta'];
+    if (!valid.includes(channel)) channel = 'stable';
+    if (store) {
+        store.set('updateChannel', channel);
+    }
+    // 立即生效
+    autoUpdater.allowPrerelease = (channel === 'beta');
+
+    // 关键：如果当前是测试版，切回 stable 时允许降级到正式版
+    const currentVersion = require('electron').app.getVersion();
+    const currentIsBeta = isBetaVersion(currentVersion);
+    if (channel === 'stable' && currentIsBeta) {
+        autoUpdater.allowDowngrade = true;
+        log(`[Updater] 当前为测试版 v${currentVersion}，已启用降级模式，可回退到正式版`);
+    } else {
+        autoUpdater.allowDowngrade = false;
+    }
+
+    log(`[Updater] 更新通道已切换为: ${channel} (allowPrerelease=${autoUpdater.allowPrerelease}, allowDowngrade=${autoUpdater.allowDowngrade})`);
+}
+
+/**
+ * 检测当前版本是否为测试版
+ */
+function isBetaVersion(version) {
+    return /-(beta|alpha|rc|dev)/.test(version || '');
+}
 
 function initAutoUpdater(win, logFn) {
     mainWindow = win;
@@ -19,10 +78,22 @@ function initAutoUpdater(win, logFn) {
         return;
     }
 
+    // 读取用户通道偏好
+    const channel = getUpdateChannel();
+
     // 配置
-    autoUpdater.autoDownload = false;      // 不自动下载，先提示用户
-    autoUpdater.autoInstallOnAppQuit = true; // 退出时自动安装
-    autoUpdater.allowPrerelease = false;    // 不检查预发布版本
+    autoUpdater.autoDownload = false;           // 不自动下载，先提示用户
+    autoUpdater.autoInstallOnAppQuit = true;    // 退出时自动安装
+    autoUpdater.allowPrerelease = (channel === 'beta'); // 是否接收测试版
+
+    // 如果当前是测试版且用户选了 stable，允许降级
+    const currentVersion = require('electron').app.getVersion();
+    if (channel === 'stable' && isBetaVersion(currentVersion)) {
+        autoUpdater.allowDowngrade = true;
+        log(`[Updater] 当前测试版 v${currentVersion}，启用降级模式`);
+    }
+
+    log(`[Updater] 初始化 — 通道: ${channel}, allowPrerelease: ${autoUpdater.allowPrerelease}, allowDowngrade: ${autoUpdater.allowDowngrade || false}`);
 
     // ==================== 事件监听 ====================
 
@@ -32,21 +103,27 @@ function initAutoUpdater(win, logFn) {
     });
 
     autoUpdater.on('update-available', (info) => {
-        log(`[Updater] 发现新版本: v${info.version}`);
+        const isBeta = isBetaVersion(info.version);
+        const channelLabel = isBeta ? '🧪 测试版' : '✅ 正式版';
+        log(`[Updater] 发现新版本: v${info.version} (${channelLabel})`);
         sendToRenderer('update-status', {
             status: 'available',
-            message: `发现新版本 v${info.version}`,
+            message: `发现新版本 v${info.version} (${channelLabel})`,
             version: info.version,
+            isBeta,
             releaseNotes: info.releaseNotes || '',
             releaseDate: info.releaseDate || '',
         });
 
         // 弹窗提示用户
+        const detail = isBeta
+            ? '这是一个测试版本，可能包含未完善的功能。\n是否立即下载？'
+            : '是否立即下载更新？';
         dialog.showMessageBox(mainWindow, {
             type: 'info',
-            title: '发现新版本',
-            message: `新版本 v${info.version} 可用！`,
-            detail: '是否立即下载更新？',
+            title: `发现${isBeta ? '测试' : '新'}版本`,
+            message: `${channelLabel} v${info.version} 可用！`,
+            detail,
             buttons: ['下载更新', '稍后提醒'],
             defaultId: 0,
             cancelId: 1,
@@ -76,11 +153,13 @@ function initAutoUpdater(win, logFn) {
     });
 
     autoUpdater.on('update-downloaded', (info) => {
+        const isBeta = isBetaVersion(info.version);
         log(`[Updater] 更新下载完成: v${info.version}`);
         sendToRenderer('update-status', {
             status: 'downloaded',
             message: `v${info.version} 已下载完成，重启即可安装`,
             version: info.version,
+            isBeta,
         });
 
         // 弹窗提示重启
@@ -132,6 +211,20 @@ function initAutoUpdater(win, logFn) {
     // 安装更新并重启
     ipcMain.handle('install-update', () => {
         autoUpdater.quitAndInstall();
+    });
+
+    // 获取/设置更新通道
+    ipcMain.handle('get-update-channel', () => {
+        return {
+            channel: getUpdateChannel(),
+            currentVersion: require('electron').app.getVersion(),
+            isBeta: isBetaVersion(require('electron').app.getVersion()),
+        };
+    });
+
+    ipcMain.handle('set-update-channel', (event, channel) => {
+        setUpdateChannel(channel);
+        return { success: true, channel: getUpdateChannel() };
     });
 
     // 启动后延迟 5 秒自动检查更新
