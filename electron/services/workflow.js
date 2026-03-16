@@ -104,7 +104,7 @@ async function ttsWorkflow(data) {
             '-stream_loop', '-1',
             '-i', bgmPath,
             '-filter_complex',
-            `[0:a]volume=1.000[voice];[1:a]volume=${safeBgmGain.toFixed(3)}[bgm];[voice][bgm]amix=inputs=2:duration=first:dropout_transition=0[aout]`,
+            `[0:a]volume=1.000[voice];[1:a]volume=${safeBgmGain.toFixed(3)}[bgm];[voice][bgm]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aout]`,
             '-map', '[aout]',
             '-c:a', 'libmp3lame',
             '-b:a', '192k',

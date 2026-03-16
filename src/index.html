@@ -708,6 +708,48 @@
                     <span class="mode-text">音频裁切导出 (双声道)</span>
                   </span>
                 </label>
+                <label class="mode-option">
+                  <input type="radio" name="format-mode" value="audio_fx">
+                  <span class="mode-label">
+                    <span class="mode-icon">🎛️</span>
+                    <span class="mode-text">特效 (混响+立体声)</span>
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            <div id="audio-fx-options" class="form-section hidden" style="background: rgba(0, 212, 255, 0.05); border: 1px solid rgba(0, 212, 255, 0.1);">
+              <h4 style="margin-bottom: 12px; color: var(--accent);">🎛️ 音频特效设置</h4>
+              <p class="hint">直接为上传的音视频应用顶级混响或立体声扩展。输出时音频会被替换或者输出为新的音频文件。</p>
+              
+              <div class="param-row" style="flex-wrap: wrap; gap: 12px;">
+                <label style="display:flex;align-items:center;gap:4px;">
+                  <input type="checkbox" id="audio-fx-reverb-enabled" checked>
+                  🔊 开启混响
+                </label>
+                
+                <div style="display:flex;align-items:center;gap:6px;">
+                  <label style="font-size: 13px;">场景:</label>
+                  <select id="audio-fx-reverb-preset" class="select" style="width: 80px;">
+                    <option value="room">小房间</option>
+                    <option value="hall" selected>大厅</option>
+                    <option value="church">教堂</option>
+                    <option value="plate">板式混响</option>
+                    <option value="echo">回声</option>
+                  </select>
+                </div>
+
+                <div style="display:flex;align-items:center;gap:6px;">
+                  <label style="font-size: 13px;">混响量:</label>
+                  <input type="number" id="audio-fx-reverb-mix" class="input input-small" min="0" max="100" step="5" value="30" style="width: 70px; padding: 6px 8px;">
+                  <span style="font-size: 12px; color: var(--text-muted);">%</span>
+                </div>
+
+                <div style="display:flex;align-items:center;gap:6px; margin-left: 12px; border-left: 1px solid var(--border-color); padding-left: 12px;">
+                  <label style="font-size: 13px;">立体声扩展:</label>
+                  <input type="number" id="audio-fx-stereo-width" class="input input-small" min="100" max="250" step="10" value="130" style="width: 80px; padding: 6px 8px;" title="100% 为原宽度，150% 为加宽">
+                  <span style="font-size: 12px; color: var(--text-muted);">%</span>
+                </div>
               </div>
             </div>
 
@@ -944,10 +986,18 @@
               <h4 style="margin-bottom: 12px; color: var(--text-secondary);">⚙️ 截图参数</h4>
               <div class="param-row" style="flex-wrap: wrap; gap: 12px;">
                 <div style="display: flex; align-items: center; gap: 8px;">
+                  <label>截图模式:</label>
+                  <select id="thumbnail-mode" class="select" style="width: 120px;">
+                    <option value="first" selected>📸 首帧</option>
+                    <option value="last">🔚 尾帧</option>
+                  </select>
+                  <span style="font-size: 11px; color: var(--text-muted);">（首帧=视频开头，尾帧=视频最后一帧）</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px;">
                   <label>图片格式:</label>
                   <select id="thumbnail-format" class="select" style="width: 100px;">
-                    <option value="jpg" selected>JPG</option>
-                    <option value="png">PNG</option>
+                    <option value="jpg">JPG</option>
+                    <option value="png" selected>PNG</option>
                   </select>
                 </div>
                 <div style="display: flex; align-items: center; gap: 8px;">
@@ -1889,121 +1939,225 @@
       <!-- ==================== 视频下载面板 ==================== -->
       <section id="video-download-panel" class="panel">
         <div class="panel-content">
-          <!-- STEP 1: URL 解析 -->
-          <div class="form-section">
-            <h3 class="section-title">STEP 1: 视频链接解析</h3>
-            <div class="file-input-group">
-              <input type="text" id="video-url" class="input" placeholder="粘贴 YouTube/Bilibili 等视频或播放列表链接...">
-              <button class="btn btn-secondary" onclick="analyzeVideoUrl()" id="btn-analyze">🔍 解析链接</button>
-            </div>
+
+          <!-- 子标签切换: 单链接 vs 批量粘贴 -->
+          <div class="sub-tabs">
+            <button class="sub-tab active" data-subtab="dl-single">🔗 单链接解析</button>
+            <button class="sub-tab" data-subtab="dl-batch-paste">📋 批量粘贴链接</button>
           </div>
 
-          <!-- 视频列表区域 -->
-          <div class="form-section" id="video-list-section" style="display: none;">
-            <div class="param-row" style="margin-bottom: 8px;">
-              <label class="checkbox-label">
-                <input type="checkbox" id="select-all-videos" checked onchange="toggleSelectAllVideos()">
-                <span>全选/取消全选</span>
-              </label>
-              <span id="video-count" style="margin-left: auto; color: var(--text-secondary); font-size: 13px;"></span>
+          <!-- ========== 单链接解析（原有功能） ========== -->
+          <div id="dl-single-subtab" class="subtab-content active">
+            <!-- STEP 1: URL 解析 -->
+            <div class="form-section">
+              <h3 class="section-title">STEP 1: 视频链接解析</h3>
+              <div class="file-input-group">
+                <input type="text" id="video-url" class="input" placeholder="粘贴 YouTube/Bilibili 等视频或播放列表链接...">
+                <button class="btn btn-secondary" onclick="analyzeVideoUrl()" id="btn-analyze">🔍 解析链接</button>
+              </div>
             </div>
-            <div id="video-table-container"
-              style="max-height: 200px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 8px;">
-              <table id="video-table" style="width: 100%; border-collapse: collapse;">
-                <thead style="position: sticky; top: 0; background: var(--bg-tertiary);">
-                  <tr>
-                    <th style="width: 40px; padding: 8px; text-align: center;"></th>
-                    <th style="padding: 8px; text-align: left;">标题</th>
-                    <th style="width: 80px; padding: 8px; text-align: center;">时长</th>
-                    <th style="width: 100px; padding: 8px; text-align: center;">状态</th>
-                  </tr>
-                </thead>
-                <tbody id="video-table-body"></tbody>
-              </table>
-            </div>
-          </div>
 
-          <!-- STEP 2: 下载参数 -->
-          <div class="form-section">
-            <h3 class="section-title">STEP 2: 下载参数设置</h3>
-            <div class="param-row" style="flex-wrap: wrap; gap: 12px;">
-              <!-- 格式选择 -->
-              <div style="display: flex; align-items: center; gap: 8px;">
-                <label>格式:</label>
-                <select id="video-format" class="select" style="width: 100px;" onchange="updateFormatOptions()">
-                  <option value="mp4">mp4</option>
-                  <option value="mkv">mkv</option>
-                  <option value="webm">webm</option>
+            <!-- 视频列表区域 -->
+            <div class="form-section" id="video-list-section" style="display: none;">
+              <div class="param-row" style="margin-bottom: 8px;">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="select-all-videos" checked onchange="toggleSelectAllVideos()">
+                  <span>全选/取消全选</span>
+                </label>
+                <span id="video-count" style="margin-left: auto; color: var(--text-secondary); font-size: 13px;"></span>
+              </div>
+              <div id="video-table-container"
+                style="max-height: 200px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 8px;">
+                <table id="video-table" style="width: 100%; border-collapse: collapse;">
+                  <thead style="position: sticky; top: 0; background: var(--bg-tertiary);">
+                    <tr>
+                      <th style="width: 40px; padding: 8px; text-align: center;"></th>
+                      <th style="padding: 8px; text-align: left;">标题</th>
+                      <th style="width: 80px; padding: 8px; text-align: center;">时长</th>
+                      <th style="width: 100px; padding: 8px; text-align: center;">状态</th>
+                    </tr>
+                  </thead>
+                  <tbody id="video-table-body"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- STEP 2: 下载参数 -->
+            <div class="form-section">
+              <h3 class="section-title">STEP 2: 下载参数设置</h3>
+              <div class="param-row" style="flex-wrap: wrap; gap: 12px;">
+                <!-- 格式选择 -->
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <label>格式:</label>
+                  <select id="video-format" class="select" style="width: 100px;" onchange="updateFormatOptions()">
+                    <option value="mp4">mp4</option>
+                    <option value="mkv">mkv</option>
+                    <option value="webm">webm</option>
+                  </select>
+                </div>
+
+                <!-- 画质选择 -->
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <label>画质:</label>
+                  <select id="video-quality" class="select" style="width: 120px;">
+                    <option value="best">Best</option>
+                    <option value="2160p">4K (2160p)</option>
+                    <option value="1440p">2K (1440p)</option>
+                    <option value="1080p">1080p</option>
+                    <option value="720p">720p</option>
+                    <option value="480p">480p</option>
+                  </select>
+                </div>
+
+                <!-- 仅下载音频 -->
+                <label class="checkbox-label">
+                  <input type="checkbox" id="audio-only" onchange="toggleAudioOnly()">
+                  <span>仅下载音频</span>
+                </label>
+
+                <!-- 下载字幕 -->
+                <label class="checkbox-label">
+                  <input type="checkbox" id="download-subtitle">
+                  <span>下载字幕</span>
+                </label>
+                <select id="subtitle-lang" class="select" style="width: 100px;">
+                  <option value="en">en</option>
+                  <option value="zh-Hans">zh-Hans</option>
+                  <option value="zh-Hant">zh-Hant</option>
+                  <option value="ja">ja</option>
+                  <option value="ko">ko</option>
+                  <option value="auto">auto</option>
                 </select>
+
+                <!-- 线程数 -->
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <label>线程数:</label>
+                  <input type="number" id="download-threads" class="input input-small" value="4" min="1" max="8"
+                    style="width: 60px;">
+                </div>
               </div>
 
-              <!-- 画质选择 -->
-              <div style="display: flex; align-items: center; gap: 8px;">
-                <label>画质:</label>
-                <select id="video-quality" class="select" style="width: 120px;">
-                  <option value="best">Best</option>
-                  <option value="2160p">4K (2160p)</option>
-                  <option value="1440p">2K (1440p)</option>
-                  <option value="1080p">1080p</option>
-                  <option value="720p">720p</option>
-                  <option value="480p">480p</option>
-                </select>
-              </div>
-
-              <!-- 仅下载音频 -->
-              <label class="checkbox-label">
-                <input type="checkbox" id="audio-only" onchange="toggleAudioOnly()">
-                <span>仅下载音频</span>
-              </label>
-
-              <!-- 下载字幕 -->
-              <label class="checkbox-label">
-                <input type="checkbox" id="download-subtitle">
-                <span>下载字幕</span>
-              </label>
-              <select id="subtitle-lang" class="select" style="width: 100px;">
-                <option value="en">en</option>
-                <option value="zh-Hans">zh-Hans</option>
-                <option value="zh-Hant">zh-Hant</option>
-                <option value="ja">ja</option>
-                <option value="ko">ko</option>
-                <option value="auto">auto</option>
-              </select>
-
-              <!-- 线程数 -->
-              <div style="display: flex; align-items: center; gap: 8px;">
-                <label>线程数:</label>
-                <input type="number" id="download-threads" class="input input-small" value="4" min="1" max="8"
-                  style="width: 60px;">
+              <!-- 下载目录 -->
+              <div class="param-row" style="margin-top: 12px;">
+                <label>保存至:</label>
+                <input type="text" id="download-dir" class="input file-path" placeholder="默认: ~/Downloads"
+                  style="flex: 1;">
+                <button class="btn btn-secondary" onclick="selectDownloadDir()">浏览...</button>
               </div>
             </div>
 
-            <!-- 下载目录 -->
-            <div class="param-row" style="margin-top: 12px;">
-              <label>保存至:</label>
-              <input type="text" id="download-dir" class="input file-path" placeholder="默认: ~/Downloads"
-                style="flex: 1;">
-              <button class="btn btn-secondary" onclick="selectDownloadDir()">浏览...</button>
-            </div>
-          </div>
-
-          <!-- STEP 3: 状态与控制 -->
-          <div class="form-section status-section">
-            <h3 class="section-title">STEP 3: 状态与控制</h3>
-            <div class="param-row" style="align-items: center;">
-              <span id="download-status" class="status-text" style="flex: 1;">等待开始...</span>
-              <button id="btn-download" class="btn btn-primary" onclick="toggleVideoDownload()"
-                style="min-width: 120px;">
-                ⬇️ 开始下载
-              </button>
-            </div>
-            <div style="margin-top: 12px;">
-              <label style="font-size: 13px; color: var(--text-secondary);">总进度:</label>
-              <div id="download-progress" class="progress-bar" style="margin-top: 4px;">
-                <div id="download-progress-inner" class="progress-bar-inner" style="width: 0%;"></div>
+            <!-- STEP 3: 状态与控制 -->
+            <div class="form-section status-section">
+              <h3 class="section-title">STEP 3: 状态与控制</h3>
+              <div class="param-row" style="align-items: center;">
+                <span id="download-status" class="status-text" style="flex: 1;">等待开始...</span>
+                <button id="btn-download" class="btn btn-primary" onclick="toggleVideoDownload()"
+                  style="min-width: 120px;">
+                  ⬇️ 开始下载
+                </button>
+              </div>
+              <div style="margin-top: 12px;">
+                <label style="font-size: 13px; color: var(--text-secondary);">总进度:</label>
+                <div id="download-progress" class="progress-bar" style="margin-top: 4px;">
+                  <div id="download-progress-inner" class="progress-bar-inner" style="width: 0%;"></div>
+                </div>
               </div>
             </div>
           </div>
+
+          <!-- ========== 批量粘贴链接下载 ========== -->
+          <div id="dl-batch-paste-subtab" class="subtab-content">
+            <div class="form-section">
+              <h3 class="section-title">📋 批量粘贴链接</h3>
+              <p class="hint" style="margin-bottom: 8px;">粘贴 Facebook / YouTube / Instagram / TikTok 等视频链接，每行一个。支持混合来源。
+              </p>
+              <textarea id="batch-links-textarea" class="textarea" rows="8"
+                placeholder="https://www.facebook.com/xxx/videos/123456&#10;https://www.facebook.com/reel/789012&#10;https://www.youtube.com/watch?v=abc123&#10;..."></textarea>
+              <div class="param-row" style="margin-top: 8px; align-items: center;">
+                <button class="btn btn-secondary" onclick="parseBatchLinks()" style="font-size: 13px;">🔍 解析链接</button>
+                <button class="btn btn-secondary" onclick="document.getElementById('batch-links-textarea').value=''"
+                  style="font-size: 13px;">🧹 清空</button>
+                <span id="batch-links-count" style="margin-left: auto; font-size: 12px; color: var(--text-secondary);">0
+                  个链接</span>
+              </div>
+            </div>
+
+            <!-- 解析后的链接列表 -->
+            <div class="form-section" id="batch-links-list-section" style="display: none;">
+              <h3 class="section-title">链接列表</h3>
+              <div id="batch-links-list"
+                style="max-height: 250px; overflow-y: auto; background: var(--bg-tertiary); border-radius: 8px; padding: 8px; font-size: 12px;">
+              </div>
+            </div>
+
+            <!-- 下载参数 -->
+            <div class="form-section">
+              <h3 class="section-title">下载参数</h3>
+              <div class="param-row" style="flex-wrap: wrap; gap: 12px;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <label>格式:</label>
+                  <select id="batch-dl-format" class="select" style="width: 100px;">
+                    <option value="mp4">mp4</option>
+                    <option value="mkv">mkv</option>
+                    <option value="webm">webm</option>
+                  </select>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <label>画质:</label>
+                  <select id="batch-dl-quality" class="select" style="width: 120px;">
+                    <option value="best">Best</option>
+                    <option value="1080p">1080p</option>
+                    <option value="720p">720p</option>
+                    <option value="480p">480p</option>
+                  </select>
+                </div>
+                <label class="checkbox-label">
+                  <input type="checkbox" id="batch-dl-audio-only">
+                  <span>仅下载音频</span>
+                </label>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <label>文件名:</label>
+                  <select id="batch-dl-template" class="select" style="width: 200px;">
+                    <option value="%(id)s.%(ext)s">视频ID (推荐FB)</option>
+                    <option value="%(title)s.%(ext)s">视频标题</option>
+                    <option value="%(uploader)s_%(id)s.%(ext)s">上传者_ID</option>
+                    <option value="%(upload_date)s_%(id)s.%(ext)s">日期_ID</option>
+                  </select>
+                </div>
+              </div>
+              <div class="param-row" style="margin-top: 12px;">
+                <label>保存至:</label>
+                <input type="text" id="batch-dl-dir" class="input file-path" placeholder="默认: ~/Downloads"
+                  style="flex: 1;">
+                <button class="btn btn-secondary" onclick="selectBatchDownloadDir()">浏览...</button>
+              </div>
+            </div>
+
+            <!-- 状态与控制 -->
+            <div class="form-section status-section">
+              <div class="param-row" style="align-items: center;">
+                <span id="batch-dl-status" class="status-text" style="flex: 1;">等待开始...</span>
+                <button id="btn-batch-download" class="btn btn-primary" onclick="startBatchLinksDownload()"
+                  style="min-width: 140px;">
+                  ⬇️ 开始批量下载
+                </button>
+              </div>
+              <div style="margin-top: 8px;">
+                <div id="batch-dl-progress" class="progress-bar">
+                  <div id="batch-dl-progress-inner" class="progress-bar-inner" style="width: 0%;"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 实时日志 -->
+            <div class="form-section" id="batch-dl-log-section" style="display: none;">
+              <h3 class="section-title">下载日志</h3>
+              <div id="batch-dl-log"
+                style="max-height: 200px; overflow-y: auto; background: #0d1117; color: #c9d1d9; border-radius: 8px; padding: 12px; font-family: 'Courier New', monospace; font-size: 11px; line-height: 1.6; white-space: pre-wrap; word-break: break-all;">
+              </div>
+            </div>
+          </div>
+
         </div>
       </section>
 
@@ -2031,7 +2185,7 @@
                 <button id="reels-bg-btn" class="btn btn-secondary" style="font-size:11px;padding:4px 8px;"
                   onclick="document.getElementById('reels-video-input').click()">📁 背景</button>
                 <input type="file" id="reels-audio-input" class="hidden-file-input"
-                  accept=".mp3,.wav,.m4a,.aac,.flac,.ogg" multiple>
+                  accept=".mp3,.wav,.m4a,.aac,.flac,.ogg,.wma,.mp4,.mov,.mkv,.avi,.wmv,.flv,.webm" multiple>
                 <button id="reels-audio-btn" class="btn btn-secondary" style="font-size:11px;padding:4px 8px;"
                   onclick="document.getElementById('reels-audio-input').click()">🎙️ 配音</button>
                 <input type="file" id="reels-srt-input" class="hidden-file-input" accept=".srt" multiple>
@@ -2099,18 +2253,28 @@
                 <span id="reels-task-count" style="font-size:11px;color:var(--text-secondary);margin-left:auto;">0
                   个任务</span>
               </div>
-              <div id="reels-task-list"
-                style="max-height:80px;overflow-y:auto;background:var(--bg-tertiary);border-radius:6px;padding:4px 8px;margin-top:6px;font-size:12px;border:1px dashed rgba(255,255,255,0.25);transition:border-color .15s ease, background-color .15s ease, box-shadow .15s ease;">
-                <p class="hint" style="margin:0;font-size:11px;">添加背景素材+配音+SRT（同名自动配对），或直接拖拽/导入文件夹</p>
-              </div>
             </div>
 
             <!-- ═══ 区域2: 三栏工作区 (flex-grow 填满中间) ═══ -->
-            <div style="flex:1; display:flex; gap:0; overflow:hidden; min-height:0;">
+            <div id="reels-workspace-columns" style="flex:1; display:flex; gap:0; overflow:hidden; min-height:0;">
+
+              <!-- 最左栏：任务列表 -->
+              <div id="reels-col-tasks"
+                style="width:200px; min-width:120px; display:flex; flex-direction:column; background:var(--bg-secondary);">
+                <div
+                  style="flex-shrink:0; padding:8px 10px; border-bottom:1px solid var(--border-color); display:flex; align-items:center; justify-content:space-between;">
+                  <h3 class="section-title" style="margin:0; font-size:13px;">📋 任务列表</h3>
+                  <span id="reels-task-count-panel" style="font-size:11px; color:var(--text-secondary);">0</span>
+                </div>
+                <div id="reels-task-list"
+                  style="flex:1; overflow-y:auto; padding:4px 6px; font-size:12px; border:1px dashed rgba(255,255,255,0.15); border-radius:4px; margin:6px; transition:border-color .15s ease, background-color .15s ease, box-shadow .15s ease;">
+                  <p class="hint" style="margin:0;font-size:11px;">添加背景素材+配音+SRT，或拖拽/导入文件夹</p>
+                </div>
+              </div>
+              <div class="reels-resize-handle" data-left="reels-col-tasks" data-right="reels-col-subtitle"></div>
 
               <!-- 左栏：字幕样式编辑器 -->
-              <div
-                style="width:320px; min-width:280px; overflow-y:auto; border-right:1px solid var(--border-color); padding:10px;">
+              <div id="reels-col-subtitle" style="width:320px; min-width:200px; overflow-y:auto; padding:10px;">
                 <div>
                   <h3 class="section-title">🎨 字幕样式</h3>
 
@@ -2589,9 +2753,11 @@
                   </div>
                 </div>
               </div>
+              <div class="reels-resize-handle" data-left="reels-col-subtitle" data-right="reels-col-preview"></div>
 
               <!-- 中栏：实时预览 -->
-              <div style="flex:1; display:flex; flex-direction:column; overflow:hidden; min-width:200px;">
+              <div id="reels-col-preview"
+                style="flex:1; display:flex; flex-direction:column; overflow:hidden; min-width:200px;">
                 <!-- 预览区 -->
                 <div style="flex:1; display:flex; flex-direction:column; padding:10px; overflow:hidden;">
                   <div class="form-section"
@@ -2657,9 +2823,11 @@
                 </div> <!-- End inner flex col -->
               </div> <!-- End 中栏 -->
 
+              <div class="reels-resize-handle" data-left="reels-col-preview" data-right="reels-col-overlay"></div>
+
               <!-- 右栏：覆层属性面板 -->
-              <div
-                style="width:260px; min-width:220px; overflow-y:auto; border-left:1px solid var(--border-color); padding:10px; background:var(--bg-secondary);">
+              <div id="reels-col-overlay"
+                style="width:260px; min-width:180px; overflow-y:auto; padding:10px; background:var(--bg-secondary);">
                 <h3 class="section-title" style="margin-top:0;">📐 覆层编辑</h3>
                 <div id="reels-overlay-panel-root"></div>
               </div>
@@ -2704,8 +2872,8 @@
                   onclick="reelsOpenOutputDir()">打开目录</button>
                 <label>画质:</label>
                 <select id="reels-quality" class="select" style="width:80px;font-size:11px;">
-                  <option value="high">高质量</option>
-                  <option value="medium" selected>中等</option>
+                  <option value="high" selected>高质量</option>
+                  <option value="medium">中等</option>
                   <option value="low">快速</option>
                 </select>
                 <label>后缀:</label>
@@ -2717,7 +2885,7 @@
                 <span style="font-size:11px;color:var(--text-secondary);">%</span>
                 <label>背景音量:</label>
                 <input type="number" id="reels-bg-volume" class="input input-small" min="0" max="200" step="1"
-                  value="15" style="width:58px;font-size:11px;">
+                  value="5" style="width:58px;font-size:11px;">
                 <span style="font-size:11px;color:var(--text-secondary);">%</span>
                 <label style="display:flex;align-items:center;gap:4px;">
                   输出时长:
@@ -2725,7 +2893,7 @@
                     value="" placeholder="自动" style="width:58px;font-size:11px;" title="留空=自动跟随音频/视频时长，输入数字=自定义秒数">
                   <span style="font-size:11px;color:var(--text-secondary);">s</span>
                 </label>
-                <label style="display:flex;align-items:center;gap:3px;"><input type="checkbox" id="reels-use-gpu">
+                <label style="display:flex;align-items:center;gap:3px;"><input type="checkbox" id="reels-use-gpu" checked>
                   ⚡GPU</label>
                 <label style="display:flex;align-items:center;gap:3px;">
                   <input type="checkbox" id="reels-loop-fade" checked>
@@ -2736,6 +2904,25 @@
                   <input type="number" id="reels-loop-fade-dur" class="input input-small" min="0.1" max="3" step="0.1"
                     value="1" style="width:56px;font-size:11px;">
                   s
+                </label>
+                <label style="display:flex;align-items:center;gap:3px;"><input type="checkbox" id="reels-reverb-enabled">
+                  🔊混响</label>
+                <select id="reels-reverb-preset" class="select" style="width:72px;font-size:11px;">
+                  <option value="room">小房间</option>
+                  <option value="hall" selected>大厅</option>
+                  <option value="church">教堂</option>
+                  <option value="plate">板式混响</option>
+                  <option value="echo">回声</option>
+                </select>
+                <label style="display:flex;align-items:center;gap:3px;font-size:11px;">
+                  混响量:
+                  <input type="number" id="reels-reverb-mix" class="input input-small" min="0" max="100" step="5"
+                    value="30" style="width:48px;font-size:11px;">%
+                </label>
+                <label style="display:flex;align-items:center;gap:3px;font-size:11px;">
+                  立体声:
+                  <input type="number" id="reels-stereo-width" class="input input-small" min="0" max="200" step="10"
+                    value="100" style="width:48px;font-size:11px;">%
                 </label>
                 <label>前置:</label>
                 <input type="text" id="reels-intro-path" class="input file-path" placeholder="可选" readonly
@@ -2811,6 +2998,15 @@
                 <button id="check-update-btn" class="btn btn-secondary" onclick="checkAppUpdate()"
                   style="font-size: 12px; padding: 6px 14px;">🔄 检查更新</button>
                 <span id="update-status-text" style="font-size: 12px; color: var(--text-secondary);"></span>
+              </div>
+              <!-- 更新通道切换 -->
+              <div style="margin-top: 10px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                <label style="font-size: 12px; color: var(--text-secondary);">更新通道:</label>
+                <select id="update-channel-select" class="select" style="width: 120px; font-size: 12px;" onchange="switchUpdateChannel(this.value)">
+                  <option value="stable">✅ 正式版</option>
+                  <option value="beta">🧪 测试版</option>
+                </select>
+                <span id="update-channel-hint" style="font-size: 11px; color: var(--text-muted);">只接收正式版更新</span>
               </div>
               <div id="update-progress-bar" class="progress-bar hidden" style="margin-top: 8px; height: 4px;">
                 <div id="update-progress-inner" class="progress-bar-inner" style="width: 0%;"></div>
@@ -3362,6 +3558,22 @@
       margin: 0;
     }
   </style>
+
+
+  <!-- 全局工具: 获取 File 对象的本地完整路径 (Electron contextIsolation 下 File.path 不可用) -->
+  <script>
+    /** 获取 File 的完整路径 — 所有 JS 文件通用 */
+    function getFileNativePath(file) {
+        if (window.electronAPI && window.electronAPI.getFilePath) {
+            try {
+                const p = window.electronAPI.getFilePath(file);
+                if (p) return p;
+            } catch (e) { console.warn('[getFileNativePath] webUtils error:', e); }
+        }
+        return file.path || file.name;
+    }
+    window.getFileNativePath = getFileNativePath;
+  </script>
 
   <script src="reels-anim-engine.js"></script>
   <script src="reels-style-engine.js"></script>

@@ -35,19 +35,22 @@ body {
 
 /* 标题栏 (现在和导航栏合并为一行) */
 .titlebar {
-    height: 44px; /* 从52px缩减，并容纳标签页 */
+    height: 44px;
+    /* 从52px缩减，并容纳标签页 */
     background: rgba(0, 0, 0, 0.4);
     display: flex;
     align-items: center;
     justify-content: flex-start;
-    padding-left: 80px; /* 避开Mac左侧红绿灯 */
+    padding-left: 80px;
+    /* 避开Mac左侧红绿灯 */
     padding-right: 16px;
     -webkit-app-region: drag;
     border-bottom: 1px solid var(--border-color);
 }
 
 .titlebar-drag-region {
-    display: none; /* 不再需要遮罩，直接在外层拖拽 */
+    display: none;
+    /* 不再需要遮罩，直接在外层拖拽 */
 }
 
 .app-title {
@@ -586,4 +589,29 @@ body {
 /* Range 滑块 */
 input[type="range"] {
     accent-color: var(--accent);
+}
+
+/* ═══ Reels 面板拖拽分隔条 ═══ */
+.reels-resize-handle {
+    width: 5px;
+    cursor: col-resize;
+    background: var(--border-color);
+    transition: background .15s;
+    flex-shrink: 0;
+    position: relative;
+    z-index: 5;
+}
+
+.reels-resize-handle:hover,
+.reels-resize-handle.active {
+    background: rgba(0, 212, 255, 0.6);
+}
+
+.reels-resize-handle::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -3px;
+    right: -3px;
 }

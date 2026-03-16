@@ -184,6 +184,83 @@ function createTextCardOverlay(opts = {}) {
     };
 }
 
+/**
+ * 创建滚动字幕覆层对象。
+ * x/y/w/h 用作裁切区域（可见窗口），文本在其中滚动。
+ */
+function createScrollOverlay(opts = {}) {
+    return {
+        id: _overlayId(),
+        type: 'scroll',
+        content: opts.content || '滚动文字内容\n第二行文字\n第三行文字\n第四行文字\n第五行文字',
+        // x/y/w/h = 裁切区域
+        x: opts.x ?? 40,
+        y: opts.y ?? 400,
+        w: opts.w ?? 1000,
+        h: opts.h ?? 1120,
+        rotation: opts.rotation ?? 0,
+        opacity: opts.opacity ?? 255,
+        start: opts.start ?? 0,
+        end: opts.end ?? 10,
+        // ── 标题 ──
+        scroll_title: opts.scroll_title ?? '',
+        scroll_title_fontsize: opts.scroll_title_fontsize ?? 56,
+        scroll_title_font_family: opts.scroll_title_font_family || '',  // 空 = 跟随正文字体
+        scroll_title_font_weight: opts.scroll_title_font_weight ?? 700,
+        scroll_title_bold: opts.scroll_title_bold !== false,
+        scroll_title_color: opts.scroll_title_color || '',  // 空 = 跟随正文颜色
+        scroll_title_align: opts.scroll_title_align || '',  // 空 = 跟随正文对齐
+        scroll_title_gap: opts.scroll_title_gap ?? 20,      // 标题与正文间距
+        scroll_title_fixed: opts.scroll_title_fixed !== false, // 默认固定不滚动
+        // ── 正文字体 ──
+        font_family: opts.font_family || 'Arial',
+        font_weight: opts.font_weight ?? (opts.bold ? 700 : 400),
+        fontsize: opts.fontsize || 40,
+        bold: opts.bold || false,
+        italic: opts.italic || false,
+        color: opts.color || '#FFFFFF',
+        text_align: opts.text_align || 'center',
+        line_spacing: opts.line_spacing ?? 6,
+        text_width: opts.text_width ?? 900,
+        // 描边
+        use_stroke: opts.use_stroke || false,
+        stroke_color: opts.stroke_color || '#000000',
+        stroke_width: opts.stroke_width || 2,
+        // 阴影
+        shadow_enabled: opts.shadow_enabled || false,
+        shadow_color: opts.shadow_color || '#000000',
+        shadow_opacity: opts.shadow_opacity || 120,
+        shadow_blur: opts.shadow_blur || 4,
+        shadow_offset_x: opts.shadow_offset_x || 2,
+        shadow_offset_y: opts.shadow_offset_y || 2,
+        // 滚动参数
+        scroll_from_x: opts.scroll_from_x ?? 90,
+        scroll_from_y: opts.scroll_from_y ?? 960,   // 裁切区域内部开始，直接可见
+        scroll_to_x: opts.scroll_to_x ?? 90,
+        scroll_to_y: opts.scroll_to_y ?? -200,      // 向上滚出
+        scroll_speed: opts.scroll_speed ?? 0.8,
+        scroll_auto_stop: opts.scroll_auto_stop !== false, // 默认开启：文字全部可见后停止
+        scroll_auto_fit: opts.scroll_auto_fit !== false,   // 默认开启：字号自适应裁切区
+        scroll_min_fontsize: opts.scroll_min_fontsize ?? 16,
+        // 卡片背景
+        bg_enabled: opts.bg_enabled || false,
+        bg_color: opts.bg_color || '#000000',
+        bg_opacity: opts.bg_opacity || 191,
+        bg_radius: opts.bg_radius || 12,
+        bg_padding_top: opts.bg_padding_top ?? 55,
+        bg_padding_bottom: opts.bg_padding_bottom ?? 55,
+        bg_padding_left: opts.bg_padding_left ?? 16,
+        bg_padding_right: opts.bg_padding_right ?? 16,
+        bg_fullscreen: opts.bg_fullscreen ?? false,
+        // 羽化
+        feather_top: opts.feather_top ?? 80,
+        feather_bottom: opts.feather_bottom ?? 80,
+        // 动画
+        transition_preset: opts.transition_preset || 'none',
+        transition_duration: opts.transition_duration || 0.35,
+    };
+}
+
 // ═══════════════════════════════════════════════════════
 // 2. Overlay Renderer
 // ═══════════════════════════════════════════════════════
@@ -225,8 +302,10 @@ function drawOverlay(ctx, ov, currentTime = 0, canvasW = 1920, canvasH = 1080) {
     const start = parseFloat(ov.start || 0);
     const end = parseFloat(ov.end || 0);
 
-    // 时间范围检查
-    if (currentTime < start || currentTime > end) return;
+    // 时间范围检查 (允许边界值)
+    // scroll 覆层: 动画完成后保持在最终位置，不根据 end 消失
+    if (currentTime < start) return;
+    if (ov.type !== 'scroll' && currentTime > end + 0.001) return;
 
     const x = parseFloat(ov.x || 0);
     const y = parseFloat(ov.y || 0);
@@ -270,6 +349,8 @@ function drawOverlay(ctx, ov, currentTime = 0, canvasW = 1920, canvasH = 1080) {
         _drawTextOverlay(ctx, ov, x, y, w, h, currentTime);
     } else if (ov.type === 'textcard') {
         _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime);
+    } else if (ov.type === 'scroll') {
+        _drawScrollOverlay(ctx, ov, x, y, w, h, currentTime, canvasW, canvasH);
     }
 
     ctx.restore();
@@ -761,6 +842,431 @@ function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime
     }
 }
 
+// ═══════════════════════════════════════════════════════
+// 2c. Scroll Overlay Renderer
+// ═══════════════════════════════════════════════════════
+
+/**
+ * 渲染滚动字幕覆层。
+ * x/y/w/h = 裁切区域; 文本从 scroll_from → scroll_to 移动。
+ */
+function _drawScrollOverlay(ctx, ov, clipX, clipY, clipW, clipH, currentTime, canvasW, canvasH) {
+    const content = ov.content || '';
+    if (!content) return;
+
+    const start = parseFloat(ov.start || 0);
+    let end = parseFloat(ov.end || 0);
+    // 当 end 是占位值(9999)，用实际媒体时长来计算滚动速度
+    if (end >= 9999) {
+        if (ov._exportDuration && ov._exportDuration > 0) {
+            end = ov._exportDuration; // 导出时由导出引擎设置
+        } else {
+            const mediaEl = document.getElementById('reels-preview-video') || document.querySelector('#reels-preview video');
+            const audioEl = document.getElementById('reels-preview-audio');
+            if (audioEl && audioEl.duration && isFinite(audioEl.duration) && audioEl.duration > 0) {
+                end = audioEl.duration;
+            } else if (mediaEl && mediaEl.duration && isFinite(mediaEl.duration)) {
+                end = mediaEl.duration;
+            } else {
+                end = 30;
+            }
+        }
+    }
+    const duration = end - start;
+    if (duration <= 0) return;
+
+    // 进度 × 速度，clamp 到 [0, 1]，到1后冻结在最终位置
+    const speed = parseFloat(ov.scroll_speed || 1);
+    let progress = ((currentTime - start) / duration) * speed;
+    progress = Math.max(0, Math.min(1, progress));
+
+    // 插值当前位置
+    const fromX = parseFloat(ov.scroll_from_x ?? clipX);
+    const fromY = parseFloat(ov.scroll_from_y ?? (clipY + clipH));
+    const toX   = parseFloat(ov.scroll_to_x ?? clipX);
+    const toY   = parseFloat(ov.scroll_to_y ?? (clipY - 500));
+
+    // 字体设置
+    // 字体设置 (可能被 auto_fit 缩小)
+    let fontSize     = ov.fontsize || 40;
+    const fontFamily  = ov.font_family || 'Arial';
+    const fontWeight  = _resolveOverlayFontWeight(ov.font_weight, ov.bold ? 700 : 400);
+    const italicStr   = ov.italic ? 'italic' : 'normal';
+    const fallback    = _resolveOverlayFallback(fontFamily);
+    const lineSpacing = parseFloat(ov.line_spacing ?? 6);
+    const align       = ov.text_align || 'center';
+    const textW       = parseFloat(ov.text_width || (clipW - 40));
+
+    // ── 计算标题占用高度 ──
+    let titleOccupiedH = 0;
+    const scrollTitleText = (ov.scroll_title || '').trim();
+    if (scrollTitleText) {
+        const tSize = parseFloat(ov.scroll_title_fontsize ?? 56);
+        const tFamily = ov.scroll_title_font_family || fontFamily;
+        const tWeight = _resolveOverlayFontWeight(ov.scroll_title_font_weight, ov.scroll_title_bold ? 700 : 400);
+        const tFallback = _resolveOverlayFallback(tFamily);
+        const tFont = `${italicStr} ${tWeight} ${tSize}px "${tFamily}", ${tFallback}`;
+        const tLineH = tSize * 1.3 + lineSpacing;
+        const tGap = parseFloat(ov.scroll_title_gap ?? 20);
+        ctx.font = tFont;
+        const titleLines = _wrapText(ctx, scrollTitleText, textW);
+        titleOccupiedH = titleLines.length * tLineH + tGap;
+    }
+
+    // ── 自动缩放字号：确保文字在裁切区内全部可见 ──
+    const featherT_pre = parseFloat(ov.feather_top ?? 0);
+    const featherB_pre = parseFloat(ov.feather_bottom ?? 0);
+    const visibleH = clipH - featherT_pre - featherB_pre;
+    const bodyVisibleH = visibleH - titleOccupiedH;  // 可用于正文的高度
+    const minFontSize = parseFloat(ov.scroll_min_fontsize ?? 16);
+
+    let fontStr, lineHeight, lines;
+    if (ov.scroll_auto_fit && bodyVisibleH > 0) {
+        // 循环缩小字号直到正文高度 <= 可用高度
+        for (let trySize = fontSize; trySize >= minFontSize; trySize -= 2) {
+            lineHeight = trySize * 1.3 + lineSpacing;
+            fontStr = `${italicStr} ${fontWeight} ${trySize}px "${fontFamily}", ${fallback}`;
+            ctx.font = fontStr;
+            lines = _wrapText(ctx, content, textW);
+            const totalH = lines.length * lineHeight;
+            if (totalH <= bodyVisibleH) {
+                fontSize = trySize;
+                break;
+            }
+            fontSize = trySize; // 即使到了 minFontSize 也要用
+        }
+    } else {
+        lineHeight = fontSize * 1.3 + lineSpacing;
+        fontStr = `${italicStr} ${fontWeight} ${fontSize}px "${fontFamily}", ${fallback}`;
+        ctx.font = fontStr;
+        lines = _wrapText(ctx, content, textW);
+    }
+
+    // ── 自动停止：到达最终位置后冻结 ──
+    let effectiveToY = toY;
+    if (ov.scroll_auto_stop) {
+        const totalTextH = lines.length * lineHeight;
+        const featherT = parseFloat(ov.feather_top ?? 0);
+        const featherB = parseFloat(ov.feather_bottom ?? 0);
+
+        // 固定标题模式下正文 clip 区会缩小
+        const titleFixed = ov.scroll_title_fixed !== false && (ov.scroll_title || '').trim();
+        const bodyClipTop = titleFixed ? (clipY + titleOccupiedH) : clipY;
+        const bodyClipBot = clipY + clipH;
+        const bodyClipH = bodyClipBot - bodyClipTop;
+
+        // 向上滚 (fromY > toY)：停在文字顶部刚进入 bodyClipTop 时
+        if (fromY > toY) {
+            // 最终位置Y = 文字顶部刚好在 bodyClipTop + featherT 处
+            const stopY = bodyClipTop + featherT;
+            effectiveToY = Math.max(toY, stopY);
+        }
+        // 向下滚 (fromY < toY)：停在文字底部刚好在 bodyClipBot - featherB 处
+        else if (fromY < toY) {
+            const stopY = bodyClipBot - featherB - totalTextH;
+            effectiveToY = Math.min(toY, stopY);
+        }
+    }
+
+    const curX  = fromX + (toX - fromX) * progress;
+    const curY  = fromY + (effectiveToY - fromY) * progress;
+
+    // ── 卡片背景 ──
+    if (ov.bg_enabled) {
+        const bgAlpha = (ov.bg_opacity || 191) / 255;
+        const padT = parseFloat(ov.bg_padding_top ?? 16);
+        const padB = parseFloat(ov.bg_padding_bottom ?? 16);
+        const padL = parseFloat(ov.bg_padding_left ?? 16);
+        const padR = parseFloat(ov.bg_padding_right ?? 16);
+        const rad = parseFloat(ov.bg_radius || 12);
+        ctx.save();
+        ctx.globalAlpha = bgAlpha * ctx.globalAlpha;
+        ctx.fillStyle = ov.bg_color || '#000000';
+        if (ov.bg_fullscreen) {
+            // 全屏蒙版
+            _roundRect(ctx, 0, 0, canvasW, canvasH, 0);
+        } else {
+            _roundRect(ctx, clipX - padL, clipY - padT, clipW + padL + padR, clipH + padT + padB, rad);
+        }
+        ctx.fill();
+        ctx.restore();
+    }
+
+    const featherTop    = parseFloat(ov.feather_top ?? 0);
+    const featherBottom = parseFloat(ov.feather_bottom ?? 0);
+
+    // ── 固定标题模式 ──
+    const titleText = (ov.scroll_title || '').trim();
+    const titleFixed = ov.scroll_title_fixed !== false && titleText;
+
+    if (titleFixed) {
+        // 计算标题尺寸
+        const tSize = parseFloat(ov.scroll_title_fontsize ?? 56);
+        const tFamily = ov.scroll_title_font_family || fontFamily;
+        const tWeight = _resolveOverlayFontWeight(ov.scroll_title_font_weight, ov.scroll_title_bold ? 700 : 400);
+        const tFallback = _resolveOverlayFallback(tFamily);
+        const tFont = `${italicStr} ${tWeight} ${tSize}px "${tFamily}", ${tFallback}`;
+        const tColor = ov.scroll_title_color || ov.color || '#FFFFFF';
+        const tAlign = ov.scroll_title_align || align;
+        const tLineH = tSize * 1.3 + lineSpacing;
+        const tGap = parseFloat(ov.scroll_title_gap ?? 20);
+
+        ctx.save();
+        ctx.font = tFont;
+        const titleLines = _wrapText(ctx, titleText, textW);
+        const titleBlockH = titleLines.length * tLineH;
+
+        // ── 1. 绘制固定标题 (在覆层顶部，不受裁切) ──
+        const titleDrawY = clipY;
+        const titleDrawX = parseFloat(ov.scroll_from_x ?? 90);
+
+        // 阴影
+        if (ov.shadow_enabled) {
+            ctx.save();
+            ctx.shadowColor = _withAlpha(ov.shadow_color || '#000000', (ov.shadow_opacity || 120) / 255);
+            ctx.shadowBlur = parseFloat(ov.shadow_blur || 4);
+            ctx.shadowOffsetX = parseFloat(ov.shadow_offset_x || 2);
+            ctx.shadowOffsetY = parseFloat(ov.shadow_offset_y || 2);
+            ctx.fillStyle = tColor;
+            let ty = titleDrawY + tSize;
+            for (const line of titleLines) {
+                ctx.fillText(line, _alignX(ctx, line, titleDrawX, textW, tAlign), ty);
+                ty += tLineH;
+            }
+            ctx.restore();
+        }
+        // 描边
+        if (ov.use_stroke && (ov.stroke_width || 0) > 0) {
+            ctx.save();
+            ctx.strokeStyle = ov.stroke_color || '#000000';
+            ctx.lineWidth = parseFloat(ov.stroke_width || 2) * 2;
+            ctx.lineJoin = 'round'; ctx.miterLimit = 2;
+            let ty = titleDrawY + tSize;
+            for (const line of titleLines) {
+                ctx.strokeText(line, _alignX(ctx, line, titleDrawX, textW, tAlign), ty);
+                ty += tLineH;
+            }
+            ctx.restore();
+        }
+        // 填充
+        ctx.fillStyle = tColor;
+        let ty = titleDrawY + tSize;
+        for (const line of titleLines) {
+            ctx.fillText(line, _alignX(ctx, line, titleDrawX, textW, tAlign), ty);
+            ty += tLineH;
+        }
+        ctx.restore();
+
+        // ── 2. 正文在标题下方的剩余空间内滚动 ──
+        const bodyClipY = clipY + titleBlockH + tGap;
+        const bodyClipH = clipH - titleBlockH - tGap;
+        if (bodyClipH > 0) {
+            const ovProxy = Object.assign({}, ov, { _skipTitle: true });
+            if (featherTop > 0 || featherBottom > 0) {
+                const cW = Math.ceil(clipW), cH = Math.ceil(bodyClipH);
+                const tmp = document.createElement('canvas');
+                tmp.width = cW; tmp.height = cH;
+                const tc = tmp.getContext('2d');
+                tc.font = fontStr;
+                const offX = curX - clipX;
+                const offY = curY - bodyClipY;
+                _drawScrollTextBlock(tc, ovProxy, lines, offX, offY, textW, lineHeight, fontSize, align);
+
+                // 渐变遮罩 (只下羽化，顶部紧贴标题)
+                tc.globalCompositeOperation = 'destination-in';
+                const grad = tc.createLinearGradient(0, 0, 0, cH);
+                grad.addColorStop(0, 'rgba(0,0,0,1)');
+                if (featherBottom > 0) {
+                    grad.addColorStop(Math.max(1 - featherBottom / cH, 0.51), 'rgba(0,0,0,1)');
+                    grad.addColorStop(1, 'rgba(0,0,0,0)');
+                } else {
+                    grad.addColorStop(1, 'rgba(0,0,0,1)');
+                }
+                tc.fillStyle = grad;
+                tc.fillRect(0, 0, cW, cH);
+                ctx.drawImage(tmp, clipX, bodyClipY);
+            } else {
+                ctx.save();
+                ctx.beginPath();
+                ctx.rect(clipX, bodyClipY, clipW, bodyClipH);
+                ctx.clip();
+                _drawScrollTextBlock(ctx, ovProxy, lines, curX, curY, textW, lineHeight, fontSize, align);
+                ctx.restore();
+            }
+        }
+    } else {
+        // ── 标题跟随滚动 (原有逻辑) ──
+        if (featherTop > 0 || featherBottom > 0) {
+            const cW = Math.ceil(clipW), cH = Math.ceil(clipH);
+            const tmp = document.createElement('canvas');
+            tmp.width = cW; tmp.height = cH;
+            const tc = tmp.getContext('2d');
+            tc.font = fontStr;
+
+            const offX = curX - clipX;
+            const offY = curY - clipY;
+            _drawScrollTextBlock(tc, ov, lines, offX, offY, textW, lineHeight, fontSize, align);
+
+            tc.globalCompositeOperation = 'destination-in';
+            const grad = tc.createLinearGradient(0, 0, 0, cH);
+            if (featherTop > 0) {
+                grad.addColorStop(0, 'rgba(0,0,0,0)');
+                grad.addColorStop(Math.min(featherTop / cH, 0.49), 'rgba(0,0,0,1)');
+            } else {
+                grad.addColorStop(0, 'rgba(0,0,0,1)');
+            }
+            if (featherBottom > 0) {
+                grad.addColorStop(Math.max(1 - featherBottom / cH, 0.51), 'rgba(0,0,0,1)');
+                grad.addColorStop(1, 'rgba(0,0,0,0)');
+            } else {
+                grad.addColorStop(1, 'rgba(0,0,0,1)');
+            }
+            tc.fillStyle = grad;
+            tc.fillRect(0, 0, cW, cH);
+            ctx.drawImage(tmp, clipX, clipY);
+        } else {
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(clipX, clipY, clipW, clipH);
+            ctx.clip();
+            _drawScrollTextBlock(ctx, ov, lines, curX, curY, textW, lineHeight, fontSize, align);
+            ctx.restore();
+        }
+    }
+
+    // ── 预览辅助线 ──
+    if (!ov._exporting) {
+        ctx.save();
+        ctx.setLineDash([8, 4]);
+        ctx.strokeStyle = '#FF6B35';
+        ctx.lineWidth = 1.5;
+        ctx.globalAlpha = 0.5;
+        ctx.strokeRect(clipX, clipY, clipW, clipH);
+        if (featherTop > 0) {
+            ctx.strokeStyle = '#FFD700'; ctx.setLineDash([4, 4]);
+            ctx.beginPath(); ctx.moveTo(clipX, clipY + featherTop);
+            ctx.lineTo(clipX + clipW, clipY + featherTop); ctx.stroke();
+        }
+        if (featherBottom > 0) {
+            ctx.strokeStyle = '#FFD700'; ctx.setLineDash([4, 4]);
+            ctx.beginPath(); ctx.moveTo(clipX, clipY + clipH - featherBottom);
+            ctx.lineTo(clipX + clipW, clipY + clipH - featherBottom); ctx.stroke();
+        }
+        ctx.setLineDash([]);
+        ctx.font = '20px sans-serif';
+        ctx.fillStyle = '#FF6B35';
+        ctx.globalAlpha = 0.8;
+        ctx.fillText(`裁切区 ${Math.round(clipW)}×${Math.round(clipH)}  速度${speed}x`, clipX + 8, clipY - 8);
+        ctx.restore();
+    }
+}
+
+/**
+ * 绘制滚动字幕文本块 (内部)。
+ */
+function _drawScrollTextBlock(ctx, ov, lines, textX, textY, textW, lineHeight, fontSize, align) {
+    let drawY = textY;
+
+    // ── 标题 (如果 _skipTitle 则跳过，由外部固定绘制) ──
+    const titleText = (ov.scroll_title || '').trim();
+    if (titleText && !ov._skipTitle) {
+        const tSize = parseFloat(ov.scroll_title_fontsize ?? 56);
+        const tFamily = ov.scroll_title_font_family || ov.font_family || 'Arial';
+        const tWeight = _resolveOverlayFontWeight(ov.scroll_title_font_weight, ov.scroll_title_bold ? 700 : 400);
+        const tItalic = ov.italic ? 'italic' : 'normal';
+        const tFallback = _resolveOverlayFallback(tFamily);
+        const tFont = `${tItalic} ${tWeight} ${tSize}px "${tFamily}", ${tFallback}`;
+        const tColor = ov.scroll_title_color || ov.color || '#FFFFFF';
+        const tAlign = ov.scroll_title_align || align;
+        const tLineH = tSize * 1.3 + parseFloat(ov.line_spacing ?? 6);
+        const tGap = parseFloat(ov.scroll_title_gap ?? 20);
+
+        ctx.save();
+        ctx.font = tFont;
+        const titleLines = _wrapText(ctx, titleText, textW);
+
+        // 阴影
+        if (ov.shadow_enabled) {
+            ctx.save();
+            ctx.shadowColor = _withAlpha(ov.shadow_color || '#000000', (ov.shadow_opacity || 120) / 255);
+            ctx.shadowBlur = parseFloat(ov.shadow_blur || 4);
+            ctx.shadowOffsetX = parseFloat(ov.shadow_offset_x || 2);
+            ctx.shadowOffsetY = parseFloat(ov.shadow_offset_y || 2);
+            ctx.fillStyle = tColor;
+            let ty = drawY + tSize;
+            for (const line of titleLines) {
+                ctx.fillText(line, _alignX(ctx, line, textX, textW, tAlign), ty);
+                ty += tLineH;
+            }
+            ctx.restore();
+        }
+        // 描边
+        if (ov.use_stroke && (ov.stroke_width || 0) > 0) {
+            ctx.save();
+            ctx.strokeStyle = ov.stroke_color || '#000000';
+            ctx.lineWidth = parseFloat(ov.stroke_width || 2) * 2;
+            ctx.lineJoin = 'round'; ctx.miterLimit = 2;
+            let ty = drawY + tSize;
+            for (const line of titleLines) {
+                ctx.strokeText(line, _alignX(ctx, line, textX, textW, tAlign), ty);
+                ty += tLineH;
+            }
+            ctx.restore();
+        }
+        // 填充
+        ctx.fillStyle = tColor;
+        let ty = drawY + tSize;
+        for (const line of titleLines) {
+            ctx.fillText(line, _alignX(ctx, line, textX, textW, tAlign), ty);
+            ty += tLineH;
+        }
+        drawY += titleLines.length * tLineH + tGap;
+        ctx.restore();
+        ctx.font = `${ov.italic ? 'italic' : 'normal'} ${_resolveOverlayFontWeight(ov.font_weight, ov.bold ? 700 : 400)} ${fontSize}px "${ov.font_family || 'Arial'}", ${_resolveOverlayFallback(ov.font_family || 'Arial')}`;
+    }
+
+    // ── 正文 ──
+    // 阴影
+    if (ov.shadow_enabled) {
+        ctx.save();
+        ctx.shadowColor = _withAlpha(ov.shadow_color || '#000000', (ov.shadow_opacity || 120) / 255);
+        ctx.shadowBlur = parseFloat(ov.shadow_blur || 4);
+        ctx.shadowOffsetX = parseFloat(ov.shadow_offset_x || 2);
+        ctx.shadowOffsetY = parseFloat(ov.shadow_offset_y || 2);
+        ctx.fillStyle = ov.color || '#FFFFFF';
+        let sy = drawY + fontSize;
+        for (const line of lines) {
+            const lx = _alignX(ctx, line, textX, textW, align);
+            ctx.fillText(line, lx, sy);
+            sy += lineHeight;
+        }
+        ctx.restore();
+    }
+    // 描边
+    if (ov.use_stroke && (ov.stroke_width || 0) > 0) {
+        ctx.save();
+        ctx.strokeStyle = ov.stroke_color || '#000000';
+        ctx.lineWidth = parseFloat(ov.stroke_width || 2) * 2;
+        ctx.lineJoin = 'round';
+        ctx.miterLimit = 2;
+        let sy = drawY + fontSize;
+        for (const line of lines) {
+            const lx = _alignX(ctx, line, textX, textW, align);
+            ctx.strokeText(line, lx, sy);
+            sy += lineHeight;
+        }
+        ctx.restore();
+    }
+    // 填充
+    ctx.fillStyle = ov.color || '#FFFFFF';
+    let yc = drawY + fontSize;
+    for (const line of lines) {
+        const lx = _alignX(ctx, line, textX, textW, align);
+        ctx.fillText(line, lx, yc);
+        yc += lineHeight;
+    }
+}
+
 /**
  * 绘制四角独立圆角矩形。
  * @param {CanvasRenderingContext2D} ctx
@@ -990,6 +1496,7 @@ const ReelsOverlay = {
     createTextOverlay,
     createImageOverlay,
     createTextCardOverlay,
+    createScrollOverlay,
     drawOverlay,
     OverlayManager,
 };

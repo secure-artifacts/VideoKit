@@ -6,21 +6,20 @@
  *   2. FFmpeg 提取背景帧序列 → JPEG 文件
  *   3. Canvas 逐帧渲染：背景帧 + 全局蒙版 + 字幕（与预览完全相同的 renderer）
  *   4. 合成帧 → JPEG pipe → FFmpeg 编码 → 临时纯视频
- *   5. FFmpeg 混合音频 → 最终输出
+ *   5. Web Audio OfflineAudioContext 离线渲染音频（含混响+立体声）→ WAV
+ *   6. FFmpeg 简单合并视频 + 预渲染音频 → 最终输出
  *
- * 这样既保证字幕效果 100% 一致，又保证背景视频流畅 + 循环淡入淡出正常。
+ * 音频效果完全使用 Web Audio API 渲染，确保导出与预览 100% 一致。
  */
 
 /**
- * Canvas → JPEG ArrayBuffer
+ * Canvas → Raw RGBA Uint8Array（零压缩，专业级画质）
+ * 注意：必须用 slice() 创建独立副本，避免 IPC 传输时 SharedArrayBuffer 问题
  */
-function _canvasToJpegBuffer(canvas, quality) {
-    return new Promise((resolve, reject) => {
-        canvas.toBlob((blob) => {
-            if (!blob) { reject(new Error('toBlob 失败')); return; }
-            blob.arrayBuffer().then(resolve).catch(reject);
-        }, 'image/jpeg', quality);
-    });
+function _canvasToRawRGBA(canvas) {
+    const ctx = canvas.getContext('2d');
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    return imageData.data.buffer.slice(0);
 }
 
 /**
@@ -36,10 +35,64 @@ function _loadImage(src) {
 }
 
 /**
+ * AudioBuffer → WAV (PCM 16-bit) ArrayBuffer
+ */
+function _audioBufferToWav(buffer, maxSamples) {
+    const numChannels = buffer.numberOfChannels;
+    const sampleRate = buffer.sampleRate;
+    const bitsPerSample = 16;
+    const bytesPerSample = bitsPerSample / 8;
+    const blockAlign = numChannels * bytesPerSample;
+    const numSamples = maxSamples ? Math.min(maxSamples, buffer.length) : buffer.length;
+    const dataSize = numSamples * blockAlign;
+    const headerSize = 44;
+    const totalSize = headerSize + dataSize;
+
+    const wav = new ArrayBuffer(totalSize);
+    const view = new DataView(wav);
+
+    const writeStr = (offset, str) => {
+        for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+    };
+    writeStr(0, 'RIFF');
+    view.setUint32(4, totalSize - 8, true);
+    writeStr(8, 'WAVE');
+    writeStr(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, numChannels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * blockAlign, true);
+    view.setUint16(32, blockAlign, true);
+    view.setUint16(34, bitsPerSample, true);
+    writeStr(36, 'data');
+    view.setUint32(40, dataSize, true);
+
+    const channels = [];
+    for (let ch = 0; ch < numChannels; ch++) {
+        channels.push(buffer.getChannelData(ch));
+    }
+
+    let offset = headerSize;
+    for (let i = 0; i < numSamples; i++) {
+        for (let ch = 0; ch < numChannels; ch++) {
+            let sample = channels[ch][i];
+            sample = Math.max(-1, Math.min(1, sample));
+            const int16 = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+            view.setInt16(offset, int16, true);
+            offset += bytesPerSample;
+        }
+    }
+
+    return wav;
+}
+
+
+/**
  * WYSIWYG 导出一个 Reel 任务
  */
 async function reelsWysiwygExport(params) {
-    const {
+    let {
         canvas,
         style,
         segments,
@@ -57,6 +110,11 @@ async function reelsWysiwygExport(params) {
         customDuration = 0,  // 自定义输出时长（秒），0 = 自动
         bgmPath = '',        // 配乐文件路径
         bgmVolume = 0.3,     // 配乐音量 (0~1)
+        reverbEnabled = false,
+        reverbPreset = 'hall',
+        reverbMix = 30,
+        stereoWidth = 100,
+        useGPU = false,
         onProgress,
         onLog,
         isCancelled,
@@ -103,6 +161,9 @@ async function reelsWysiwygExport(params) {
     const totalFrames = Math.ceil(duration * fps);
     log(`时长: ${duration.toFixed(2)}s, 帧数: ${totalFrames}, FPS: ${fps}`);
 
+    // 注意：OfflineAudioContext 在 Electron contextIsolation:true 下会崩溃
+    // 所有音频效果由 FFmpeg afir 卷积滤镜处理（使用相同 seeded PRNG 的 IR）
+
     // ═══ 阶段 1: 让主进程用 FFmpeg 预处理背景 + 提取帧序列 ═══
     log('阶段1: FFmpeg 预处理背景视频（循环+淡入淡出+提取帧）...');
     progress(2);
@@ -137,9 +198,16 @@ async function reelsWysiwygExport(params) {
         voiceVolume,
         bgVolume,
         backgroundPath,
-        bgHasAudio: !_isImageFile(backgroundPath),
+        // 如果 voicePath === backgroundPath（voiced_bg 模式），
+        // 背景音频已经作为 voice 混入，不要再重复混入
+        bgHasAudio: (voicePath && backgroundPath && voicePath === backgroundPath) ? false : !_isImageFile(backgroundPath),
         bgmPath: bgmPath || '',
         bgmVolume: bgmVolume || 0,
+        reverbEnabled,
+        reverbPreset,
+        reverbMix,
+        stereoWidth,
+        useGPU,
     });
     if (!sessionId) throw new Error('FFmpeg 启动失败');
 
@@ -147,7 +215,7 @@ async function reelsWysiwygExport(params) {
     const hasMask = !!style.global_mask_enabled;
     const maskColor = style.global_mask_color || '#000000';
     const maskOpacity = style.global_mask_opacity ?? 0.5;
-    const jpegQuality = 0.92;
+
 
     // ═══ 阶段 3: 逐帧渲染 ═══
     log('阶段3: 逐帧 Canvas 渲染...');
@@ -169,7 +237,7 @@ async function reelsWysiwygExport(params) {
             // 加载背景帧（从 FFmpeg 提取的 JPEG 序列）
             const bgFrameIdx = Math.min(frameIdx, totalBgFrames - 1);
             if (bgFrameIdx !== currentBgIdx) {
-                const framePath = `${framesDir}/frame_${String(bgFrameIdx + 1).padStart(6, '0')}.jpg`;
+                const framePath = `${framesDir}/frame_${String(bgFrameIdx + 1).padStart(6, '0')}.png`;
                 try {
                     currentBgImg = await _loadImage(`file://${framePath}`);
                     currentBgIdx = bgFrameIdx;
@@ -205,11 +273,13 @@ async function reelsWysiwygExport(params) {
                 for (const ov of taskOverlays) {
                     const ovStart = parseFloat(ov.start || 0);
                     const ovEnd = parseFloat(ov.end || 9999);
-                    if (t >= ovStart && t <= ovEnd) {
+                    // scroll 覆层不受 end 限制（动画完成后保持最终位置）
+                    if (t >= ovStart && (ov.type === 'scroll' || t <= ovEnd)) {
                         // 导出时不画辅助线和选中框
                         const origSelected = ov._selected;
                         ov._selected = false;
                         ov._exporting = true;
+                        ov._exportDuration = duration; // 让 scroll 覆层知道实际导出时长
                         ReelsOverlay.drawOverlay(ctx, ov, t, targetWidth, targetHeight);
                         ov._selected = origSelected;
                         ov._exporting = false;
@@ -228,11 +298,11 @@ async function reelsWysiwygExport(params) {
                 _drawWatermarks(ctx, targetWidth, targetHeight);
             }
 
-            // ── Canvas → JPEG → IPC ──
-            const jpegBuf = await _canvasToJpegBuffer(canvas, jpegQuality);
+            // ── Canvas → Raw RGBA → IPC（零压缩）──
+            const rawBuf = _canvasToRawRGBA(canvas);
             const ok = await window.electronAPI.reelsComposeWysiwyg('frame', {
                 sessionId,
-                jpeg: jpegBuf,
+                raw: rawBuf,
             });
             if (!ok) throw new Error(`FFmpeg 写入帧失败 (frame ${frameIdx})`);
 

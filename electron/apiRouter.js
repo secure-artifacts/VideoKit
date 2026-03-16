@@ -329,15 +329,105 @@ async function routeAPI(endpoint, data) {
             const outDir = data.output_dir || path.dirname(files[0]);
             const allResults = [];
 
-            for (const file of files) {
-                try {
-                    const results = await ffmpegService.mediaConvert(file, mode, outDir, data);
-                    allResults.push(...results);
-                } catch (e) {
-                    allResults.push({ error: e.message, file });
+            if (mode === 'audio_split') {
+                // 音频裁切导出
+                const cutPointsMap = data.cut_points_map || {};
+                const exportMp3 = data.export_mp3 !== false;
+                const exportMp4 = data.export_mp4 || false;
+
+                for (const file of files) {
+                    try {
+                        const baseName = path.parse(file).name;
+                        const fileOutDir = path.join(outDir || path.dirname(file), `${baseName}_splits`);
+                        fs.mkdirSync(fileOutDir, { recursive: true });
+
+                        const rawCutPoints = cutPointsMap[file] || '';
+                        const cutPoints = ffmpegService.parseCutPoints(rawCutPoints);
+                        const segments = ffmpegService.buildSegments(cutPoints);
+
+                        // 获取总时长用于最后一段
+                        const totalDuration = await ffmpegService.getDuration(file);
+
+                        for (let i = 0; i < segments.length; i++) {
+                            const [start, end] = segments[i];
+                            const segEnd = end != null ? end : totalDuration;
+                            if (segEnd == null || segEnd - start <= 0) continue;
+
+                            const idx = String(i + 1).padStart(2, '0');
+                            const duration = segEnd - start;
+
+                            // 导出 MP3（双声道）
+                            if (exportMp3) {
+                                const mp3Path = path.join(fileOutDir, `${baseName}_${idx}.mp3`);
+                                await ffmpegService.runCommand('ffmpeg', [
+                                    '-y', '-i', file,
+                                    '-ss', start.toFixed(3), '-to', segEnd.toFixed(3),
+                                    '-vn', '-c:a', 'libmp3lame', '-b:a', '192k', '-ac', '2',
+                                    mp3Path
+                                ]);
+                                allResults.push(mp3Path);
+                            }
+
+                            // 导出黑屏 MP4
+                            if (exportMp4) {
+                                const mp4Path = path.join(fileOutDir, `${baseName}_${idx}.mp4`);
+                                await ffmpegService.generateBlackMp4(file, mp4Path, start, duration);
+                                allResults.push(mp4Path);
+                            }
+                        }
+                    } catch (e) {
+                        allResults.push({ error: e.message, file });
+                    }
+                }
+            } else if (mode === 'audio_fx') {
+                // 单独处理音频特效(立体声/混响)
+                console.log('[AudioFX Route] files:', files, 'outDir:', outDir, 'data keys:', Object.keys(data));
+                for (const file of files) {
+                    try {
+                        const fileOutDir = outDir || path.dirname(file);
+                        fs.mkdirSync(fileOutDir, { recursive: true });
+                        const results = await ffmpegService.applyAudioFx(file, fileOutDir, data);
+                        allResults.push(...results);
+                    } catch (e) {
+                        console.error('[AudioFX Route] Error processing file:', file, e.message, e.stack);
+                        allResults.push({ error: e.message, file });
+                    }
+                }
+            } else {
+                for (const file of files) {
+                    try {
+                        const results = await ffmpegService.mediaConvert(file, mode, outDir, data);
+                        allResults.push(...results);
+                    } catch (e) {
+                        allResults.push({ error: e.message, file });
+                    }
                 }
             }
-            return { message: `转换完成: ${allResults.length} 个文件`, converted: allResults };
+
+            // 收集文件信息
+            const filesInfo = [];
+            for (const item of allResults) {
+                if (typeof item === 'string' && fs.existsSync(item)) {
+                    try {
+                        const dur = await ffmpegService.getDuration(item);
+                        filesInfo.push({ path: item, filename: path.basename(item), duration: dur });
+                    } catch { filesInfo.push({ path: item, filename: path.basename(item) }); }
+                }
+            }
+
+            const successFiles = allResults.filter(r => typeof r === 'string');
+            const errorItems = allResults.filter(r => typeof r === 'object' && r.error);
+            let msg = `转换完成: ${successFiles.length} 个文件`;
+            if (errorItems.length > 0) {
+                msg += `\n失败 ${errorItems.length} 个: ${errorItems.map(e => e.error).join('; ')}`;
+            }
+
+            return {
+                message: msg,
+                files: successFiles,
+                files_info: filesInfo,
+                converted: allResults,
+            };
         }
 
         case 'media/batch-thumbnail': {
@@ -346,7 +436,8 @@ async function routeAPI(endpoint, data) {
             const results = await ffmpegService.batchThumbnail(
                 data.files, outDir,
                 data.format || 'jpg',
-                data.quality || 2
+                data.quality || 2,
+                data.mode || 'first'
             );
             return {
                 message: `截图完成: ${results.filter(r => r.success).length}/${results.length}`,
@@ -528,6 +619,26 @@ async function routeAPI(endpoint, data) {
                 subtitles: data.options?.subtitles,
                 subLang: data.options?.sub_lang,
             });
+
+        case 'video/download-batch-links': {
+            if (!data.urls || data.urls.length === 0) throw new Error('没有要下载的链接');
+            const { BrowserWindow: BW } = require('electron');
+            const wins = BW.getAllWindows();
+            return await ytdlpService.downloadBatchSequential(data.urls, {
+                outputDir: data.output_dir || undefined,
+                quality: data.quality || 'best',
+                ext: data.ext || 'mp4',
+                audioOnly: data.audio_only || false,
+                outputTemplate: data.output_template || '%(id)s.%(ext)s',
+                onProgress: (index, total, status, message) => {
+                    for (const win of wins) {
+                        try {
+                            win.webContents.send('batch-download-progress', { index, total, status, message });
+                        } catch { /* window closed */ }
+                    }
+                },
+            });
+        }
 
         // ==================== 别名兼容 ====================
         case 'settings/elevenlabs/keys':
@@ -736,6 +847,21 @@ async function routeUpload(endpoint, fileBuffer, fileName, formData) {
             } catch (e) {
                 try { fs.unlinkSync(tempPath); } catch { }
                 throw e;
+            }
+        }
+
+        case 'audio/smart-split-analyze': {
+            // 保存上传的音频文件到临时目录
+            const tempDir = settingsService.getSecureTmpDir();
+            const tempPath = path.join(tempDir, `smart_split_${crypto.randomUUID()}_${fileName}`);
+            fs.writeFileSync(tempPath, Buffer.from(fileBuffer));
+
+            try {
+                const maxDuration = parseFloat(formData.max_duration || 29);
+                const result = await ffmpegService.smartSplitAnalyze(tempPath, maxDuration);
+                return result;
+            } finally {
+                try { fs.unlinkSync(tempPath); } catch { }
             }
         }
 

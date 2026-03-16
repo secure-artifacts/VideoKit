@@ -16,9 +16,16 @@ async function refreshVWVoices() {
             select.innerHTML = data.voices.map(v =>
                 `<option value="${v.voice_id}">${v.name}</option>`
             ).join('');
+        } else if (data.error) {
+            select.innerHTML = `<option value="">错误: ${escapeHtml(data.error)}</option>`;
+            showToast(`获取音色失败: ${data.error}`, 'error');
+        } else {
+            select.innerHTML = '<option value="">[未找到音色，请检查网络或Key]</option>';
         }
     } catch (error) {
         console.error('获取音色失败:', error);
+        select.innerHTML = '<option value="">[网络或后端错误]</option>';
+        showToast('获取音色异常，后端可能未响应', 'error');
     }
 }
 

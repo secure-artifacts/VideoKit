@@ -3749,7 +3749,7 @@ def download_video_batch():
 
 @app.route('/api/media/batch-thumbnail', methods=['POST', 'OPTIONS'])
 def batch_thumbnail():
-    """批量提取视频首帧截图"""
+    """批量提取视频截图（支持首帧/尾帧模式）"""
     if request.method == 'OPTIONS':
         return '', 204
 
@@ -3758,6 +3758,7 @@ def batch_thumbnail():
     output_dir = data.get('output_dir', '')
     image_format = data.get('format', 'jpg')  # jpg 或 png
     quality = int(data.get('quality', 2))  # FFmpeg -q:v, 2=高质量, 5=中等, 10=低
+    mode = data.get('mode', 'first')  # 'first'=首帧, 'last'=尾帧
     # 支持直接传入文件列表（从前端上传的场景）
     file_list = data.get('files', [])
 
@@ -3804,7 +3805,8 @@ def batch_thumbnail():
         failed = 0
         results = []
 
-        print(f"[批量截图] 开始处理 {total} 个视频，输出到: {output_dir}")
+        mode_label = '尾帧' if mode == 'last' else '首帧'
+        print(f"[批量截图] 开始处理 {total} 个视频（{mode_label}模式），输出到: {output_dir}")
 
         for i, video_path in enumerate(video_files):
             base_name = os.path.splitext(os.path.basename(video_path))[0]
@@ -3820,10 +3822,19 @@ def batch_thumbnail():
                 continue
 
             try:
-                cmd = ['ffmpeg', '-y', '-ss', '0', '-i', video_path, '-frames:v', '1']
-                if out_ext == 'jpg':
-                    cmd.extend(['-q:v', str(quality)])
-                cmd.append(output_path)
+                if mode == 'last':
+                    # 尾帧模式：-sseof -3 定位到最后3秒，-update 1 持续覆盖输出
+                    # 最终文件就是绝对最后一帧
+                    cmd = ['ffmpeg', '-y', '-sseof', '-3', '-i', video_path, '-update', '1']
+                    if out_ext == 'jpg':
+                        cmd.extend(['-q:v', str(quality)])
+                    cmd.append(output_path)
+                else:
+                    # 首帧模式（默认）
+                    cmd = ['ffmpeg', '-y', '-ss', '0', '-i', video_path, '-frames:v', '1']
+                    if out_ext == 'jpg':
+                        cmd.extend(['-q:v', str(quality)])
+                    cmd.append(output_path)
 
                 subprocess.run(cmd, check=True, capture_output=True, timeout=30)
                 success += 1

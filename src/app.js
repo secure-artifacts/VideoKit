@@ -94,6 +94,15 @@ async function handleFormDataUpload(endpoint, formData) {
 const API_BASE = 'ipc://api';
 const API_ORIGIN = '';
 
+/** 获取 File 对象的本地完整路径 (Electron contextIsolation 下 File.path 不可用) */
+function getFileNativePath(file) {
+    if (window.electronAPI && window.electronAPI.getFilePath) {
+        const p = window.electronAPI.getFilePath(file);
+        if (p) return p;
+    }
+    return file.path || file.name;
+}
+
 // 当前选中的文件路径
 let currentAudioPath = '';
 let currentSrtSrcPath = '';
@@ -374,7 +383,7 @@ function initFileInputs() {
     document.getElementById('audio-file-input').addEventListener('change', (e) => {
         if (e.target.files.length > 0) {
             const file = e.target.files[0];
-            currentAudioPath = file.path || file.name;
+            currentAudioPath = getFileNativePath(file);
             document.getElementById('audio-path').value = file.name;
             showToast(`已选择: ${file.name}`, 'success');
         }
@@ -410,7 +419,7 @@ function initFileInputs() {
     document.getElementById('srt-src-input').addEventListener('change', (e) => {
         if (e.target.files.length > 0) {
             const file = e.target.files[0];
-            currentSrtSrcPath = file.path || file.name;
+            currentSrtSrcPath = getFileNativePath(file);
             document.getElementById('srt-src-path').value = file.name;
         }
     });
@@ -418,7 +427,7 @@ function initFileInputs() {
     document.getElementById('srt-orgi-input').addEventListener('change', (e) => {
         if (e.target.files.length > 0) {
             const file = e.target.files[0];
-            currentSrtOrgiPath = file.path || file.name;
+            currentSrtOrgiPath = getFileNativePath(file);
             document.getElementById('srt-orgi-path').value = file.name;
         }
     });
@@ -426,7 +435,7 @@ function initFileInputs() {
     document.getElementById('srt-ref-input').addEventListener('change', (e) => {
         if (e.target.files.length > 0) {
             const file = e.target.files[0];
-            currentSrtRefPath = file.path || file.name;
+            currentSrtRefPath = getFileNativePath(file);
             document.getElementById('srt-ref-path').value = file.name;
         }
     });
@@ -434,7 +443,7 @@ function initFileInputs() {
     document.getElementById('seamless-srt-input').addEventListener('change', (e) => {
         if (e.target.files.length > 0) {
             const file = e.target.files[0];
-            currentSeamlessSrtPath = file.path || file.name;
+            currentSeamlessSrtPath = getFileNativePath(file);
             document.getElementById('seamless-srt-path').value = file.name;
         }
     });
@@ -443,7 +452,7 @@ function initFileInputs() {
     document.getElementById('media-input-file').addEventListener('change', (e) => {
         if (e.target.files.length > 0) {
             currentMediaFileInfos = Array.from(e.target.files).map(f => ({
-                path: f.path || f.name,
+                path: getFileNativePath(f),
                 name: f.name,
                 file: f  // 保存 File 对象引用，用于创建 blob URL 播放
             }));
@@ -1205,7 +1214,7 @@ function initMediaModeOptions() {
                 const file = e.target.files[0];
                 document.getElementById('custom-logo-path').value = file.name;
                 // 存储文件路径
-                customLogoFile.dataset.filePath = file.path || file.name;
+                customLogoFile.dataset.filePath = getFileNativePath(file);
                 showToast(`已选择 Logo: ${file.name}`, 'success');
                 updateLogoPreview();
             }
@@ -1304,7 +1313,8 @@ function initMediaModeOptions() {
 
     const formatModes = document.querySelectorAll('input[name="format-mode"]');
     const audioSplitOptions = document.getElementById('audio-split-options');
-    const updateAudioSplitOptions = () => {
+    const audioFxOptions = document.getElementById('audio-fx-options');
+    const updateFormatOptions = () => {
         const selected = document.querySelector('input[name="format-mode"]:checked')?.value;
         if (selected === 'audio_split') {
             audioSplitOptions?.classList.remove('hidden');
@@ -1312,13 +1322,19 @@ function initMediaModeOptions() {
         } else {
             audioSplitOptions?.classList.add('hidden');
         }
+        
+        if (selected === 'audio_fx') {
+            audioFxOptions?.classList.remove('hidden');
+        } else {
+            audioFxOptions?.classList.add('hidden');
+        }
     };
 
     formatModes.forEach(input => {
-        input.addEventListener('change', updateAudioSplitOptions);
+        input.addEventListener('change', updateFormatOptions);
     });
 
-    updateAudioSplitOptions();
+    updateFormatOptions();
 
     // 初始化预览
     setTimeout(() => {
@@ -1826,8 +1842,13 @@ async function loadSettings(autoLoadVoices = false) {
         if (keyTextarea) {
             const keys = Array.isArray(data.api_keys) ? data.api_keys : (data.api_key ? [data.api_key] : []);
             keyTextarea.value = keys.join('\n');
-            if (keys.length > 0 && autoLoadVoices && backendReady) {
-                loadVoices();
+            if (autoLoadVoices && backendReady) {
+                if (keys.length > 0) {
+                    loadVoices();
+                }
+                if (typeof refreshVWVoices === 'function') {
+                    refreshVWVoices();
+                }
             }
         }
     } catch (error) {
@@ -2942,52 +2963,18 @@ async function startMediaConvert() {
     const outputPath = document.getElementById('media-output-path').value;
     const statusEl = document.getElementById('media-status');
 
-    // 先上传文件到后端（浏览器无法获取本地文件路径）
-    statusEl.textContent = '正在上传文件...';
-    const uploadedPaths = [];
-    const pathMapping = {};  // 原路径 -> 上传后路径的映射
-
-    for (let i = 0; i < currentMediaFileInfos.length; i++) {
-        const fileInfo = currentMediaFileInfos[i];
-        if (fileInfo.file) {
-            // 需要上传
-            const formData = new FormData();
-            formData.append('file', fileInfo.file);
-
-            try {
-                const resp = await apiFetch(`${API_BASE}/file/upload`, {
-                    method: 'POST',
-                    body: formData
-                });
-                const result = await resp.json();
-                if (result.success) {
-                    uploadedPaths.push(result.path);
-                    // 保存映射：原路径 -> 上传后路径
-                    pathMapping[fileInfo.path] = result.path;
-                    // 同时更新 fileInfo，后续使用
-                    fileInfo.uploadedPath = result.path;
-                } else {
-                    showToast(`上传失败: ${escapeHtml(result.error)}`, 'error');
-                    statusEl.textContent = '上传失败';
-                    return;
-                }
-            } catch (err) {
-                showToast(`上传失败: ${err.message}`, 'error');
-                statusEl.textContent = '上传失败';
-                return;
-            }
-        } else if (fileInfo.path && fileInfo.path !== fileInfo.name) {
-            // 已有完整路径（Electron 环境）
-            uploadedPaths.push(fileInfo.path);
-            pathMapping[fileInfo.path] = fileInfo.path;
-            fileInfo.uploadedPath = fileInfo.path;
-        }
-    }
+    // 直接使用本地文件路径
+    const uploadedPaths = currentMediaFileInfos
+        .map(f => f.path)
+        .filter(p => p);
 
     if (uploadedPaths.length === 0) {
         showToast('没有有效的文件路径', 'error');
         return;
     }
+
+    // 设置 uploadedPath 供后续使用
+    currentMediaFileInfos.forEach(f => { f.uploadedPath = f.path; });
 
     // 确定当前激活的子标签页
     const activeSubtab = document.querySelector('#media-panel .subtab-content.active');
@@ -3110,6 +3097,11 @@ async function startMediaConvert() {
             payload.cut_points_map = cutPointsMap;
             payload.export_mp3 = exportMp3;
             payload.export_mp4 = exportMp4;
+        } else if (formatMode === 'audio_fx') {
+            payload.reverbEnabled = document.getElementById('audio-fx-reverb-enabled')?.checked || false;
+            payload.reverbPreset = document.getElementById('audio-fx-reverb-preset')?.value || 'hall';
+            payload.reverbMix = parseFloat(document.getElementById('audio-fx-reverb-mix')?.value || '30');
+            payload.stereoWidth = parseFloat(document.getElementById('audio-fx-stereo-width')?.value || '100');
         }
     } else {
         // 默认：使用第一个子标签页的 Logo 模式
@@ -3284,6 +3276,9 @@ async function saveElevenLabsKey() {
         if (response.ok) {
             showToast('API Keys 已保存', 'success');
             loadVoices();
+            if (typeof refreshVWVoices === 'function') {
+                refreshVWVoices();
+            }
             loadQuota();
         }
     } catch (error) {
@@ -4775,6 +4770,283 @@ function selectDownloadDir() {
     }
 }
 
+// ==================== 批量粘贴链接下载 ====================
+
+let batchLinksData = []; // 解析后的链接数组
+let isBatchDownloading = false;
+
+/**
+ * 解析粘贴的批量链接
+ */
+function parseBatchLinks() {
+    const textarea = document.getElementById('batch-links-textarea');
+    const raw = textarea.value.trim();
+    if (!raw) {
+        showToast('请先粘贴链接', 'error');
+        return;
+    }
+
+    // 解析链接: 每行一个，去重，过滤空行
+    const lines = raw.split('\n')
+        .map(l => l.trim())
+        .filter(l => l && (l.startsWith('http://') || l.startsWith('https://')));
+
+    // 去重
+    const unique = [...new Set(lines)];
+
+    if (unique.length === 0) {
+        showToast('未检测到有效链接（以 http:// 或 https:// 开头）', 'error');
+        return;
+    }
+
+    batchLinksData = unique;
+    document.getElementById('batch-links-count').textContent = `${unique.length} 个链接`;
+
+    // 渲染链接列表
+    renderBatchLinksList(unique);
+    document.getElementById('batch-links-list-section').style.display = 'block';
+
+    showToast(`已解析 ${unique.length} 个链接`, 'success');
+}
+
+/**
+ * 渲染链接列表（带序号和状态）
+ */
+function renderBatchLinksList(urls) {
+    const container = document.getElementById('batch-links-list');
+    container.innerHTML = '';
+
+    urls.forEach((url, i) => {
+        const row = document.createElement('div');
+        row.id = `batch-link-row-${i}`;
+        row.style.cssText = 'display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-bottom: 1px solid rgba(255,255,255,0.05); transition: background 0.2s;';
+
+        // 序号
+        const numSpan = document.createElement('span');
+        numSpan.style.cssText = 'flex-shrink: 0; width: 28px; text-align: center; font-weight: 600; color: var(--text-muted); font-size: 11px;';
+        numSpan.textContent = `${i + 1}`;
+        row.appendChild(numSpan);
+
+        // 来源图标
+        const sourceIcon = document.createElement('span');
+        sourceIcon.style.cssText = 'flex-shrink: 0; font-size: 14px;';
+        let _host = ''; try { _host = new URL(url).hostname; } catch(_) {}
+        if (_host.endsWith('facebook.com') || _host.endsWith('fb.com') || _host.endsWith('fb.watch')) {
+            sourceIcon.textContent = '📘';
+        } else if (_host.endsWith('youtube.com') || _host.endsWith('youtu.be')) {
+            sourceIcon.textContent = '▶️';
+        } else if (_host.endsWith('instagram.com')) {
+            sourceIcon.textContent = '📷';
+        } else if (_host.endsWith('tiktok.com')) {
+            sourceIcon.textContent = '🎵';
+        } else {
+            sourceIcon.textContent = '🔗';
+        }
+        row.appendChild(sourceIcon);
+
+        // URL显示
+        const urlSpan = document.createElement('span');
+        urlSpan.style.cssText = 'flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary);';
+        urlSpan.textContent = url;
+        urlSpan.title = url;
+        row.appendChild(urlSpan);
+
+        // 状态
+        const statusSpan = document.createElement('span');
+        statusSpan.id = `batch-link-status-${i}`;
+        statusSpan.style.cssText = 'flex-shrink: 0; padding: 2px 8px; border-radius: 4px; font-size: 11px; background: rgba(255,255,255,0.05); color: var(--text-muted);';
+        statusSpan.textContent = '等待';
+        row.appendChild(statusSpan);
+
+        // 删除按钮
+        const delBtn = document.createElement('button');
+        delBtn.style.cssText = 'flex-shrink: 0; background: none; border: none; cursor: pointer; color: var(--text-muted); font-size: 12px; padding: 2px 4px; opacity: 0.6;';
+        delBtn.textContent = '✕';
+        delBtn.title = '移除此链接';
+        delBtn.onclick = () => {
+            batchLinksData.splice(i, 1);
+            renderBatchLinksList(batchLinksData);
+            document.getElementById('batch-links-count').textContent = `${batchLinksData.length} 个链接`;
+        };
+        row.appendChild(delBtn);
+
+        container.appendChild(row);
+    });
+}
+
+/**
+ * 选择批量下载目录
+ */
+function selectBatchDownloadDir() {
+    if (window.electronAPI && window.electronAPI.selectDirectory) {
+        window.electronAPI.selectDirectory().then(dir => {
+            if (dir) document.getElementById('batch-dl-dir').value = dir;
+        });
+    } else {
+        const dir = prompt('请输入下载目录路径:');
+        if (dir) {
+            document.getElementById('batch-dl-dir').value = dir;
+        }
+    }
+}
+
+/**
+ * 开始批量链接下载
+ */
+async function startBatchLinksDownload() {
+    if (isBatchDownloading) {
+        showToast('正在下载中，请等待完成', 'warning');
+        return;
+    }
+
+    // 如果还没解析，先自动解析
+    if (batchLinksData.length === 0) {
+        parseBatchLinks();
+    }
+
+    if (batchLinksData.length === 0) {
+        showToast('没有可下载的链接', 'error');
+        return;
+    }
+
+    const format = document.getElementById('batch-dl-format').value;
+    const quality = document.getElementById('batch-dl-quality').value;
+    const audioOnly = document.getElementById('batch-dl-audio-only').checked;
+    const outputTemplate = document.getElementById('batch-dl-template').value;
+    const outputDir = document.getElementById('batch-dl-dir').value.trim();
+
+    isBatchDownloading = true;
+    const btn = document.getElementById('btn-batch-download');
+    btn.textContent = '⏳ 下载中...';
+    btn.disabled = true;
+    btn.style.opacity = '0.6';
+
+    // 显示日志区域
+    const logSection = document.getElementById('batch-dl-log-section');
+    logSection.style.display = 'block';
+    const logEl = document.getElementById('batch-dl-log');
+    logEl.innerHTML = '';
+
+    // 重置所有状态
+    batchLinksData.forEach((_, i) => {
+        const statusEl = document.getElementById(`batch-link-status-${i}`);
+        if (statusEl) {
+            statusEl.textContent = '等待';
+            statusEl.style.background = 'rgba(255,255,255,0.05)';
+            statusEl.style.color = 'var(--text-muted)';
+        }
+    });
+
+    document.getElementById('batch-dl-status').textContent = '下载中...';
+    document.getElementById('batch-dl-progress-inner').style.width = '0%';
+
+    // 注册实时进度监听
+    const appendLog = (text) => {
+        const line = document.createElement('div');
+        line.textContent = text;
+        logEl.appendChild(line);
+        // 限制日志行数
+        while (logEl.children.length > 200) {
+            logEl.removeChild(logEl.firstChild);
+        }
+        logEl.scrollTop = logEl.scrollHeight;
+    };
+
+    if (window.electronAPI && window.electronAPI.onBatchDownloadProgress) {
+        window.electronAPI.onBatchDownloadProgress((data) => {
+            const { index, total, status, message } = data;
+
+            // 更新进度条
+            if (status === 'done' || status === 'error') {
+                const pct = Math.round(((index + 1) / total) * 100);
+                document.getElementById('batch-dl-progress-inner').style.width = `${pct}%`;
+            }
+
+            // 更新状态标签
+            const statusEl = document.getElementById(`batch-link-status-${index}`);
+            if (statusEl) {
+                if (status === 'downloading' || status === 'progress') {
+                    statusEl.textContent = '⬇️ 下载中';
+                    statusEl.style.background = 'rgba(102,126,234,0.2)';
+                    statusEl.style.color = '#667eea';
+                } else if (status === 'done') {
+                    statusEl.textContent = '✅ 完成';
+                    statusEl.style.background = 'rgba(81,207,102,0.2)';
+                    statusEl.style.color = '#51cf66';
+                } else if (status === 'error') {
+                    statusEl.textContent = '❌ 失败';
+                    statusEl.style.background = 'rgba(255,0,0,0.2)';
+                    statusEl.style.color = '#ff6b6b';
+                }
+            }
+
+            // 高亮当前行
+            const row = document.getElementById(`batch-link-row-${index}`);
+            if (row && (status === 'downloading' || status === 'progress')) {
+                row.style.background = 'rgba(102,126,234,0.05)';
+            } else if (row && (status === 'done' || status === 'error')) {
+                row.style.background = '';
+            }
+
+            // 更新状态文本
+            document.getElementById('batch-dl-status').textContent = message;
+
+            // 追加日志
+            if (status !== 'progress') {
+                appendLog(message);
+            }
+        });
+    }
+
+    try {
+        appendLog(`🚀 开始批量下载 ${batchLinksData.length} 个链接...`);
+
+        const response = await apiFetch(`${API_BASE}/video/download-batch-links`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                urls: batchLinksData,
+                output_dir: outputDir || '',
+                quality,
+                ext: format,
+                audio_only: audioOnly,
+                output_template: outputTemplate,
+            })
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+            document.getElementById('batch-dl-progress-inner').style.width = '100%';
+            const msg = `下载完成: ${result.success_count || 0} 成功, ${result.fail_count || 0} 失败`;
+            document.getElementById('batch-dl-status').textContent = msg;
+            appendLog(`\n✨ ${msg}`);
+            if (result.output_path) {
+                appendLog(`📂 输出目录: ${result.output_path}`);
+            }
+
+            if (result.fail_count === 0) {
+                showToast(`全部下载完成: ${result.success_count} 个`, 'success');
+            } else {
+                showToast(msg, 'warning');
+            }
+        } else {
+            document.getElementById('batch-dl-status').textContent = `错误: ${result.error}`;
+            appendLog(`❌ 错误: ${result.error}`);
+            showToast('下载失败: ' + result.error, 'error');
+        }
+    } catch (error) {
+        document.getElementById('batch-dl-status').textContent = `请求失败: ${error.message}`;
+        appendLog(`❌ 请求失败: ${error.message}`);
+        showToast('请求失败: ' + error.message, 'error');
+    } finally {
+        isBatchDownloading = false;
+        btn.textContent = '⬇️ 开始批量下载';
+        btn.disabled = false;
+        btn.style.opacity = '1';
+    }
+}
+
 // ==================== 设置功能 ====================
 
 async function saveGladiaKeys() {
@@ -5030,18 +5302,18 @@ async function analyzeSmartSplit() {
     try {
         for (let i = 0; i < currentMediaFileInfos.length; i++) {
             const fileInfo = currentMediaFileInfos[i];
-            if (!fileInfo.file) continue;
+            if (!fileInfo.path) continue;
 
             btn.textContent = `⏳ 分析中 (${i + 1}/${total})...`;
 
             try {
-                const formData = new FormData();
-                formData.append('audio_file', fileInfo.file);
-                formData.append('max_duration', maxDuration.toString());
-
                 const response = await apiFetch(`${API_BASE}/audio/smart-split-analyze`, {
                     method: 'POST',
-                    body: formData
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        file_path: fileInfo.path,
+                        max_duration: maxDuration
+                    })
                 });
 
                 const data = await response.json();
@@ -5262,7 +5534,7 @@ document.addEventListener('DOMContentLoaded', () => {
         sceneInput.addEventListener('change', (e) => {
             if (e.target.files.length > 0) {
                 const newFiles = Array.from(e.target.files).map(f => ({
-                    path: f.path || f.name,
+                    path: getFileNativePath(f),
                     name: f.name
                 }));
                 // 合并去重
@@ -5300,7 +5572,7 @@ document.addEventListener('DOMContentLoaded', () => {
             );
             if (files.length > 0) {
                 files.forEach(f => {
-                    const info = { path: f.path || f.name, name: f.name };
+                    const info = { path: getFileNativePath(f), name: f.name };
                     if (!sceneFiles.find(sf => sf.path === info.path)) {
                         sceneFiles.push(info);
                     }
@@ -6668,6 +6940,7 @@ async function startBatchThumbnail() {
     const outputDir = document.getElementById('thumbnail-output-path').value.trim();
     const format = document.getElementById('thumbnail-format').value;
     const quality = parseInt(document.getElementById('thumbnail-quality').value);
+    const mode = document.getElementById('thumbnail-mode')?.value || 'first';
 
     const statusEl = document.getElementById('thumbnail-status');
     const startBtn = document.getElementById('thumbnail-start-btn');
@@ -6713,7 +6986,8 @@ async function startBatchThumbnail() {
                 folder_path: folderPath,
                 output_dir: outputDir,
                 format: format,
-                quality: quality
+                quality: quality,
+                mode: mode
             })
         });
 
@@ -7043,14 +7317,14 @@ document.addEventListener('DOMContentLoaded', () => {
     if (faceInput) {
         faceInput.addEventListener('change', e => {
             const file = e.target.files[0];
-            if (file) document.getElementById('lipsync-face-path').value = file.path || file.name;
+            if (file) document.getElementById('lipsync-face-path').value = getFileNativePath(file);
         });
     }
 
     if (audioInput) {
         audioInput.addEventListener('change', e => {
             const file = e.target.files[0];
-            if (file) document.getElementById('lipsync-audio-path').value = file.path || file.name;
+            if (file) document.getElementById('lipsync-audio-path').value = getFileNativePath(file);
         });
     }
 });
@@ -7226,7 +7500,7 @@ document.addEventListener('DOMContentLoaded', () => {
         batchCutInput.addEventListener('change', (e) => {
             if (e.target.files.length > 0) {
                 const file = e.target.files[0];
-                batchCutFilePath = file.path || file.name;
+                batchCutFilePath = getFileNativePath(file);
                 document.getElementById('batchcut-video-path').value = file.name;
                 loadBatchCutVideoInfo(batchCutFilePath);
             }
@@ -7254,7 +7528,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 videoExts.some(ext => f.name.toLowerCase().endsWith(ext))
             );
             if (file) {
-                batchCutFilePath = file.path || file.name;
+                batchCutFilePath = getFileNativePath(file);
                 document.getElementById('batchcut-video-path').value = file.name;
                 loadBatchCutVideoInfo(batchCutFilePath);
             }
@@ -8961,10 +9235,10 @@ function _initUniRename() {
 function _addUniRenameFiles(files) {
     for (const f of files) {
         // 避免重复
-        if (_uniRenameFiles.some(x => x.path === (f.path || f.name))) continue;
+        if (_uniRenameFiles.some(x => x.path === getFileNativePath(f))) continue;
         _uniRenameFiles.push({
             name: f.name,
-            path: f.path || f.name,
+            path: getFileNativePath(f),
             ext: (f.name.match(/\.[^.]+$/) || [''])[0],
         });
     }
@@ -9193,3 +9467,56 @@ async function checkAppUpdate() {
         if (btn) btn.disabled = false;
     }
 }
+
+/**
+ * 切换更新通道 (stable / beta)
+ */
+async function switchUpdateChannel(channel) {
+    const hintEl = document.getElementById('update-channel-hint');
+    if (!window.electronAPI?.setUpdateChannel) {
+        if (hintEl) hintEl.textContent = '⚠️ 仅打包版支持';
+        return;
+    }
+
+    try {
+        const result = await window.electronAPI.setUpdateChannel(channel);
+        if (hintEl) {
+            hintEl.textContent = channel === 'beta'
+                ? '将收到测试版 + 正式版更新'
+                : '只接收正式版更新';
+        }
+        // 切换后立即检查更新
+        checkAppUpdate();
+    } catch (e) {
+        if (hintEl) hintEl.textContent = '❌ 切换失败';
+    }
+}
+
+/**
+ * 初始化更新通道 UI 状态
+ */
+async function initUpdateChannelUI() {
+    if (!window.electronAPI?.getUpdateChannel) return;
+    try {
+        const info = await window.electronAPI.getUpdateChannel();
+        const selectEl = document.getElementById('update-channel-select');
+        const hintEl = document.getElementById('update-channel-hint');
+        if (selectEl) selectEl.value = info.channel;
+        if (hintEl) {
+            hintEl.textContent = info.channel === 'beta'
+                ? '将收到测试版 + 正式版更新'
+                : '只接收正式版更新';
+        }
+        // 如果当前运行的就是测试版，在版本号旁显示标记
+        if (info.isBeta) {
+            const versionDisplay = document.getElementById('app-version-display');
+            if (versionDisplay && !versionDisplay.textContent.includes('🧪')) {
+                versionDisplay.textContent += ' 🧪 测试版';
+            }
+        }
+    } catch (e) { /* 忽略 */ }
+}
+
+// 页面加载时初始化通道 UI
+document.addEventListener('DOMContentLoaded', initUpdateChannelUI);
+

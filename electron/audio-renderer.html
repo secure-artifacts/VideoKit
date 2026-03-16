@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html>
+<head><title>Audio Renderer</title></head>
+<body>
+<script>
+// 隐藏窗口：用 Chromium 原生 Web Audio 渲染音频效果
+// 与预览使用完全相同的引擎 —— 100% WYSIWYG
+
+const { ipcRenderer } = require('electron');
+
+// 确定性伪随机数生成器（mulberry32）
+function _mulberry32(seed) {
+    return function() {
+        seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+        let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+        t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+        return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+}
+
+function _presetSeed(preset) {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < preset.length; i++) {
+        h ^= preset.charCodeAt(i);
+        h = Math.imul(h, 0x01000193);
+    }
+    return h >>> 0;
+}
+
+const _REVERB_PRESETS = {
+    room:   { decay: 0.8, duration: 0.6, density: 3000, lpFreq: 8000 },
+    hall:   { decay: 2.0, duration: 1.5, density: 5000, lpFreq: 6000 },
+    church: { decay: 4.0, duration: 3.0, density: 8000, lpFreq: 4000 },
+    plate:  { decay: 1.2, duration: 1.0, density: 6000, lpFreq: 10000 },
+    echo:   { decay: 1.5, duration: 0.8, density: 1500, lpFreq: 5000 },
+};
+
+ipcRenderer.on('render-audio', async (event, config) => {
+    try {
+        const { filePath, reverbEnabled, reverbPreset, reverbMix, stereoWidth } = config;
+
+        // 1) 直接读取文件（nodeIntegration:true）
+        const fs = require('fs');
+        const fileBuffer = fs.readFileSync(filePath);
+        const arrayBuf = fileBuffer.buffer.slice(fileBuffer.byteOffset, fileBuffer.byteOffset + fileBuffer.byteLength);
+
+        // 2) 解码音频（用 Chromium 原生 decodeAudioData — 和预览一样）
+        const tmpCtx = new AudioContext();
+        const sampleRate = tmpCtx.sampleRate; // 系统采样率（macOS = 48000）
+        const decoded = await tmpCtx.decodeAudioData(arrayBuf);
+        tmpCtx.close();
+
+        console.log(`[AudioRenderer] decoded: ${decoded.duration.toFixed(2)}s, ${decoded.numberOfChannels}ch, sr=${sampleRate}`);
+
+        // 3) 创建 OfflineAudioContext
+        const totalSamples = decoded.length + sampleRate; // +1s reverb tail
+        const offCtx = new OfflineAudioContext(2, totalSamples, sampleRate);
+
+        // 复制 buffer 到 offline context
+        const audioBuf = offCtx.createBuffer(decoded.numberOfChannels, decoded.length, sampleRate);
+        for (let ch = 0; ch < decoded.numberOfChannels; ch++) {
+            audioBuf.getChannelData(ch).set(decoded.getChannelData(ch));
+        }
+
+        // 4) 构建效果链 — 与预览 _setupPreviewReverb 完全一致
+        const sourceNode = offCtx.createBufferSource();
+        sourceNode.buffer = audioBuf;
+
+        const mix = reverbEnabled ? Math.max(0, Math.min(100, reverbMix || 30)) / 100 : 0;
+        const stereoW = (stereoWidth || 100) / 100;
+
+        if (reverbEnabled) {
+            const dryGain = offCtx.createGain();
+            dryGain.gain.value = 1 - mix * 0.5;
+
+            const preset = reverbPreset || 'hall';
+            const p = _REVERB_PRESETS[preset] || _REVERB_PRESETS.hall;
+            const irLength = Math.ceil(sampleRate * p.duration);
+            const irBuffer = offCtx.createBuffer(2, irLength, sampleRate);
+            for (let ch = 0; ch < 2; ch++) {
+                const rng = _mulberry32(_presetSeed(preset) + ch * 0xDEAD);
+                const irData = irBuffer.getChannelData(ch);
+                for (let i = 0; i < irLength; i++) {
+                    const t = i / sampleRate;
+                    irData[i] = (rng() * 2 - 1) * Math.exp(-t / (p.decay * 0.3));
+                }
+            }
+
+            const convolver = offCtx.createConvolver();
+            convolver.buffer = irBuffer;
+            const wetGain = offCtx.createGain();
+            wetGain.gain.value = mix;
+            const masterGain = offCtx.createGain();
+            masterGain.gain.value = 1.0;
+
+            // 与预览完全一致的连接
+            sourceNode.connect(dryGain);
+            sourceNode.connect(convolver);
+            convolver.connect(wetGain);
+            dryGain.connect(masterGain);
+            wetGain.connect(masterGain);
+
+            if (stereoW > 1.05) {
+                const wf = Math.max(0, (stereoW - 1)) * 0.015;
+                const splitter = offCtx.createChannelSplitter(2);
+                const merger = offCtx.createChannelMerger(2);
+                const delayL = offCtx.createDelay(0.05);
+                const delayR = offCtx.createDelay(0.05);
+                delayL.delayTime.value = wf * 0.3;
+                delayR.delayTime.value = wf * 0.7;
+                masterGain.connect(splitter);
+                splitter.connect(delayL, 0);
+                splitter.connect(delayR, 1);
+                delayL.connect(merger, 0, 0);
+                delayR.connect(merger, 0, 1);
+                merger.connect(offCtx.destination);
+            } else {
+                masterGain.connect(offCtx.destination);
+            }
+        } else {
+            // 仅立体声增强
+            if (stereoW > 1.05) {
+                const wf = Math.max(0, (stereoW - 1)) * 0.015;
+                const masterGain = offCtx.createGain();
+                masterGain.gain.value = 1.0;
+                sourceNode.connect(masterGain);
+                const splitter = offCtx.createChannelSplitter(2);
+                const merger = offCtx.createChannelMerger(2);
+                const delayL = offCtx.createDelay(0.05);
+                const delayR = offCtx.createDelay(0.05);
+                delayL.delayTime.value = wf * 0.3;
+                delayR.delayTime.value = wf * 0.7;
+                masterGain.connect(splitter);
+                splitter.connect(delayL, 0);
+                splitter.connect(delayR, 1);
+                delayL.connect(merger, 0, 0);
+                delayR.connect(merger, 0, 1);
+                merger.connect(offCtx.destination);
+            } else {
+                sourceNode.connect(offCtx.destination);
+            }
+        }
+
+        sourceNode.start(0);
+        console.log('[AudioRenderer] rendering...');
+        const renderedBuffer = await offCtx.startRendering();
+
+        // 5) 转为 16-bit PCM WAV
+        const numSamples = Math.min(decoded.length, renderedBuffer.length);
+        const outCh = 2;
+        const outDataSize = numSamples * outCh * 2;
+        const wavBuf = new ArrayBuffer(44 + outDataSize);
+        const view = new DataView(wavBuf);
+
+        // WAV header
+        const writeStr = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
+        writeStr(0, 'RIFF');
+        view.setUint32(4, 36 + outDataSize, true);
+        writeStr(8, 'WAVE');
+        writeStr(12, 'fmt ');
+        view.setUint32(16, 16, true);
+        view.setUint16(20, 1, true); // PCM
+        view.setUint16(22, outCh, true);
+        view.setUint32(24, sampleRate, true);
+        view.setUint32(28, sampleRate * outCh * 2, true);
+        view.setUint16(32, outCh * 2, true);
+        view.setUint16(34, 16, true);
+        writeStr(36, 'data');
+        view.setUint32(40, outDataSize, true);
+
+        // PCM data
+        const rCh = renderedBuffer.numberOfChannels;
+        const chArrays = [];
+        for (let c = 0; c < rCh; c++) chArrays.push(renderedBuffer.getChannelData(c));
+
+        let offset = 44;
+        for (let i = 0; i < numSamples; i++) {
+            for (let c = 0; c < outCh; c++) {
+                const srcCh = c < rCh ? c : 0;
+                let s = Math.max(-1, Math.min(1, chArrays[srcCh][i]));
+                view.setInt16(offset, Math.round(s < 0 ? s * 0x8000 : s * 0x7FFF), true);
+                offset += 2;
+            }
+        }
+
+        console.log(`[AudioRenderer] done: ${numSamples} samples, ${(wavBuf.byteLength / 1024 / 1024).toFixed(1)}MB`);
+
+        // 6) 送回主进程
+        ipcRenderer.send('render-audio-result', {
+            success: true,
+            wavBuffer: Buffer.from(wavBuf),
+            sampleRate,
+            numSamples,
+        });
+    } catch (err) {
+        console.error('[AudioRenderer] error:', err);
+        ipcRenderer.send('render-audio-result', { success: false, error: err.message });
+    }
+});
+
+// 通知主进程已就绪
+ipcRenderer.send('audio-renderer-ready');
+</script>
+</body>
+</html>

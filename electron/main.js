@@ -79,18 +79,30 @@ function setupFFmpegPath() {
         const candidates = [
             path.join(getResourcePath('vendor'), 'ffmpeg', 'bin'),
             path.join(getResourcePath('vendor'), 'windows', 'ffmpeg', 'bin'),
+            // 额外的 fallback：直接在 vendor/ffmpeg 下（无 bin 子目录的情况）
+            path.join(getResourcePath('vendor'), 'ffmpeg'),
         ];
+        log(`[FFmpeg] Windows resource path: ${getResourcePath('vendor')}`);
+        let found = false;
         for (const vendorFfmpeg of candidates) {
+            log(`[FFmpeg] Checking candidate: ${vendorFfmpeg} exists=${fs.existsSync(vendorFfmpeg)}`);
             if (fs.existsSync(vendorFfmpeg)) {
-                log(`Using vendor FFmpeg on Windows: ${vendorFfmpeg}`);
-                process.env.PATH = `${vendorFfmpeg}${path.delimiter}${process.env.PATH || ''}`;
-                // Set explicit paths so resolveCommand() and other services can find them
                 const ffmpegExe = path.join(vendorFfmpeg, 'ffmpeg.exe');
                 const ffprobeExe = path.join(vendorFfmpeg, 'ffprobe.exe');
-                if (fs.existsSync(ffmpegExe)) process.env.FFMPEG_PATH = ffmpegExe;
-                if (fs.existsSync(ffprobeExe)) process.env.FFPROBE_PATH = ffprobeExe;
-                break;
+                log(`[FFmpeg]   ffmpeg.exe: ${ffmpegExe} exists=${fs.existsSync(ffmpegExe)}`);
+                log(`[FFmpeg]   ffprobe.exe: ${ffprobeExe} exists=${fs.existsSync(ffprobeExe)}`);
+                if (fs.existsSync(ffmpegExe) || fs.existsSync(ffprobeExe)) {
+                    log(`Using vendor FFmpeg on Windows: ${vendorFfmpeg}`);
+                    process.env.PATH = `${vendorFfmpeg}${path.delimiter}${process.env.PATH || ''}`;
+                    if (fs.existsSync(ffmpegExe)) process.env.FFMPEG_PATH = ffmpegExe;
+                    if (fs.existsSync(ffprobeExe)) process.env.FFPROBE_PATH = ffprobeExe;
+                    found = true;
+                    break;
+                }
             }
+        }
+        if (!found) {
+            log(`[FFmpeg] WARNING: ffmpeg/ffprobe not found in any candidate path!`);
         }
     }
 }
@@ -273,9 +285,49 @@ app.whenReady().then(async () => {
         return handleWysiwygIPC(action, data);
     });
 
+    // IPC: 保存 Web Audio 离线渲染的音频（WYSIWYG 混音）
+    ipcMain.handle('save-rendered-audio', async (event, wavData) => {
+        const settingsService = require('./services/settings');
+        const tmpPath = settingsService.secureTmpFile('reels_rendered_audio', '.wav');
+        const buffer = Buffer.from(wavData);
+        fs.writeFileSync(tmpPath, buffer);
+        log(`[WYSIWYG] 保存预渲染音频: ${tmpPath} (${(buffer.length / 1024 / 1024).toFixed(1)}MB)`);
+        return tmpPath;
+    });
+
     // IPC: 获取媒体时长
     ipcMain.handle('get-media-duration', async (event, filePath) => {
         return ffmpegService.getDuration(filePath);
+    });
+
+    // IPC: 读取音频文件为 WAV Buffer（供渲染进程的 Web Audio decodeAudioData 使用）
+    // 先用 FFmpeg 转成 WAV（支持 mp4/mp3 等任何格式）
+    ipcMain.handle('read-file-buffer', async (event, filePath) => {
+        if (!filePath || !fs.existsSync(filePath)) {
+            throw new Error(`文件不存在: ${filePath}`);
+        }
+        const settingsService = require('./services/settings');
+        const { spawnSync } = require('child_process');
+        const ffmpeg = ffmpegService.resolveCommand('ffmpeg');
+
+        // 转为 WAV 供 Web Audio 使用
+        const wavPath = settingsService.secureTmpFile('voice_decode', '.wav');
+        const result = spawnSync(ffmpeg, [
+            '-y', '-i', filePath,
+            '-vn', '-acodec', 'pcm_s16le', '-ar', '44100', '-ac', '2',
+            wavPath,
+        ], { timeout: 30000 });
+
+        if (result.status !== 0 || !fs.existsSync(wavPath)) {
+            // 回退：直接读原文件
+            log(`[read-file-buffer] FFmpeg 转 WAV 失败，直接读原文件`);
+            return fs.readFileSync(filePath);
+        }
+
+        const buf = fs.readFileSync(wavPath);
+        try { fs.unlinkSync(wavPath); } catch (_) { }
+        log(`[read-file-buffer] ${filePath} → WAV ${(buf.length / 1024 / 1024).toFixed(1)}MB`);
+        return buf;
     });
 
     // IPC: 扫描本地字体目录
@@ -389,6 +441,11 @@ app.whenReady().then(async () => {
         initAutoUpdater(mainWindow, log);
     } else {
         log('[Updater] 开发模式，跳过自动更新初始化');
+        // 开发模式下注册 fallback handler，避免前端报错
+        ipcMain.handle('get-update-channel', () => ({
+            channel: 'stable', currentVersion: app.getVersion(), isBeta: false,
+        }));
+        ipcMain.handle('set-update-channel', () => ({ success: true, channel: 'stable' }));
     }
 });
 
