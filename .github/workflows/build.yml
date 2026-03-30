@@ -5,8 +5,8 @@ name: 🚀 Build All Platforms
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - '*'
   
   workflow_dispatch:
     inputs:
