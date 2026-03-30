@@ -43,7 +43,7 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "secure-artifacts",
+        "owner": "vitalitate14-pixel",
         "repo": "pyMediaTools_Electron"
       }
     ],
