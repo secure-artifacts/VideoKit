@@ -85,6 +85,73 @@ function getGladiaKeysPath() { return path.join(getBackendDir(), 'gladia_keys.js
 function loadGladiaKeys() { return readJSON(getGladiaKeysPath()) || { keys: [] }; }
 function saveGladiaKeys(data) { writeJSON(getGladiaKeysPath(), data); }
 
+// Gemini Keys
+const DEFAULT_GEMINI_PROMPT = `你是一个专业的配音文案标注专家，专门为 ElevenLabs 配音软件准备文案。
+
+【核心用途】
+用于 ElevenLabs 配音。场景：祷告 / 宣告 / 属灵鼓励 / 短视频旁白
+
+【情感标签规则（最重要）】
+✅ 只使用情感/语气标签（如 [calm] [reverent] [faith-filled] [pause]）
+❌ 不要使用 emoji
+❌ 不要解释标签含义
+标签要求：克制、稳定、不浮夸、不戏剧化
+
+【节奏与结构】
+- 合适的停顿，常用 [pause]，停顿要合理，符合正常人说话的情况，只有必须停顿的才加停顿，不然太多停顿听着就像是在背台词了
+- 停顿要根据整体文案内容添加的合理自然
+
+【ElevenLabs 特性优化】
+针对 ElevenLabs 的特性，它对停顿和标点非常敏感。在 ElevenLabs 中，直接使用 [pause] 标签有时效果不够自然。
+**最有效的"停顿"其实是利用标点符号（如 ... 或 ,）以及通过情感词引导模型改变语速。**
+- 将情感词放在中括号内并配合 ... 标点，能更好地引导 AI 表现出语气起伏
+- 例如：[calm] Lord... I come before You today, with a grateful heart...
+
+【语气取向】
+根据文案内容，偏向：力量感、祷告感、安抚感、权柄但不咆哮
+避免：情绪炸裂、表演感、过度煽动
+
+【内容处理原则】
+❌ 不改原文意思
+❌ 不擅自删句
+❌ 不加新神学内容
+
+【输出要求 - 分两部分】
+你需要输出两个结果，用 ||| 分隔：
+1. 加标签结果：带情感标签的完整文案（用于 ElevenLabs 配音）
+2. 断句结果：根据标签合理断行后的文案（用于字幕显示）
+
+断行规则：
+- 断句合理，符合语言习惯
+- 每行不超过 4 个单词，便于字幕显示
+- 也不要太短（至少有完整的意思单元）
+- 在 [pause] 标签处自然断行
+- 断句结果不包含情感标签，只保留纯文本
+- ⚠️ 断句结果不包含省略号（...），省略号仅用于配音的加标签结果
+
+输出格式示例：
+[calm] Lord... I come before You today, with a grateful heart...
+|||
+Lord,
+I come before You today,
+with a grateful heart.
+
+【批量处理输出规则】
+你需要处理多条文案，每条以 [编号] 开头。
+对于每条文案，输出格式为：[编号] 加标签结果|||断句结果
+⚠️ 断句结果中的换行用 \\n 表示（字面的反斜杠n），不要真正换行，保持每条结果在同一行。
+每条结果占一行。`;
+
+function getGeminiKeysPath() { return path.join(getBackendDir(), 'gemini_keys.json'); }
+function loadGeminiKeys() { 
+    const data = readJSON(getGeminiKeysPath()) || { keys: [] }; 
+    if (!data.prompt || !data.prompt.trim()) {
+        data.prompt = DEFAULT_GEMINI_PROMPT;
+    }
+    return data;
+}
+function saveGeminiKeys(data) { writeJSON(getGeminiKeysPath(), data); }
+
 // ElevenLabs Settings
 function getElevenLabsSettingsPath() { return path.join(getBackendDir(), 'elevenlabs_settings.json'); }
 function loadElevenLabsSettings() {
@@ -96,14 +163,27 @@ function loadElevenLabsSettings() {
     return {
         api_key: keys[0] || '',
         api_keys: keys,
+        use_web_token: !!data.use_web_token
     };
 }
-function saveElevenLabsSettings(data) {
-    let keys = data.api_keys || [];
+function saveElevenLabsSettings(inputData) {
+    const existingData = readJSON(getElevenLabsSettingsPath()) || {};
+    let keys = inputData.api_keys || [];
     if (typeof keys === 'string') keys = [keys];
-    if (keys.length === 0 && data.api_key) keys = [data.api_key];
+    if (keys.length === 0 && inputData.api_key) keys = [inputData.api_key];
     keys = keys.filter(k => typeof k === 'string' && k.trim());
-    const payload = { api_key: keys[0] || '', api_keys: keys };
+    
+    // Retain full existing state and overlay new changes
+    const payload = { 
+        ...existingData,
+        api_key: keys[0] || '', 
+        api_keys: keys 
+    };
+    
+    if (inputData.use_web_token !== undefined) {
+        payload.use_web_token = !!inputData.use_web_token;
+    }
+    
     writeJSON(getElevenLabsSettingsPath(), payload);
     return payload;
 }
@@ -221,6 +301,8 @@ module.exports = {
     writeJSON,
     loadGladiaKeys,
     saveGladiaKeys,
+    loadGeminiKeys,
+    saveGeminiKeys,
     loadElevenLabsSettings,
     saveElevenLabsSettings,
     loadElevenLabsKeysWithStatus,
@@ -233,4 +315,5 @@ module.exports = {
     getLanguages,
     LANGUAGES,
     UPLOAD_DIR,
+    DEFAULT_GEMINI_PROMPT,
 };

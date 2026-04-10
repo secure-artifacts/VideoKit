@@ -111,9 +111,11 @@ async function vwPasteFromClipboard() {
 
                 tableRows.forEach(tr => {
                     const cells = tr.querySelectorAll('td, th');
-                    if (cells.length >= 2) {
+                    if (cells.length >= 1) {
                         const ttsText = getCellTextWithBreaks(cells[0]);
-                        const subtitleText = getCellTextWithBreaks(cells[1]);
+                        let subtitleText = cells.length >= 2 ? getCellTextWithBreaks(cells[1]) : ttsText;
+                        if (!subtitleText) subtitleText = ttsText; // 如果第二列为空白，直接使用第一列文案
+
                         const voiceId = cells[2]?.textContent.trim() || '';
                         const bgmPath = cells[3]?.textContent.trim() || '';
                         if (ttsText) {
@@ -131,15 +133,22 @@ async function vwPasteFromClipboard() {
 
                 lines.forEach(line => {
                     const parts = line.split('\t');
-                    if (parts.length >= 2) {
-                        rows.push({
-                            ttsText: parts[0]?.trim() || '',
-                            subtitleText: parts[1]?.trim() || '',
-                            voiceId: parts[2]?.trim() || '',
-                            bgmPath: parts[3]?.trim() || '',
-                            split: defaultSplit,
-                            exportMp4: defaultMp4
-                        });
+                    if (parts.length >= 1) {
+                        const ttsText = parts[0]?.trim() || '';
+                        let subtitleText = parts.length >= 2 ? (parts[1]?.trim() || '') : ttsText;
+                        if (!subtitleText) subtitleText = ttsText; // 如果第二列为空白，直接使用第一列文案
+                        
+                        // 只在有真实内容时压入
+                        if (ttsText) {
+                            rows.push({
+                                ttsText: ttsText,
+                                subtitleText: subtitleText,
+                                voiceId: parts[2]?.trim() || '',
+                                bgmPath: parts[3]?.trim() || '',
+                                split: defaultSplit,
+                                exportMp4: defaultMp4
+                            });
+                        }
                     }
                 });
             }
@@ -205,10 +214,10 @@ function renderVWTasks() {
                 </span>
             </div>
             <div style="font-size: 12px; color: var(--text-primary); margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(task.ttsText)}">
-                <strong>TTS:</strong> ${escapeHtml(task.ttsText.substring(0, 80))}${task.ttsText.length > 80 ? '...' : ''}
+                <strong>[列1] TTS配音:</strong> ${escapeHtml(task.ttsText.substring(0, 80))}${task.ttsText.length > 80 ? '...' : ''}
             </div>
             <div style="font-size: 11px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(task.subtitleText)}">
-                <strong>字幕:</strong> ${escapeHtml(task.subtitleText.substring(0, 60).replace(/\n/g, ' | '))}${task.subtitleText.length > 60 ? '...' : ''}
+                <strong>[列2] AI字幕原文:</strong> ${escapeHtml(task.subtitleText.substring(0, 60).replace(/\n/g, ' | '))}${task.subtitleText.length > 60 ? '...' : ''}
             </div>
             ${task.voiceId ? `<div style="font-size: 10px; color: var(--text-muted); margin-top: 2px;">音色: ${task.voiceId}</div>` : ''}
             <div style="display:flex;align-items:center;gap:6px;margin-top:4px;font-size:10px;color:var(--text-muted);">

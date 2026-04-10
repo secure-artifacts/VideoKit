@@ -152,9 +152,9 @@ class ReelsVideoCanvas {
         } else {
             // 占位渐变
             const grad = vctx.createLinearGradient(0, 0, 0, ch);
-            grad.addColorStop(0, '#1a1a2e');
-            grad.addColorStop(0.5, '#16213e');
-            grad.addColorStop(1, '#0f3460');
+            grad.addColorStop(0, '#181818');
+            grad.addColorStop(0.5, '#1e1e1e');
+            grad.addColorStop(1, '#2a2a2a');
             vctx.fillStyle = grad;
             vctx.fillRect(0, 0, cw, ch);
         }
@@ -196,7 +196,7 @@ class ReelsVideoCanvas {
 
         // 虚线选框
         ctx.save();
-        ctx.strokeStyle = '#00D4FF';
+        ctx.strokeStyle = '#4c9eff';
         ctx.lineWidth = 2;
         ctx.setLineDash([6, 3]);
         ctx.strokeRect(x, y, w, h);
@@ -204,7 +204,7 @@ class ReelsVideoCanvas {
 
         // 8 个缩放手柄
         const handles = this._getHandleRects(x, y, w, h);
-        ctx.fillStyle = '#00D4FF';
+        ctx.fillStyle = '#4c9eff';
         ctx.strokeStyle = '#fff';
         ctx.lineWidth = 1.5;
         for (const handle of handles) {
@@ -216,7 +216,7 @@ class ReelsVideoCanvas {
 
         // 尺寸标签
         ctx.font = '11px monospace';
-        ctx.fillStyle = '#00D4FF';
+        ctx.fillStyle = '#4c9eff';
         ctx.textAlign = 'center';
         ctx.fillText(`${Math.round(ov.w)}×${Math.round(ov.h)}`, x + w / 2, y - 8);
 
@@ -394,7 +394,7 @@ class ReelsVideoCanvas {
             fontWeight: String(Math.max(100, Math.min(900, parseInt(ov.font_weight || (ov.bold ? 700 : 400), 10) || 400))),
             color: ov.color || '#fff',
             background: 'rgba(0,0,0,0.6)',
-            border: '2px solid #00D4FF',
+            border: '2px solid #4c9eff',
             borderRadius: '4px',
             padding: '4px',
             resize: 'none',

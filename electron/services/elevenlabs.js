@@ -19,11 +19,24 @@ function request(method, urlPath, apiKey, body = null, timeout = 15000) {
             path: url.pathname + url.search,
             method,
             headers: {
-                'xi-api-key': apiKey,
                 'Accept': 'application/json',
             },
             timeout,
         };
+
+        if (apiKey === '__WEB_TOKEN__') {
+            const data = loadSettings();
+            const wt = data.web_token || {};
+            if (wt.xiApiKey) options.headers['xi-api-key'] = wt.xiApiKey;
+            if (wt.authorization) options.headers['Authorization'] = wt.authorization;
+            if (wt.cookie) options.headers['Cookie'] = wt.cookie;
+            options.headers['Origin'] = 'https://elevenlabs.io';
+            options.headers['Referer'] = 'https://elevenlabs.io/';
+            options.headers['User-Agent'] = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+        } else {
+            options.headers['xi-api-key'] = apiKey;
+        }
+
         // Intentional: sending user text to ElevenLabs TTS API
         const requestPayload = (body && method !== 'GET') ? String(JSON.stringify(body)) : null;
         if (requestPayload) {
@@ -72,21 +85,59 @@ function saveSettings(data) {
 /** 加载 API Keys，返回 key 字符串数组（启用的） */
 function loadKeys(includeDisabled = false) {
     const data = loadSettings();
-    const keysWithStatus = data.keys_with_status || [];
-
-    if (keysWithStatus.length > 0) {
-        if (includeDisabled) return keysWithStatus;
-        return keysWithStatus
-            .filter(k => k.enabled !== false)
-            .map(k => (typeof k === 'string') ? k : k.key)
-            .filter(k => k && k.trim());
+    let keysWithStatus = data.keys_with_status || [];
+    let keysResult = [];
+    
+    // 如果启用了网页抓取 Token
+    if (data.use_web_token && data.web_token) {
+        if (includeDisabled || data.web_token_enabled !== false) {
+            keysResult.push('__WEB_TOKEN__');
+        }
     }
 
-    // 兼容旧格式
-    let keys = data.api_keys || [];
-    if (typeof keys === 'string') keys = [keys];
-    if (keys.length === 0 && data.api_key) keys = [data.api_key];
-    return keys.filter(k => k && k.trim());
+    // ── 自动合并：确保 api_keys 里的条目全部存在于 keys_with_status ──
+    // 防止 keys_with_status 只存了部分 key 导致轮换失效
+    let legacyKeys = data.api_keys || [];
+    if (typeof legacyKeys === 'string') legacyKeys = [legacyKeys];
+    if (legacyKeys.length === 0 && data.api_key) legacyKeys = [data.api_key];
+    legacyKeys = legacyKeys.filter(k => k && k.trim());
+
+    if (legacyKeys.length > 0) {
+        // Normalize existing entries: convert bare strings to {key, enabled} objects
+        keysWithStatus = keysWithStatus.map(entry =>
+            typeof entry === 'string' ? { key: entry, enabled: true } : entry
+        );
+        const existingSet = new Set(keysWithStatus.map(e => e.key));
+        let migrated = 0;
+        for (const k of legacyKeys) {
+            if (!existingSet.has(k)) {
+                keysWithStatus.push({ key: k, enabled: true });
+                existingSet.add(k);
+                migrated++;
+            }
+        }
+        if (migrated > 0) {
+            data.keys_with_status = keysWithStatus;
+            try { saveSettings(data); } catch {}
+            console.log(`[ElevenLabs] 自动合并了 ${migrated} 个 api_keys → keys_with_status (总计 ${keysWithStatus.length})`);
+        }
+    }
+
+    if (keysWithStatus.length > 0) {
+        if (includeDisabled) {
+             keysResult.push(...keysWithStatus);
+        } else {
+             keysResult.push(...keysWithStatus
+                .filter(k => (typeof k === 'object') ? k.enabled !== false : true)
+                .map(k => (typeof k === 'string') ? k : k.key)
+                .filter(k => k && k.trim()));
+        }
+        return keysResult;
+    }
+
+    // 纯旧格式 fallback（两个数组都为空时）
+    keysResult.push(...legacyKeys);
+    return keysResult;
 }
 
 function selectKey(keys, keyIndex) {
@@ -117,6 +168,26 @@ function parseElevenLabsError(status, body) {
 
 function setKeyEnabled(apiKey, enabled, reason = '', source = 'auto') {
     const data = loadSettings();
+    
+    if (apiKey === '__WEB_TOKEN__') {
+        const manualDisabled = !enabled && source === 'manual';
+        
+        if (source === 'auto' && enabled && data.web_token_manual_disabled) {
+            return; // ignore auto re-enable if manually disabled
+        }
+        
+        data.web_token_enabled = enabled;
+        if (source === 'manual') {
+            data.web_token_manual_disabled = manualDisabled;
+        } else {
+            data.web_token_auto_disabled = !enabled;
+            if (!enabled) data.web_token_auto_disabled_reason = reason;
+        }
+        saveSettings(data);
+        console.log(`[ElevenLabs] 已${source === 'manual' ? '手动' : '自动'}${enabled ? '启用' : '停用'} 网页Token`);
+        return;
+    }
+
     const kws = data.keys_with_status || [];
     let changed = false;
     for (const entry of kws) {
@@ -132,9 +203,9 @@ function setKeyEnabled(apiKey, enabled, reason = '', source = 'auto') {
             }
 
             if (source === 'manual') {
-                const manualDisabled = !enabled;
-                if (entry.manual_disabled !== manualDisabled) {
-                    entry.manual_disabled = manualDisabled;
+                const isManualDisabled = !enabled;
+                if (entry.manual_disabled !== isManualDisabled) {
+                    entry.manual_disabled = isManualDisabled;
                     changed = true;
                 }
                 // 手动启用时，清除自动停用标志
@@ -280,8 +351,8 @@ async function requestTTS(apiKey, voiceId, text, modelId, stability, outputForma
         voice_settings: { stability, similarity_boost: 0.75 },
     };
 
-    async function doRequest() {
-        return await request('POST', `/text-to-speech/${voiceId}?output_format=${outputFormat}`, apiKey, payload, 60000);
+    async function doRequest(vid) {
+        return await request('POST', `/text-to-speech/${vid || voiceId}?output_format=${outputFormat}`, apiKey, payload, 60000);
     }
 
     let res = await doRequest();
@@ -289,6 +360,31 @@ async function requestTTS(apiKey, voiceId, text, modelId, stability, outputForma
     if (res.status !== 200) {
         const errInfo = parseElevenLabsError(res.status, res.body);
         const classified = classifyError(errInfo);
+
+        // 社区音色未添加 → 自动添加到库后重试
+        if (classified.category === 'voice_error') {
+            console.log(`[TTS] 音色 ${voiceId} 不在个人库中，尝试自动从社区添加...`);
+            try {
+                const addResult = await addVoice(apiKey, voiceId, 'AutoAdded', true);
+                if (addResult && addResult.success) {
+                    const newVoiceId = addResult.voice_id || voiceId;
+                    console.log(`[TTS] 社区音色已自动添加 (${newVoiceId})，重试 TTS...`);
+                    await new Promise(r => setTimeout(r, 500));
+                    const retryRes = await doRequest(newVoiceId);
+                    if (retryRes.status === 200) return retryRes.body;
+                    // 重试仍失败，继续走下面的错误处理
+                    const retryErr = parseElevenLabsError(retryRes.status, retryRes.body);
+                    const retryClassified = classifyError(retryErr);
+                    const error = new Error(retryClassified.userMessage);
+                    error.classified = retryClassified;
+                    error.errInfo = retryErr;
+                    throw error;
+                }
+            } catch (addErr) {
+                console.warn(`[TTS] 自动添加社区音色失败:`, addErr.message);
+                // 如果添加失败，继续抛出原始错误
+            }
+        }
 
         // 音色数量限制 → 尝试自动删除
         if (classified.category === 'voice_limit' && autoDeleteOnLimit) {
@@ -353,7 +449,7 @@ async function requestTTSWithRotation(keys, voiceId, text, modelId, stability, o
 
 // ==================== 音色管理 ====================
 
-async function getVoices(apiKey) {
+async function getVoices(apiKey, extended = false) {
     const res = await request('GET', '/voices', apiKey);
     if (res.status !== 200) throw new Error(`获取音色列表失败: ${res.status}`);
     const data = parseJSON(res.body) || {};
@@ -371,6 +467,43 @@ async function getVoices(apiKey) {
             created_at: v.created_date || '',
         };
     });
+
+    // 扩展模式（Web Token）：额外拉取社区音色库热门音色，合并到列表中
+    if (extended) {
+        const existingIds = new Set(voices.map(v => v.voice_id));
+        // 拉取多个语种/类别的热门音色
+        const queries = [
+            { label: '热门', params: 'page_size=100&sort=trending' },
+            { label: '中文', params: 'page_size=50&sort=trending&language=zh' },
+            { label: '英语', params: 'page_size=50&sort=trending&language=en' },
+        ];
+        for (const q of queries) {
+            try {
+                const sharedRes = await request('GET', `/shared-voices?${q.params}`, apiKey);
+                if (sharedRes.status === 200) {
+                    const sharedData = parseJSON(sharedRes.body) || {};
+                    for (const sv of (sharedData.voices || [])) {
+                        const vid = sv.voice_id || sv.public_owner_id;
+                        if (!vid || existingIds.has(vid)) continue;
+                        existingIds.add(vid);
+                        voices.push({
+                            voice_id: vid,
+                            name: `[社区${q.label}] ${sv.name}`,
+                            preview_url: sv.preview_url || '',
+                            can_delete: false,
+                            category: 'shared',
+                            public_owner_id: sv.public_owner_id || vid,
+                            created_at: '',
+                        });
+                    }
+                }
+            } catch (e) {
+                console.warn(`[ElevenLabs] 获取社区音色(${q.label})失败:`, e.message);
+            }
+        }
+        console.log(`[ElevenLabs] 扩展模式: 个人 ${data.voices?.length || 0} + 社区 ${voices.length - (data.voices?.length || 0)} = 总计 ${voices.length} 个音色`);
+    }
+
     return voices;
 }
 
@@ -456,13 +589,22 @@ async function getAllQuotas() {
 
     const results = [];
     let keysChanged = false;
+    const dataSettings = loadSettings(); // 获取全局设置给 web_token 参考
 
     for (let i = 0; i < keysData.length; i++) {
         const entry = keysData[i];
         const key = typeof entry === 'string' ? entry : entry.key;
-        let enabled = typeof entry === 'object' ? entry.enabled !== false : true;
-        const manualDisabled = typeof entry === 'object' ? !!entry.manual_disabled : false;
-        let autoDisabled = typeof entry === 'object' ? !!entry.auto_disabled : false;
+        
+        let enabled, manualDisabled, autoDisabled;
+        if (key === '__WEB_TOKEN__') {
+            enabled = dataSettings.web_token_enabled !== false;
+            manualDisabled = !!dataSettings.web_token_manual_disabled;
+            autoDisabled = !!dataSettings.web_token_auto_disabled;
+        } else {
+            enabled = typeof entry === 'object' ? entry.enabled !== false : true;
+            manualDisabled = typeof entry === 'object' ? !!entry.manual_disabled : false;
+            autoDisabled = typeof entry === 'object' ? !!entry.auto_disabled : false;
+        }
 
         if (!key) continue;
 
@@ -472,47 +614,59 @@ async function getAllQuotas() {
 
             // 自动停用余额不足 200 的 key
             if (remaining < 200 && enabled && !manualDisabled) {
-                if (typeof entry === 'object') {
+                if (key === '__WEB_TOKEN__') {
+                    dataSettings.web_token_enabled = false;
+                    dataSettings.web_token_auto_disabled = true;
+                    dataSettings.web_token_auto_disabled_reason = `remaining<200`;
+                    saveSettings(dataSettings);
+                } else if (typeof entry === 'object') {
                     entry.enabled = false;
                     entry.auto_disabled = true;
                     entry.auto_disabled_reason = `remaining<200`;
+                    keysChanged = true;
                 }
-                keysChanged = true;
                 enabled = false;
                 autoDisabled = true;
             } else if (remaining >= 200 && !enabled && autoDisabled && !manualDisabled) {
-                if (typeof entry === 'object') {
+                if (key === '__WEB_TOKEN__') {
+                    dataSettings.web_token_enabled = true;
+                    dataSettings.web_token_auto_disabled = false;
+                    dataSettings.web_token_auto_disabled_reason = '';
+                    saveSettings(dataSettings);
+                } else if (typeof entry === 'object') {
                     entry.enabled = true;
                     entry.auto_disabled = false;
                     entry.auto_disabled_reason = '';
+                    keysChanged = true;
                 }
-                keysChanged = true;
                 enabled = true;
                 autoDisabled = false;
             }
 
-            const maskKey = k => k ? '***' + k.slice(-4) : '';
+            const maskKey = k => k === '__WEB_TOKEN__' ? '[网页Token]' : (k ? '***' + k.slice(-4) : '');
             results.push({
                 index: i + 1,
                 key_prefix: maskKey(key),
                 usage: quota.usage, limit: quota.limit,
                 remaining, percent: quota.limit > 0 ? Math.round(quota.usage / quota.limit * 1000) / 10 : 0,
                 enabled, manual_disabled: manualDisabled, auto_disabled: autoDisabled,
+                is_web_token: key === '__WEB_TOKEN__'
             });
         } catch (e) {
-            const maskKey = k => k ? '***' + k.slice(-4) : '';
+            const maskKey = k => k === '__WEB_TOKEN__' ? '[网页Token]' : (k ? '***' + k.slice(-4) : '');
             results.push({
                 index: i + 1,
                 key_prefix: maskKey(key),
                 error: e.message,
                 enabled, manual_disabled: manualDisabled, auto_disabled: autoDisabled,
+                is_web_token: key === '__WEB_TOKEN__'
             });
         }
     }
 
     if (keysChanged) {
         const data = loadSettings();
-        data.keys_with_status = keysData;
+        data.keys_with_status = keysData.filter(k => k !== '__WEB_TOKEN__'); // Save only real keys back to keys_with_status
         saveSettings(data);
     }
 

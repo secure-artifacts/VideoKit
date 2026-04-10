@@ -736,8 +736,36 @@ async function composeReel({
             vcodec = 'h264_videotoolbox';
             preset = null;
         } else if (platform === 'win32') {
-            vcodec = 'h264_nvenc';
-            preset = 'p4';
+            // 按优先级：NVENC(Nvidia) → AMF(AMD) → QSV(Intel)
+            // 在这个 fallback 路径中只做简单选择，实际主路径走 WYSIWYG 引擎有完整探测
+            const { spawnSync } = require('child_process');
+            const ffmpegBin = resolveCommand('ffmpeg');
+            const testEncoders = [
+                { codec: 'h264_nvenc', preset: 'p4' },
+                { codec: 'h264_amf', preset: null },
+                { codec: 'h264_qsv', preset: null },
+            ];
+            let found = false;
+            for (const enc of testEncoders) {
+                try {
+                    const r = spawnSync(ffmpegBin, [
+                        '-y', '-f', 'lavfi', '-i', 'color=c=black:s=256x256:d=0.1',
+                        '-c:v', enc.codec, '-frames:v', '1', '-f', 'null', '-'
+                    ], { timeout: 10000, stdio: ['ignore', 'ignore', 'pipe'] });
+                    if (r.status === 0) {
+                        vcodec = enc.codec;
+                        preset = enc.preset;
+                        found = true;
+                        console.log(`[composeReel] GPU 编码器: ${enc.codec}`);
+                        break;
+                    }
+                } catch (_) {}
+            }
+            if (!found) {
+                console.log(`[composeReel] Windows GPU 编码器均不可用，回退 CPU`);
+                vcodec = 'libx264';
+                preset = 'medium';
+            }
         }
     }
 

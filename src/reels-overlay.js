@@ -96,7 +96,7 @@ function createImageOverlay(opts = {}) {
 }
 
 /**
- * 创建文案卡片覆层对象。
+ * 创建文字卡片覆层对象。
  * 包含：纯色半透明背景 + 四角独立圆角 + 标题 + 内容（不同字体样式）
  */
 function createTextCardOverlay(opts = {}) {
@@ -104,10 +104,11 @@ function createTextCardOverlay(opts = {}) {
         id: _overlayId(),
         type: 'textcard',
         // ── 卡片位置/尺寸 ──
-        x: opts.x ?? 40,
-        y: opts.y ?? 200,
+        // Top-left defaults corresponding to center position (0,0) for 1080x1920 with 910x1300 card
+        x: opts.x ?? 85,
+        y: opts.y ?? 310,
         w: opts.w ?? 910,
-        h: opts.h ?? 0,           // 0 = 自动计算高度
+        h: opts.h ?? 1300,        // 默认1300；手动设为0时表示自动计算高度
         rotation: opts.rotation ?? 0,
         opacity: opts.opacity ?? 255,
         start: opts.start ?? 0,
@@ -129,8 +130,10 @@ function createTextCardOverlay(opts = {}) {
         title_italic: opts.title_italic || false,
         title_color: opts.title_color || '#000000',
         title_align: opts.title_align || 'center',
+        title_valign: opts.title_valign || 'top',
         title_uppercase: opts.title_uppercase ?? true,
-        title_letter_spacing: opts.title_letter_spacing ?? 1,
+        title_letter_spacing: opts.title_letter_spacing ?? 0,
+        title_line_spacing: opts.title_line_spacing ?? 0,
         // ── 内容 ──
         body_text: opts.body_text ?? '内容文字',
         body_font_family: opts.body_font_family || 'Arial',
@@ -140,6 +143,8 @@ function createTextCardOverlay(opts = {}) {
         body_italic: opts.body_italic || false,
         body_color: opts.body_color || '#000000',
         body_align: opts.body_align || 'center',
+        body_valign: opts.body_valign || 'top',
+        body_letter_spacing: opts.body_letter_spacing ?? 0,
         body_line_spacing: opts.body_line_spacing ?? 6,
         // ── 结尾 ──
         footer_text: opts.footer_text ?? '',
@@ -150,29 +155,84 @@ function createTextCardOverlay(opts = {}) {
         footer_italic: opts.footer_italic || false,
         footer_color: opts.footer_color || '#666666',
         footer_align: opts.footer_align || 'center',
-        // ── 文字效果 ──
+        footer_valign: opts.footer_valign || 'top',
+        footer_letter_spacing: opts.footer_letter_spacing ?? 0,
+        footer_line_spacing: opts.footer_line_spacing ?? 0,
+        // ── 文字效果（共享模式）──
         text_stroke_color: opts.text_stroke_color || '#000000',
         text_stroke_width: opts.text_stroke_width ?? 0,
         text_shadow_color: opts.text_shadow_color || '#000000',
         text_shadow_blur: opts.text_shadow_blur ?? 0,
         text_shadow_x: opts.text_shadow_x ?? 0,
         text_shadow_y: opts.text_shadow_y ?? 0,
+        // ── 独立效果模式 ──
+        independent_effects: opts.independent_effects ?? false,
+        // 标题独立效果
+        title_stroke_color: opts.title_stroke_color || '#000000',
+        title_stroke_width: opts.title_stroke_width ?? 0,
+        title_shadow_color: opts.title_shadow_color || '#000000',
+        title_shadow_blur: opts.title_shadow_blur ?? 0,
+        title_shadow_x: opts.title_shadow_x ?? 0,
+        title_shadow_y: opts.title_shadow_y ?? 0,
+        // 内容独立效果
+        body_stroke_color: opts.body_stroke_color || '#000000',
+        body_stroke_width: opts.body_stroke_width ?? 0,
+        body_shadow_color: opts.body_shadow_color || '#000000',
+        body_shadow_blur: opts.body_shadow_blur ?? 0,
+        body_shadow_x: opts.body_shadow_x ?? 0,
+        body_shadow_y: opts.body_shadow_y ?? 0,
+        // 结尾独立效果
+        footer_stroke_color: opts.footer_stroke_color || '#000000',
+        footer_stroke_width: opts.footer_stroke_width ?? 0,
+        footer_shadow_color: opts.footer_shadow_color || '#000000',
+        footer_shadow_blur: opts.footer_shadow_blur ?? 0,
+        footer_shadow_x: opts.footer_shadow_x ?? 0,
+        footer_shadow_y: opts.footer_shadow_y ?? 0,
+        // 独立背景（每部分单独背景色/透明度/圆角）
+        title_bg_enabled: opts.title_bg_enabled ?? false,
+        title_bg_mode: opts.title_bg_mode || 'block',
+        title_bg_color: opts.title_bg_color || '#000000',
+        title_bg_opacity: opts.title_bg_opacity ?? 60,
+        title_bg_radius: opts.title_bg_radius ?? 12,
+        title_bg_pad_h: opts.title_bg_pad_h ?? 0,
+        title_bg_pad_top: opts.title_bg_pad_top ?? 0,
+        title_bg_pad_bottom: opts.title_bg_pad_bottom ?? 0,
+
+        body_bg_enabled: opts.body_bg_enabled ?? false,
+        body_bg_mode: opts.body_bg_mode || 'block',
+        body_bg_color: opts.body_bg_color || '#000000',
+        body_bg_opacity: opts.body_bg_opacity ?? 60,
+        body_bg_radius: opts.body_bg_radius ?? 12,
+        body_bg_pad_h: opts.body_bg_pad_h ?? 0,
+        body_bg_pad_top: opts.body_bg_pad_top ?? 0,
+        body_bg_pad_bottom: opts.body_bg_pad_bottom ?? 0,
+
+        footer_bg_enabled: opts.footer_bg_enabled ?? false,
+        footer_bg_mode: opts.footer_bg_mode || 'block',
+        footer_bg_color: opts.footer_bg_color || '#000000',
+        footer_bg_opacity: opts.footer_bg_opacity ?? 60,
+        footer_bg_radius: opts.footer_bg_radius ?? 12,
+        footer_bg_pad_h: opts.footer_bg_pad_h ?? 0,
+        footer_bg_pad_top: opts.footer_bg_pad_top ?? 0,
+        footer_bg_pad_bottom: opts.footer_bg_pad_bottom ?? 0,
         // ── 自动适配 ──
-        auto_fit: opts.auto_fit !== false,        // 根据文案长短自动调整蒙版大小
-        auto_center_v: opts.auto_center_v ?? true, // 自动垂直居中
+        auto_fit: opts.auto_fit === true,         // 默认关闭；仅显式开启时生效
+        auto_center_v: opts.auto_center_v === true, // 默认关闭；仅显式开启时生效
         // ── 内边距 ──
-        padding_top: opts.padding_top ?? 20,
-        padding_bottom: opts.padding_bottom ?? 40,
+        padding_top: opts.padding_top ?? 60,
+        padding_bottom: opts.padding_bottom ?? 60,
         padding_left: opts.padding_left ?? 40,
         padding_right: opts.padding_right ?? 40,
-        title_body_gap: opts.title_body_gap ?? 42,  // 标题与内容间距
+        title_body_gap: opts.title_body_gap ?? 42,  // 标题与正文间距
+        body_footer_gap: opts.body_footer_gap ?? 42, // 正文与结尾间距
         // ── 自适应限制 ──
         max_height: opts.max_height ?? 1400,
-        auto_shrink: opts.auto_shrink !== false,
+        auto_shrink: opts.auto_shrink === true,
         title_max_lines: opts.title_max_lines ?? 3,
         min_fontsize: opts.min_fontsize ?? 16,
         fullscreen_mask: opts.fullscreen_mask ?? false,
-        // ── 垂直偏移 ──
+        // ── 获取位置偏移 ──
+        offset_x: opts.offset_x ?? 0,
         offset_y: opts.offset_y ?? 0,
         // ── 动画 ──
         transition_preset: opts.transition_preset || 'none',
@@ -288,6 +348,22 @@ function _getCachedImage(path) {
     return null;
 }
 
+const _videoCache = {};
+function _getCachedVideo(path) {
+    if (!path) return null;
+    if (_videoCache[path]) return _videoCache[path];
+    const vid = document.createElement('video');
+    vid.src = path;
+    vid.muted = true;
+    vid.loop = true;
+    vid.playsInline = true;
+    // We don't autoplay. We will manage its playback based on currentTime
+    vid.load();
+    _videoCache[path] = vid;
+    return vid;
+}
+
+
 /**
  * 渲染单个覆层到 Canvas。
  * 移植自 FrameRenderer.draw_single_overlay
@@ -299,6 +375,8 @@ function _getCachedImage(path) {
  * @param {number} canvasH - 画布高度
  */
 function drawOverlay(ctx, ov, currentTime = 0, canvasW = 1920, canvasH = 1080) {
+    if (ov.disabled) return;
+    
     const start = parseFloat(ov.start || 0);
     const end = parseFloat(ov.end || 0);
 
@@ -307,8 +385,24 @@ function drawOverlay(ctx, ov, currentTime = 0, canvasW = 1920, canvasH = 1080) {
     if (currentTime < start) return;
     if (ov.type !== 'scroll' && currentTime > end + 0.001) return;
 
-    const x = parseFloat(ov.x || 0);
-    const y = parseFloat(ov.y || 0);
+    let x = parseFloat(ov.x || 0);
+    let y = parseFloat(ov.y || 0);
+    let destScaleOffset = 1.0;
+
+    if (ov.anim_dest_enabled && end > start) {
+        const p = Math.max(0, Math.min(1, (currentTime - start) / (end - start)));
+        const easedP = window.ReelsAnimEngine ? window.ReelsAnimEngine.EASING_MAP['ease_in_out_quad'](p) : p;
+        
+        const endX = parseFloat(ov.anim_end_x ?? x);
+        const endY = parseFloat(ov.anim_end_y ?? y);
+        const endScale = parseFloat(ov.anim_end_scale ?? 100) / 100.0;
+        // The scale starts at 1.0 (relative to static scale), and goes to endScale
+        
+        x = x + (endX - x) * easedP;
+        y = y + (endY - y) * easedP;
+        destScaleOffset = 1.0 + (endScale - 1.0) * easedP;
+    }
+
     const w = parseFloat(ov.w || 100);
     const h = parseFloat(ov.h || 100);
     const rotation = parseFloat(ov.rotation || 0);
@@ -334,6 +428,8 @@ function drawOverlay(ctx, ov, currentTime = 0, canvasW = 1920, canvasH = 1080) {
         transDx = result[2];
         transDy = result[3];
     }
+    
+    transScale *= destScaleOffset;
 
     ctx.translate(transDx, transDy);
     if (Math.abs(transScale - 1) > 0.0001) {
@@ -351,6 +447,8 @@ function drawOverlay(ctx, ov, currentTime = 0, canvasW = 1920, canvasH = 1080) {
         _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime);
     } else if (ov.type === 'scroll') {
         _drawScrollOverlay(ctx, ov, x, y, w, h, currentTime, canvasW, canvasH);
+    } else if (ov.type === 'video') {
+        _drawVideoOverlay(ctx, ov, x, y, w, h, currentTime);
     }
 
     ctx.restore();
@@ -394,6 +492,104 @@ function _drawImageOverlay(ctx, ov, x, y, w, h) {
     ctx.restore();
     ctx.globalCompositeOperation = 'source-over';
 }
+
+/**
+ * 渲染视频覆层 (内部)。
+ * 支持导出模式 (PNG序列) 和 预览模式(<video> / <img>)
+ */
+function _drawVideoOverlay(ctx, ov, x, y, w, h, currentTime) {
+    const videoPath = ov.content || '';
+    if (!videoPath) return;
+
+    const scale = parseFloat(ov.scale || 1);
+    const flipX = ov.flip_x || false;
+    const flipY = ov.flip_y || false;
+    const keepAspect = ov.keep_aspect !== false;
+    const blendMode = ov.blend_mode || 'source-over';
+    
+    // 相对本覆层的播放时间
+    const start = parseFloat(ov.start || 0);
+    let relTime = Math.max(0, currentTime - start);
+
+    let drawable = null;
+    const isGif = videoPath ? videoPath.toLowerCase().endsWith('.gif') : false;
+
+    if (ov.is_img_sequence && ov.sequence_frames && ov.sequence_frames.length > 0) {
+        // ═══ 图像序列处理 (预览与导出通用) ═══
+        const fps = ov.fps || 30;
+        let frameIdx = Math.floor(relTime * fps);
+        if (frameIdx >= ov.sequence_frames.length) {
+            frameIdx = frameIdx % ov.sequence_frames.length; // loop
+        }
+        if (ov._exporting && ov._currentFrameImage) {
+            drawable = ov._currentFrameImage;
+        } else {
+            drawable = _getCachedImage(ov.sequence_frames[frameIdx]);
+        }
+    } else if (ov._exporting && ov._framesDir) {
+        // ═══ 导出模式：读取预处理的 PNG 序列 ═══
+        const fps = 30; // 假设提取是30fps
+        let frameIdx = Math.floor(relTime * fps);
+        if (frameIdx >= ov._frameCount) {
+            frameIdx = frameIdx % Math.max(1, ov._frameCount); // loop
+        }
+        const frameName = `frame_${String(frameIdx + 1).padStart(6, '0')}.png`;
+        const fPath = `${ov._framesDir}/${frameName}`;
+        if (ov._currentFrameImage) {
+            drawable = ov._currentFrameImage;
+        } else {
+            drawable = _getCachedImage(`file://${fPath}`); 
+        }
+    } else {
+        // ═══ 预览模式：使用 <video> 或 <img> ═══
+        if (isGif) {
+            // GIF 只是个 img，它会自由播放
+            drawable = _getCachedImage(videoPath);
+        } else {
+            const vid = _getCachedVideo(videoPath);
+            if (vid && vid.readyState >= 2) {
+                drawable = vid;
+                // 让预览的 video 也循环，匹配导出时的循环机制
+                let targetTime = relTime;
+                const d = vid.duration || 1;
+                if (targetTime >= d) targetTime = targetTime % d;
+
+                // 简单的同步逻辑：检测如果误差大于0.2秒就seek
+                if (Math.abs(vid.currentTime - targetTime) > 0.2) {
+                    vid.currentTime = targetTime;
+                }
+                if (vid.paused && document.visibilityState === 'visible') {
+                    // vid.play().catch(e => {}); 
+                }
+            }
+        }
+    }
+
+    if (!drawable) return; // 还没加载好
+
+    ctx.globalCompositeOperation = blendMode;
+    ctx.save();
+    ctx.translate(x + w / 2, y + h / 2);
+    ctx.scale(flipX ? -scale : scale, flipY ? -scale : scale);
+
+    let drawW = w, drawH = h;
+    if (keepAspect) {
+        const srcW = drawable.naturalWidth || drawable.videoWidth || w;
+        const srcH = drawable.naturalHeight || drawable.videoHeight || h;
+        const imgRatio = srcW / srcH;
+        const boxRatio = w / h;
+        if (imgRatio > boxRatio) {
+            drawH = w / imgRatio;
+        } else {
+            drawW = h * imgRatio;
+        }
+    }
+
+    ctx.drawImage(drawable, -drawW / 2, -drawH / 2, drawW, drawH);
+    ctx.restore();
+    ctx.globalCompositeOperation = 'source-over';
+}
+
 
 /**
  * 渲染文本覆层 (内部)。
@@ -521,22 +717,35 @@ function _drawTextOverlay(ctx, ov, x, y, w, h, currentTime) {
 // ═══════════════════════════════════════════════════════
 
 /**
- * 渲染文案卡片覆层。
+ * 渲染文字卡片覆层。
  * 功能：半透明纯色背景 + 四角独立圆角 + 标题（粗体大字）+ 内容（正常字体）
  * 自动适配：根据文案长短调整蒙版大小和位置
  */
 function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime) {
-    // 自动水平居中: 当宽度 < 画布宽度时居中
-    if (ov.auto_center_v) {
-        x = (canvasW - w) / 2;
-        ov.x = x; // 写回供 hit-test
-    }
+    // 注意：auto_center_v 仅控制垂直居中，不应改动 X（避免手动 X 被每帧覆盖）
+    
+    // 关键修正：必须明确指定为 alphabetic，否则由于上层可能污染 ctx.textBaseline='top'
+    // 会导致 actualBoundingBoxAscent 计算为负数，触发 fallback（0.8 * fontSize）
+    // 进而使 ty = topY + 0.8*fontSize 形成视觉上的“多出一个空行”。
+    ctx.textBaseline = 'alphabetic';
 
-    const padT = ov.padding_top ?? 20;
-    const padB = ov.padding_bottom ?? 40;
-    const padL = ov.padding_left ?? 40;
-    const padR = ov.padding_right ?? 40;
+    const useAutoFit = (ov.auto_fit === true || ov.auto_fit === 1 || ov.auto_fit === '1');
+    const useAutoCenterV = (ov.auto_center_v === true || ov.auto_center_v === 1 || ov.auto_center_v === '1');
+    const useAutoShrink = useAutoFit && (ov.auto_shrink === true);
+
+    // 自动适配开：使用边距；自动适配关：边距一律归0（全充实）
+    const padL = useAutoFit ? (ov.padding_left ?? 40) : 0;
+    const padR = useAutoFit ? (ov.padding_right ?? 40) : 0;
+    const padT = useAutoFit ? (ov.padding_top ?? 60) : 0;
+    const padB = useAutoFit ? (ov.padding_bottom ?? 60) : 0;
+    
+    const minFont = ov.min_fontsize ?? 16;
+    const maxH = ov.max_height ?? 1400;
+    const titleMaxLines = ov.title_max_lines ?? 3;
+    const doShrink = useAutoShrink && maxH > 0;
     const gap = ov.title_body_gap ?? 42;
+    const gapFooter = ov.body_footer_gap ?? 42;
+    const offsetX = parseFloat(ov.offset_x || 0);
 
     const contentW = Math.max(1, w - padL - padR);
 
@@ -562,58 +771,175 @@ function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime
     const footerFamily = ov.footer_font_family || 'Arial';
     const footerFallback = _resolveOverlayFallback(footerFamily);
 
-    // Text effects
-    const strokeW = ov.text_stroke_width ?? 0;
-    const strokeC = ov.text_stroke_color || '#000000';
-    const shadowBlur = ov.text_shadow_blur ?? 0;
-    const shadowColor = ov.text_shadow_color || '#000000';
-    const shadowX = ov.text_shadow_x ?? 0;
-    const shadowY = ov.text_shadow_y ?? 0;
-    const hasStroke = strokeW > 0;
-    const hasShadow = shadowBlur > 0 || shadowX !== 0 || shadowY !== 0;
+    // Text effects — resolve per-section when independent mode
+    const indep = ov.independent_effects;
 
-    const minFont = ov.min_fontsize ?? 16;
-    const maxH = ov.max_height ?? 1400;
-    const titleMaxLines = ov.title_max_lines ?? 3;
-    const doShrink = ov.auto_shrink && maxH > 0;
+    // Shared (fallback) values
+    const _shStrokeW = ov.text_stroke_width ?? 0;
+    const _shStrokeC = ov.text_stroke_color || '#000000';
+    const _shShadowBlur = ov.text_shadow_blur ?? 0;
+    const _shShadowColor = ov.text_shadow_color || '#000000';
+    const _shShadowX = ov.text_shadow_x ?? 0;
+    const _shShadowY = ov.text_shadow_y ?? 0;
+
+    function _resolveEffects(prefix) {
+        if (!indep) return {
+            strokeW: _shStrokeW, strokeC: _shStrokeC,
+            shadowBlur: _shShadowBlur, shadowColor: _shShadowColor,
+            shadowX: _shShadowX, shadowY: _shShadowY,
+        };
+        return {
+            strokeW: ov[prefix + '_stroke_width'] ?? _shStrokeW,
+            strokeC: ov[prefix + '_stroke_color'] || _shStrokeC,
+            shadowBlur: ov[prefix + '_shadow_blur'] ?? _shShadowBlur,
+            shadowColor: ov[prefix + '_shadow_color'] || _shShadowColor,
+            shadowX: ov[prefix + '_shadow_x'] ?? _shShadowX,
+            shadowY: ov[prefix + '_shadow_y'] ?? _shShadowY,
+        };
+    }
+
+
+
+    function _fontMetrics(font, testStr = 'H国T', fontSize = 40, descentText = null) {
+        ctx.font = font;
+        const sample = ctx.measureText(testStr);
+        let asc = Number(sample.actualBoundingBoxAscent);
+        if (!Number.isFinite(asc) || asc <= 0) asc = Math.round(fontSize * 0.8);
+        
+        // 视觉光学平衡：即使文本没有下沉字母（如 p,y,j），排版上如果下底线紧贴英文基线，
+        // 人眼会因为缺少“行高预留的安全区”而感觉整个文字块“偏上”。
+        // 所以我们需要保证至少有一个标准的下沉空间（约字号的 20% - 25%）。
+        let stdDesc = Number(ctx.measureText('pjyqg,').actualBoundingBoxDescent);
+        if (!Number.isFinite(stdDesc) || stdDesc <= 0) stdDesc = Math.round(fontSize * 0.22);
+        
+        let desc = stdDesc; 
+        if (descentText) {
+            const mLine = ctx.measureText(descentText);
+            const rawDesc = Number(mLine.actualBoundingBoxDescent);
+            if (Number.isFinite(rawDesc) && rawDesc > 0) {
+                desc = Math.max(stdDesc, rawDesc);
+            }
+        }
+        return { ascent: asc, descent: desc };
+    }
+
+    function _getSectionExtents(prefix, fontSize) {
+        if (!indep || !ov[prefix + '_bg_enabled']) return { padT: 0, padB: 0, extTop: 0, extBot: 0 };
+        const fx = _resolveEffects(prefix);
+        const autoPad = Math.max(12, Math.round(fontSize * 0.2));
+        const pT = ov[prefix + '_bg_pad_top'] !== undefined ? ov[prefix + '_bg_pad_top'] : autoPad;
+        const pB = ov[prefix + '_bg_pad_bottom'] !== undefined ? ov[prefix + '_bg_pad_bottom'] : autoPad;
+        const strokeExt = Math.max(0, (fx.strokeW || 0) / 2);
+        const shBlur = Math.max(0, fx.shadowBlur || 0);
+        const shY = fx.shadowY || 0;
+        return { padT: pT, padB: pB, extTop: Math.max(strokeExt, shBlur + Math.max(0, -shY)), extBot: Math.max(strokeExt, shBlur + Math.max(0, shY)) };
+    }
+
+    const tW = (ov.title_override_w > 0) ? Number(ov.title_override_w) : contentW;
+    const bW = (ov.body_override_w > 0) ? Number(ov.body_override_w) : contentW;
+    const fW = (ov.footer_override_w > 0) ? Number(ov.footer_override_w) : contentW;
 
     // ── 内部测量函数 ──
     function _measure(tfs, bfs, ffs) {
         const tf = `${titleItalic} ${titleWeight} ${tfs}px "${titleFamily}", ${titleFallback}`;
         ctx.font = tf;
-        const tLines = titleText ? _wrapText(ctx, titleText, contentW) : [];
-        const tLineH = tfs * 1.3 + (ov.title_letter_spacing ?? 0);
-        const tH = tLines.length * tLineH;
+        ctx.letterSpacing = `${ov.title_letter_spacing || 0}px`;
+        const tLines = titleText ? _wrapText(ctx, titleText, tW) : [];
+        ctx.letterSpacing = '0px';
+        const tLineH = tfs * 1.3 + parseFloat(ov.title_line_spacing || 0);
+        const tExt = _getSectionExtents('title', tfs);
+        const tFirstFM = tLines.length > 0 ? _fontMetrics(tf, tLines[0], tfs) : null;
+        const tFM = tFirstFM || { ascent: tfs * 0.8, descent: 0 };
+        const tDesc = tLines.length > 0 ? _fontMetrics(tf, tLines[0], tfs, tLines[tLines.length - 1]).descent : 0;
+        const tTextH = tLines.length > 0 ? (tFM.ascent + tDesc + (tLines.length - 1) * tLineH) : 0;
+        const tBlockH = tLines.length > 0 ? (tTextH + tExt.padT + tExt.padB + tExt.extTop + tExt.extBot) : 0;
 
         const bf = `${bodyItalic} ${bodyWeight} ${bfs}px "${bodyFamily}", ${bodyFallback}`;
         ctx.font = bf;
-        const bLines = bodyText ? _wrapText(ctx, bodyText, contentW) : [];
-        const bLineH = bfs * 1.3 + (ov.body_line_spacing ?? 0);
-        const bH = bLines.length * bLineH;
+        ctx.letterSpacing = `${ov.body_letter_spacing || 0}px`;
+        const bLines = bodyText ? _wrapText(ctx, bodyText, bW) : [];
+        ctx.letterSpacing = '0px';
+        const bLineH = bfs * 1.3 + parseFloat(ov.body_line_spacing || 0);
+        const bExt = _getSectionExtents('body', bfs);
+        const bFirstFM = bLines.length > 0 ? _fontMetrics(bf, bLines[0], bfs) : null;
+        const bFM = bFirstFM || { ascent: bfs * 0.8, descent: 0 };
+        const bDesc = bLines.length > 0 ? _fontMetrics(bf, bLines[0], bfs, bLines[bLines.length - 1]).descent : 0;
+        const bTextH = bLines.length > 0 ? (bFM.ascent + bDesc + (bLines.length - 1) * bLineH) : 0;
+        const bBlockH = bLines.length > 0 ? (bTextH + bExt.padT + bExt.padB + bExt.extTop + bExt.extBot) : 0;
 
         const ff = `${footerItalic} ${footerWeight} ${ffs}px "${footerFamily}", ${footerFallback}`;
         ctx.font = ff;
-        const fLines = footerText ? _wrapText(ctx, footerText, contentW) : [];
-        const fLineH = ffs * 1.3;
-        const fH = fLines.length * fLineH;
+        ctx.letterSpacing = `${ov.footer_letter_spacing || 0}px`;
+        const fLines = footerText ? _wrapText(ctx, footerText, fW) : [];
+        ctx.letterSpacing = '0px';
+        const fLineH = ffs * 1.3 + parseFloat(ov.footer_line_spacing || 0);
+        const fExt = _getSectionExtents('footer', ffs);
+        const fFirstFM = fLines.length > 0 ? _fontMetrics(ff, fLines[0], ffs) : null;
+        const fFM = fFirstFM || { ascent: ffs * 0.8, descent: 0 };
+        const fDesc = fLines.length > 0 ? _fontMetrics(ff, fLines[0], ffs, fLines[fLines.length - 1]).descent : 0;
+        const fTextH = fLines.length > 0 ? (fFM.ascent + fDesc + (fLines.length - 1) * fLineH) : 0;
+        const fBlockH = fLines.length > 0 ? (fTextH + fExt.padT + fExt.padB + fExt.extTop + fExt.extBot) : 0;
 
         const hasT = tLines.length > 0;
         const hasB = bLines.length > 0;
         const hasF = fLines.length > 0;
-        const total = (hasT ? tH : 0)
-            + (hasT && (hasB || hasF) ? gap : 0)
-            + (hasB ? bH : 0)
-            + ((hasB || hasT) && hasF ? gap : 0)
-            + (hasF ? fH : 0)
-            + padT + padB;
-        return { tLines, tLineH, tH, bLines, bLineH, bH, fLines, fLineH, fH, total, tf, bf, ff, hasT, hasB, hasF };
+        
+        const tSpace = (ov.title_override_h > 0) ? Number(ov.title_override_h) : tBlockH;
+        const bSpace = (ov.body_override_h > 0) ? Number(ov.body_override_h) : bBlockH;
+        const fSpace = (ov.footer_override_h > 0) ? Number(ov.footer_override_h) : fBlockH;
+
+        let total = padT + padB;
+        if (ov.layout_mode === 'absolute') {
+            const tBot = hasT ? (ov.title_offset_y || 0) + tSpace : 0;
+            const bBot = hasB ? (ov.body_offset_y || 0) + bSpace : 0;
+            const fBot = hasF ? (ov.footer_offset_y || 0) + fSpace : 0;
+            total += Math.max(0, tBot, bBot, fBot);
+        } else {
+            if (hasT) total += tSpace;
+            if (hasB) {
+                if (hasT) total += gap;
+                total += bSpace;
+            }
+            if (hasF) {
+                if (hasT || hasB) total += gapFooter;
+                total += fSpace;
+            }
+        }
+
+        return {
+            tLines, tLineH, tTextH, tBlockH, tFM, tExt, tSpace,
+            bLines, bLineH, bTextH, bBlockH, bFM, bExt, bSpace,
+            fLines, fLineH, fTextH, fBlockH, fFM, fExt, fSpace,
+            total, tf, bf, ff, hasT, hasB, hasF
+        };
     }
 
     // ── 自动缩放循环 ──
     let m = _measure(titleFontSize, bodyFontSize, footerFontSize);
 
-    // 阶段 0: 强制标题行数限制 (不依赖 maxH)
+    // 独立缩放阶段
+    if (ov.title_override_h > 0 && ov.title_auto_shrink) {
+        while (m.tBlockH > Number(ov.title_override_h) && titleFontSize > minFont) {
+            titleFontSize = Math.max(minFont, titleFontSize - 1);
+            m = _measure(titleFontSize, bodyFontSize, footerFontSize);
+        }
+    }
+    if (ov.body_override_h > 0 && ov.body_auto_shrink) {
+        while (m.bBlockH > Number(ov.body_override_h) && bodyFontSize > minFont) {
+            bodyFontSize = Math.max(minFont, bodyFontSize - 1);
+            m = _measure(titleFontSize, bodyFontSize, footerFontSize);
+        }
+    }
+    if (ov.footer_override_h > 0 && ov.footer_auto_shrink) {
+        while (m.fBlockH > Number(ov.footer_override_h) && footerFontSize > minFont) {
+            footerFontSize = Math.max(minFont, footerFontSize - 1);
+            m = _measure(titleFontSize, bodyFontSize, footerFontSize);
+        }
+    }
+
+    // 阶段 0: 仅在自动缩放模式下执行标题行数限制
     while (m.tLines.length > titleMaxLines && titleFontSize > minFont) {
+        if (!doShrink) break;
         titleFontSize = Math.max(minFont, titleFontSize - 2);
         m = _measure(titleFontSize, bodyFontSize, footerFontSize);
     }
@@ -638,25 +964,33 @@ function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime
         }
     }
 
-    const { tLines: titleLines, tLineH: titleLineH, tH: titleH,
-        bLines: bodyLines, bLineH: bodyLineH, bH: bodyH,
-        fLines: footerLines, fLineH: footerLineH, fH: footerH,
+    const { tLines: titleLines, tLineH: titleLineH, tTextH: titleTextH, tBlockH: titleBlockH, tFM: titleFM, tExt: titleExt, tSpace,
+        bLines: bodyLines, bLineH: bodyLineH, bTextH: bodyTextH, bBlockH: bodyBlockH, bFM: bodyFM, bExt: bodyExt, bSpace,
+        fLines: footerLines, fLineH: footerLineH, fTextH: footerTextH, fBlockH: footerBlockH, fFM: footerFM, fExt: footerExt, fSpace,
         total: autoH, tf: titleFont, bf: bodyFont, ff: footerFont,
         hasT: hasTitle, hasB: hasBody, hasF: hasFooter } = m;
 
-    // ── 计算总高度（自动适配）──
-    let cardH = ov.auto_fit ? autoH : (h > 0 ? h : autoH);
-    // 如果启用了 maxH 限制，裁剪
+    // ── 计算总高度与锚点 ──
+    // 自动适配开：高度跟随内容；无适配：手动设定的 h 或回退到内容。
+    let cardH = useAutoFit ? autoH : (h > 0 ? h : autoH);
     if (doShrink && cardH > maxH) cardH = maxH;
-    let cardY = y;
 
-    // 自动垂直居中 + 偏移
-    if (ov.auto_fit && ov.auto_center_v) {
-        cardY = (canvasH - cardH) / 2 + (ov.offset_y || 0);
+    // flow 布局保持中心锚定，避免内容缩放时视觉“漂移”。
+    // absolute 布局（完全解绑）固定顶部锚点，避免调整 footer 时 title 跟着移动。
+    const isAbsoluteLayout = ov.layout_mode === 'absolute';
+    let cardY = y;
+    if (!isAbsoluteLayout) {
+        const originalCenterY = y + (h > 0 ? h : cardH) / 2;
+        cardY = useAutoFit ? (originalCenterY - cardH / 2) : y;
     }
 
-    // 全屏蒙版模式: 背景铺满画布，但文字区域保持在 cardY/cardH 内
-    const isFullMask = ov.fullscreen_mask;
+    // 全局物理垂直居中 (如果开启，覆盖原居中系)
+    if (useAutoCenterV) {
+        cardY = (canvasH - cardH) / 2;
+    }
+
+    // 全屏蒙版模式
+    const isFullMask = (ov.fullscreen_mask === true || ov.fullscreen_mask === 1 || ov.fullscreen_mask === '1');
     let maskX = x, maskY = cardY, maskW = w, maskH = cardH;
     if (isFullMask) {
         maskX = 0; maskY = 0; maskW = canvasW; maskH = canvasH;
@@ -678,7 +1012,6 @@ function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime
         if (inType === 'fade') animOpFactor *= inProgress;
         if (outType === 'fade') animOpFactor *= outProgress;
 
-        // Pop animation
         if (inType === 'pop' || outType === 'pop') {
             let popScale = 1;
             if (inType === 'pop') popScale = Math.min(popScale, ReelsAnimEngine.computePopScale(inProgress));
@@ -691,7 +1024,6 @@ function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime
             }
         }
 
-        // Slide animation
         const slideTypes = ['slide_up', 'slide_down', 'slide_left', 'slide_right'];
         if (slideTypes.includes(inType) || slideTypes.includes(outType)) {
             let sdx = 0, sdy = 0;
@@ -709,65 +1041,285 @@ function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime
     ctx.globalAlpha *= animOpFactor;
 
     // ── 绘制背景 ──
-    const cardAlpha = (ov.card_opacity ?? 80) / 100;
-    ctx.save();
-    ctx.globalAlpha = cardAlpha * ctx.globalAlpha;
-    ctx.fillStyle = ov.card_color || '#FFFFFF';
-    if (isFullMask) {
-        // 全屏铺满，无圆角
-        ctx.fillRect(maskX, maskY, maskW, maskH);
-    } else {
-        _roundRectIndividual(ctx, x, cardY, w, cardH,
-            ov.radius_tl || 0, ov.radius_tr || 0, ov.radius_br || 0, ov.radius_bl || 0);
-        ctx.fill();
-    }
-    ctx.restore();
-
-    // 文字区域始终基于 cardY/cardH（受 maxH 约束）
-    const textY = cardY;
-
-    // Helper: apply text effects
-    function _applyTextEffects(ctx) {
-        if (hasShadow) {
-            ctx.shadowColor = shadowColor;
-            ctx.shadowBlur = shadowBlur;
-            ctx.shadowOffsetX = shadowX;
-            ctx.shadowOffsetY = shadowY;
-        }
-    }
-
-    // ── 绘制标题文字 ──
-    if (hasTitle) {
+    if (ov.card_enabled !== false) {
+        const cardAlpha = (ov.card_opacity ?? 80) / 100;
         ctx.save();
-        ctx.font = titleFont;
-        _applyTextEffects(ctx);
-        let ty = textY + padT + titleFontSize * 0.85;
-        for (const line of titleLines) {
-            const lx = _alignX(ctx, line, x + padL, contentW, ov.title_align || 'center');
-            if (hasStroke) {
-                ctx.strokeStyle = strokeC;
-                ctx.lineWidth = strokeW;
-                ctx.lineJoin = 'round';
-                ctx.strokeText(line, lx, ty);
-            }
-            ctx.fillStyle = ov.title_color || '#1A1A1A';
-            ctx.fillText(line, lx, ty);
-            ty += titleLineH;
+        ctx.globalAlpha = cardAlpha * ctx.globalAlpha;
+        ctx.fillStyle = ov.card_color || '#FFFFFF';
+        if (isFullMask) {
+            ctx.fillRect(maskX, maskY, maskW, maskH);
+        } else {
+            _roundRectIndividual(ctx, x, cardY, w, cardH,
+                ov.radius_tl || 0, ov.radius_tr || 0, ov.radius_br || 0, ov.radius_bl || 0);
+            ctx.fill();
         }
         ctx.restore();
     }
 
+    // ── 文字内部锚点 ──
+    // absolute 布局必须固定锚点，避免 footer 调整反向影响 title/body。
+    // flow 布局保留原有“内容居中”行为。
+    const textY = isAbsoluteLayout
+        ? (cardY + (ov.offset_y || 0))
+        : (useAutoFit ? cardY : cardY + (h - autoH) / 2 + (ov.offset_y || 0));
+
+    // Helper: draw per-section background (when independent mode enabled)
+    // 使用文字实际视觉高度来居中、支持独立上/下/水平 padding
+    function _drawSectionBg(prefix, secY, secH, secW, fontSize, fx, customX = 0, origBaseY = undefined) {
+        if (!indep) return;
+        if (!ov[prefix + '_bg_enabled']) return;
+        if (ov[prefix + '_bg_mode'] && ov[prefix + '_bg_mode'] !== 'block') return;
+        const bgColor = ov[prefix + '_bg_color'] || '#000000';
+        const bgOp = (ov[prefix + '_bg_opacity'] ?? 60) / 100;
+        const bgR = ov[prefix + '_bg_radius'] ?? 12;
+
+        // secH 已经是按真实字形上下界估算后的视觉高度
+        const textVisualH = secH;
+
+        // ── padding：设值 >= 0 时用自定义值，无值时按字号比例自动计算 ──
+        const autoPad = Math.max(12, Math.round(fontSize * 0.2));
+        const autoPadH = Math.max(14, Math.round(fontSize * 0.25));
+        
+        const bgPadTop    = ov[prefix + '_bg_pad_top']    !== undefined ? ov[prefix + '_bg_pad_top']    : autoPad;
+        const bgPadBottom = ov[prefix + '_bg_pad_bottom'] !== undefined ? ov[prefix + '_bg_pad_bottom'] : autoPad;
+        const bgPadH      = ov[prefix + '_bg_pad_h']      !== undefined ? ov[prefix + '_bg_pad_h']      : autoPadH;
+
+        // Include stroke/shadow extents to avoid text visually spilling outside background
+        const strokeExt = Math.max(0, (fx?.strokeW || 0) / 2);
+        const shBlur = Math.max(0, fx?.shadowBlur || 0);
+        const shX = fx?.shadowX || 0;
+        const shY = fx?.shadowY || 0;
+        const extTop = Math.max(strokeExt, shBlur + Math.max(0, -shY));
+        const extBottom = Math.max(strokeExt, shBlur + Math.max(0, shY));
+        const extLeft = Math.max(strokeExt, shBlur + Math.max(0, -shX));
+        const extRight = Math.max(strokeExt, shBlur + Math.max(0, shX));
+
+        // ── 绘制背景矩形（基于文字视觉高度，上下等 padding = 居中）──
+        let bgH = bgPadTop + textVisualH + bgPadBottom + extTop + extBottom;
+        let finalY = secY - bgPadTop - extTop;
+
+        const overrideH = Number(ov[prefix + '_override_h']) || 0;
+        if (overrideH > 0 && ov[prefix + '_bg_mode'] !== 'inline' && ov[prefix + '_bg_mode'] !== 'inline-joined') {
+            bgH = overrideH;
+            if (origBaseY !== undefined) {
+                finalY = origBaseY;
+            }
+        }
+
+        ctx.save();
+        ctx.globalAlpha = bgOp * ctx.globalAlpha;
+        ctx.fillStyle = bgColor;
+        _roundRect(ctx,
+            x + padL - bgPadH - extLeft + offsetX + customX,
+            finalY,
+            secW + bgPadH * 2 + extLeft + extRight,
+            bgH,
+            bgR
+        );
+        ctx.fill();
+        ctx.restore();
+    }
+
+    function _roundRectPath(ctx, x, y, w, h, r) {
+        r = Math.min(r, w / 2, h / 2);
+        ctx.moveTo(x + r, y);
+        ctx.lineTo(x + w - r, y);
+        ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+        ctx.lineTo(x + w, y + h - r);
+        ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+        ctx.lineTo(x + r, y + h);
+        ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+        ctx.lineTo(x, y + r);
+        ctx.quadraticCurveTo(x, y, x + r, y);
+    }
+
+    function _drawInlineBgGroup(ctx, prefix, boxes, fontAscent, fontDescent, fontSize, fx) {
+        if (!indep || !ov[prefix + '_bg_enabled'] || ov[prefix + '_bg_mode'] === 'block') return;
+        const mode = ov[prefix + '_bg_mode'];
+        const bgColor = ov[prefix + '_bg_color'] || '#000000';
+        const bgOp = (ov[prefix + '_bg_opacity'] ?? 60) / 100;
+        const bgR = ov[prefix + '_bg_radius'] ?? 12;
+
+        const autoPad = Math.max(12, Math.round(fontSize * 0.2));
+        const autoPadH = Math.max(14, Math.round(fontSize * 0.25));
+        
+        const bgPadTop    = ov[prefix + '_bg_pad_top']    !== undefined ? ov[prefix + '_bg_pad_top']    : autoPad;
+        const bgPadBottom = ov[prefix + '_bg_pad_bottom'] !== undefined ? ov[prefix + '_bg_pad_bottom'] : autoPad;
+        const bgPadH      = ov[prefix + '_bg_pad_h']      !== undefined ? ov[prefix + '_bg_pad_h']      : autoPadH;
+
+        const strokeExt = Math.max(0, (fx?.strokeW || 0) / 2);
+        const shBlur = Math.max(0, fx?.shadowBlur || 0);
+        const shX = Math.abs(fx?.shadowX || 0);
+        const shY = Math.abs(fx?.shadowY || 0);
+        const extTop = Math.max(strokeExt, shBlur + shY);
+        const extBottom = Math.max(strokeExt, shBlur + shY);
+        const extLeft = Math.max(strokeExt, shBlur + shX);
+        const extRight = Math.max(strokeExt, shBlur + shX);
+
+        const lh = fontAscent + fontDescent;
+        const bgH = bgPadTop + lh + bgPadBottom + extTop + extBottom;
+
+        ctx.save();
+        ctx.globalAlpha = bgOp * ctx.globalAlpha;
+        ctx.fillStyle = bgColor;
+        ctx.shadowColor = 'transparent';
+        ctx.shadowBlur = 0;
+        ctx.shadowOffsetX = 0;
+        ctx.shadowOffsetY = 0;
+
+        ctx.beginPath();
+        
+        const rects = [];
+        for (const b of boxes) {
+            const rx = b.lx - bgPadH - extLeft;
+            const ry = b.y - fontAscent - bgPadTop - extTop;
+            const rw = b.lw + bgPadH * 2 + extLeft + extRight;
+            const rh = bgH;
+            
+            _roundRectPath(ctx, rx, ry, rw, rh, bgR);
+            rects.push({ L: rx, R: rx + rw, T: ry, B: ry + rh });
+        }
+
+        if (mode === 'inline-joined' && rects.length > 1) {
+            for (let i = 0; i < rects.length - 1; i++) {
+                const r1 = rects[i];
+                const r2 = rects[i + 1];
+                const iL = Math.max(r1.L, r2.L);
+                const iR = Math.min(r1.R, r2.R);
+                if (iL < iR) {
+                    const jointTop = Math.min(r1.B - bgR, r2.T);
+                    const jointBot = Math.max(r2.T + bgR, r1.B);
+                    if (jointTop < jointBot) {
+                        ctx.rect(iL, jointTop, iR - iL, jointBot - jointTop);
+                    }
+                }
+            }
+        }
+
+        ctx.fill();
+        ctx.restore();
+    }
+
+    // ── 绘制文字与其独立背景 ──
+    let currentY = textY + padT;
+
+    // ── 绘制标题文字 ──
+    if (hasTitle) {
+        const disableOffsets = useAutoFit || useAutoCenterV;
+        const customX = disableOffsets ? 0 : (ov.title_offset_x || 0);
+        const customY = disableOffsets ? 0 : (ov.title_offset_y || 0);
+
+        const secBaseY = (ov.layout_mode === 'absolute') ? (textY + padT + customY) : (currentY + customY);
+        let availSpace = tSpace;
+        if (ov.title_override_h == 0 && ov.layout_mode === 'absolute') availSpace = cardH - padT - padB;
+        let tDeltaY = 0;
+        if (availSpace > titleBlockH) {
+            const vAlign = ov.title_valign || 'top';
+            if (vAlign === 'center') tDeltaY = (availSpace - titleBlockH) / 2;
+            else if (vAlign === 'bottom') tDeltaY = availSpace - titleBlockH;
+        }
+        const titleTextTopY = secBaseY + tDeltaY + titleExt.padT + titleExt.extTop;
+        const fx = _resolveEffects('title');
+        _drawSectionBg('title', titleTextTopY, titleTextH, tW, titleFontSize, fx, customX, secBaseY);
+        ctx.save();
+        ctx.font = titleFont;
+        ctx.letterSpacing = `${ov.title_letter_spacing || 0}px`;
+        if (fx.shadowBlur > 0 || fx.shadowX !== 0 || fx.shadowY !== 0) {
+            ctx.shadowColor = fx.shadowColor;
+            ctx.shadowBlur = fx.shadowBlur;
+            ctx.shadowOffsetX = fx.shadowX;
+            ctx.shadowOffsetY = fx.shadowY;
+        }
+        let ty = titleTextTopY + titleFM.ascent;
+        if (indep && ov.title_bg_enabled && ov.title_bg_mode !== 'block') {
+            const boxes = [];
+            let bY = ty;
+            for (const line of titleLines) {
+                const lx = _alignX(ctx, line, x + padL + offsetX + customX, tW, ov.title_align || 'center');
+                const lw = ctx.measureText(line).width;
+                boxes.push({ lx, y: bY, lw });
+                bY += titleLineH;
+            }
+            _drawInlineBgGroup(ctx, 'title', boxes, titleFM.ascent, titleFM.descent, titleFontSize, fx);
+        }
+        for (const line of titleLines) {
+            const lx = _alignX(ctx, line, x + padL + offsetX + customX, tW, ov.title_align || 'center');
+            if (fx.strokeW > 0) {
+                ctx.strokeStyle = fx.strokeC;
+                ctx.lineWidth = fx.strokeW;
+                ctx.lineJoin = 'round';
+                ctx.strokeText(line, lx, ty);
+            }
+            if (!indep && ov.title_color_from_style) {
+                ctx.fillStyle = _resolveTitleColor(ov.title_color_from_style);
+            } else {
+                ctx.fillStyle = ov.title_color || '#1A1A1A';
+            }
+            ctx.fillText(line, lx, ty);
+            ty += titleLineH;
+        }
+        ctx.restore();
+        
+        if (ov.debug_title || (ov.debug_title === undefined && ov.debug_layout)) {
+            ctx.save(); ctx.strokeStyle='#ff5555'; ctx.lineWidth=1; ctx.setLineDash([4,4]);
+            ctx.strokeRect(x + padL + offsetX + customX, secBaseY, tW, tSpace);
+            ctx.restore();
+        }
+
+        if (ov.layout_mode !== 'absolute') currentY += tSpace;
+    }
+
     // ── 绘制内容文字 ──
     if (hasBody) {
+        const disableOffsets = useAutoFit || useAutoCenterV;
+        const customX = disableOffsets ? 0 : (ov.body_offset_x || 0);
+        const customY = disableOffsets ? 0 : (ov.body_offset_y || 0);
+
+        let secBaseY;
+        if (ov.layout_mode === 'absolute') {
+            secBaseY = textY + padT + customY;
+        } else {
+            if (hasTitle) currentY += gap;
+            secBaseY = currentY + customY;
+        }
+
+        let availSpace = bSpace;
+        if (ov.body_override_h == 0 && ov.layout_mode === 'absolute') availSpace = cardH - padT - padB;
+        let bDeltaY = 0;
+        if (availSpace > bodyBlockH) {
+            const vAlign = ov.body_valign || 'top';
+            if (vAlign === 'center') bDeltaY = (availSpace - bodyBlockH) / 2;
+            else if (vAlign === 'bottom') bDeltaY = availSpace - bodyBlockH;
+        }
+        const bodyTextTopY = secBaseY + bDeltaY + bodyExt.padT + bodyExt.extTop;
+        const fx = _resolveEffects('body');
+        _drawSectionBg('body', bodyTextTopY, bodyTextH, bW, bodyFontSize, fx, customX, secBaseY);
         ctx.save();
         ctx.font = bodyFont;
-        _applyTextEffects(ctx);
-        let by = textY + padT + (hasTitle ? titleH + gap : 0) + bodyFontSize * 0.85;
+        ctx.letterSpacing = `${ov.body_letter_spacing || 0}px`;
+        if (fx.shadowBlur > 0 || fx.shadowX !== 0 || fx.shadowY !== 0) {
+            ctx.shadowColor = fx.shadowColor;
+            ctx.shadowBlur = fx.shadowBlur;
+            ctx.shadowOffsetX = fx.shadowX;
+            ctx.shadowOffsetY = fx.shadowY;
+        }
+        let by = bodyTextTopY + bodyFM.ascent;
+        if (indep && ov.body_bg_enabled && ov.body_bg_mode !== 'block') {
+            const boxes = [];
+            let bY2 = by;
+            for (const line of bodyLines) {
+                const lx = _alignX(ctx, line, x + padL + offsetX + customX, bW, ov.body_align || 'center');
+                const lw = ctx.measureText(line).width;
+                boxes.push({ lx, y: bY2, lw });
+                bY2 += bodyLineH;
+            }
+            _drawInlineBgGroup(ctx, 'body', boxes, bodyFM.ascent, bodyFM.descent, bodyFontSize, fx);
+        }
         for (const line of bodyLines) {
-            const lx = _alignX(ctx, line, x + padL, contentW, ov.body_align || 'center');
-            if (hasStroke) {
-                ctx.strokeStyle = strokeC;
-                ctx.lineWidth = strokeW;
+            const lx = _alignX(ctx, line, x + padL + offsetX + customX, bW, ov.body_align || 'center');
+            if (fx.strokeW > 0) {
+                ctx.strokeStyle = fx.strokeC;
+                ctx.lineWidth = fx.strokeW;
                 ctx.lineJoin = 'round';
                 ctx.strokeText(line, lx, by);
             }
@@ -776,22 +1328,67 @@ function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime
             by += bodyLineH;
         }
         ctx.restore();
+        
+        if (ov.debug_body || (ov.debug_body === undefined && ov.debug_layout)) {
+            ctx.save(); ctx.strokeStyle='#55ff55'; ctx.lineWidth=1; ctx.setLineDash([4,4]);
+            ctx.strokeRect(x + padL + offsetX + customX, secBaseY, bW, bSpace);
+            ctx.restore();
+        }
+
+        if (ov.layout_mode !== 'absolute') currentY += bSpace;
     }
 
     // ── 绘制结尾文字 ──
     if (hasFooter) {
+        const disableOffsets = useAutoFit || useAutoCenterV;
+        const customX = disableOffsets ? 0 : (ov.footer_offset_x || 0);
+        const customY = disableOffsets ? 0 : (ov.footer_offset_y || 0);
+
+        let secBaseY;
+        if (ov.layout_mode === 'absolute') {
+            secBaseY = textY + padT + customY;
+        } else {
+            if (hasTitle || hasBody) currentY += gapFooter;
+            secBaseY = currentY + customY;
+        }
+
+        let availSpace = fSpace;
+        if (ov.footer_override_h == 0 && ov.layout_mode === 'absolute') availSpace = cardH - padT - padB;
+        let fDeltaY = 0;
+        if (availSpace > footerBlockH) {
+            const vAlign = ov.footer_valign || 'top';
+            if (vAlign === 'center') fDeltaY = (availSpace - footerBlockH) / 2;
+            else if (vAlign === 'bottom') fDeltaY = availSpace - footerBlockH;
+        }
+        const footerTextTopY = secBaseY + fDeltaY + footerExt.padT + footerExt.extTop;
+        const fx = _resolveEffects('footer');
+        _drawSectionBg('footer', footerTextTopY, footerTextH, fW, footerFontSize, fx, customX, secBaseY);
         ctx.save();
         ctx.font = footerFont;
-        _applyTextEffects(ctx);
-        let fy = textY + padT
-            + (hasTitle ? titleH + gap : 0)
-            + (hasBody ? bodyH + gap : 0)
-            + footerFontSize * 0.85;
+        ctx.letterSpacing = `${ov.footer_letter_spacing || 0}px`;
+        if (fx.shadowBlur > 0 || fx.shadowX !== 0 || fx.shadowY !== 0) {
+            ctx.shadowColor = fx.shadowColor;
+            ctx.shadowBlur = fx.shadowBlur;
+            ctx.shadowOffsetX = fx.shadowX;
+            ctx.shadowOffsetY = fx.shadowY;
+        }
+        let fy = footerTextTopY + footerFM.ascent;
+        if (indep && ov.footer_bg_enabled && ov.footer_bg_mode !== 'block') {
+            const boxes = [];
+            let bY3 = fy;
+            for (const line of footerLines) {
+                const lx = _alignX(ctx, line, x + padL + offsetX + customX, fW, ov.footer_align || 'center');
+                const lw = ctx.measureText(line).width;
+                boxes.push({ lx, y: bY3, lw });
+                bY3 += footerLineH;
+            }
+            _drawInlineBgGroup(ctx, 'footer', boxes, footerFM.ascent, footerFM.descent, footerFontSize, fx);
+        }
         for (const line of footerLines) {
-            const lx = _alignX(ctx, line, x + padL, contentW, ov.footer_align || 'center');
-            if (hasStroke) {
-                ctx.strokeStyle = strokeC;
-                ctx.lineWidth = strokeW;
+            const lx = _alignX(ctx, line, x + padL + offsetX + customX, fW, ov.footer_align || 'center');
+            if (fx.strokeW > 0) {
+                ctx.strokeStyle = fx.strokeC;
+                ctx.lineWidth = fx.strokeW;
                 ctx.lineJoin = 'round';
                 ctx.strokeText(line, lx, fy);
             }
@@ -800,19 +1397,65 @@ function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime
             fy += footerLineH;
         }
         ctx.restore();
+        
+        if (ov.debug_footer || (ov.debug_footer === undefined && ov.debug_layout)) {
+            ctx.save(); ctx.strokeStyle='#5555ff'; ctx.lineWidth=1; ctx.setLineDash([4,4]);
+            ctx.strokeRect(x + padL + offsetX + customX, secBaseY, fW, fSpace);
+            ctx.restore();
+        }
+
+        if (ov.layout_mode !== 'absolute') currentY += fSpace;
     }
 
     // 将实际绘制的尺寸存回 ov，供 hit-test 和属性面板使用
+    ov._renderedX = x;
+    ov._renderedW = w;
     ov._renderedH = cardH;
     ov._renderedY = cardY;
 
+    // ── 排版辅助线（基准线与边距）──
+    if (ov.debug_layout && !ov._exporting) {
+        ctx.save();
+        ctx.globalAlpha = 0.9;
+        
+        ctx.strokeStyle = '#00ff00';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 4]);
+        
+        // 上边距线
+        const topEdge = cardY + padT;
+        ctx.beginPath();
+        ctx.moveTo(x, topEdge);
+        ctx.lineTo(x + w, topEdge);
+        ctx.stroke();
+
+        // 下边距线
+        const botEdge = cardY + autoH - padB;
+        ctx.beginPath();
+        ctx.moveTo(x, botEdge);
+        ctx.lineTo(x + w, botEdge);
+        ctx.stroke();
+
+        ctx.fillStyle = '#00ff00';
+        ctx.font = '14px sans-serif';
+        if (padT > 0) ctx.fillText(`上边距: ${padT}px`, x + 5, cardY + padT / 2 + 5);
+        if (padB > 0) ctx.fillText(`下边距: ${padB}px`, x + 5, botEdge + padB / 2 + 5);
+        
+        // 框选边界
+        ctx.strokeStyle = '#ff00ff';
+        ctx.setLineDash([2, 5]);
+        ctx.strokeRect(x, cardY, w, cardH);
+        
+        ctx.restore();
+    }
+
     // ── 最大高度辅助线（仅预览时显示，导出时跳过）──
     if (doShrink && !ov._exporting) {
-        const guideY_top = ov.auto_center_v ? (canvasH - maxH) / 2 : cardY;
+        const guideY_top = useAutoCenterV ? (canvasH - maxH) / 2 : cardY;
         const guideY_bot = guideY_top + maxH;
         ctx.save();
         ctx.setLineDash([10, 6]);
-        ctx.strokeStyle = '#00D4FF';
+        ctx.strokeStyle = '#4c9eff';
         ctx.lineWidth = 2;
         ctx.globalAlpha = 0.7;
         // 上边界
@@ -828,14 +1471,14 @@ function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime
         // 标签
         ctx.setLineDash([]);
         ctx.font = '22px sans-serif';
-        ctx.fillStyle = '#00D4FF';
+        ctx.fillStyle = '#4c9eff';
         ctx.globalAlpha = 0.85;
         ctx.fillText(`最大高度: ${maxH}px`, x + w + 28, guideY_top + 26);
         // 高度标尺线
         ctx.beginPath();
         ctx.moveTo(x + w + 16, guideY_top);
         ctx.lineTo(x + w + 16, guideY_bot);
-        ctx.strokeStyle = '#00D4FF';
+        ctx.strokeStyle = '#4c9eff';
         ctx.lineWidth = 1;
         ctx.stroke();
         ctx.restore();
@@ -1357,6 +2000,7 @@ class OverlayManager {
      */
     getVisibleOverlays(currentTime) {
         return this.overlays.filter(ov => {
+            if (ov.disabled) return false;
             const start = parseFloat(ov.start || 0);
             const end = parseFloat(ov.end || 0);
             return currentTime >= start && currentTime <= end;

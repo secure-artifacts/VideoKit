@@ -13,6 +13,7 @@ const crypto = require('crypto');
 const ffmpegService = require('./services/ffmpeg');
 const elevenlabsService = require('./services/elevenlabs');
 const settingsService = require('./services/settings');
+const elevenlabsAuth = require('./services/elevenlabsAuth');
 const subtitleService = require('./services/subtitle');
 const fcpxmlService = require('./services/fcpxml');
 
@@ -23,6 +24,7 @@ const workflowService = require('./services/workflow');
 const subtitleUtils = require('./services/subtitleUtils');
 const { audioSubtitleSearchDifferentStrong } = require('./services/subtitleAlignment');
 const wav2lipService = require('./services/wav2lip');
+const geminiService = require('./services/gemini');
 
 /**
  * 注册所有 IPC API 路由
@@ -71,6 +73,11 @@ async function routeAPI(endpoint, data) {
             settingsService.saveGladiaKeys(data);
             return { message: '保存成功' };
 
+        case 'settings/gemini-keys':
+            if (data._method === 'GET') return settingsService.loadGeminiKeys();
+            settingsService.saveGeminiKeys(data);
+            return { message: '保存成功' };
+
         case 'settings/elevenlabs':
             if (data._method === 'GET') return settingsService.loadElevenLabsSettings();
             return settingsService.saveElevenLabsSettings(data);
@@ -93,13 +100,76 @@ async function routeAPI(endpoint, data) {
             return await settingsService.openFolder(data.path);
 
         // ==================== ElevenLabs ====================
+        case 'elevenlabs/web-login':
+            elevenlabsAuth.openElevenLabsAuthWindow();
+            return { message: '登录页面已打开' };
+
+        case 'elevenlabs/web-logout':
+            await elevenlabsAuth.clearElevenLabsSession();
+            return { message: '网页凭证已清除' };
+
+        case 'elevenlabs/web-status': {
+            const data = elevenlabsService.loadSettings();
+            const hasToken = !!(data.web_token && (data.web_token.authorization || data.web_token.xiApiKey || data.web_token.cookie));
+            return { hasToken, tokenData: data.web_token };
+        }
+
+        case 'elevenlabs/web-token-manual': {
+            // 手动粘贴 Token
+            const settingsData = elevenlabsService.loadSettings();
+            const tokenData = {};
+            if (data.authorization) tokenData.authorization = data.authorization;
+            if (data.xiApiKey) tokenData.xiApiKey = data.xiApiKey;
+            if (data.cookie) tokenData.cookie = data.cookie;
+            if (!tokenData.authorization && !tokenData.xiApiKey) {
+                return { success: false, message: '请至少提供 Authorization Token 或 xi-api-key' };
+            }
+            settingsData.web_token = tokenData;
+            // 关键：同时激活 web token 模式，否则 loadKeys() 不会把它加入轮询池
+            settingsData.use_web_token = true;
+            settingsData.web_token_enabled = true;
+            settingsData.web_token_manual_disabled = false;
+            settingsData.web_token_auto_disabled = false;
+            elevenlabsService.saveSettings(settingsData);
+            console.log('[ElevenLabs] 手动保存 Web Token 成功，已自动启用 web token 模式');
+
+            // 验证 Token 是否有效
+            try {
+                const quota = await elevenlabsService.getQuota('__WEB_TOKEN__');
+                const remaining = (quota.limit || 0) - (quota.usage || 0);
+                return { success: true, message: `✅ Token 已保存并验证成功 (剩余额度: ${remaining.toLocaleString()})` };
+            } catch (verifyErr) {
+                // Token 保存了但验证失败，提醒用户
+                return { success: true, message: `⚠️ Token 已保存，但验证失败: ${verifyErr.message}。请检查 Token 是否过期。` };
+            }
+        }
+
         case 'elevenlabs/voices': {
             const keys = elevenlabsService.loadKeys();
             if (!keys || keys.length === 0) return { voices: [], error: '未配置 API Key' };
-            const apiKey = elevenlabsService.selectKey(keys, data.key_index);
-            if (!apiKey) return { voices: [], error: '无可用 API Key' };
-            const voices = await elevenlabsService.getVoices(apiKey);
-            return { voices };
+            // 依次尝试所有可用 Key，遇到 401 自动停用并切换下一个
+            let lastError = null;
+            for (let i = 0; i < keys.length; i++) {
+                const apiKey = keys[i];
+                try {
+                    // Web Token 模式下启用扩展模式，拉取社区热门音色
+                    const extended = (apiKey === '__WEB_TOKEN__');
+                    const voices = await elevenlabsService.getVoices(apiKey, extended);
+                    return { voices };
+                } catch (e) {
+                    lastError = e;
+                    const msg = (e.message || '').toLowerCase();
+                    // 401/auth 错误 → 自动停用这把 Key，尝试下一把
+                    if (msg.includes('401') || msg.includes('invalid') || msg.includes('unauthorized')) {
+                        console.log(`[ElevenLabs] Key${i + 1} 获取音色失败(auth)，自动停用并切换下一个`);
+                        try { elevenlabsService.setKeyEnabled(apiKey, false, 'auth'); } catch {}
+                        continue;
+                    }
+                    // 其他错误也尝试下一把
+                    console.log(`[ElevenLabs] Key${i + 1} 获取音色失败: ${e.message}，尝试下一个`);
+                }
+            }
+            return { voices: [], error: lastError ? lastError.message : '所有 Key 均失败' };
         }
 
         case 'elevenlabs/search': {
@@ -156,7 +226,7 @@ async function routeAPI(endpoint, data) {
                 savePath = elevenlabsService.buildTTSSavePath(data.text, data.output_format || 'mp3_44100_128', 'tts');
             }
             fs.writeFileSync(savePath, audio);
-            return { message: '生成成功', file_path: savePath };
+            return { message: '生成成功', file_path: savePath, used_key: usedKey };
         }
 
         case 'elevenlabs/tts-batch': {
@@ -183,7 +253,7 @@ async function routeAPI(endpoint, data) {
                         savePath = elevenlabsService.buildTTSSavePath(item.text, outputFormat, 'batch', `${String(i + 1).padStart(3, '0')}`);
                     }
                     fs.writeFileSync(savePath, audio);
-                    results.push({ index: i, success: true, file_path: savePath });
+                    results.push({ index: i, success: true, file_path: savePath, used_key: usedKey });
                 } catch (e) {
                     results.push({ index: i, success: false, error: e.message });
                 }
@@ -236,6 +306,17 @@ async function routeAPI(endpoint, data) {
         case 'srt/compute-char-time':
             if (!data.ref_path) throw new Error('缺少必需参数: ref_path');
             return subtitleService.computeCharTime(data.ref_path, data.interval_time);
+
+        // ==================== AI 文案处理 ====================
+        case 'ai/process-scripts': {
+            if (!data.scripts || !Array.isArray(data.scripts)) {
+                throw new Error('缺少文案列表');
+            }
+            const keysData = settingsService.loadGeminiKeys() || {};
+            const keys = keysData.keys || [];
+            const customPrompt = keysData.prompt || null;
+            return await geminiService.processScripts(data.scripts, keys, customPrompt);
+        }
 
         // ==================== 媒体操作 ====================
         case 'media/info': {
@@ -828,7 +909,6 @@ async function routeAPI(endpoint, data) {
             });
         }
 
-        // ==================== 文件工具 ====================
         case 'file/write-text': {
             const filePath = data.path;
             const content = data.content || '';
@@ -836,6 +916,20 @@ async function routeAPI(endpoint, data) {
             const dir = path.dirname(filePath);
             if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
             fs.writeFileSync(filePath, content, 'utf-8');
+            return { message: '写入成功', path: filePath };
+        }
+
+        case 'file/write-base64': {
+            const filePath = data.path;
+            const content = data.content || '';
+            if (!filePath) throw new Error('缺少文件路径');
+            const dir = path.dirname(filePath);
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+            let base64Data = content;
+            if (base64Data.includes(',')) {
+                base64Data = base64Data.split(',')[1];
+            }
+            fs.writeFileSync(filePath, Buffer.from(base64Data, 'base64'));
             return { message: '写入成功', path: filePath };
         }
 

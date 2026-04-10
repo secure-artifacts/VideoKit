@@ -98,6 +98,10 @@ async function reelsWysiwygExport(params) {
         segments,
         overlays: taskOverlays,
         backgroundPath,
+        bgMode = 'single',       // 'single' | 'multi'
+        bgClipPool = [],         // 多素材池路径列表
+        bgTransition = 'crossfade', // 多素材转场类型
+        bgTransDur = 0.5,        // 多素材转场时长(秒)
         voicePath,
         outputPath,
         targetWidth = 1080,
@@ -110,6 +114,12 @@ async function reelsWysiwygExport(params) {
         customDuration = 0,  // 自定义输出时长（秒），0 = 自动
         bgmPath = '',        // 配乐文件路径
         bgmVolume = 0.3,     // 配乐音量 (0~1)
+        contentVideoPath = null,
+        contentVideoTrimStart = null,
+        contentVideoTrimEnd = null,
+        contentVideoScale = 100,
+        contentVideoX = 'center',
+        contentVideoY = 'center',
         bgScale = 100,       // 背景图片缩放 (50~300%)
         bgDurScale = 100,    // 背景素材时长缩放 (10~500%)
         audioDurScale = 100,  // 音频素材时长缩放 (10~500%)
@@ -124,8 +134,10 @@ async function reelsWysiwygExport(params) {
         isCancelled,
     } = params;
 
+    const isMultiClip = bgMode === 'multi' && Array.isArray(bgClipPool) && bgClipPool.length > 0;
+
     if (!canvas) throw new Error('需要提供 canvas');
-    if (!backgroundPath) throw new Error('缺少背景素材');
+    if (!backgroundPath && !isMultiClip) throw new Error('缺少背景素材');
     if (!outputPath) throw new Error('缺少输出路径');
     if (!window.electronAPI || !window.electronAPI.reelsComposeWysiwyg) {
         throw new Error('需要 reelsComposeWysiwyg IPC 接口');
@@ -142,7 +154,7 @@ async function reelsWysiwygExport(params) {
     const ctx = canvas.getContext('2d');
     const renderer = new ReelsCanvasRenderer(canvas);
 
-    // 获取时长：优先自定义时长，否则音频时长，否则视频背景时长
+    // 获取时长：优先自定义时长，否则音频时长，否则覆层视频时长，否则背景视频时长
     let duration = 0;
     const _audioDurFactor = (audioDurScale || 100) / 100;
     const _bgDurFactor = (bgDurScale || 100) / 100;
@@ -158,6 +170,42 @@ async function reelsWysiwygExport(params) {
                 log(`音频原始时长: ${rawAudioDur.toFixed(2)}s × ${audioDurScale}% = ${duration.toFixed(2)}s`);
             } else {
                 duration = rawAudioDur;
+            }
+        }
+        // ── 覆层视频 (Content Video) 时长优先于背景 ──
+        if ((!duration || duration <= 0) && contentVideoPath) {
+            let cvDur = 0;
+            // 情况1: 图片序列文件夹 → duration = imageCount / fps
+            if (window.require) {
+                try {
+                    const fs = window.require('fs');
+                    if (fs.existsSync(contentVideoPath) && fs.statSync(contentVideoPath).isDirectory()) {
+                        const seqFiles = fs.readdirSync(contentVideoPath)
+                            .filter(f => !f.startsWith('.') && /\.(png|jpg|jpeg|webp)$/i.test(f));
+                        if (seqFiles.length > 0) {
+                            cvDur = seqFiles.length / fps;
+                            log(`覆层序列帧时长: ${seqFiles.length} 帧 / ${fps} fps = ${cvDur.toFixed(2)}s`);
+                        }
+                    }
+                } catch (e) { /* not a directory or no fs */ }
+            }
+            // 情况2: 普通视频文件 → probe duration
+            if (cvDur <= 0) {
+                log('正在获取覆层视频时长...');
+                let rawCvDur = await window.electronAPI.getMediaDuration(contentVideoPath);
+                if (rawCvDur > 0) {
+                    const trimStart = parseFloat(contentVideoTrimStart) || 0;
+                    const trimEnd   = parseFloat(contentVideoTrimEnd) || 0;
+                    if (trimEnd > trimStart && trimStart >= 0) {
+                        cvDur = trimEnd - trimStart;
+                    } else {
+                        cvDur = rawCvDur - trimStart;
+                    }
+                    log(`覆层视频时长: ${cvDur.toFixed(2)}s (原始 ${rawCvDur.toFixed(2)}s, trim ${trimStart}-${trimEnd || 'end'})`);
+                }
+            }
+            if (cvDur > 0) {
+                duration = cvDur;
             }
         }
         if (!duration || duration <= 0) {
@@ -189,6 +237,11 @@ async function reelsWysiwygExport(params) {
             ...seg,
             start: (seg.start || 0) * _audioDurFactor,
             end:   (seg.end   || 0) * _audioDurFactor,
+            words: seg.words ? seg.words.map(w => ({
+                ...w,
+                start: (w.start || 0) * _audioDurFactor,
+                end:   (w.end   || 0) * _audioDurFactor,
+            })) : undefined
         }));
     }
 
@@ -196,17 +249,25 @@ async function reelsWysiwygExport(params) {
     // 所有音频效果由 FFmpeg afir 卷积滤镜处理（使用相同 seeded PRNG 的 IR）
 
     // ═══ 阶段 1: 让主进程用 FFmpeg 预处理背景 + 提取帧序列 ═══
-    log('阶段1: FFmpeg 预处理背景视频（循环+淡入淡出+提取帧）...');
+    if (isMultiClip) {
+        log(`阶段1: FFmpeg 多素材拼接（${bgClipPool.length}个片段，转场: ${bgTransition} ${bgTransDur}s）...`);
+    } else {
+        log('阶段1: FFmpeg 预处理背景视频（循环+淡入淡出+提取帧）...');
+    }
     progress(2);
 
     const prepResult = await window.electronAPI.reelsComposeWysiwyg('prepare-bg', {
-        backgroundPath,
+        backgroundPath: isMultiClip ? null : backgroundPath,
+        bgMode: isMultiClip ? 'multi' : 'single',
+        bgClipPool: isMultiClip ? bgClipPool : [],
+        bgTransition: isMultiClip ? bgTransition : 'none',
+        bgTransDur: isMultiClip ? bgTransDur : 0,
         voicePath,
         targetWidth,
         targetHeight,
         fps,
         duration: duration,
-        loopFade,
+        loopFade: isMultiClip ? false : loopFade,
         loopFadeDur,
         bgScale: bgScale || 100,
     });
@@ -217,6 +278,69 @@ async function reelsWysiwygExport(params) {
     const framesDir = prepResult.framesDir;
     const totalBgFrames = prepResult.frameCount;
     log(`背景帧提取完成: ${totalBgFrames} 帧 → ${framesDir}`);
+    progress(18);
+
+    const videoOverlays = (taskOverlays || []).filter(ov => ov.type === 'video' && !ov.disabled);
+    if (videoOverlays.length > 0) {
+        log(`阶段1.5: 预处理 ${videoOverlays.length} 个视频/动图覆层...`);
+        for (const ov of videoOverlays) {
+            if (!ov.content) continue;
+            const opath = ov.content.startsWith('file://') ? ov.content.substring(7) : ov.content;
+            const oPrep = await window.electronAPI.reelsComposeWysiwyg('prepare-overlay', {
+                overlayPath: opath,
+                fps,
+                duration: Math.min(duration, parseFloat(ov.end || duration)),
+            });
+            if (oPrep && oPrep.framesDir) {
+                ov._framesDir = oPrep.framesDir;
+                ov._frameCount = oPrep.frameCount;
+            }
+        }
+    }
+
+    let cvFramesDir = null;
+    let cvFrameCount = 0;
+    let cvIsImageSequence = false;
+    if (contentVideoPath) {
+        log(`阶段1.5: 预处理内容视频源 (${contentVideoPath})...`);
+        const cvPathRaw = contentVideoPath.startsWith('file://') ? contentVideoPath.substring(7) : contentVideoPath;
+
+        // 检测是否为图片序列文件夹
+        let isDir = false;
+        if (window.require) {
+            try {
+                const fs = window.require('fs');
+                if (fs.existsSync(cvPathRaw) && fs.statSync(cvPathRaw).isDirectory()) {
+                    isDir = true;
+                    const seqFiles = fs.readdirSync(cvPathRaw)
+                        .filter(f => !f.startsWith('.') && /\.(png|jpg|jpeg|webp)$/i.test(f)).sort();
+                    if (seqFiles.length > 0) {
+                        cvFramesDir = cvPathRaw;
+                        cvFrameCount = seqFiles.length;
+                        cvIsImageSequence = true;
+                        // 缓存文件名列表供逐帧渲染使用
+                        window._cvSeqFileList = seqFiles;
+                        log(`覆层图片序列: ${seqFiles.length} 帧 (直接使用源目录)`);
+                    }
+                }
+            } catch (e) { /* not a directory */ }
+        }
+
+        if (!isDir) {
+            const cvPrep = await window.electronAPI.reelsComposeWysiwyg('prepare-overlay', {
+                overlayPath: cvPathRaw,
+                fps,
+                duration,
+                trimStart: contentVideoTrimStart,
+                trimEnd: contentVideoTrimEnd,
+            });
+            if (cvPrep && cvPrep.framesDir) {
+                cvFramesDir = cvPrep.framesDir;
+                cvFrameCount = cvPrep.frameCount;
+            }
+        }
+    }
+
     progress(20);
 
     // ═══ 阶段 2: 启动 FFmpeg 编码器 ═══
@@ -229,10 +353,9 @@ async function reelsWysiwygExport(params) {
         voicePath,
         voiceVolume,
         bgVolume,
-        backgroundPath,
-        // 如果 voicePath === backgroundPath（voiced_bg 模式），
-        // 背景音频已经作为 voice 混入，不要再重复混入
-        bgHasAudio: (voicePath && backgroundPath && voicePath === backgroundPath) ? false : !_isImageFile(backgroundPath),
+        backgroundPath: isMultiClip ? null : backgroundPath,
+        // Multi-clip mode: no bg audio (separate voice track). Single mode: check if bg has audio.
+        bgHasAudio: isMultiClip ? false : ((voicePath && backgroundPath && voicePath === backgroundPath) ? false : !_isImageFile(backgroundPath)),
         bgmPath: bgmPath || '',
         bgmVolume: bgmVolume || 0,
         audioDurScale: audioDurScale || 100,
@@ -258,6 +381,8 @@ async function reelsWysiwygExport(params) {
     // 预加载第一帧
     let currentBgImg = null;
     let currentBgIdx = -1;
+    let currentCvImg = null;
+    let currentCvIdx = -1;
 
     try {
         for (let frameIdx = 0; frameIdx < totalFrames; frameIdx++) {
@@ -285,6 +410,40 @@ async function reelsWysiwygExport(params) {
                 }
             }
 
+            // ── 预加载视频覆层帧 ──
+            if (taskOverlays && taskOverlays.length > 0) {
+                for (const ov of taskOverlays) {
+                    if (ov.type === 'video' && !ov.disabled) {
+                        const ovStart = parseFloat(ov.start || 0);
+                        let relTime = Math.max(0, t - ovStart);
+                        let frameIdxOv = Math.floor(relTime * fps);
+                        
+                        let fPath = null;
+                        if (ov.is_img_sequence && ov.sequence_frames && ov.sequence_frames.length > 0) {
+                            if (frameIdxOv >= ov.sequence_frames.length) {
+                                frameIdxOv = frameIdxOv % Math.max(1, ov.sequence_frames.length);
+                            }
+                            // sequence_frames 已经是合法的 url，若为原生路径等由外部处理（通常已处理好）
+                            fPath = ov.sequence_frames[frameIdxOv];
+                        } else if (ov._framesDir) {
+                            if (frameIdxOv >= ov._frameCount) {
+                                frameIdxOv = frameIdxOv % Math.max(1, ov._frameCount);
+                            }
+                            const frameName = `frame_${String(frameIdxOv + 1).padStart(6, '0')}.png`;
+                            fPath = `file://${ov._framesDir}/${frameName}`;
+                        }
+
+                        if (fPath) {
+                            try {
+                                ov._currentFrameImage = await _loadImage(fPath);
+                            } catch (e) {
+                                ov._currentFrameImage = null;
+                            }
+                        }
+                    }
+                }
+            }
+
             // ── 绘制背景帧 ──
             ctx.fillStyle = '#000000';
             ctx.fillRect(0, 0, targetWidth, targetHeight);
@@ -307,6 +466,58 @@ async function reelsWysiwygExport(params) {
                 }
             }
 
+            // ── 绘制合并内容视频 ──
+            if (contentVideoPath && cvFramesDir) {
+                // Loop video automatically
+                let frameIdxCv = frameIdx;
+                if (cvFrameCount > 0) {
+                    frameIdxCv = frameIdxCv % cvFrameCount;
+                }
+                if (frameIdxCv !== currentCvIdx) {
+                    let framePath;
+                    if (cvIsImageSequence && window._cvSeqFileList && window._cvSeqFileList.length > 0) {
+                        // 图片序列: 使用原始文件名
+                        const seqFile = window._cvSeqFileList[frameIdxCv];
+                        framePath = `file://${cvFramesDir}/${seqFile}`;
+                    } else {
+                        // FFmpeg 提取的帧: frame_000001.png 格式
+                        const frameName = `frame_${String(frameIdxCv + 1).padStart(6, '0')}.png`;
+                        framePath = `file://${cvFramesDir}/${frameName}`;
+                    }
+                    try {
+                        currentCvImg = await _loadImage(framePath);
+                        currentCvIdx = frameIdxCv;
+                    } catch (e) {
+                        currentCvImg = null;
+                    }
+                }
+                if (currentCvImg) {
+                    const imgW = currentCvImg.naturalWidth || targetWidth;
+                    const imgH = currentCvImg.naturalHeight || targetHeight;
+                    const cScale = (contentVideoScale || 100) / 100;
+                    
+                    // Default width-fit
+                    const baseScale = targetWidth / imgW;
+                    const finalScale = baseScale * cScale;
+                    const drawW = imgW * finalScale;
+                    const drawH = imgH * finalScale;
+                    
+                    let drawX = (targetWidth - drawW) / 2;
+                    let drawY = (targetHeight - drawH) / 2;
+                    
+                    if (contentVideoX && contentVideoX !== 'center') {
+                        const relX = parseFloat(contentVideoX);
+                        if (!isNaN(relX)) Math.abs(relX) <= 1 ? drawX += targetWidth * relX : drawX += relX;
+                    }
+                    if (contentVideoY && contentVideoY !== 'center') {
+                        const relY = parseFloat(contentVideoY);
+                        if (!isNaN(relY)) Math.abs(relY) <= 1 ? drawY += targetHeight * relY : drawY += relY;
+                    }
+                    
+                    ctx.drawImage(currentCvImg, drawX, drawY, drawW, drawH);
+                }
+            }
+
             // ── 全局蒙版 ──
             if (hasMask) {
                 ctx.save();
@@ -316,9 +527,10 @@ async function reelsWysiwygExport(params) {
                 ctx.restore();
             }
 
-            // ── 覆盖层（文案卡片等）──
+            // ── 覆盖层（文字卡片等）──
             if (taskOverlays && taskOverlays.length > 0 && window.ReelsOverlay) {
                 for (const ov of taskOverlays) {
+                    if (ov.disabled) continue;
                     const ovStart = parseFloat(ov.start || 0);
                     const ovEnd = parseFloat(ov.end || 9999);
                     // scroll 覆层不受 end 限制（动画完成后保持最终位置）
@@ -380,6 +592,14 @@ async function reelsWysiwygExport(params) {
 
         // 清理背景帧
         await window.electronAPI.reelsComposeWysiwyg('cleanup-bg', { framesDir });
+        for (const ov of videoOverlays) {
+            if (ov._framesDir) {
+                try { await window.electronAPI.reelsComposeWysiwyg('cleanup-bg', { framesDir: ov._framesDir }); } catch (_) { }
+            }
+        }
+        if (cvFramesDir && !cvIsImageSequence) {
+            try { await window.electronAPI.reelsComposeWysiwyg('cleanup-bg', { framesDir: cvFramesDir }); } catch (_) { }
+        }
 
         progress(100);
         const totalTime = ((Date.now() - t0) / 1000).toFixed(1);
@@ -389,6 +609,14 @@ async function reelsWysiwygExport(params) {
     } catch (e) {
         try { await window.electronAPI.reelsComposeWysiwyg('abort', { sessionId }); } catch (_) { }
         try { await window.electronAPI.reelsComposeWysiwyg('cleanup-bg', { framesDir }); } catch (_) { }
+        for (const ov of videoOverlays) {
+            if (ov._framesDir) {
+                try { await window.electronAPI.reelsComposeWysiwyg('cleanup-bg', { framesDir: ov._framesDir }); } catch (_) { }
+            }
+        }
+        if (cvFramesDir && !cvIsImageSequence) {
+            try { await window.electronAPI.reelsComposeWysiwyg('cleanup-bg', { framesDir: cvFramesDir }); } catch (_) { }
+        }
         if (e && e.message === '__CANCELLED__') {
             log('导出已取消，资源已清理');
             return { cancelled: true };

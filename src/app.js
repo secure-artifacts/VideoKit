@@ -341,7 +341,7 @@ function initSubtitleLangPicker() {
                         border-bottom:1px solid rgba(255,255,255,0.04);
                         display:flex;justify-content:space-between;align-items:center;
                         transition:background 0.15s;
-                        ${hiddenInput.value === l.name ? 'background:rgba(0,212,255,0.12);color:#00D4FF;' : ''}
+                        ${hiddenInput.value === l.name ? 'background:rgba(76,158,255,0.12);color:#4c9eff;' : ''}
                         ${l.pinned ? 'font-weight:600;' : ''}">
                 <span>${l.name}</span>
                 <span style="font-size:11px;color:var(--text-muted, #666);">${l.en}</span>
@@ -391,7 +391,7 @@ function initSubtitleLangPicker() {
     });
     listEl.addEventListener('mouseout', (e) => {
         const item = e.target.closest('.subtitle-lang-item');
-        if (item) item.style.background = hiddenInput.value === item.dataset.name ? 'rgba(0,212,255,0.12)' : '';
+        if (item) item.style.background = hiddenInput.value === item.dataset.name ? 'rgba(76,158,255,0.12)' : '';
     });
 
     // Click outside to close
@@ -764,7 +764,7 @@ function renderAudioSplitFileList() {
         // 播放光标
         const cursor = document.createElement('div');
         cursor.id = `audio-cursor-${idx}`;
-        cursor.style.cssText = 'position: absolute; top: 0; bottom: 0; width: 2px; background: #ff6b6b; left: 0%; pointer-events: none; display: none;';
+        cursor.style.cssText = 'position: absolute; top: 0; bottom: 0; width: 2px; background: #f87171; left: 0%; pointer-events: none; display: none;';
 
         const loading = document.createElement('div');
         loading.id = `audio-loading-${idx}`;
@@ -1344,7 +1344,7 @@ function drawWaveform(canvas, peaks, cutPoints = [], totalDuration = 0) {
 
     // 绘制分割点标记线
     if (cutPoints.length > 0 && totalDuration > 0) {
-        ctx.strokeStyle = '#ff6b6b';
+        ctx.strokeStyle = '#f87171';
         ctx.lineWidth = 2;
         ctx.setLineDash([4, 2]);
 
@@ -1358,7 +1358,7 @@ function drawWaveform(canvas, peaks, cutPoints = [], totalDuration = 0) {
             ctx.stroke();
 
             // 分割点标签
-            ctx.fillStyle = '#ff6b6b';
+            ctx.fillStyle = '#f87171';
             ctx.font = '10px sans-serif';
             ctx.fillText(`#${idx + 1}`, x + 2, 10);
         });
@@ -1529,6 +1529,7 @@ function initMediaModeOptions() {
     const formatModes = document.querySelectorAll('input[name="format-mode"]');
     const audioSplitOptions = document.getElementById('audio-split-options');
     const audioFxOptions = document.getElementById('audio-fx-options');
+    const txtWrapOptions = document.getElementById('txt-wrap-options');
     const updateFormatOptions = () => {
         const selected = document.querySelector('input[name="format-mode"]:checked')?.value;
         if (selected === 'audio_split') {
@@ -1542,6 +1543,12 @@ function initMediaModeOptions() {
             audioFxOptions?.classList.remove('hidden');
         } else {
             audioFxOptions?.classList.add('hidden');
+        }
+
+        if (selected === 'txt_wrap') {
+            txtWrapOptions?.classList.remove('hidden');
+        } else {
+            txtWrapOptions?.classList.add('hidden');
         }
     };
 
@@ -1678,9 +1685,9 @@ function renderLogoToCanvas(canvasId, params) {
     // 清空并绘制背景
     if (params.bgType === 'dark') {
         const gradient = ctx.createLinearGradient(0, 0, w, h);
-        gradient.addColorStop(0, '#1a1a2e');
-        gradient.addColorStop(0.5, '#16213e');
-        gradient.addColorStop(1, '#0f3460');
+        gradient.addColorStop(0, '#181818');
+        gradient.addColorStop(0.5, '#1e1e1e');
+        gradient.addColorStop(1, '#2a2a2a');
         ctx.fillStyle = gradient;
     } else {
         const gradient = ctx.createLinearGradient(0, 0, w, h);
@@ -1823,9 +1830,9 @@ function renderWatermarkToCanvas(canvasId, params) {
     // 清空并绘制背景
     if (params.bgType === 'dark') {
         const gradient = ctx.createLinearGradient(0, 0, w, h);
-        gradient.addColorStop(0, '#1a1a2e');
-        gradient.addColorStop(0.5, '#16213e');
-        gradient.addColorStop(1, '#0f3460');
+        gradient.addColorStop(0, '#181818');
+        gradient.addColorStop(0.5, '#1e1e1e');
+        gradient.addColorStop(1, '#2a2a2a');
         ctx.fillStyle = gradient;
     } else {
         const gradient = ctx.createLinearGradient(0, 0, w, h);
@@ -2049,22 +2056,54 @@ async function loadSettings(autoLoadVoices = false) {
         // 忽略
     }
 
+    try {
+        const response = await apiFetch(`${API_BASE}/settings/gemini-keys`);
+        const data = await response.json();
+        if (data.keys) {
+            document.getElementById('gemini-keys').value = data.keys.join('\n');
+        }
+        if (data.prompt !== undefined) {
+            document.getElementById('gemini-prompt').value = data.prompt;
+        }
+    } catch (error) {
+        // 忽略
+    }
+
     // 加载 ElevenLabs API Keys
     try {
         const response = await apiFetch(`${API_BASE}/settings/elevenlabs`);
         const data = await response.json();
         const keyTextarea = document.getElementById('elevenlabs-api-keys');
+        const settingsKeyTextarea = document.getElementById('settings-elevenlabs-keys');
+        const radioWeb = document.getElementById('mode-web');
+        const radioApi = document.getElementById('mode-apikey');
+        
+        const keys = Array.isArray(data.api_keys) ? data.api_keys : (data.api_key ? [data.api_key] : []);
+        
         if (keyTextarea) {
-            const keys = Array.isArray(data.api_keys) ? data.api_keys : (data.api_key ? [data.api_key] : []);
             keyTextarea.value = keys.join('\n');
+            if (data.use_web_token && radioWeb) {
+                radioWeb.checked = true;
+            } else if (radioApi) {
+                radioApi.checked = true;
+            }
+            if (typeof updateWebTokenUI === 'function') {
+                updateWebTokenUI();
+            }
             if (autoLoadVoices && backendReady) {
-                if (keys.length > 0) {
+                if (keys.length > 0 || data.use_web_token) {
                     loadVoices();
                 }
                 if (typeof refreshVWVoices === 'function') {
                     refreshVWVoices();
                 }
             }
+        }
+        // 同步填充到「总设置」面板
+        if (settingsKeyTextarea) {
+            settingsKeyTextarea.value = keys.join('\n');
+            const countEl = document.getElementById('settings-elevenlabs-key-count');
+            if (countEl) countEl.textContent = keys.length > 0 ? `已配置 ${keys.length} 个密钥` : '';
         }
     } catch (error) {
         // 忽略
@@ -2673,7 +2712,7 @@ async function startBatchGeneration() {
                     if (status) {
                         status.textContent = '❌ 失败';
                         status.style.background = 'rgba(255,0,0,0.2)';
-                        status.style.color = '#ff6b6b';
+                        status.style.color = '#f87171';
                     }
                     addSubtitleRetryButton(items[taskIndex], taskIndex);
                 }
@@ -2691,7 +2730,7 @@ async function startBatchGeneration() {
                 if (status) {
                     status.textContent = '❌ 失败';
                     status.style.background = 'rgba(255,0,0,0.2)';
-                    status.style.color = '#ff6b6b';
+                    status.style.color = '#f87171';
                 }
                 addSubtitleRetryButton(items[taskIndex], taskIndex);
             }
@@ -2932,7 +2971,7 @@ async function retrySingleSubtitleTask(index) {
                 if (status) {
                     status.textContent = '❌ 失败';
                     status.style.background = 'rgba(255,0,0,0.2)';
-                    status.style.color = '#ff6b6b';
+                    status.style.color = '#f87171';
                 }
             }
             showToast('重试失败: ' + (error.error || '未知错误'), 'error');
@@ -3318,6 +3357,8 @@ async function startMediaConvert() {
             payload.reverbMix = parseFloat(document.getElementById('audio-fx-reverb-mix')?.value || '30');
             payload.stereoWidth = parseFloat(document.getElementById('audio-fx-stereo-width')?.value || '100');
             payload.outputFormat = document.getElementById('audio-fx-output-format')?.value || 'mp3';
+        } else if (formatMode === 'txt_wrap') {
+            payload.txt_wrap_width = parseInt(document.getElementById('txt-wrap-width')?.value || '18');
         }
     } else {
         // 默认：使用第一个子标签页的 Logo 模式
@@ -3476,21 +3517,324 @@ async function selectMediaOutputDir() {
     }
 }
 
+// ==================== 批量文案断行（前端纯处理） ====================
+
+// ---- 内部状态 ----
+let _wrapOriginals = [];   // 原始文案数组
+let _wrapResults   = [];   // 断行结果数组
+
+/**
+ * 从 Google Sheets 粘贴的 HTML 中解析单元格。
+ * Google Sheets 复制时剪贴板包含 text/html，结构为 <table><tr><td>...</td></tr>...</table>
+ * 每个 <td> = 一个单元格，内部 <br> / <p> / <div> = 单元格内换行
+ */
+function _parseCellsFromHTML(html) {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    const rows = doc.querySelectorAll('tr');
+    if (rows.length === 0) return null; // 不是表格格式
+
+    const cells = [];
+    rows.forEach(tr => {
+        const td = tr.querySelector('td, th');
+        if (!td) return;
+        // 把 <br> 替换成换行
+        const clone = td.cloneNode(true);
+        clone.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
+        clone.querySelectorAll('p, div').forEach(el => {
+            el.insertAdjacentText('beforebegin', '\n');
+        });
+        const text = clone.textContent || '';
+        cells.push(text.replace(/^\n+/, '').replace(/\n+$/, '')); // trim 首尾换行
+    });
+
+    // 去掉末尾空白单元格
+    while (cells.length > 0 && cells[cells.length - 1].trim() === '') cells.pop();
+    return cells.length > 0 ? cells : null;
+}
+
+/**
+ * 粘贴事件拦截 — 从剪贴板 HTML 中精确识别表格单元格
+ * 如果不是表格格式（纯文本），则整坨内容视为 1 条文案
+ */
+function _handleTxtWrapPaste(e) {
+    e.preventDefault();
+
+    const html = e.clipboardData.getData('text/html');
+    const plainText = e.clipboardData.getData('text/plain') || '';
+
+    let cells = null;
+
+    // 优先从 HTML 表格解析
+    if (html) {
+        cells = _parseCellsFromHTML(html);
+    }
+
+    // 无表格结构 → 整坨视为 1 条文案
+    if (!cells || cells.length === 0) {
+        const trimmed = plainText.trim();
+        if (!trimmed) { showToast('剪贴板为空', 'warning'); return; }
+        cells = [trimmed];
+    }
+
+    // 存储，并在输入框显示预览
+    _wrapOriginals = cells;
+    _wrapResults = [];
+
+    const inputEl = document.getElementById('txt-wrap-input');
+    if (cells.length === 1) {
+        inputEl.value = cells[0];
+    } else {
+        inputEl.value = cells.map((c, i) => `【第${i+1}条】\n${c}`).join('\n─────\n');
+    }
+
+    document.getElementById('txt-wrap-counter').textContent = `📥 已识别 ${cells.length} 条文案`;
+    showToast(`已识别 ${cells.length} 条文案，点击「开始断行」处理`, 'success');
+}
+
+/**
+ * 初始化粘贴拦截器
+ * initMediaModeOptions 已经监听了 format-mode radio，这里只要绑定 paste
+ */
+function _initTxtWrapPaste() {
+    const input = document.getElementById('txt-wrap-input');
+    if (input && !input._wrapPasteBound) {
+        input.addEventListener('paste', _handleTxtWrapPaste);
+        input._wrapPasteBound = true;
+    }
+}
+
+// 在 DOM 就绪后绑定
+document.addEventListener('DOMContentLoaded', () => {
+    setTimeout(_initTxtWrapPaste, 300);
+});
+
+// ==================== UI 操作 ====================
+
+function hideTxtWrapTable() {
+    const w = document.getElementById('txt-wrap-table-wrapper');
+    if (w) w.style.display = 'none';
+    const c = document.getElementById('txt-wrap-counter');
+    if (c) c.textContent = '';
+    _wrapOriginals = [];
+    _wrapResults = [];
+}
+
+/** 主入口 — 开始断行 */
+function runBatchTextWrap() {
+    // 如果 paste 拦截器已经解析过，用 _wrapOriginals；否则把输入框文本当作一条
+    if (_wrapOriginals.length === 0) {
+        const raw = document.getElementById('txt-wrap-input')?.value || '';
+        if (!raw.trim()) { showToast('请先粘贴文案内容', 'error'); return; }
+        _wrapOriginals = [raw.trim()];
+    }
+
+    const maxLen = parseInt(document.getElementById('txt-wrap-width')?.value || '18');
+    _wrapResults = _wrapOriginals.map(c => _wrapTextSmart(c, maxLen));
+
+    // 渲染表格
+    _renderWrapTable();
+
+    document.getElementById('txt-wrap-table-wrapper').style.display = 'block';
+    document.getElementById('txt-wrap-table-info').textContent = `📊 共 ${_wrapOriginals.length} 条文案`;
+    document.getElementById('txt-wrap-counter').textContent = `✅ 已处理 ${_wrapOriginals.length} 条`;
+    showToast(`已完成 ${_wrapOriginals.length} 条文案的智能断行`, 'success');
+}
+
+function _renderWrapTable() {
+    const tbody = document.getElementById('txt-wrap-result-tbody');
+    tbody.innerHTML = '';
+
+    _wrapOriginals.forEach((orig, i) => {
+        const tr = document.createElement('tr');
+        tr.style.cssText = 'border-bottom: 1px solid rgba(255,255,255,0.05);';
+        if (i % 2 === 1) tr.style.background = 'rgba(255,255,255,0.02)';
+
+        // # 列
+        const tdNum = document.createElement('td');
+        tdNum.style.cssText = 'padding:8px 10px; text-align:center; color:var(--text-muted); font-size:11px; vertical-align:top;';
+        tdNum.textContent = i + 1;
+
+        // 原文列
+        const tdOrig = document.createElement('td');
+        tdOrig.style.cssText = 'padding:8px 10px; white-space:pre-wrap; word-break:break-all; font-family:"SF Mono","Menlo",monospace; font-size:12px; line-height:1.6; vertical-align:top; color:var(--text-secondary);';
+        tdOrig.textContent = orig;
+
+        // 结果列
+        const tdResult = document.createElement('td');
+        tdResult.style.cssText = 'padding:8px 10px; white-space:pre-wrap; word-break:break-all; font-family:"SF Mono","Menlo",monospace; font-size:12px; line-height:1.6; vertical-align:top; color:var(--text-primary); font-weight:500;';
+        tdResult.textContent = _wrapResults[i];
+
+        tr.appendChild(tdNum);
+        tr.appendChild(tdOrig);
+        tr.appendChild(tdResult);
+        tbody.appendChild(tr);
+    });
+}
+
+/** 复制全部结果（仅结果列 → 粘贴到一列） */
+function copyWrapResults() {
+    if (_wrapResults.length === 0) { showToast('请先执行断行', 'error'); return; }
+    const text = _wrapResults.map(c => _quoteForSheets(c)).join('\n');
+    navigator.clipboard.writeText(text).then(() => {
+        showToast(`已复制 ${_wrapResults.length} 条断行结果`, 'success');
+    }).catch(() => {
+        _fallbackCopy(text);
+    });
+}
+
+/** 复制原文 + 结果（两列 tab 分隔 → 粘贴后占两列） */
+function copyWrapOriginalAndResults() {
+    if (_wrapResults.length === 0) { showToast('请先执行断行', 'error'); return; }
+    const rows = _wrapOriginals.map((orig, i) => {
+        return _quoteForSheets(orig) + '\t' + _quoteForSheets(_wrapResults[i]);
+    });
+    const text = rows.join('\n');
+    navigator.clipboard.writeText(text).then(() => {
+        showToast(`已复制 ${_wrapResults.length} 条（原文+结果两列）`, 'success');
+    }).catch(() => {
+        _fallbackCopy(text);
+    });
+}
+
+function _fallbackCopy(text) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;left:-9999px;';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    showToast('已复制到剪贴板', 'success');
+}
+
+/** 判断字符是否为 CJK / 全角 / 日韩假名 */
+function _isCJK(ch) {
+    const c = ch.charCodeAt(0);
+    return (c >= 0x2E80 && c <= 0x9FFF) ||   // CJK 部首 / 统一汉字
+           (c >= 0x3000 && c <= 0x303F) ||   // CJK 符号
+           (c >= 0x3040 && c <= 0x30FF) ||   // 平假名 & 片假名
+           (c >= 0xF900 && c <= 0xFAFF) ||   // CJK 兼容
+           (c >= 0xFE30 && c <= 0xFE4F) ||   // CJK 兼容形式
+           (c >= 0xFF00 && c <= 0xFFEF) ||   // 全角
+           (c >= 0x20000 && c <= 0x2FA1F);   // 扩展 B–F
+}
+
+/** 判断是否为标点（中/英标点都算） */
+const _PUNCT_SET = new Set("，。！？、：；,.!?;:…—–·\u201C\u201D\u201E\u2018\u2019\uFF01\uFF1F");
+function _isPunctuation(ch) {
+    return _PUNCT_SET.has(ch);
+}
+
+/** 连续空行合并为一个 */
+function _cleanBlankLines(text) {
+    const lines = text.split('\n');
+    const out = [];
+    let blank = false;
+    for (const l of lines) {
+        if (l.trim() === '') { if (!blank) { out.push(''); blank = true; } }
+        else { out.push(l); blank = false; }
+    }
+    return out.join('\n');
+}
+
+/**
+ * 智能断行 — 同时兼容 CJK（逐字）和 Latin（逐词）文本
+ *
+ * 策略：将段落拆分为 token 列表
+ *   - CJK 字符 → 每个字独立 token
+ *   - 连续非空白非 CJK 字符 → 一个 Latin word token
+ * 然后按宽度累积，两个 Latin word 之间加空格，CJK 之间无间距。
+ * 遇到标点且当前行超过一半宽度 → 提前换行。
+ */
+function _wrapTextSmart(text, maxLen) {
+    const paragraphs = text.trim().split(/\n\s*\n/);
+    const wrappedLines = [];
+
+    for (const para of paragraphs) {
+        // 将段落规范为单行（段内换行 → 空格）
+        const flat = para.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+        if (!flat) continue;
+
+        // 分词
+        const tokens = [];
+        let j = 0;
+        while (j < flat.length) {
+            if (flat[j] === ' ') { j++; continue; }
+            if (_isCJK(flat[j]) || _isPunctuation(flat[j])) {
+                tokens.push(flat[j]); j++;
+            } else {
+                let word = '';
+                while (j < flat.length && flat[j] !== ' ' && !_isCJK(flat[j])) {
+                    word += flat[j]; j++;
+                }
+                tokens.push(word);
+            }
+        }
+        if (tokens.length === 0) continue;
+
+        let currentLine = '';
+        for (const tok of tokens) {
+            // 需要在两个 Latin token 之间加空格
+            const needSpace = currentLine.length > 0
+                && !_isCJK(currentLine[currentLine.length - 1])
+                && !_isPunctuation(currentLine[currentLine.length - 1])
+                && !_isCJK(tok[0])
+                && !_isPunctuation(tok[0]);
+            const sep = needSpace ? ' ' : '';
+            const newLen = currentLine.length + sep.length + tok.length;
+
+            if (!currentLine) {
+                currentLine = tok;
+            } else if (newLen <= maxLen) {
+                currentLine += sep + tok;
+            } else {
+                wrappedLines.push(currentLine);
+                currentLine = tok;
+            }
+
+            // 标点断行：当前行超过一半宽度且末尾是标点 → 换行
+            if (currentLine && _isPunctuation(currentLine[currentLine.length - 1])) {
+                if (currentLine.length > maxLen / 2) {
+                    wrappedLines.push(currentLine);
+                    currentLine = '';
+                }
+            }
+        }
+        if (currentLine) wrappedLines.push(currentLine);
+        wrappedLines.push(''); // 段落间空行
+    }
+
+    while (wrappedLines.length > 0 && wrappedLines[wrappedLines.length - 1] === '') wrappedLines.pop();
+    return _cleanBlankLines(wrappedLines.join('\n'));
+}
+
+/** 序列化一个单元格为 Sheets 可粘贴的文本 */
+function _quoteForSheets(cell) {
+    if (cell.includes('\n') || cell.includes('"') || cell.includes('\t')) {
+        return '"' + cell.replace(/"/g, '""') + '"';
+    }
+    return cell;
+}
+
+
+
 // ==================== ElevenLabs 功能 ====================
 
 async function saveElevenLabsKey() {
     const rawKeys = document.getElementById('elevenlabs-api-keys').value;
     const apiKeys = rawKeys.split(/[\s,;]+/).map(k => k.trim()).filter(Boolean);
+    const useWebToken = document.getElementById('mode-web')?.checked || false;
 
     try {
         const response = await apiFetch(`${API_BASE}/settings/elevenlabs`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ api_keys: apiKeys })
+            body: JSON.stringify({ api_keys: apiKeys, use_web_token: useWebToken })
         });
 
         if (response.ok) {
-            showToast('API Keys 已保存', 'success');
+            showToast('设置已保存', 'success');
             loadVoices();
             if (typeof refreshVWVoices === 'function') {
                 refreshVWVoices();
@@ -3499,6 +3843,124 @@ async function saveElevenLabsKey() {
         }
     } catch (error) {
         showToast('保存失败: ' + error.message, 'error');
+    }
+}
+
+function updateWebTokenUI() {
+    const isWebMode = document.getElementById('mode-web')?.checked || false;
+    
+    const panelApiKey = document.getElementById('elevenlabs-apikey-panel');
+    const panelWeb = document.getElementById('elevenlabs-web-panel');
+    
+    if (panelApiKey) panelApiKey.style.display = isWebMode ? 'none' : 'block';
+    if (panelWeb) panelWeb.style.display = isWebMode ? 'block' : 'none';
+    
+    const statusSpan = document.getElementById('web-login-status');
+    
+    if (statusSpan) {
+        if (!isWebMode) {
+            if (window._webTokenStatusTimer) clearInterval(window._webTokenStatusTimer);
+        } else {
+            statusSpan.style.background = 'rgba(255,255,255,0.1)';
+            statusSpan.style.color = '#aaa';
+            statusSpan.textContent = '检查中...';
+            
+            const checkStatus = async () => {
+                try {
+                    const res = await apiFetch(`${API_BASE}/elevenlabs/web-status`);
+                    const data = await res.json();
+                    if (data.hasToken) {
+                        statusSpan.style.background = 'rgba(0, 217, 165, 0.15)';
+                        statusSpan.style.color = '#00d9a5';
+                        statusSpan.textContent = '🟢 已登录就绪';
+                    } else {
+                        statusSpan.style.background = 'rgba(255, 107, 107, 0.15)';
+                        statusSpan.style.color = '#ff6b6b';
+                        statusSpan.textContent = '🔴 未登录 / 无凭证';
+                    }
+                } catch (e) {
+                    statusSpan.textContent = '状态未知';
+                }
+            };
+            
+            checkStatus();
+            if (window._webTokenStatusTimer) clearInterval(window._webTokenStatusTimer);
+            window._webTokenStatusTimer = setInterval(checkStatus, 3000);
+        }
+    }
+}
+
+function toggleWebToken() {
+    updateWebTokenUI();
+    saveElevenLabsKey();
+}
+
+async function openElevenLabsWebLogin() {
+    try {
+        const res = await apiFetch(`${API_BASE}/elevenlabs/web-login`, { method: 'POST' });
+        const json = await res.json();
+        showToast(json.message || '已打开登录页面', 'success');
+    } catch (e) {
+        showToast('打开失败: ' + e.message, 'error');
+    }
+}
+
+async function clearElevenLabsWebLogin() {
+    if (!confirm('确定要清除网页登录凭证吗？')) return;
+    try {
+        const res = await apiFetch(`${API_BASE}/elevenlabs/web-logout`, { method: 'POST' });
+        const json = await res.json();
+        showToast(json.message || '凭证已清除', 'success');
+        updateWebTokenUI();
+    } catch (e) {
+        showToast('清除失败: ' + e.message, 'error');
+    }
+}
+
+async function saveManualWebToken() {
+    const textarea = document.getElementById('elevenlabs-manual-token');
+    const raw = (textarea?.value || '').trim();
+    if (!raw) {
+        showToast('请先粘贴 Authorization Token', 'error');
+        return;
+    }
+
+    // 智能解析: 尝试判断用户粘贴的内容类型
+    const payload = {};
+    if (raw.startsWith('Bearer ') || raw.startsWith('bearer ') || raw.startsWith('eyJ')) {
+        // 看起来是 Authorization header value
+        payload.authorization = raw.startsWith('eyJ') ? `Bearer ${raw}` : raw;
+    } else if (raw.length >= 20 && /^[a-zA-Z0-9_-]+$/.test(raw)) {
+        // 看起来像 xi-api-key
+        payload.xiApiKey = raw;
+    } else {
+        // 默认当做 Authorization
+        payload.authorization = raw;
+    }
+
+    try {
+        const res = await apiFetch(`${API_BASE}/elevenlabs/web-token-manual`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const json = await res.json();
+        if (json.success) {
+            showToast(json.message || '✅ Token 已保存', 'success');
+            textarea.value = '';
+            // 自动切换到网页模式（后端已经设置了 use_web_token=true）
+            const modeWeb = document.getElementById('mode-web');
+            if (modeWeb && !modeWeb.checked) {
+                modeWeb.checked = true;
+            }
+            updateWebTokenUI();
+            // 自动刷新语音列表以验证 Token 是否工作
+            if (typeof loadVoices === 'function') loadVoices();
+        } else {
+            showToast(json.message || '保存失败', 'error');
+        }
+    } catch (e) {
+        showToast('保存失败: ' + e.message, 'error');
     }
 }
 
@@ -3953,7 +4415,7 @@ async function loadAllQuotas() {
                 text.style.cssText = 'min-width: 100px; font-size: 11px; color: var(--text-primary); text-align: right;';
                 if (quota.error) {
                     text.textContent = `❌ 错误`;
-                    text.style.color = '#ff6b6b';
+                    text.style.color = '#f87171';
                 } else if (quota.remaining !== undefined) {
                     text.textContent = `剩余: ${quota.remaining.toLocaleString()}`;
                 } else {
@@ -3977,7 +4439,7 @@ async function loadAllQuotas() {
 
                 const deleteBtn = document.createElement('button');
                 deleteBtn.className = 'btn btn-secondary';
-                deleteBtn.style.cssText = 'padding: 2px 6px; font-size: 10px; color: #ff6b6b;';
+                deleteBtn.style.cssText = 'padding: 2px 6px; font-size: 10px; color: #f87171;';
                 deleteBtn.textContent = '🗑 删除';
                 deleteBtn.onclick = () => deleteKey(idx);
 
@@ -3995,7 +4457,7 @@ async function loadAllQuotas() {
             list.innerHTML = '<div style="text-align: center; color: var(--text-secondary);">没有配置 API Key</div>';
         }
     } catch (error) {
-        list.innerHTML = `<div style="text-align: center; color: #ff6b6b;">加载失败: ${escapeHtml(error.message)}</div>`;
+        list.innerHTML = `<div style="text-align: center; color: #f87171;">加载失败: ${escapeHtml(error.message)}</div>`;
     }
 }
 
@@ -4119,7 +4581,11 @@ async function generateTTS() {
 
         if (response.ok) {
             updateElevenLabsStatus('生成成功');
-            showToast('语音生成成功！', 'success');
+            let usedInfo = '';
+            if (result.used_key) {
+                 usedInfo = result.used_key === '__WEB_TOKEN__' ? ' (使用 网页Token)' : ` (使用 Key: ...${result.used_key.slice(-4)})`;
+            }
+            showToast(`语音生成成功！${usedInfo}`, 'success');
 
             // 加载生成的音频
             currentAudioPath_elevenlabs = result.file_path;
@@ -4550,7 +5016,11 @@ async function generateTTSBatch() {
 
             if (r && !r.error) {
                 successCount++;
-                statusSpan.textContent = '✅ 成功';
+                let keyStr = '';
+                if (r.used_key) {
+                    keyStr = r.used_key === '__WEB_TOKEN__' ? ' (网)' : ` (...${r.used_key.slice(-4)})`;
+                }
+                statusSpan.textContent = `✅ 成功${keyStr}`;
                 statusSpan.style.background = 'rgba(0,255,0,0.2)';
                 statusSpan.style.color = '#51cf66';
                 row.dataset.failed = 'false';
@@ -4565,7 +5035,7 @@ async function generateTTSBatch() {
                 failCount++;
                 statusSpan.textContent = `❌ ${(r?.error || '未知错误').substring(0, 20)}`;
                 statusSpan.style.background = 'rgba(255,0,0,0.2)';
-                statusSpan.style.color = '#ff6b6b';
+                statusSpan.style.color = '#f87171';
                 row.dataset.failed = 'true';
                 row.dataset.error = r?.error || '未知错误';
 
@@ -4586,7 +5056,7 @@ async function generateTTSBatch() {
             failCount++;
             statusSpan.textContent = `❌ ${error.message.substring(0, 20)}`;
             statusSpan.style.background = 'rgba(255,0,0,0.2)';
-            statusSpan.style.color = '#ff6b6b';
+            statusSpan.style.color = '#f87171';
             row.dataset.failed = 'true';
             row.dataset.error = error.message;
             return { success: false };
@@ -4740,7 +5210,7 @@ async function retrySingleBatch(row) {
         } else {
             statusSpan.textContent = `❌ ${(r?.error || '未知错误').substring(0, 30)}...`;
             statusSpan.style.background = 'rgba(255,0,0,0.2)';
-            statusSpan.style.color = '#ff6b6b';
+            statusSpan.style.color = '#f87171';
             showToast('重试失败: ' + (r?.error || '未知错误'), 'error');
         }
     } catch (error) {
@@ -5289,7 +5759,7 @@ async function startBatchLinksDownload() {
                 } else if (status === 'error') {
                     statusEl.textContent = '❌ 失败';
                     statusEl.style.background = 'rgba(255,0,0,0.2)';
-                    statusEl.style.color = '#ff6b6b';
+                    statusEl.style.color = '#f87171';
                 }
             }
 
@@ -5362,6 +5832,30 @@ async function startBatchLinksDownload() {
 
 // ==================== 设置功能 ====================
 
+async function saveSettingsElevenLabsKeys() {
+    const keysText = document.getElementById('settings-elevenlabs-keys').value;
+    const keys = keysText.split('\n').map(k => k.trim()).filter(k => k);
+
+    try {
+        const response = await apiFetch(`${API_BASE}/settings/elevenlabs`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ api_keys: keys })
+        });
+
+        if (response.ok) {
+            showToast(`ElevenLabs Keys 已保存！(${keys.length} 个)`, 'success');
+            // 同步到 ElevenLabs 面板
+            const elTextarea = document.getElementById('elevenlabs-api-keys');
+            if (elTextarea) elTextarea.value = keys.join('\n');
+            const countEl = document.getElementById('settings-elevenlabs-key-count');
+            if (countEl) countEl.textContent = keys.length > 0 ? `已配置 ${keys.length} 个密钥` : '';
+        }
+    } catch (error) {
+        showToast('保存失败: ' + error.message, 'error');
+    }
+}
+
 async function saveGladiaKeys() {
     const keysText = document.getElementById('gladia-keys').value;
     const keys = keysText.split('\n').filter(k => k.trim());
@@ -5375,6 +5869,26 @@ async function saveGladiaKeys() {
 
         if (response.ok) {
             showToast('Gladia Keys 已保存！', 'success');
+        }
+    } catch (error) {
+        showToast('保存失败: ' + error.message, 'error');
+    }
+}
+
+async function saveGeminiKeys() {
+    const keysText = document.getElementById('gemini-keys').value;
+    const keys = keysText.split('\n').filter(k => k.trim());
+    const prompt = document.getElementById('gemini-prompt').value;
+
+    try {
+        const response = await apiFetch(`${API_BASE}/settings/gemini-keys`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ keys, prompt })
+        });
+
+        if (response.ok) {
+            showToast('Gemini 设置已保存！', 'success');
         }
     } catch (error) {
         showToast('保存失败: ' + error.message, 'error');
@@ -5673,7 +6187,7 @@ async function analyzeSmartSplit() {
                     if (statusEl) {
                         statusEl.textContent = '分析失败';
                         statusEl.style.background = 'rgba(255, 107, 107, 0.2)';
-                        statusEl.style.color = '#ff6b6b';
+                        statusEl.style.color = '#f87171';
                     }
                 }
             } catch (err) {
@@ -5682,7 +6196,7 @@ async function analyzeSmartSplit() {
                 if (statusEl) {
                     statusEl.textContent = '出错';
                     statusEl.style.background = 'rgba(255, 107, 107, 0.2)';
-                    statusEl.style.color = '#ff6b6b';
+                    statusEl.style.color = '#f87171';
                 }
             }
         }
@@ -5703,7 +6217,7 @@ async function analyzeSmartSplit() {
             const statusEl = document.getElementById('smart-split-status');
             if (statusEl) {
                 statusEl.textContent = '❌ 分析失败';
-                statusEl.style.color = '#ff6b6b';
+                statusEl.style.color = '#f87171';
             }
         }
 
@@ -5729,7 +6243,7 @@ function renderSmartSplitSegments() {
             <input type="text" class="smart-split-end" data-idx="${idx}" value="${formatTimeAudio(seg.end)}"
                 style="width: 70px; padding: 2px 6px; font-size: 11px; border-radius: 3px; border: 1px solid rgba(255,255,255,0.1); background: var(--bg-tertiary); color: var(--text-primary);">
             <span style="font-size: 11px; color: var(--text-muted);">(${seg.duration.toFixed(1)}s)</span>
-            <button class="btn btn-secondary" onclick="deleteSmartSplitSegment(${idx})" style="padding: 2px 6px; font-size: 10px; color: #ff6b6b;">✕</button>
+            <button class="btn btn-secondary" onclick="deleteSmartSplitSegment(${idx})" style="padding: 2px 6px; font-size: 10px; color: #f87171;">✕</button>
         </div>
     `).join('');
 
@@ -7487,7 +8001,7 @@ function updateUrlThumbnailItem(data) {
         downloading:   { icon: '⬇️', text: '下载中...', color: '#74c0fc' },
         screenshotting:{ icon: '📸', text: '截图中...', color: '#ffa94d' },
         done:          { icon: '✅', text: '完成',      color: '#51cf66' },
-        error:         { icon: '❌', text: '失败',      color: '#ff6b6b' },
+        error:         { icon: '❌', text: '失败',      color: '#f87171' },
     };
     const s = statusMap[status] || { icon: '⏳', text: status, color: 'var(--text-muted)' };
     iconEl.textContent = s.icon;
@@ -7519,7 +8033,7 @@ function displayUrlThumbnailResults(result) {
                 <span style="font-size:11px; color:var(--text-muted);">成功</span>
             </div>
             <div style="display:flex; flex-direction:column; align-items:center;">
-                <span style="font-size:22px; font-weight:700; color:#ff6b6b;">${failed}</span>
+                <span style="font-size:22px; font-weight:700; color:#f87171;">${failed}</span>
                 <span style="font-size:11px; color:var(--text-muted);">失败</span>
             </div>
             <div style="flex:1; font-size:12px; color:var(--text-muted); word-break:break-all;">📁 ${escapedDir}</div>
@@ -7533,7 +8047,7 @@ function displayUrlThumbnailResults(result) {
                 <div style="border-radius:8px; overflow:hidden; background:var(--bg-tertiary); padding:8px;
                     border:1px solid var(--border-color); display:flex; flex-direction:column; gap:4px;">
                     <div style="font-size:20px; text-align:center;">❌</div>
-                    <div style="font-size:10px; color:#ff6b6b; word-break:break-all; line-height:1.3;">${escapeHtml(r.error || '失败')}</div>
+                    <div style="font-size:10px; color:#f87171; word-break:break-all; line-height:1.3;">${escapeHtml(r.error || '失败')}</div>
                 </div>`;
         } else {
             // 在 Electron 中使用 file:// 协议显示图片
@@ -7571,7 +8085,7 @@ function displayThumbnailResults(result) {
                 <span style="font-size: 12px; color: var(--text-muted);">成功</span>
             </div>
             <div style="display: flex; flex-direction: column; align-items: center;">
-                <span style="font-size: 24px; font-weight: 600; color: ${result.failed > 0 ? '#ff6b6b' : 'var(--text-muted)'};">${result.failed}</span>
+                <span style="font-size: 24px; font-weight: 600; color: ${result.failed > 0 ? '#f87171' : 'var(--text-muted)'};">${result.failed}</span>
                 <span style="font-size: 12px; color: var(--text-muted);">失败</span>
             </div>
             <div style="flex: 1; text-align: right;">
@@ -7590,7 +8104,7 @@ function displayThumbnailResults(result) {
         const errors = result.results.filter(r => r.status === 'error' || r.status === 'timeout');
         if (errors.length > 0) {
             const errorTitle = document.createElement('h5');
-            errorTitle.style.cssText = 'color: #ff6b6b; margin-bottom: 8px;';
+            errorTitle.style.cssText = 'color: #f87171; margin-bottom: 8px;';
             errorTitle.textContent = `⚠️ 失败文件 (${errors.length}):`;
             errorsEl.appendChild(errorTitle);
 
@@ -7764,7 +8278,7 @@ function displayClassifyResults(result) {
             </div>
             ${result.hash_errors > 0 ? `
             <div style="display: flex; flex-direction: column; align-items: center;">
-                <span style="font-size: 24px; font-weight: 600; color: #ff6b6b;">${result.hash_errors}</span>
+                <span style="font-size: 24px; font-weight: 600; color: #f87171;">${result.hash_errors}</span>
                 <span style="font-size: 11px; color: var(--text-muted);">哈希失败</span>
             </div>` : ''}
             <div style="flex: 1; text-align: right;">
@@ -7783,7 +8297,7 @@ function displayClassifyResults(result) {
         result.groups.forEach(group => {
             const card = document.createElement('div');
             card.style.cssText = 'padding: 10px 14px; margin-bottom: 6px; background: rgba(255,255,255,0.03); border-radius: 6px; border-left: 3px solid ' +
-                (group.count >= 10 ? '#ff6b6b' : group.count >= 5 ? '#ffd43b' : '#51cf66') + ';';
+                (group.count >= 10 ? '#f87171' : group.count >= 5 ? '#ffd43b' : '#51cf66') + ';';
 
             const header = document.createElement('div');
             header.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;';
@@ -8014,11 +8528,62 @@ if (origSubTabHandler) {
 // ==================== 批量剪辑模块 ====================
 
 let batchCutFilePath = '';
-let batchCutSegments = [];  // [{name, start, end, checked, videoPath?, videoDuration?}]
+let batchCutSegments = [];  // [{name, start, end, checked, videoPath?, videoDuration?, clipColor?}]
 let batchCutOutputDir = '';
 let batchCutPreviewIndex = -1;
 let batchCutPreviewSrc = '';
 let batchCutMultiMode = false;
+
+// ===== 达芬奇 Clip Color 调色板（16 种标准色）=====
+const DAVINCI_CLIP_COLORS = {
+    '':          { label: '无颜色', hex: 'transparent' },
+    'Orange':    { label: '🟠 橙色',   hex: '#FF8C00' },
+    'Apricot':   { label: '🍑 杏色',   hex: '#FFA07A' },
+    'Yellow':    { label: '🟡 黄色',   hex: '#FFD700' },
+    'Lime':      { label: '🟢 青柠',   hex: '#32CD32' },
+    'Olive':     { label: '🫒 橄榄',   hex: '#808000' },
+    'Green':     { label: '💚 绿色',   hex: '#228B22' },
+    'Teal':      { label: '🩵 蓝绿',   hex: '#008080' },
+    'Navy':      { label: '🔵 海军蓝', hex: '#000080' },
+    'Blue':      { label: '💙 蓝色',   hex: '#4169E1' },
+    'Purple':    { label: '💜 紫色',   hex: '#8A2BE2' },
+    'Violet':    { label: '🟣 紫罗兰', hex: '#EE82EE' },
+    'Pink':      { label: '💗 粉色',   hex: '#FF69B4' },
+    'Tan':       { label: '🟤 棕褐',   hex: '#D2B48C' },
+    'Beige':     { label: '🏷️ 米色',   hex: '#F5F5DC' },
+    'Brown':     { label: '🤎 棕色',   hex: '#8B4513' },
+    'Chocolate': { label: '🍫 巧克力', hex: '#D2691E' },
+};
+
+/** 更新片段 clipColor */
+function batchCutSetClipColor(index, color) {
+    if (batchCutSegments[index]) {
+        batchCutSegments[index].clipColor = color;
+        renderBatchCutSegments();
+    }
+}
+
+/** 为所有片段随机分配 Clip Color（相邻不重复） */
+function batchCutRandomColors() {
+    if (batchCutSegments.length === 0) {
+        showToast('没有片段可着色', 'info');
+        return;
+    }
+    // 收集有效颜色 key（排除空值）
+    const colorKeys = Object.keys(DAVINCI_CLIP_COLORS).filter(k => k !== '');
+    // Fisher-Yates 洗牌
+    const shuffled = [...colorKeys];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    // 依次分配（循环使用），确保相邻不同色
+    for (let i = 0; i < batchCutSegments.length; i++) {
+        batchCutSegments[i].clipColor = shuffled[i % shuffled.length];
+    }
+    renderBatchCutSegments();
+    showToast(`🎨 已为 ${batchCutSegments.length} 个片段随机着色`, 'success');
+}
 
 // 初始化批量剪辑文件输入
 document.addEventListener('DOMContentLoaded', () => {
@@ -8683,11 +9248,11 @@ function removeBatchCutSubtitleColumn(colIdx) {
 function batchCutGridCols() {
     const subCols = batchCutSubtitleCols.map(() => '1fr').join(' ');
     if (batchCutMultiMode) {
-        // 多视频模式：# + ✓ + 视频缩略图+文件名 + 字幕列 + 操作（含上下移动）
-        return `40px 30px minmax(120px, 180px) ${subCols} 90px`;
+        // 多视频模式：# + ✓ + 🎨色 + 视频缩略图+文件名 + 字幕列 + 操作（含上下移动）
+        return `40px 30px 56px minmax(120px, 180px) ${subCols} 90px`;
     }
-    // 单视频模式：# + ✓ + 字幕列 + 入点 + 出点 + 预览 + 操作
-    return `40px 30px ${subCols} 120px 120px 40px 50px`;
+    // 单视频模式：# + ✓ + 🎨色 + 字幕列 + 入点 + 出点 + 预览 + 操作
+    return `40px 30px 56px ${subCols} 120px 120px 40px 50px`;
 }
 
 // 渲染表头
@@ -8702,6 +9267,7 @@ function renderBatchCutTableHeader() {
     }).join('');
 
     const videoCol = batchCutMultiMode ? '<span>🎬 视频文件</span>' : '';
+    const colorHeader = '<span style="text-align: center;" title="达芬奇 Clip Color">🎨</span>';
     const timeHeaders = batchCutMultiMode ? '' : `
         <span>入点</span>
         <span>出点</span>
@@ -8710,6 +9276,7 @@ function renderBatchCutTableHeader() {
     el.innerHTML = `<div style="display: grid; grid-template-columns: ${batchCutGridCols()}; gap: 6px; padding: 6px 8px; background: var(--bg-tertiary); border-radius: 6px 6px 0 0; font-size: 11px; color: var(--text-muted); font-weight: 600;">
         <span style="text-align: center;">#</span>
         <span style="text-align: center;">✓</span>
+        ${colorHeader}
         ${videoCol}
         ${subHeaders}
         ${timeHeaders}
@@ -8821,6 +9388,21 @@ function renderBatchCutSegments() {
             <button class="btn btn-secondary" onclick="batchCutPreviewSegment(${i})"
                 style="padding: 2px 6px; font-size: 11px; ${batchCutPreviewIndex === i ? 'color: var(--accent); font-weight: bold;' : ''}" title="预览此片段">👁️</button>`;
 
+        // 片段颜色选择器
+        const curColor = seg.clipColor || '';
+        const curColorHex = (DAVINCI_CLIP_COLORS[curColor] || {}).hex || 'transparent';
+        const colorOptions = Object.entries(DAVINCI_CLIP_COLORS).map(([key, val]) => {
+            const dotStyle = key ? `width:12px;height:12px;border-radius:50%;background:${val.hex};display:inline-block;vertical-align:middle;margin-right:4px;border:1px solid rgba(255,255,255,0.2);` : '';
+            return `<option value="${key}" ${curColor === key ? 'selected' : ''}>${val.label}</option>`;
+        }).join('');
+        const colorDot = curColor
+            ? `<span style="display:inline-block;width:16px;height:16px;border-radius:50%;background:${curColorHex};border:2px solid rgba(255,255,255,0.3);vertical-align:middle;box-shadow:0 0 4px ${curColorHex}44;"></span>`
+            : `<span style="display:inline-block;width:16px;height:16px;border-radius:50%;border:2px dashed var(--border-color);vertical-align:middle;opacity:0.4;"></span>`;
+        const colorCol = `<span style="text-align: center; position: relative;" class="batchcut-color-cell">
+            <select onchange="batchCutSetClipColor(${i}, this.value)" style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;" title="达芬奇 Clip Color">${colorOptions}</select>
+            ${colorDot}
+        </span>`;
+
         return `
         <div class="batchcut-row" data-index="${i}" ${batchCutMultiMode ? `draggable="true" ondragstart="batchCutDragStart(event, ${i})" ondragover="batchCutDragOver(event)" ondragenter="batchCutDragEnter(event)" ondragleave="batchCutDragLeave(event)" ondrop="batchCutDrop(event, ${i})" ondragend="batchCutDragEnd(event)"` : ''} style="display: grid; grid-template-columns: ${batchCutGridCols()}; gap: 6px; padding: 4px 8px; align-items: center; border-bottom: 1px solid var(--border-color); ${!seg.checked ? 'opacity: 0.5;' : ''} ${batchCutPreviewIndex === i ? 'background: rgba(102,126,234,0.1); border-left: 3px solid var(--accent);' : ''} ${batchCutMultiMode ? 'cursor: grab;' : ''} transition: background 0.15s, border-top 0.15s;">
             <span style="text-align: center; font-size: 11px; color: var(--text-muted); ${batchCutMultiMode ? 'cursor: grab;' : ''}" ${batchCutMultiMode ? 'title="拖拽排序"' : ''}>${batchCutMultiMode ? `<span style="font-size:13px; opacity:0.5;">☰</span><br>${i + 1}` : (i + 1)}</span>
@@ -8828,6 +9410,7 @@ function renderBatchCutSegments() {
                 <input type="checkbox" ${seg.checked ? 'checked' : ''}
                     onchange="batchCutToggleRow(${i}, this.checked)">
             </span>
+            ${colorCol}
             ${videoCol}
             ${subInputs}
             ${timeCols}
@@ -9807,7 +10390,8 @@ async function exportBatchCutFcpxml() {
                 start: 0,
                 end: null,
                 videoPath: seg.videoPath,
-                videoDuration: seg.videoDuration || 0
+                videoDuration: seg.videoDuration || 0,
+                clipColor: seg.clipColor || ''
             });
         } else {
             // 单视频模式：验证时间点
@@ -9829,7 +10413,8 @@ async function exportBatchCutFcpxml() {
                 name: seg.name || `片段${i + 1}`,
                 subtitles: (seg.subtitles || [seg.name || '']).slice(),
                 start: start,
-                end: end
+                end: end,
+                clipColor: seg.clipColor || ''
             });
         }
     }
@@ -9893,12 +10478,16 @@ async function exportBatchCutFcpxml() {
         if (data.marker_edl_path) {
             showToast('已生成标签专用 Marker EDL：达芬奇请用 Timeline > Import > Timeline Markers from EDL', 'info');
         }
+        if (data.color_script_path) {
+            showToast('🎨 已生成 Clip Color 脚本：导入FCPXML后在达芬奇中运行 .py 脚本即可自动着色', 'info', 8000);
+        }
 
         // 显示结果
         const statusEl = document.getElementById('batchcut-status');
         if (statusEl) {
             const markerInfo = data.marker_edl_path ? ` | 标签EDL: ${data.marker_edl_path}` : '';
-            statusEl.textContent = `✅ FCPXML: ${data.path || data.file_path}${markerInfo}`;
+            const colorInfo = data.color_script_path ? ` | 🎨 着色脚本: ${data.color_script_path}` : '';
+            statusEl.textContent = `✅ FCPXML: ${data.path || data.file_path}${markerInfo}${colorInfo}`;
             statusEl.style.color = 'var(--success)';
         }
     } catch (e) {

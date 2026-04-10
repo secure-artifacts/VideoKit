@@ -571,8 +571,12 @@ function generateEnhancedASS(segments, style, opts = {}) {
     const shadowColor = toASSColor(s.color_shadow || '#000000', shadowAlpha);
 
     const borderW = s.use_stroke !== false ? (s.border_width || 3) : 0;
-    // 阴影距离：不再限制上限，与预览一致
-    const shadowDist = s.shadow_blur ? Math.max(1, Math.round(s.shadow_blur * 0.5)) : 0;
+    // 阴影距离：综合偏移量和模糊值
+    const shadowDist = Math.max(
+        Math.abs(s.shadow_offset_x || 0),
+        Math.abs(s.shadow_offset_y || 0),
+        s.shadow_blur ? Math.max(1, Math.round(s.shadow_blur * 0.5)) : 0
+    );
 
     // BorderStyle: 1=outline+shadow, 3=opaque box
     const borderStyle = s.use_box ? 3 : 1;
@@ -586,17 +590,31 @@ function generateEnhancedASS(segments, style, opts = {}) {
     // 位置计算 — 使用精确 \pos 与 \an
     const useAdvTextbox = !!s.advanced_textbox_enabled;
     const advAlign = String(s.advanced_textbox_align || s.adv_text_align || 'center').toLowerCase();
-    const baseAlign = useAdvTextbox
-        ? (advAlign === 'left' ? 4 : advAlign === 'right' ? 6 : 5)
-        : 5;
+    const advValign = String(s.advanced_textbox_valign || 'center').toLowerCase();
+    
+    // ASS Alignment Numbering:
+    // 7 8 9 (Top Left, Top Center, Top Right)
+    // 4 5 6 (Middle Left, Middle Center, Middle Right)
+    // 1 2 3 (Bottom Left, Bottom Center, Bottom Right)
+    const bx = advAlign === 'left' ? 1 : (advAlign === 'right' ? 3 : 2);
+    const by = advValign === 'bottom' ? 0 : (advValign === 'top' ? 6 : 3);
+    const baseAlign = useAdvTextbox ? (bx + by) : 5;
+
+    const advX = parseFloat(s.advanced_textbox_x) || 0;
+    const advY = parseFloat(s.advanced_textbox_y) || 0;
+    const advW = Math.max(80, parseFloat(s.advanced_textbox_w) || videoW * 0.8);
+    const advH = Math.max(40, parseFloat(s.advanced_textbox_h) || 200);
+
     const rawPosX = typeof s.pos_x === 'number' ? s.pos_x : 0.5;
     const rawPosY = typeof s.pos_y === 'number' ? s.pos_y : 0.5;
-    const posX = useAdvTextbox
-        ? (parseFloat(s.advanced_textbox_x) || 0) + (Math.max(80, parseFloat(s.advanced_textbox_w) || videoW * 0.8) / 2)
-        : (rawPosX <= 1 ? rawPosX * videoW : rawPosX);
-    const posY = useAdvTextbox
-        ? (parseFloat(s.advanced_textbox_y) || 0) + (Math.max(40, parseFloat(s.advanced_textbox_h) || 200) / 2)
-        : (rawPosY <= 1 ? rawPosY * videoH : rawPosY);
+
+    let posX = rawPosX <= 1 ? rawPosX * videoW : rawPosX;
+    let posY = rawPosY <= 1 ? rawPosY * videoH : rawPosY;
+
+    if (useAdvTextbox) {
+        posX = advAlign === 'left' ? advX : (advAlign === 'right' ? advX + advW : advX + advW / 2);
+        posY = advValign === 'top' ? advY : (advValign === 'bottom' ? advY + advH : advY + advH / 2);
+    }
 
     // 与预览一致的自动换行宽度
     const wrapPercent = Math.max(20, Math.min(120, parseFloat(s.wrap_width_percent) || 90));

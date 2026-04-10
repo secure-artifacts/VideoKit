@@ -191,7 +191,7 @@ app.whenReady().then(async () => {
             const entries = fs.readdirSync(dirPath, { withFileTypes: true });
             const files = [];
             for (const entry of entries) {
-                if (entry.isFile() && !entry.name.startsWith('.')) {
+                if (!entry.name.startsWith('.')) {
                     const fullPath = pathModule.join(dirPath, entry.name);
                     try {
                         const stat = fs.statSync(fullPath);
@@ -200,6 +200,7 @@ app.whenReady().then(async () => {
                             path: fullPath,
                             size: stat.size,
                             mtime: stat.mtimeMs,
+                            isDirectory: stat.isDirectory()
                         });
                     } catch { /* skip unreadable files */ }
                 }
@@ -300,6 +301,76 @@ app.whenReady().then(async () => {
         return tmpPath;
     });
 
+    // IPC: 保存 PNG 帧（分层 PNG 序列导出用）
+    ipcMain.handle('save-png-frame', async (event, { outputPath: pngPath, rawRGBA, width, height, isPng }) => {
+        try {
+            // 已经是 PNG 数据，直接写入
+            if (isPng) {
+                fs.writeFileSync(pngPath, Buffer.from(rawRGBA));
+                return { ok: true };
+            }
+
+            // Raw RGBA → PNG 转换
+            try {
+                const { PNG } = require('pngjs');
+                const png = new PNG({ width, height });
+                const buf = Buffer.from(rawRGBA);
+                buf.copy(png.data);
+                const pngBuffer = PNG.sync.write(png);
+                fs.writeFileSync(pngPath, pngBuffer);
+                return { ok: true };
+            } catch (e) {
+                // Fallback: use FFmpeg to convert raw RGBA to PNG
+                const settingsService = require('./services/settings');
+                const tmpRaw = settingsService.secureTmpFile('frame_raw', '.rgba');
+                fs.writeFileSync(tmpRaw, Buffer.from(rawRGBA));
+                const ffmpeg = ffmpegService.resolveCommand('ffmpeg');
+                const { spawnSync } = require('child_process');
+                const result = spawnSync(ffmpeg, [
+                    '-y', '-f', 'rawvideo', '-pix_fmt', 'rgba',
+                    '-s', `${width}x${height}`,
+                    '-i', tmpRaw,
+                    '-frames:v', '1',
+                    pngPath
+                ], { timeout: 10000 });
+                try { fs.unlinkSync(tmpRaw); } catch (_) { }
+                if (result.status === 0) return { ok: true };
+                return { ok: false, error: result.stderr?.toString() || 'FFmpeg failed' };
+            }
+        } catch (e) {
+            return { ok: false, error: e.message };
+        }
+    });
+
+    // IPC: 导出音频为 MP3（分层 PNG 序列导出用）
+    ipcMain.handle('export-audio-mp3', async (event, { inputPath, outputPath: mp3Path, volume }) => {
+        const ffmpeg = ffmpegService.resolveCommand('ffmpeg');
+        const { spawnSync } = require('child_process');
+        const args = ['-y', '-i', inputPath];
+        if (volume != null && volume !== 1.0) {
+            args.push('-af', `volume=${volume}`);
+        }
+        args.push('-c:a', 'libmp3lame', '-b:a', '192k', mp3Path);
+        const result = spawnSync(ffmpeg, args, { timeout: 120000 });
+        if (result.status !== 0) {
+            return { ok: false, error: result.stderr?.toString() || 'FFmpeg MP3 export failed' };
+        }
+        log(`[Layers] 音频导出: ${mp3Path}`);
+        return { ok: true, path: mp3Path };
+    });
+
+    // IPC: 确保目录存在
+    ipcMain.handle('ensure-directory', async (event, dirPath) => {
+        try {
+            if (!fs.existsSync(dirPath)) {
+                fs.mkdirSync(dirPath, { recursive: true });
+            }
+            return { ok: true };
+        } catch (e) {
+            return { ok: false, error: e.message };
+        }
+    });
+
     // IPC: 获取媒体时长
     ipcMain.handle('get-media-duration', async (event, filePath) => {
         return ffmpegService.getDuration(filePath);
@@ -338,6 +409,13 @@ app.whenReady().then(async () => {
     // IPC: 在 Finder/Explorer 中高亮文件
     ipcMain.handle('show-item-in-folder', (event, fullPath) => {
         if (fullPath && typeof fullPath === 'string') shell.showItemInFolder(fullPath);
+    });
+
+    // IPC: 用系统默认浏览器打开链接
+    ipcMain.handle('open-external-url', (event, url) => {
+        if (url && typeof url === 'string' && (url.startsWith('https://') || url.startsWith('http://'))) {
+            shell.openExternal(url);
+        }
     });
 
     // IPC: 扫描本地字体目录

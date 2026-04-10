@@ -55,6 +55,9 @@ function buildSubtitleBurnCommand(params) {
             vcodec = 'h264_videotoolbox';
             preset = null; // VideoToolbox 不支持 preset
         } else if (platform === 'win32') {
+            // 优先 NVENC(Nvidia)，其次 AMF(AMD)，再次 QSV(Intel)
+            // 实际可用性由 ffmpeg-rawvideo 的 _probeGPUEncoder 决定
+            // 这里作为 fallback 路径，默认尝试 NVENC
             vcodec = 'h264_nvenc';
             preset = 'p4';
         }

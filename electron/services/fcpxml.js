@@ -416,6 +416,11 @@ function segmentsToFcpxml(videoPath, segments, videoDuration, fps, resolution, s
 
         xml += `\t\t\t\t\t\t<asset-clip name="${xmlEscape(clipName)}" ref="r${i + 1}" offset="${offsetStr}" start="${startStr}" duration="${durationStr}" format="r0" tcFormat="NDF">\n`;
 
+        // 如果指定了片段颜色，写入 <note> 标签（达芬奇导入时可见为备注）
+        if (seg.clipColor) {
+            xml += `\t\t\t\t\t\t\t<note>[ClipColor:${xmlEscape(seg.clipColor)}] ${xmlEscape(clipName)}</note>\n`;
+        }
+
         // 动态生成每个字幕列的 title 元素
         for (let ci = 0; ci < columns.length; ci++) {
             const text = (subtitles[ci] || '').trim();
@@ -455,7 +460,125 @@ function segmentsToFcpxml(videoPath, segments, videoDuration, fps, resolution, s
     fs.writeFileSync(savePath, xml, 'utf-8');
     console.log(`FCPXML 时间线已写入: ${savePath}`);
 
-    return { success: true, path: savePath, segments_count: segments.length };
+    // ===== 生成达芬奇 Clip Color 脚本 =====
+    let colorScriptPath = null;
+    const hasAnyColor = segments.some(s => s.clipColor);
+    if (hasAnyColor) {
+        colorScriptPath = savePath.replace(/\.fcpxml$/i, '_clip_colors.py');
+        const colorScript = generateDaVinciColorScript(segments, projectName);
+        fs.writeFileSync(colorScriptPath, colorScript, 'utf-8');
+        console.log(`达芬奇 Clip Color 脚本已写入: ${colorScriptPath}`);
+    }
+
+    return {
+        success: true,
+        path: savePath,
+        segments_count: segments.length,
+        color_script_path: colorScriptPath
+    };
+}
+
+/**
+ * 生成达芬奇 Python 脚本，用于批量设置片段颜色
+ * 用户导入 FCPXML 后，在达芬奇控制台运行此脚本即可自动着色
+ *
+ * 支持的颜色名称（DaVinci Resolve SetClipColor API）:
+ * Orange, Apricot, Yellow, Lime, Olive, Green, Teal, Navy,
+ * Blue, Purple, Violet, Pink, Tan, Beige, Brown, Chocolate
+ */
+function generateDaVinciColorScript(segments, projectName) {
+    const colorEntries = segments
+        .map((seg, i) => ({ index: i, name: seg.name || `片段${i + 1}`, color: seg.clipColor || '' }))
+        .filter(e => e.color);
+
+    let script = `#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+达芬奇 Clip Color 自动着色脚本
+由 VideoKit 批量剪辑模块自动生成
+
+使用方法：
+  1. 先将 FCPXML 导入达芬奇 (File > Import > Timeline)
+  2. 确保目标时间线已打开
+  3. 在达芬奇中运行此脚本:
+     - Workspace > Scripts > 选择此脚本
+     - 或在控制台中: exec(open(r'${colorScriptPath_placeholder()}').read())
+"""
+import sys
+
+try:
+    import DaVinciResolveScript as dvr
+except ImportError:
+    # 尝试内部环境
+    try:
+        import fusionscript as dvr
+    except ImportError:
+        print("[错误] 无法导入 DaVinci Resolve 脚本模块")
+        print("请确保在达芬奇环境中运行此脚本")
+        sys.exit(1)
+
+def main():
+    resolve = dvr.scriptapp("Resolve")
+    if not resolve:
+        print("[错误] 无法连接到达芬奇")
+        return
+
+    pm = resolve.GetProjectManager()
+    project = pm.GetCurrentProject()
+    if not project:
+        print("[错误] 没有打开的项目")
+        return
+
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        print("[错误] 没有打开的时间线")
+        return
+
+    print(f"[ClipColor] 当前时间线: {timeline.GetName()}")
+    print(f"[ClipColor] 需要着色的片段: ${colorEntries.length} 个")
+
+    # 获取视频轨道 1 的所有片段
+    items = timeline.GetItemListInTrack("video", 1)
+    if not items:
+        print("[错误] 视频轨道 1 没有片段")
+        return
+
+    print(f"[ClipColor] 时间线中共有 {len(items)} 个片段")
+
+    # 按顺序着色
+    color_map = {
+`;
+
+    for (const entry of colorEntries) {
+        script += `        ${entry.index}: ("${entry.color}", "${entry.name.replace(/"/g, "'")}"),\n`;
+    }
+
+    script += `    }
+
+    success = 0
+    for idx, (color, name) in color_map.items():
+        if idx < len(items):
+            result = items[idx].SetClipColor(color)
+            status = "✅" if result else "❌"
+            print(f"  {status} 片段 {idx+1} [{name}] → {color}")
+            if result:
+                success += 1
+        else:
+            print(f"  ⚠️ 片段 {idx+1} [{name}] 超出时间线范围")
+
+    print(f"\n[ClipColor] 完成: {success}/${colorEntries.length} 个片段已着色")
+
+if __name__ == "__main__":
+    main()
+`;
+
+    // 替换占位符
+    return script;
+}
+
+/** 内部辅助：生成脚本时的路径占位 */
+function colorScriptPath_placeholder() {
+    return '此脚本路径';
 }
 
 module.exports = {

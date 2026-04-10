@@ -115,6 +115,8 @@ const ANIM_TYPE_LABELS = [
     ['打字机', 'typewriter'],
     ['逐字弹跳', 'char_bounce'],
     ['逐字放大', 'letter_jump'],
+    ['逐词弹出(随机)', 'word_pop_random'],
+    ['逐词弹出(回弹)', 'word_pop_random_pulse'],
     ['节奏逐词', 'metronome'],
     ['模糊渐清', 'blur_sharp'],
     ['圣光', 'holy_glow'],
@@ -388,6 +390,52 @@ function computeLetterJumpScale(currentTime, wordStart, wordEnd,
     return 1.0;
 }
 
+/** Return scale factor for per-word print-in with deterministic random final size. */
+function computeWordRandomPopScale(currentTime, wordStart, wordEnd, wordIndex = 0, segStart = 0,
+    minScale = 0.86, maxScale = 1.34, animDuration = 0.22) {
+    const dt = currentTime - wordStart;
+    if (dt < 0) return 0.0;
+
+    const dur = Math.max(0.06, Number(animDuration) || 0.22);
+    const minS = Number(minScale) || 0.86;
+    const maxS = Math.max(minS, Number(maxScale) || 1.34);
+    const key = (Number(wordIndex) + 1.0) * 12.9898 + Number(segStart) * 78.233 + Number(wordStart) * 37.719;
+    const rand = (Math.sin(key) * 43758.5453) % 1;
+    const rand01 = rand < 0 ? rand + 1 : rand;
+    const finalScale = minS + (maxS - minS) * rand01;
+
+    if (dt >= dur) return finalScale;
+    const p = Math.max(0.0, Math.min(1.0, dt / dur));
+    const startScale = 0.56;
+    return startScale + (finalScale - startScale) * easeOutBack(p);
+}
+
+/** Return scale factor for per-word pop pulse that settles back to 1.0. */
+function computeWordRandomPulseScale(currentTime, wordStart, wordEnd, wordIndex = 0, segStart = 0,
+    minScale = 1.08, maxScale = 1.38, animDuration = 0.22) {
+    const dt = currentTime - wordStart;
+    if (dt < 0) return 0.0;
+
+    const dur = Math.max(0.06, Number(animDuration) || 0.22);
+    const minS = Number(minScale) || 1.08;
+    const maxS = Math.max(minS, Number(maxScale) || 1.38);
+    const key = (Number(wordIndex) + 1.0) * 12.9898 + Number(segStart) * 78.233 + Number(wordStart) * 37.719;
+    const rand = (Math.sin(key) * 43758.5453) % 1;
+    const rand01 = rand < 0 ? rand + 1 : rand;
+    const peak = minS + (maxS - minS) * rand01;
+
+    const inDur = dur * 0.45;
+    if (dt <= inDur) {
+        const p = Math.max(0.0, Math.min(1.0, dt / inDur));
+        return 0.72 + (peak - 0.72) * easeOutBack(p);
+    }
+    if (dt <= dur) {
+        const p = Math.max(0.0, Math.min(1.0, (dt - inDur) / Math.max(0.001, dur - inDur)));
+        return peak - (peak - 1.0) * easeOutCubic(p);
+    }
+    return 1.0;
+}
+
 /** Return blur radius (int). Starts at maxBlur, reaches 0 at clearFrac of duration. */
 function computeBlurSharpRadius(currentTime, segStart, segEnd,
     maxBlur = 20, clearFrac = 0.4) {
@@ -505,6 +553,8 @@ const ReelsAnimEngine = {
     computeFlashHighlight,
     computeHolyGlow,
     computeLetterJumpScale,
+    computeWordRandomPopScale,
+    computeWordRandomPulseScale,
     computeBlurSharpRadius,
     computeMultiStrokeLayers,
     // Spectrum

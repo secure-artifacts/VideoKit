@@ -741,8 +741,28 @@ def gladia_keys():
     
     elif request.method == 'POST':
         data = request.json
-        with open(keys_file, 'w') as f:
-            json.dump(data, f)
+        with open(keys_file, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        return jsonify({"message": "保存成功"})
+
+@app.route('/api/settings/gemini-keys', methods=['GET', 'POST', 'OPTIONS'])
+def gemini_keys():
+    """管理 Gemini API Keys"""
+    if request.method == 'OPTIONS':
+        return '', 204
+    
+    keys_file = os.path.join(os.path.dirname(__file__), 'gemini_keys.json')
+    
+    if request.method == 'GET':
+        if os.path.exists(keys_file):
+            with open(keys_file, 'r', encoding='utf-8') as f:
+                return jsonify(json.load(f))
+        return jsonify({"keys": []})
+    
+    elif request.method == 'POST':
+        data = request.json
+        with open(keys_file, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
         return jsonify({"message": "保存成功"})
 
 @app.route('/api/settings/elevenlabs', methods=['GET', 'POST', 'OPTIONS'])
@@ -2575,6 +2595,7 @@ def media_convert():
         'wav': {'output_ext': '.wav', 'type': 'audio'},
         'audio_black': {'output_ext': '_black.mp4', 'type': 'audio_black'},
         'audio_split': {'output_ext': '', 'type': 'audio_split'},
+        'txt_wrap': {'output_ext': '_断行.txt', 'type': 'txt_wrap'},
     }
     
     # custom_logo 和 watermark 是特殊模式，不在预定义配置中
@@ -2836,6 +2857,106 @@ def media_convert():
                     subprocess.run(cmd, check=True, capture_output=True, timeout=600)
                     converted.append(mp4_path)
 
+                continue
+
+            elif mode == 'txt_wrap':
+                if ext.lower() not in ['.txt']:
+                    continue
+                import re
+                try:
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        text = f.read()
+
+                    def clean_blank_lines(txt: str) -> str:
+                        lines = txt.splitlines()
+                        new_lines = []
+                        blank = False
+                        for line in lines:
+                            if line.strip() == "":
+                                if not blank:
+                                    new_lines.append("")
+                                    blank = True
+                            else:
+                                new_lines.append(line)
+                                blank = False
+                        return "\n".join(new_lines)
+
+                    def _is_cjk(ch):
+                        c = ord(ch)
+                        return (0x2E80 <= c <= 0x9FFF or 0x3000 <= c <= 0x303F or
+                                0x3040 <= c <= 0x30FF or 0xF900 <= c <= 0xFAFF or
+                                0xFE30 <= c <= 0xFE4F or 0xFF00 <= c <= 0xFFEF or
+                                0x20000 <= c <= 0x2FA1F)
+
+                    _PUNCTS = set('，。！？、：；,.!?;:…—–')
+
+                    def wrap_text(txt: str, max_length: int) -> str:
+                        paragraphs = re.split(r'\n\s*\n', txt.strip())
+                        wrapped_lines = []
+
+                        for para in paragraphs:
+                            flat = re.sub(r'\n', ' ', para)
+                            flat = re.sub(r'\s+', ' ', flat).strip()
+                            if not flat:
+                                continue
+
+                            # 分词：CJK 逐字，Latin 逐词
+                            tokens = []
+                            j = 0
+                            while j < len(flat):
+                                if flat[j] == ' ':
+                                    j += 1; continue
+                                if _is_cjk(flat[j]) or flat[j] in _PUNCTS:
+                                    tokens.append(flat[j]); j += 1
+                                else:
+                                    word = ''
+                                    while j < len(flat) and flat[j] != ' ' and not _is_cjk(flat[j]):
+                                        word += flat[j]; j += 1
+                                    tokens.append(word)
+
+                            if not tokens:
+                                continue
+
+                            current_line = ''
+                            for tok in tokens:
+                                need_space = (len(current_line) > 0
+                                    and not _is_cjk(current_line[-1])
+                                    and current_line[-1] not in _PUNCTS
+                                    and not _is_cjk(tok[0])
+                                    and tok[0] not in _PUNCTS)
+                                sep = ' ' if need_space else ''
+                                new_len = len(current_line) + len(sep) + len(tok)
+
+                                if not current_line:
+                                    current_line = tok
+                                elif new_len <= max_length:
+                                    current_line += sep + tok
+                                else:
+                                    wrapped_lines.append(current_line)
+                                    current_line = tok
+
+                                if current_line and current_line[-1] in _PUNCTS:
+                                    if len(current_line) > max_length // 2:
+                                        wrapped_lines.append(current_line)
+                                        current_line = ''
+
+                            if current_line:
+                                wrapped_lines.append(current_line)
+                            wrapped_lines.append('')
+
+                        while wrapped_lines and wrapped_lines[-1] == '':
+                            wrapped_lines.pop()
+                        return clean_blank_lines('\n'.join(wrapped_lines))
+
+                    width = int(data.get('txt_wrap_width', 18))
+                    wrapped = wrap_text(text, width)
+
+                    output_path = os.path.join(out_dir, f"{base_name}_断行.txt")
+                    with open(output_path, "w", encoding="utf-8") as f:
+                        f.write(wrapped)
+                    converted.append(output_path)
+                except Exception as e:
+                    print(f"txt_wrap error: {e}")
                 continue
 
             else:
@@ -4159,6 +4280,165 @@ def image_classify():
         import traceback
         traceback.print_exc()
         return jsonify({"error": f"画面分类失败: {str(e)}"}), 500
+@app.route('/api/ai/process-scripts', methods=['POST', 'OPTIONS'])
+def process_scripts():
+    if request.method == 'OPTIONS':
+        return '', 204
+    
+    data = request.json
+    scripts = data.get('scripts', [])
+    
+    # 1. Load keys
+    keys_file = os.path.join(os.path.dirname(__file__), 'gemini_keys.json')
+    gemini_keys = []
+    if os.path.exists(keys_file):
+        try:
+            with open(keys_file, 'r', encoding='utf-8') as f:
+                gemini_data = json.load(f)
+                gemini_keys = gemini_data.get('keys', [])
+        except:
+            pass
+            
+    if not gemini_keys:
+        return jsonify({"error": "未配置 Gemini API Keys，请在设置中配置"}), 400
+        
+    import random
+    import requests
+    api_key = random.choice(gemini_keys).strip()
+    
+    # 2. Build batched Prompt
+    VOICE_MODE_SYSTEM_INSTRUCTION = """你是一个专业的配音文案标注专家，专门为 ElevenLabs 配音软件准备文案。
+
+【核心用途】
+用于 ElevenLabs 配音。场景：祷告 / 宣告 / 属灵鼓励 / 短视频旁白
+
+【情感标签规则（最重要）】
+✅ 只使用情感/语气标签（如 [calm] [reverent] [faith-filled] [pause]）
+❌ 不要使用 emoji
+❌ 不要解释标签含义
+标签要求：克制、稳定、不浮夸、不戏剧化
+
+【节奏与结构】
+- 合适的停顿，常用 [pause]，停顿要合理，符合正常人说话的情况，只有必须停顿的才加停顿，不然太多停顿听着就像是在背台词了
+- 停顿要根据整体文案内容添加的合理自然
+
+【ElevenLabs 特性优化】
+针对 ElevenLabs 的特性，它对停顿和标点非常敏感。在 ElevenLabs 中，直接使用 [pause] 标签有时效果不够自然。
+**最有效的"停顿"其实是利用标点符号（如 ... 或 ,）以及通过情感词引导模型改变语速。**
+- 将情感词放在中括号内并配合 ... 标点，能更好地引导 AI 表现出语气起伏
+- 例如：[calm] Lord... I come before You today, with a grateful heart...
+
+【语气取向】
+根据文案内容，偏向：力量感、祷告感、安抚感、权柄但不咆哮
+避免：情绪炸裂、表演感、过度煽动
+
+【内容处理原则】
+❌ 不改原文意思
+❌ 不擅自删句
+❌ 不加新神学内容
+
+【输出要求 - 分两部分】
+你需要输出两个结果，用 ||| 分隔：
+1. 加标签结果：带情感标签的完整文案（用于 ElevenLabs 配音）
+2. 断句结果：根据标签合理断行后的文案（用于字幕显示）
+
+断行规则：
+- 断句合理，符合语言习惯
+- 每行不超过 4 个单词，便于字幕显示
+- 也不要太短（至少有完整的意思单元）
+- 在 [pause] 标签处自然断行
+- 断句结果不包含情感标签，只保留纯文本
+- ⚠️ 断句结果不包含省略号（...），省略号仅用于配音的加标签结果
+
+输出格式示例：
+[calm] Lord... I come before You today, with a grateful heart...
+|||
+Lord,
+I come before You today,
+with a grateful heart.
+
+【批量处理输出规则】
+你需要处理多条文案，每条以 [编号] 开头。
+对于每条文案，输出格式为：[编号] 加标签结果|||断句结果
+⚠️ 断句结果中的换行用 \\n 表示（字面的反斜杠n），不要真正换行，保持每条结果在同一行。
+每条结果占一行。"""
+
+    numbered_inputs = "\n\n".join([f"[{s['idx']}] {s['text']}" for s in scripts])
+    
+    user_prompt = f"""请为以下每条文案添加情感标签并断行：
+
+{numbered_inputs}
+
+按格式输出每条结果：[编号] 加标签结果|||断句结果
+注意：断句结果中的换行用 \\n 表示，不要真正换行。"""
+    
+    payload = {
+        "system_instruction": {
+            "parts": [{"text": VOICE_MODE_SYSTEM_INSTRUCTION}]
+        },
+        "contents": [
+            {
+                "role": "user",
+                "parts": [{"text": user_prompt}]
+            }
+        ],
+        "generationConfig": {
+            "temperature": 0.4
+        }
+    }
+    
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent?key={api_key}"
+        resp = requests.post(url, json=payload, timeout=60)
+        resp.raise_for_status()
+        
+        resp_data = resp.json()
+        ai_text = resp_data.get("candidates", [])[0].get("content", {}).get("parts", [])[0].get("text", "")
+        
+        # Parse output
+        results = []
+        for line in ai_text.split('\n'):
+            line = line.strip()
+            if not line: continue
+            
+            import re
+            match = re.match(r'^\[(.+?)\]\s*(.+)$', line)
+            if match:
+                idx = match.group(1)
+                content = match.group(2)
+                
+                parts = content.split('|||')
+                if len(parts) >= 2:
+                    tts_text = parts[0].strip()
+                    display_text = parts[1].strip().replace('\\n', '\n')
+                    
+                    results.append({
+                        "idx": int(idx),
+                        "tts_text": tts_text,
+                        "display_text": display_text
+                    })
+                else:
+                    # 解析失败 fallback
+                    results.append({
+                        "idx": int(idx),
+                        "tts_text": content,
+                        "display_text": content.replace('\\n', '\n')
+                    })
+                    
+        return jsonify({"results": results})
+        
+    except requests.exceptions.RequestException as e:
+        import traceback
+        traceback.print_exc()
+        if hasattr(e, 'response') and e.response is not None:
+             error_msg = f"API 错误 ({e.response.status_code}): {e.response.text}"
+        else:
+             error_msg = f"网络请求失败: {str(e)}"
+        return jsonify({"error": error_msg}), 500
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"AI处理失败: {str(e)}"}), 500
 
 
 if __name__ == '__main__':

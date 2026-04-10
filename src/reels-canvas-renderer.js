@@ -85,6 +85,11 @@ class ReelsCanvasRenderer {
         const lineSpacing = s.line_spacing || 0;
         const lineH = fontSize * 1.2;
         const lineStep = lineH + lineSpacing;
+        const blockTypography = (s.block_typography_enabled === true)
+            || (s.block_typography_enabled == null && (s.anim_in_type || 'none') === 'word_pop_random');
+        const blockScaleMin = Number.isFinite(Number(s.block_scale_min)) ? Number(s.block_scale_min) : 0.78;
+        const blockScaleMax = Number.isFinite(Number(s.block_scale_max)) ? Number(s.block_scale_max) : 1.6;
+        const blockTargetWidth = maxWidth;
 
         // If advanced textbox, limit visible lines
         let visibleLines = lines;
@@ -93,14 +98,28 @@ class ReelsCanvasRenderer {
             visibleLines = lines.slice(0, maxVisLines);
         }
 
-        const totalH = lineH * visibleLines.length + lineSpacing * Math.max(0, visibleLines.length - 1);
-
         let maxLineW = 0;
         const lineWidths = visibleLines.map(line => {
             const w = this._measureTextWithSpacing(ctx, line, letterSpacing);
             maxLineW = Math.max(maxLineW, w);
             return w;
         });
+        const lineScales = lineWidths.map((w) => {
+            if (!blockTypography) return 1.0;
+            const safeW = Math.max(1, w);
+            const fit = blockTargetWidth / safeW;
+            return Math.max(blockScaleMin, Math.min(blockScaleMax, fit));
+        });
+        const lineHeights = lineScales.map(sc => lineH * sc);
+        const lineTopOffsets = [];
+        let accumY = 0;
+        for (let i = 0; i < visibleLines.length; i++) {
+            lineTopOffsets.push(accumY);
+            accumY += lineHeights[i];
+            if (i < visibleLines.length - 1) accumY += lineSpacing;
+        }
+        const totalH = accumY;
+        const renderMaxLineW = blockTypography ? blockTargetWidth : maxLineW;
 
         // ── 位置计算 ──
         let cx, cy;
@@ -120,9 +139,9 @@ class ReelsCanvasRenderer {
         if (advEnabled) {
             rectX = advX; rectY = advY; rectW = advW; rectH = advH;
         } else {
-            rectX = cx - maxLineW / 2 - padX;
+            rectX = cx - renderMaxLineW / 2 - padX;
             rectY = cy - totalH / 2 - padY;
-            rectW = maxLineW + padX * 2;
+            rectW = renderMaxLineW + padX * 2;
             rectH = totalH + padY * 2;
         }
 
@@ -229,10 +248,15 @@ class ReelsCanvasRenderer {
 
         // ── Metronome / Bullet / Letter Jump flags ──
         const isMetronome = animInType === 'metronome';
+        const isWordPopRandom = animInType === 'word_pop_random';
+        const isWordPopRandomPulse = animInType === 'word_pop_random_pulse';
         const isBullet = animInType === 'bullet_reveal';
         const isLetterJump = animInType === 'letter_jump';
         const isFlash = animInType === 'flash_highlight';
         const isHolyGlow = animInType === 'holy_glow';
+        const wordPopGroups = (isWordPopRandom && words.length > 0)
+            ? this._buildWordPopGroups(words.length, segStart, segEnd, wordsInfo)
+            : null;
 
         // ── Advanced textbox background ──
         if (advEnabled && s.adv_bg_enabled) {
@@ -355,7 +379,7 @@ class ReelsCanvasRenderer {
         // ── Multi-layer stroke expand (pre-pass) ──
         if (s.stroke_expand_enabled) {
             this._renderStrokeExpand(ctx, s, visibleLines, lineWidths, cx, advEnabled, advAlign, advX, advW,
-                cy, totalH, lineStep, fontStr, fontSize, letterSpacing);
+                cy, totalH, lineStep, fontStr, fontSize, letterSpacing, advY, advH);
         }
 
         // ── 文字绘制 ──
@@ -366,22 +390,45 @@ class ReelsCanvasRenderer {
         const borderW = s.border_width || 3;
         const useStroke = s.use_stroke !== false;
         const shadowBlur = s.shadow_blur || 0;
+        const shadowOffX = s.shadow_offset_x || 0;
+        const shadowOffY = s.shadow_offset_y || 0;
         const shadowColor = s.color_shadow || '#000000';
         const shadowAlpha = (s.opacity_shadow || 150) / 255;
         const useUnderline = s.use_underline || false;
         const underlineColor = s.color_underline || '#FFD700';
 
-        const startY = advEnabled ? (advY) : (cy - totalH / 2);
+        let startY;
+        if (advEnabled) {
+            const advValign = (s.advanced_textbox_valign || 'center').toLowerCase();
+            if (advValign === 'top') {
+                startY = advY;
+            } else if (advValign === 'bottom') {
+                startY = advY + advH - totalH;
+            } else { // center
+                startY = cy - totalH / 2;
+            }
+        } else {
+            startY = cy - totalH / 2;
+        }
+
         let wordCounter = 0;
         let twCharCounter = 0;
 
         for (let i = 0; i < visibleLines.length; i++) {
             const line = visibleLines[i];
             const lineW = lineWidths[i];
+            const lineScale = lineScales[i] || 1.0;
+            const lineHScaled = lineH * lineScale;
 
             // Text alignment
             let xStart;
-            if (advEnabled && advAlign === 'left') {
+            if (blockTypography && advEnabled && advAlign === 'left') {
+                xStart = advX;
+            } else if (blockTypography && advEnabled && advAlign === 'right') {
+                xStart = advX + advW - blockTargetWidth;
+            } else if (blockTypography) {
+                xStart = cx - blockTargetWidth / 2;
+            } else if (advEnabled && advAlign === 'left') {
                 xStart = advX;
             } else if (advEnabled && advAlign === 'right') {
                 xStart = advX + advW - lineW;
@@ -389,7 +436,7 @@ class ReelsCanvasRenderer {
                 xStart = cx - lineW / 2;
             }
 
-            const y = startY + i * lineStep;
+            const y = startY + (blockTypography ? lineTopOffsets[i] : (i * lineStep));
 
             // Bullet reveal: per-line alpha
             let lineAlpha = 1.0;
@@ -422,6 +469,17 @@ class ReelsCanvasRenderer {
                 } else {
                     wordCounter++;
                 }
+                const wordIdx = wordCounter - 1;
+                const totalWordCount = Math.max(1, words.length);
+                const segDur = Math.max(0.001, segEnd - segStart);
+                const fallbackStart = segStart + segDur * (wordIdx / totalWordCount);
+                const fallbackEnd = segStart + segDur * ((wordIdx + 1) / totalWordCount);
+                let wordStart = (wInfo && Number.isFinite(wInfo.start)) ? wInfo.start : fallbackStart;
+                let wordEnd = (wInfo && Number.isFinite(wInfo.end)) ? wInfo.end : fallbackEnd;
+                if (wordPopGroups && wordIdx < wordPopGroups.starts.length) {
+                    wordStart = wordPopGroups.starts[wordIdx];
+                    wordEnd = wordPopGroups.ends[wordIdx];
+                }
 
                 // Metronome visibility
                 let metroVisible = true;
@@ -439,8 +497,8 @@ class ReelsCanvasRenderer {
                     const dynOffY = s.high_offset_y || 0;
                     let boxX = currX - dynPad;
                     let boxY = y - dynPad + dynOffY;
-                    let boxW = wordW + dynPad * 2;
-                    let boxH = lineH + dynPad * 2;
+                    let boxW = wordW * lineScale + dynPad * 2;
+                    let boxH = lineHScaled + dynPad * 2;
 
                     if (s.dyn_box_anim && anim && wInfo) {
                         const dscale = anim.computeDynBoxScale(
@@ -509,6 +567,36 @@ class ReelsCanvasRenderer {
                     }
                 }
 
+                // ── Word pop random (逐词弹出+随机大小) ──
+                let randomPopScale = 1.0;
+                if (anim && (isWordPopRandom || isWordPopRandomPulse)) {
+                    const unreadOpacity = Math.max(0, Math.min(1, Number(s.word_pop_random_unread_opacity ?? 0.0)));
+                    const readOpacity = Math.max(0, Math.min(1, Number(s.word_pop_random_read_opacity ?? 1.0)));
+                    if (currentTime < wordStart) {
+                        wordOpacity *= unreadOpacity;
+                    } else {
+                        wordOpacity *= readOpacity;
+                    }
+
+                    if (currentTime >= wordStart) {
+                        if (isWordPopRandomPulse && typeof anim.computeWordRandomPulseScale === 'function') {
+                            randomPopScale = anim.computeWordRandomPulseScale(
+                                currentTime, wordStart, wordEnd, wordIdx, segStart,
+                                Number(s.word_pop_random_pulse_min_scale ?? 1.08),
+                                Number(s.word_pop_random_pulse_max_scale ?? 1.38),
+                                Number(s.word_pop_random_pulse_duration ?? 0.22)
+                            );
+                        } else {
+                            randomPopScale = anim.computeWordRandomPopScale(
+                                currentTime, wordStart, wordEnd, wordIdx, segStart,
+                                Number(s.word_pop_random_min_scale ?? 0.86),
+                                Number(s.word_pop_random_max_scale ?? 1.34),
+                                Number(s.word_pop_random_duration ?? 0.22)
+                            );
+                        }
+                    }
+                }
+
                 // ── Vertical offset for char bounce ──
                 let wordY = y;
                 if (anim && isCharBounce && wInfo) {
@@ -546,17 +634,21 @@ class ReelsCanvasRenderer {
                 ctx.save();
                 ctx.globalAlpha = globalAlpha * wordOpacity;
 
-                if (letterJumpScale !== 1.0) {
-                    const wcx = currX + wordW / 2;
-                    const wcy = wordY + lineH / 2;
-                    ctx.translate(wcx, wcy);
-                    ctx.scale(letterJumpScale, letterJumpScale);
-                    ctx.translate(-wcx, -wcy);
+                const wordScale = letterJumpScale * randomPopScale;
+                if (wordScale !== 1.0) {
+                    ctx.translate(currX, wordY);
+                    ctx.scale(wordScale, wordScale);
+                    ctx.translate(-currX, -wordY);
+                }
+                if (lineScale !== 1.0) {
+                    ctx.translate(currX, wordY);
+                    ctx.scale(lineScale, lineScale);
+                    ctx.translate(-currX, -wordY);
                 }
 
                 this._drawWord(ctx, wordStr, currX, wordY, wordColor,
                     useStroke && !s.stroke_expand_enabled, wordStrokeColor, borderW, outlineAlpha,
-                    shadowBlur, shadowColor, shadowAlpha, letterSpacing);
+                    shadowBlur, shadowOffX, shadowOffY, shadowColor, shadowAlpha, letterSpacing);
                 ctx.restore();
 
                 // Bullet restore
@@ -567,15 +659,25 @@ class ReelsCanvasRenderer {
                     ctx.save();
                     ctx.globalAlpha = globalAlpha * lineAlpha;
                     ctx.strokeStyle = underlineColor;
-                    ctx.lineWidth = Math.max(2, fontSize * 0.04);
+                    ctx.lineWidth = Math.max(2, fontSize * 0.04) * lineScale;
                     ctx.beginPath();
-                    ctx.moveTo(currX, wordY + lineH + 2);
-                    ctx.lineTo(currX + wordW, wordY + lineH + 2);
+                    const underlineY = wordY + lineHScaled + 2;
+                    ctx.moveTo(currX, underlineY);
+                    ctx.lineTo(currX + wordW * lineScale, underlineY);
                     ctx.stroke();
                     ctx.restore();
                 }
 
-                currX += wordW + spaceW;
+                let advanceScale = lineScale;
+                if (isWordPopRandom && currentTime >= wordStart) {
+                    const finalRandScale = this._computeWordRandomFinalScale(
+                        wordIdx, segStart, wordStart,
+                        Number(s.word_pop_random_min_scale ?? 0.86),
+                        Number(s.word_pop_random_max_scale ?? 1.34)
+                    );
+                    advanceScale *= finalRandScale;
+                }
+                currX += (wordW + spaceW) * advanceScale;
             }
         }
 
@@ -656,7 +758,7 @@ class ReelsCanvasRenderer {
 
     // ─── Multi-layer stroke expand ───
     _renderStrokeExpand(ctx, s, lines, lineWidths, cx, advEnabled, advAlign, advX, advW,
-        cy, totalH, lineStep, fontStr, fontSize, letterSpacing) {
+        cy, totalH, lineStep, fontStr, fontSize, letterSpacing, advY, advH) {
         const seLayers = parseInt(s.stroke_expand_layers) || 3;
         const seStep = parseFloat(s.stroke_expand_step) || 4;
         const seFeather = parseFloat(s.stroke_expand_feather) || 8;
@@ -666,7 +768,19 @@ class ReelsCanvasRenderer {
         const seLayerWidths = s.stroke_expand_layer_widths || [];
         const seLayerFeathers = s.stroke_expand_layer_feathers || [];
 
-        const startY = advEnabled ? (cy - totalH / 2) : (cy - totalH / 2);
+        let startY;
+        if (advEnabled) {
+            const advValign = (s.advanced_textbox_valign || 'center').toLowerCase();
+            if (advValign === 'top') {
+                startY = advY;
+            } else if (advValign === 'bottom') {
+                startY = advY + advH - totalH;
+            } else {
+                startY = cy - totalH / 2;
+            }
+        } else {
+            startY = cy - totalH / 2;
+        }
 
         ctx.save();
         ctx.font = fontStr;
@@ -726,22 +840,32 @@ class ReelsCanvasRenderer {
     // ─── Helper: draw word with optional letter spacing ───
     _drawWord(ctx, text, x, y, fillColor,
         useStroke, strokeColor, strokeWidth, strokeAlpha,
-        shadowBlur, shadowColor, shadowAlpha, letterSpacing = 0) {
+        shadowBlur, shadowOffX, shadowOffY, shadowColor, shadowAlpha, letterSpacing = 0) {
 
         // Shadow
-        if (shadowBlur > 0) {
+        if (shadowBlur > 0 || shadowOffX !== 0 || shadowOffY !== 0) {
             ctx.save();
             ctx.globalAlpha *= shadowAlpha;
             ctx.fillStyle = shadowColor;
-            const offStep = shadowBlur * 0.3;
-            for (const ox of [-offStep, 0, offStep]) {
-                for (const oy of [-offStep, 0, offStep]) {
-                    if (ox === 0 && oy === 0) continue;
-                    if (letterSpacing > 0) {
-                        this._fillTextSpaced(ctx, text, x + ox, y + oy, letterSpacing);
-                    } else {
-                        ctx.fillText(text, x + ox, y + oy);
+            if (shadowBlur > 0) {
+                // Blur + offset: draw multiple copies with blur spread around the offset position
+                const offStep = shadowBlur * 0.3;
+                for (const bx of [-offStep, 0, offStep]) {
+                    for (const by of [-offStep, 0, offStep]) {
+                        if (bx === 0 && by === 0 && shadowBlur > 0) continue;
+                        if (letterSpacing > 0) {
+                            this._fillTextSpaced(ctx, text, x + shadowOffX + bx, y + shadowOffY + by, letterSpacing);
+                        } else {
+                            ctx.fillText(text, x + shadowOffX + bx, y + shadowOffY + by);
+                        }
                     }
+                }
+            } else {
+                // Pure offset, no blur
+                if (letterSpacing > 0) {
+                    this._fillTextSpaced(ctx, text, x + shadowOffX, y + shadowOffY, letterSpacing);
+                } else {
+                    ctx.fillText(text, x + shadowOffX, y + shadowOffY);
                 }
             }
             ctx.restore();
@@ -796,6 +920,58 @@ class ReelsCanvasRenderer {
             w += ctx.measureText(ch).width + spacing;
         }
         return Math.max(0, w - spacing); // remove last spacing
+    }
+
+    _seededRand(seed) {
+        const raw = (Math.sin(seed) * 43758.5453) % 1;
+        return raw < 0 ? raw + 1 : raw;
+    }
+
+    _computeWordRandomFinalScale(wordIdx, segStart, wordStart, minScale = 0.86, maxScale = 1.34) {
+        const key = (Number(wordIdx) + 1.0) * 12.9898 + Number(segStart) * 78.233 + Number(wordStart) * 37.719;
+        const rand = this._seededRand(key);
+        const minS = Number(minScale) || 0.86;
+        const maxS = Math.max(minS, Number(maxScale) || 1.34);
+        return minS + (maxS - minS) * rand;
+    }
+
+    _buildWordPopGroups(totalWords, segStart, segEnd, wordsInfo = []) {
+        const count = Math.max(0, parseInt(totalWords, 10) || 0);
+        const starts = new Array(count);
+        const ends = new Array(count);
+        if (count <= 0) return { starts, ends };
+
+        const segDur = Math.max(0.001, segEnd - segStart);
+        const hasWordTimes = Array.isArray(wordsInfo) && wordsInfo.length >= count;
+
+        let i = 0;
+        while (i < count) {
+            const seed = (i + 1) * 17.17 + segStart * 31.13 + segEnd * 7.19;
+            const r = this._seededRand(seed);
+            let groupSize = 1;
+            if (r > 0.82) groupSize = 3;
+            else if (r > 0.48) groupSize = 2;
+            const startIdx = i;
+            const endIdx = Math.min(count - 1, i + groupSize - 1);
+
+            let gStart = segStart + segDur * (startIdx / count);
+            let gEnd = segStart + segDur * ((endIdx + 1) / count);
+            if (hasWordTimes) {
+                const ws = wordsInfo[startIdx];
+                const we = wordsInfo[endIdx];
+                const tStart = ws && Number.isFinite(ws.start) ? ws.start : gStart;
+                const tEnd = we && Number.isFinite(we.end) ? we.end : gEnd;
+                gStart = tStart;
+                gEnd = Math.max(gStart + 0.04, tEnd);
+            }
+
+            for (let j = startIdx; j <= endIdx; j++) {
+                starts[j] = gStart;
+                ends[j] = gEnd;
+            }
+            i = endIdx + 1;
+        }
+        return { starts, ends };
     }
 
     // ─── Wrap tokens by pixel width ───
@@ -933,7 +1109,11 @@ function generateASS(segments, style) {
     const outlineColor = toASSColor(s.color_outline || '#000000');
     const shadowColor = toASSColor(s.color_shadow || '#000000', Math.round(255 - (s.opacity_shadow || 150)));
     const borderW = s.use_stroke !== false ? (s.border_width || 3) : 0;
-    const shadowDist = s.shadow_blur ? Math.min(s.shadow_blur, 4) : 0;
+    const shadowDist = Math.max(
+        Math.abs(s.shadow_offset_x || 0),
+        Math.abs(s.shadow_offset_y || 0),
+        s.shadow_blur ? Math.min(s.shadow_blur, 4) : 0
+    );
     const spacing = s.letter_spacing || 0;
 
     let alignment = 2;

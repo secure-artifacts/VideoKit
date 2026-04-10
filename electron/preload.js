@@ -66,6 +66,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getMediaDuration: (filePath) => ipcRenderer.invoke('get-media-duration', filePath),
     saveRenderedAudio: (wavData) => ipcRenderer.invoke('save-rendered-audio', wavData),
     readFileBuffer: (filePath) => ipcRenderer.invoke('read-file-buffer', filePath),
+    // 分层 PNG 序列导出
+    savePngFrame: (opts) => ipcRenderer.invoke('save-png-frame', opts),
+    exportAudioMp3: (opts) => ipcRenderer.invoke('export-audio-mp3', opts),
+    ensureDirectory: (dirPath) => ipcRenderer.invoke('ensure-directory', dirPath),
 
     // 自动更新
     checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
@@ -82,9 +86,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // 扫描本地字体
     scanFonts: () => ipcRenderer.invoke('scan-fonts'),
 
-    // 读取文本文件
+    // 读取文件内容
     readFileText: (filePath) => {
         try { return fs.readFileSync(filePath, 'utf-8'); } catch { return ''; }
+    },
+
+    // 写入文件内容 (用于保存工程)
+    writeFileText: (filePath, content) => {
+        try { fs.writeFileSync(filePath, content, 'utf-8'); return true; } catch (e) { console.error('Write File Error:', e); return false; }
     },
 
     // ==================== 统一 API 调用接口 ====================
@@ -115,5 +124,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // 在 Finder/Explorer 中高亮显示文件
     showItemInFolder: (filePath) => {
         ipcRenderer.invoke('show-item-in-folder', filePath).catch(() => {});
+    },
+
+    // 用系统默认浏览器打开链接
+    openExternal: (url) => {
+        ipcRenderer.invoke('open-external-url', url).catch(() => {});
     },
 });

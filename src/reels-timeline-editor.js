@@ -22,14 +22,14 @@ const TL_RULER_H = 28;
 const TL_HANDLE_W = 6;
 const TL_MIN_CLIP_W = 4;
 const TL_COLORS = {
-    bg: '#1a1a2e',
+    bg: '#181818',
     ruler: '#0f0f1e',
     rulerText: '#8899aa',
     playhead: '#FF4444',
     gridMajor: 'rgba(255,255,255,0.08)',
     gridMinor: 'rgba(255,255,255,0.03)',
-    headerBg: '#12122a',
-    headerBorder: '#2a2a4a',
+    headerBg: '#141414',
+    headerBorder: 'rgba(255,255,255,0.08)',
     domainSep: '#FF6B6B',
     trackTypes: {
         video: '#3366FF',
@@ -38,7 +38,7 @@ const TL_COLORS = {
         image: '#44CC88',
         audio: '#66BBFF',
     },
-    selected: '#00D4FF',
+    selected: '#4c9eff',
     clipBg: 'rgba(255,255,255,0.1)',
 };
 

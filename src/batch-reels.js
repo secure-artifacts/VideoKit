@@ -35,6 +35,14 @@ const _reelsState = {
     mockStartTime: 0,
     // AI watermarks
     watermarks: [],
+    // Global subtitle style (when apply-all is enabled)
+    globalSubtitleStyle: null,
+    // Hook preview state
+    hookVideoReady: false,
+    hookDuration: 0,
+    hookPhase: false, // true = currently in hook phase during playback
+    // Content Video Image Sequence Cache
+    cvSequence: { path: '', files: [], loadedImages: {} },
 };
 window._reelsState = _reelsState;
 
@@ -107,6 +115,142 @@ const REELS_FONT_PRESETS = {
     },
 };
 
+const REELS_ANIMATION_PRESETS = {
+    classic_fade: {
+        label: 'Classic Clean · 淡入淡出',
+        anim_in_type: 'fade',
+        anim_in_duration: 0.28,
+        anim_out_type: 'fade',
+        anim_out_duration: 0.22,
+    },
+    bold_pop: {
+        label: 'Bold Punch · 弹出强调',
+        anim_in_type: 'pop',
+        anim_in_duration: 0.2,
+        anim_out_type: 'fade',
+        anim_out_duration: 0.18,
+        letter_jump_scale: 1.35,
+    },
+    karaoke_sweep: {
+        label: 'Karaoke Sweep · 卡拉OK',
+        anim_in_type: 'fade',
+        anim_in_duration: 0.18,
+        anim_out_type: 'fade',
+        anim_out_duration: 0.16,
+        karaoke_highlight: true,
+    },
+    pop_word: {
+        label: 'Pop Word · 逐字放大',
+        anim_in_type: 'letter_jump',
+        anim_in_duration: 0.26,
+        anim_out_type: 'fade',
+        anim_out_duration: 0.2,
+        letter_jump_scale: 1.6,
+    },
+    word_pop_random: {
+        label: 'Word Pop Random · 逐词弹出(随机)',
+        anim_in_type: 'word_pop_random',
+        anim_in_duration: 0.24,
+        anim_out_type: 'fade',
+        anim_out_duration: 0.2,
+        word_pop_random_min_scale: 0.86,
+        word_pop_random_max_scale: 1.34,
+        word_pop_random_duration: 0.24,
+        word_pop_random_unread_opacity: 0.0,
+        word_pop_random_read_opacity: 1.0,
+    },
+    word_pop_random_pulse: {
+        label: 'Word Pop Pulse · 逐词弹出(回弹)',
+        anim_in_type: 'word_pop_random_pulse',
+        anim_in_duration: 0.24,
+        anim_out_type: 'fade',
+        anim_out_duration: 0.2,
+        word_pop_random_pulse_min_scale: 1.08,
+        word_pop_random_pulse_max_scale: 1.40,
+        word_pop_random_pulse_duration: 0.24,
+        word_pop_random_unread_opacity: 0.0,
+        word_pop_random_read_opacity: 1.0,
+    },
+    typewriter_story: {
+        label: 'Typewriter · 打字机',
+        anim_in_type: 'typewriter',
+        anim_in_duration: 0.42,
+        anim_out_type: 'fade',
+        anim_out_duration: 0.26,
+    },
+    bounce_fun: {
+        label: 'Bounce · 逐字弹跳',
+        anim_in_type: 'char_bounce',
+        anim_in_duration: 0.3,
+        anim_out_type: 'fade',
+        anim_out_duration: 0.2,
+        char_bounce_height: 24,
+    },
+    metro_beat: {
+        label: 'Rhythm Beat · 节奏逐词',
+        anim_in_type: 'metronome',
+        anim_in_duration: 0.28,
+        anim_out_type: 'fade',
+        anim_out_duration: 0.2,
+        metronome_bpm: 128,
+    },
+    slide_up_clean: {
+        label: 'Slide Up · 上滑入场',
+        anim_in_type: 'slide_up',
+        anim_in_duration: 0.24,
+        anim_out_type: 'slide_down',
+        anim_out_duration: 0.2,
+    },
+    slide_lr: {
+        label: 'Slide Left/Right · 横向切入',
+        anim_in_type: 'slide_left',
+        anim_in_duration: 0.25,
+        anim_out_type: 'slide_right',
+        anim_out_duration: 0.22,
+    },
+    floating_soft: {
+        label: 'Floating · 轻漂浮',
+        anim_in_type: 'floating',
+        anim_in_duration: 0.32,
+        anim_out_type: 'fade',
+        anim_out_duration: 0.24,
+        floating_amplitude: 10,
+        floating_period: 2.4,
+    },
+    flash_hook: {
+        label: 'Flash Highlight · 闪光开场',
+        anim_in_type: 'flash_highlight',
+        anim_in_duration: 0.2,
+        anim_out_type: 'fade',
+        anim_out_duration: 0.18,
+        flash_color: '#FFFFFF',
+    },
+    glow_cinematic: {
+        label: 'Holy Glow · 圣光字幕',
+        anim_in_type: 'holy_glow',
+        anim_in_duration: 0.42,
+        anim_out_type: 'fade',
+        anim_out_duration: 0.28,
+        holy_glow_color: '#FFFFAA',
+        holy_glow_radius: 8,
+    },
+    blur_focus: {
+        label: 'Blur To Sharp · 聚焦清晰',
+        anim_in_type: 'blur_sharp',
+        anim_in_duration: 0.35,
+        anim_out_type: 'fade',
+        anim_out_duration: 0.24,
+        blur_sharp_max: 22,
+    },
+    bullet_reveal: {
+        label: 'Bullet Reveal · 逐行出现',
+        anim_in_type: 'bullet_reveal',
+        anim_in_duration: 0.28,
+        anim_out_type: 'fade',
+        anim_out_duration: 0.22,
+    },
+};
+
 let _reelsHotkeyBound = false;
 
 // ═══════════════════════════════════════════════════════
@@ -124,6 +268,36 @@ function _initReelsModule() {
         canvas.height = 1920;
         _reelsState.renderer = new ReelsCanvasRenderer(canvas);
     }
+    
+    // Probe GPU
+    setTimeout(async () => {
+        try {
+            const gpuNameEl = document.getElementById('reels-gpu-name');
+            const gpuCheckbox = document.getElementById('reels-use-gpu');
+            if (gpuNameEl && window.electronAPI && window.electronAPI.reelsComposeWysiwyg) {
+                gpuNameEl.textContent = '(探测中...)';
+                const gpuInfo = await window.electronAPI.reelsComposeWysiwyg('probe-gpu');
+                if (gpuInfo && !gpuInfo.error) {
+                    if (gpuInfo.available) {
+                        gpuNameEl.textContent = `(${gpuInfo.name || 'API加载中'})`;
+                        gpuNameEl.style.color = '#38bdf8';
+                        if (gpuCheckbox && !gpuCheckbox.disabled) gpuCheckbox.checked = true;
+                    } else {
+                        gpuNameEl.textContent = `(${gpuInfo.name || 'CPU'})`;
+                        gpuNameEl.style.color = '#f87171';
+                        if (gpuCheckbox) {
+                            gpuCheckbox.checked = false;
+                        }
+                    }
+                } else {
+                    gpuNameEl.textContent = '(需重启客户端生效)';
+                    gpuNameEl.style.color = '#f87171';
+                }
+            }
+        } catch (e) {
+            console.warn('Probe GPU failed', e);
+        }
+    }, 1500);
 
     const videoInput = document.getElementById('reels-video-input');
     const audioInput = document.getElementById('reels-audio-input');
@@ -155,6 +329,8 @@ function _initReelsModule() {
 
     const seekBar = document.getElementById('reels-preview-seek');
     if (seekBar) seekBar.addEventListener('input', _onSeek);
+    const previewLoopEl = document.getElementById('reels-preview-loop');
+    if (previewLoopEl) previewLoopEl.addEventListener('change', reelsOnPreviewLoopModeChange);
     const voiceVolumeEl = document.getElementById('reels-voice-volume');
     const bgVolumeEl = document.getElementById('reels-bg-volume');
     const bindMix = (el) => {
@@ -185,6 +361,7 @@ function _initReelsModule() {
         audio.addEventListener('timeupdate', _onAudioTimeUpdate);
         audio.addEventListener('loadedmetadata', _onAudioLoaded);
         audio.addEventListener('ended', () => {
+            if (_isPreviewLoopEnabled()) return;
             const video = document.getElementById('reels-preview-video');
             if (video) video.pause();
             const fadeVideo = _reelsState.previewFadeVideo;
@@ -202,14 +379,17 @@ function _initReelsModule() {
         const bgmEl = document.createElement('audio');
         bgmEl.id = 'reels-preview-bgm';
         bgmEl.style.display = 'none';
-        bgmEl.loop = true;  // BGM 循环播放
+        bgmEl.loop = _isPreviewLoopEnabled();
         document.body.appendChild(bgmEl);
         _reelsState._bgmAudioEl = bgmEl;
     }
+    _applyPreviewLoopMode();
 
     _reelsRefreshPresetList();
     _reelsApplyDefaultPreset();
+    _reelsState.globalSubtitleStyle = _cloneSubtitleStyle(_readStyleFromUI());
     _initReelsFontPresetUI();
+    _initReelsAnimationPresetUI();
 
     // ═══ 字体管理器初始化 ═══
     _initFontManager();
@@ -354,7 +534,7 @@ function _initReelsColumnResize() {
 
                 // Save column widths
                 const cols = {};
-                ['reels-col-tasks', 'reels-col-subtitle', 'reels-col-overlay'].forEach(id => {
+                ['reels-col-tasks', 'reels-col-subtitle'].forEach(id => {
                     const el = document.getElementById(id);
                     if (el) cols[id] = Math.round(el.getBoundingClientRect().width);
                 });
@@ -645,7 +825,7 @@ function _drawOverlaySelectionUI(ctx, canvasW, canvasH) {
     const proxy = _reelsState.overlayProxy;
     if (!proxy) return;
     const ov = (proxy.overlayMgr.overlays || []).find(o => o.id === _reelsState.overlaySelectedId);
-    if (!ov) return;
+    if (!ov || ov.disabled) return;
 
     const bounds = _ovGetBounds(ov);
     const { x, y, w, h } = bounds;
@@ -653,7 +833,7 @@ function _drawOverlaySelectionUI(ctx, canvasW, canvasH) {
 
     ctx.save();
     // Dashed selection border
-    ctx.strokeStyle = '#00D4FF';
+    ctx.strokeStyle = '#4c9eff';
     ctx.lineWidth = 2;
     ctx.setLineDash([6, 4]);
     ctx.strokeRect(x, y, w, h);
@@ -661,7 +841,7 @@ function _drawOverlaySelectionUI(ctx, canvasW, canvasH) {
 
     // 8 resize handles
     ctx.fillStyle = '#FFFFFF';
-    ctx.strokeStyle = '#00D4FF';
+    ctx.strokeStyle = '#4c9eff';
     ctx.lineWidth = 2;
     const handles = [
         [x, y], [x + w / 2, y], [x + w, y],
@@ -866,6 +1046,62 @@ function _initReelsFontPresetUI() {
     if (current && REELS_FONT_PRESETS[current]) select.value = current;
 }
 
+function _initReelsAnimationPresetUI() {
+    const select = document.getElementById('reels-animation-preset');
+    if (!select) return;
+    const current = select.value;
+    select.innerHTML = '<option value="">-- 动画预设 --</option>';
+    for (const [key, preset] of Object.entries(REELS_ANIMATION_PRESETS)) {
+        const opt = document.createElement('option');
+        opt.value = key;
+        opt.textContent = preset.label;
+        select.appendChild(opt);
+    }
+    if (current && REELS_ANIMATION_PRESETS[current]) select.value = current;
+}
+
+function reelsApplyAnimationPreset(silent = false) {
+    const select = document.getElementById('reels-animation-preset');
+    if (!select || !select.value) {
+        if (!silent) alert('请先选择一个动画预设');
+        return;
+    }
+    const preset = REELS_ANIMATION_PRESETS[select.value];
+    if (!preset) return;
+
+    const set = (id, val) => {
+        const el = document.getElementById(id);
+        if (!el || val === undefined || val === null) return;
+        el.value = String(val);
+    };
+    const setChk = (id, val) => {
+        const el = document.getElementById(id);
+        if (!el || val === undefined || val === null) return;
+        el.checked = !!val;
+    };
+
+    set('reels-anim-in', preset.anim_in_type);
+    set('reels-anim-in-dur', preset.anim_in_duration);
+    set('reels-anim-out', preset.anim_out_type);
+    set('reels-anim-out-dur', preset.anim_out_duration);
+    set('reels-float-amp', preset.floating_amplitude);
+    set('reels-float-period', preset.floating_period);
+    set('reels-bounce-height', preset.char_bounce_height);
+    set('reels-metro-bpm', preset.metronome_bpm);
+    set('reels-jump-scale', preset.letter_jump_scale);
+    set('reels-flash-color', preset.flash_color);
+    set('reels-glow-color', preset.holy_glow_color);
+    set('reels-glow-radius', preset.holy_glow_radius);
+    set('reels-blur-max', preset.blur_sharp_max);
+    setChk('reels-karaoke-hl', preset.karaoke_highlight);
+
+    reelsUpdatePreview();
+}
+
+function reelsApplyAnimationPresetQuick() {
+    reelsApplyAnimationPreset(true);
+}
+
 function reelsRefreshSubtitleWeightOptions() {
     const familyEl = document.getElementById('reels-font-family');
     const weightEl = document.getElementById('reels-font-weight');
@@ -981,10 +1217,10 @@ function reelsUploadFont() {
     input.click();
 }
 
-async function reelsApplyFontPreset() {
+async function reelsApplyFontPreset(silent = false) {
     const select = document.getElementById('reels-font-preset');
     if (!select || !select.value) {
-        alert('请先选择一个字体预设');
+        if (!silent) alert('请先选择一个字体预设');
         return;
     }
     const preset = REELS_FONT_PRESETS[select.value];
@@ -1020,6 +1256,67 @@ async function reelsApplyFontPreset() {
     reelsUpdatePreview();
 }
 
+function reelsApplyFontPresetQuick() {
+    return reelsApplyFontPreset(true);
+}
+
+function _cloneSubtitleStyle(style) {
+    if (!style || typeof style !== 'object') return null;
+    try {
+        return JSON.parse(JSON.stringify(style));
+    } catch (_) {
+        return { ...style };
+    }
+}
+
+function _isStyleApplyAllEnabled() {
+    const el = document.getElementById('reels-style-apply-all');
+    return el ? el.checked !== false : true;
+}
+
+function _resolveSubtitleStyleForTask(task) {
+    const globalStyle = _reelsState.globalSubtitleStyle;
+    // ── 最高优先级：批量表格中设置的字幕模板预设 ──
+    // 即使 applyAll 开启，任务级别的显式预设也应该生效
+    if (task && task._subtitlePreset && window.ReelsStyleEngine) {
+        const presetStyle = ReelsStyleEngine.applySubtitlePreset(task._subtitlePreset);
+        if (presetStyle) return presetStyle;
+    }
+    if (_isStyleApplyAllEnabled()) {
+        return _cloneSubtitleStyle(globalStyle) || _readStyleFromUI();
+    }
+    if (task && task.subtitleStyle && typeof task.subtitleStyle === 'object') {
+        return _cloneSubtitleStyle(task.subtitleStyle);
+    }
+    return _cloneSubtitleStyle(globalStyle) || _readStyleFromUI();
+}
+
+function _persistSubtitleStyleByScope(style) {
+    const safeStyle = _cloneSubtitleStyle(style || _readStyleFromUI());
+    if (!safeStyle) return;
+    if (_isStyleApplyAllEnabled()) {
+        _reelsState.globalSubtitleStyle = safeStyle;
+        return;
+    }
+    const task = _getSelectedTask();
+    if (task) task.subtitleStyle = safeStyle;
+}
+
+function reelsOnStyleApplyScopeChange() {
+    const task = _getSelectedTask();
+    const applyAll = _isStyleApplyAllEnabled();
+    if (applyAll) {
+        _persistSubtitleStyleByScope(_readStyleFromUI());
+    } else {
+        const style = _resolveSubtitleStyleForTask(task);
+        if (style) {
+            _writeStyleToUI(style);
+            _persistSubtitleStyleByScope(style);
+        }
+    }
+    reelsUpdatePreview();
+}
+
 // ═══════════════════════════════════════════════════════
 // Style: read all params from UI → style object
 // ═══════════════════════════════════════════════════════
@@ -1035,6 +1332,12 @@ function _readStyleFromUI() {
     if (swLabel) swLabel.textContent = val('reels-stroke-width');
     const sbLabel = get('reels-shadow-blur-label');
     if (sbLabel) sbLabel.textContent = val('reels-shadow-blur');
+    const soxLabel = get('reels-shadow-offset-x-label');
+    if (soxLabel) soxLabel.textContent = val('reels-shadow-offset-x');
+    const soyLabel = get('reels-shadow-offset-y-label');
+    if (soyLabel) soyLabel.textContent = val('reels-shadow-offset-y');
+    const pxLabel = get('reels-pos-x-label');
+    if (pxLabel) pxLabel.textContent = val('reels-pos-x') + '%';
     const pyLabel = get('reels-pos-y-label');
     if (pyLabel) pyLabel.textContent = val('reels-pos-y') + '%';
     const wwLabel = get('reels-wrap-width-label');
@@ -1068,6 +1371,8 @@ function _readStyleFromUI() {
 
         // Shadow
         shadow_blur: chk('reels-shadow') ? num('reels-shadow-blur', 4) : 0,
+        shadow_offset_x: chk('reels-shadow') ? num('reels-shadow-offset-x', 0) : 0,
+        shadow_offset_y: chk('reels-shadow') ? num('reels-shadow-offset-y', 2) : 0,
         color_shadow: val('reels-shadow-color') || '#000000',
         opacity_shadow: chk('reels-shadow') ? 150 : 0,
 
@@ -1106,7 +1411,7 @@ function _readStyleFromUI() {
         color_underline: val('reels-underline-color') || '#FFD700',
 
         // Position / layout
-        pos_x: 0.5,
+        pos_x: num('reels-pos-x', 50) / 100,
         pos_y: num('reels-pos-y', 50) / 100,
         wrap_width_percent: num('reels-wrap-width', 90),
         line_spacing: num('reels-line-spacing', 4),
@@ -1121,6 +1426,7 @@ function _readStyleFromUI() {
         // Advanced textbox
         advanced_textbox_enabled: chk('reels-adv-textbox'),
         advanced_textbox_align: val('reels-adv-textbox-align') || 'center',
+        advanced_textbox_valign: val('reels-adv-textbox-valign') || 'center',
         advanced_textbox_x: num('reels-adv-x', 200),
         advanced_textbox_y: num('reels-adv-y', 1400),
         advanced_textbox_w: num('reels-adv-w', 680),
@@ -1146,6 +1452,14 @@ function _readStyleFromUI() {
         metronome_bpm: num('reels-metro-bpm', 120),
         letter_jump_scale: num('reels-jump-scale', 1.5),
         letter_jump_duration: 0.2,
+        word_pop_random_min_scale: num('reels-word-pop-min', 0.86),
+        word_pop_random_max_scale: num('reels-word-pop-max', 1.34),
+        word_pop_random_duration: num('reels-word-pop-dur', 0.22),
+        word_pop_random_pulse_min_scale: num('reels-word-pop-pulse-min', 1.08),
+        word_pop_random_pulse_max_scale: num('reels-word-pop-pulse-max', 1.38),
+        word_pop_random_pulse_duration: num('reels-word-pop-pulse-dur', 0.22),
+        word_pop_random_unread_opacity: num('reels-word-pop-unread-opacity', 0.0),
+        word_pop_random_read_opacity: num('reels-word-pop-read-opacity', 1.0),
         flash_color: val('reels-flash-color') || '#FFFFFF',
         flash_duration: 0.1,
         bullet_stagger: 0.15,
@@ -1199,9 +1513,12 @@ function _writeStyleToUI(style) {
     set('reels-se-step', style.stroke_expand_step || 4);
     set('reels-se-feather', style.stroke_expand_feather || 8);
     set('reels-se-colors', typeof style.stroke_expand_colors === 'string' ? style.stroke_expand_colors : '#FF0000,#00FF00,#0000FF');
+    if (typeof window.reelsSyncSEColorsUI === 'function') window.reelsSyncSEColorsUI();
     setChk('reels-shadow', (style.shadow_blur || 0) > 0);
     set('reels-shadow-color', style.color_shadow || '#000000');
     set('reels-shadow-blur', style.shadow_blur || 4);
+    set('reels-shadow-offset-x', style.shadow_offset_x ?? 0);
+    set('reels-shadow-offset-y', style.shadow_offset_y ?? 2);
     setChk('reels-use-box', style.use_box);
     set('reels-box-color', style.color_bg || '#000000');
     set('reels-box-opacity', style.opacity_bg || 150);
@@ -1211,6 +1528,7 @@ function _writeStyleToUI(style) {
     set('reels-bg-gradient-type', style.bg_gradient_type || 'linear_h');
     set('reels-bg-gradient-colors', typeof style.bg_gradient_colors === 'string' ? style.bg_gradient_colors : '#e0c3fc,#8ec5fc');
     setChk('reels-bg-gradient-hl', style.bg_gradient_highlight);
+    if (typeof window.reelsSyncBgGradientColorsUI === 'function') window.reelsSyncBgGradientColorsUI();
     setChk('reels-box-transition', style.box_transition_enabled);
     set('reels-box-transition-color', style.box_transition_color_to || '#FF6600');
     setChk('reels-dynamic-box', style.dynamic_box);
@@ -1220,12 +1538,14 @@ function _writeStyleToUI(style) {
     set('reels-dyn-radius', style.dynamic_radius || 6);
     setChk('reels-use-underline', style.use_underline);
     set('reels-underline-color', style.color_underline || '#FFD700');
+    set('reels-pos-x', Math.round((style.pos_x || 0.5) * 100));
     set('reels-pos-y', Math.round((style.pos_y || 0.5) * 100));
     set('reels-wrap-width', style.wrap_width_percent || 90);
     set('reels-line-spacing', style.line_spacing || 4);
     set('reels-rotation', style.rotation || 0);
     setChk('reels-adv-textbox', style.advanced_textbox_enabled);
     set('reels-adv-textbox-align', style.advanced_textbox_align || 'center');
+    set('reels-adv-textbox-valign', style.advanced_textbox_valign || 'center');
 
     // Global mask
     setChk('reels-global-mask', style.global_mask_enabled);
@@ -1264,6 +1584,7 @@ function reelsUpdatePreview() {
     if (!renderer) return;
 
     const style = _readStyleFromUI();
+    _persistSubtitleStyleByScope(style);
     const previewText = (document.getElementById('reels-preview-text') || {}).value || 'Hello World 这是一个测试字幕';
     const canvas = renderer.canvas;
     const ctx = renderer.ctx;
@@ -1277,21 +1598,71 @@ function reelsUpdatePreview() {
     _syncBackgroundVideoToMaster();
 
     const video = document.getElementById('reels-preview-video');
+    const hookVideo = document.getElementById('reels-preview-hook-video');
     // Check for image background
     const bgImg = _reelsState._previewBgImage;
     const hasBgImg = bgImg && bgImg.complete && bgImg.naturalWidth > 0;
 
-    // Debug: log video state periodically
-    if (video && video.src && !_reelsState._lastVideoDebugTime) _reelsState._lastVideoDebugTime = 0;
-    if (video && video.src && (Date.now() - (_reelsState._lastVideoDebugTime || 0)) > 3000) {
-        console.log('[Preview] video.src:', video.src?.substring(0, 80), 'readyState:', video.readyState, 'videoWidth:', video.videoWidth, 'error:', video.error?.message);
-        _reelsState._lastVideoDebugTime = Date.now();
-    }
+    // Removed noisy debug logs
 
     const _selectedTask = _getSelectedTask();
     const _bgScalePct = _selectedTask ? (_selectedTask.bgScale || 100) : 100;
 
-    if (video && video.src && video.readyState >= 1 && video.videoWidth > 0) {
+    // ── Phase calculations ──
+    const inCoverEditMode = !!_reelsState._coverEditMode;
+    const coverDur = (_selectedTask && _selectedTask.cover && _selectedTask.cover.enabled) ? (parseFloat(_selectedTask.cover.duration) || 0.01) : 0;
+    const hookDur = _reelsState.hookDuration || 0;
+    const totalTime = _getPreviewCurrentTime();
+    
+
+    // 如果在【封面编辑模式】，强制进入 CoverPhase
+    const inCoverPhase = inCoverEditMode || (coverDur > 0 && totalTime < coverDur);
+    _reelsState.coverPhase = inCoverPhase;
+
+    // Hook 阶段偏移
+    const inHookPhase = !inCoverEditMode && (hookDur > 0 && totalTime >= coverDur && totalTime < (coverDur + hookDur));
+    _reelsState.hookPhase = inHookPhase;
+
+    // ── Cover 阶段渲染 ──
+    if (inCoverPhase) {
+        let coverBgScale = (_selectedTask && _selectedTask.cover && _selectedTask.cover.bgScale) || _bgScalePct;
+        if (_reelsState._previewCoverImage && _reelsState._previewCoverImage.complete && _reelsState._previewCoverImage.naturalWidth > 0) {
+            _drawVideoCover(ctx, _reelsState._previewCoverImage, w, h, coverBgScale);
+        } else if (_reelsState._previewCoverVideo && _reelsState._previewCoverVideo.readyState >= 1) {
+            _drawVideoCover(ctx, _reelsState._previewCoverVideo, w, h, coverBgScale);
+        } else if (hasBgImg) {
+            _drawVideoCover(ctx, bgImg, w, h, coverBgScale);            
+        } else if (video && video.readyState >= 1) {
+            _drawVideoCover(ctx, video, w, h, coverBgScale); 
+        } else {
+            ctx.fillStyle = '#000'; ctx.fillRect(0,0,w,h);
+        }
+    } 
+    // ── Hook 阶段渲染 (在 Hook 阶段绘制 Hook 视频代替背景) ──
+    else if (inHookPhase && hookVideo && hookVideo.src && hookVideo.readyState >= 1 && hookVideo.videoWidth > 0) {
+        // 同步 Hook 视频 currentTime 与 mock 时钟，防止漂移
+        if (_selectedTask) {
+            const trimStart = (_selectedTask.hookTrimStart != null && _selectedTask.hookTrimStart > 0) ? _selectedTask.hookTrimStart : 0;
+            const speed = _selectedTask.hookSpeed || 1.0;
+            const expectedHookTime = trimStart + ((totalTime - coverDur) * speed);
+            if (hookVideo.readyState >= 2 && Math.abs(hookVideo.currentTime - expectedHookTime) > 0.3) {
+                try { hookVideo.currentTime = expectedHookTime; } catch (e) { }
+            }
+        }
+        _drawVideoCover(ctx, hookVideo, w, h, 100);
+
+        // Hook → Main 转场 (读取 task 配置的转场类型和时长，与导出一致)
+        const hookTransition = (_selectedTask && _selectedTask.hookTransition) || 'none';
+        const transitionDur = hookTransition !== 'none' ? ((_selectedTask && _selectedTask.hookTransDuration) || 0.5) : 0;
+        const timeToEnd = (coverDur + hookDur) - totalTime;
+        if (transitionDur > 0 && timeToEnd < transitionDur && video && video.src && video.readyState >= 1 && video.videoWidth > 0) {
+            const alpha = 1.0 - (timeToEnd / transitionDur);
+            ctx.save();
+            ctx.globalAlpha = Math.min(1, Math.max(0, alpha));
+            _drawVideoCover(ctx, video, w, h, _bgScalePct);
+            ctx.restore();
+        }
+    } else if (video && video.src && video.readyState >= 1 && video.videoWidth > 0) {
         _drawVideoCover(ctx, video, w, h, _bgScalePct);
         const fadeFrame = _calcPreviewLoopFadeFrame();
         if (fadeFrame && fadeFrame.video && fadeFrame.video.readyState >= 2) {
@@ -1323,19 +1694,76 @@ function reelsUpdatePreview() {
         }
     } else {
         const grad = ctx.createLinearGradient(0, 0, 0, h);
-        grad.addColorStop(0, '#1a1a2e');
-        grad.addColorStop(0.5, '#16213e');
-        grad.addColorStop(1, '#0f3460');
+        grad.addColorStop(0, '#181818');
+        grad.addColorStop(0.5, '#1e1e1e');
+        grad.addColorStop(1, '#2a2a2a');
         ctx.fillStyle = grad;
         ctx.fillRect(0, 0, w, h);
 
-        // Draw global mask over placeholder background as well
         if (style.global_mask_enabled) {
             ctx.save();
             ctx.globalAlpha = style.global_mask_opacity ?? 0.5;
             ctx.fillStyle = style.global_mask_color || '#000000';
             ctx.fillRect(0, 0, w, h);
             ctx.restore();
+        }
+    }
+
+    // --- Content Video or Image ---
+    const contentVideoEl = document.getElementById('reels-preview-contentvideo');
+    const contentImg = _reelsState.previewContentImage;
+    if (_selectedTask && _selectedTask.contentVideoPath) {
+        let drawSource = null;
+        let cvW = 0, cvH = 0;
+        
+        let seqImg = null;
+        if (_reelsState.cvSequence && _reelsState.cvSequence.path === _selectedTask.contentVideoPath && _reelsState.cvSequence.files.length > 0) {
+            const fps = 30;
+            // loop sequence:
+            let frameIdx = Math.floor(_getPreviewCurrentTime() * fps);
+            frameIdx = frameIdx % _reelsState.cvSequence.files.length;
+            const frameFile = _reelsState.cvSequence.files[frameIdx];
+            seqImg = _reelsState.cvSequence.loadedImages[frameFile];
+        }
+
+        if (seqImg && seqImg.complete && seqImg.naturalWidth > 0) {
+            drawSource = seqImg;
+            cvW = seqImg.naturalWidth;
+            cvH = seqImg.naturalHeight;
+        } else if (contentImg && contentImg.complete && contentImg.naturalWidth > 0) {
+            drawSource = contentImg;
+            cvW = contentImg.naturalWidth;
+            cvH = contentImg.naturalHeight;
+        } else if (contentVideoEl && contentVideoEl.src && contentVideoEl.readyState >= 1 && contentVideoEl.videoWidth > 0) {
+            drawSource = contentVideoEl;
+            cvW = contentVideoEl.videoWidth;
+            cvH = contentVideoEl.videoHeight;
+        }
+
+        if (drawSource && cvW > 0) {
+            const cScale = (_selectedTask.contentVideoScale || 100) / 100;
+            
+            // Auto scale to fit width: width is 1080 -> canvas.width (w)
+            const baseScale = w / cvW;
+            const finalScale = baseScale * cScale;
+            
+            const drawW = cvW * finalScale;
+            const drawH = cvH * finalScale;
+            
+            // Default position: centered
+            let drawX = (w - drawW) / 2;
+            let drawY = (h - drawH) / 2;
+            
+            if (_selectedTask.contentVideoX && _selectedTask.contentVideoX !== 'center') {
+                const relX = parseFloat(_selectedTask.contentVideoX);
+                if (!isNaN(relX)) Math.abs(relX) <= 1 ? drawX += w * relX : drawX += (relX / 1080) * w;
+            }
+            if (_selectedTask.contentVideoY && _selectedTask.contentVideoY !== 'center') {
+                const relY = parseFloat(_selectedTask.contentVideoY);
+                if (!isNaN(relY)) Math.abs(relY) <= 1 ? drawY += h * relY : drawY += (relY / 1920) * h;
+            }
+            
+            ctx.drawImage(drawSource, drawX, drawY, drawW, drawH);
         }
     }
 
@@ -1350,6 +1778,15 @@ function reelsUpdatePreview() {
     }
 
     let cycleTime = _getPreviewCurrentTime();
+    // Subtract hook and cover duration so content time starts at 0 after hook ends
+    const _hookDur = _reelsState.hookDuration || 0;
+    const _coverDur = (_selectedTask && _selectedTask.cover && _selectedTask.cover.enabled) ? (parseFloat(_selectedTask.cover.duration) || 0.01) : 0;
+    const _inHookPhase = _reelsState.hookPhase;
+    const _inCoverPhase = _reelsState.coverPhase;
+    
+    if (!inCoverEditMode && (_hookDur > 0 || _coverDur > 0) && !_inHookPhase && !_inCoverPhase) {
+        cycleTime = Math.max(0, cycleTime - _hookDur - _coverDur);
+    }
     if (!(cycleTime > 0)) {
         // 检查是否有媒体正在播放
         const video = document.getElementById('reels-preview-video');
@@ -1385,12 +1822,15 @@ function reelsUpdatePreview() {
     // If an actual task and segment exists, try to sync it.
     // For now, render exactly what the user inputs as a test segment if no timeline clip matches.
     // A more sophisticated system will find the correct segment based on video.currentTime
-    let activeSegment = segment;
-    if (_reelsState.selectedIdx !== -1 && _reelsState.tasks[_reelsState.selectedIdx]) {
-        const task = _reelsState.tasks[_reelsState.selectedIdx];
-        const segs = task.segments || [];
+    let activeSegment = (_inHookPhase || _inCoverPhase) ? null : segment; // Hook 或 Cover 阶段不显示字母
+    const taskForAudio = _getSelectedTask();
+    const aDurScale = taskForAudio && taskForAudio.audioDurScale ? taskForAudio.audioDurScale / 100 : 1;
+    const audioCycleTime = cycleTime / aDurScale;
+
+    if (_reelsState.selectedIdx !== -1 && taskForAudio) {
+        const segs = taskForAudio.segments || [];
         // Find segment
-        const s = segs.find(s => cycleTime >= s.start && cycleTime <= s.end);
+        const s = segs.find(s => audioCycleTime >= s.start && audioCycleTime <= s.end);
         if (s) {
             activeSegment = s;
         } else {
@@ -1401,17 +1841,36 @@ function reelsUpdatePreview() {
 
     const subtitleToggle = document.getElementById('reels-subtitle-toggle');
     const showSubtitle = !subtitleToggle || subtitleToggle.checked;
+    const rangeToggle = document.getElementById('reels-show-subtitle-range');
+    const showSubtitleRange = !rangeToggle || rangeToggle.checked;
 
-    if (activeSegment && showSubtitle) {
-        renderer.renderSubtitle(style, activeSegment, cycleTime, w, h);
+    if (showSubtitleRange) {
+        _drawSubtitlePreviewRange(ctx, style, w, h);
     }
 
-    // ── 渲染覆层 (文案卡片等) ──
-    if (_reelsState.overlayProxy && _reelsState.overlayProxy.overlayMgr) {
+    if (activeSegment && showSubtitle) {
+        renderer.renderSubtitle(style, activeSegment, audioCycleTime, w, h);
+    }
+
+    // ── 渲染覆层 (文字卡片等) ──
+    if (!inCoverEditMode && _inCoverPhase) {
+        // Normal mode > Cover phase -> ONLY render Cover overlays
+        const coverOverlays = (_selectedTask && _selectedTask.cover && _selectedTask.cover.overlays) ? _selectedTask.cover.overlays : [];
+        if (coverOverlays.length > 0 && window.ReelsOverlay) {
+            for (const ov of coverOverlays) {
+                if (ov.disabled) continue;
+                ReelsOverlay.drawOverlay(ctx, ov, 0, w, h);
+            }
+        }
+    } else if (!inCoverEditMode && _inHookPhase) {
+        // Normal mode > Hook phase -> Do NOT render any overlays
+    } else if (_reelsState.overlayProxy && _reelsState.overlayProxy.overlayMgr) {
+        // Cover edit mode OR Normal mode > Main Phase -> Render whatever overlayMgr holds
         const ovMgr = _reelsState.overlayProxy.overlayMgr;
         const overlays = ovMgr.overlays || [];
         if (overlays.length > 0 && window.ReelsOverlay) {
             for (const ov of overlays) {
+                if (ov.disabled) continue;
                 // "显示终点" 模式：滚动字幕用终点时间渲染
                 let ovTime = cycleTime;
                 if (_reelsState._scrollPreviewEnd && ov.type === 'scroll') {
@@ -1431,27 +1890,32 @@ function reelsUpdatePreview() {
     const dDur = _getPreviewDuration();
     const cTime = _getPreviewCurrentTime();
 
-    // 如果没有真实的媒体元素，渲染循环必须主动驱动时间轴和 UI 的更新 (没有 timeupdate 事件)
-    if (!_getPreviewMasterElement()) {
+    // 如果没有真实的媒体元素 或 mock时钟正在驱动(Cover/Hook阶段)，渲染循环必须主动驱动时间轴和 UI 的更新
+    if (!_getPreviewMasterElement() || _reelsState.mockPlaying) {
         _updatePreviewTimeUI(cTime, dDur);
     } else if (!cTime) {
         _updatePreviewTimeUI(0, dDur);
     }
 
+    // ── Hook → Main 自动切换 ──
+    _syncHookPhaseTransition();
+
     // 检查是否到达终点以自动停止
-    if (dDur > 0 && cTime >= dDur) {
+    if (!_isPreviewLoopEnabled() && dDur > 0 && cTime >= dDur) {
         // Reached the end
         const video = document.getElementById('reels-preview-video');
         const audio = document.getElementById('reels-preview-audio');
         const fadeVideo = _reelsState.previewFadeVideo;
+        const hookVideoStop = document.getElementById('reels-preview-hook-video');
         const btn = document.getElementById('reels-preview-play');
         
         // Only force pause if it wasn't already manually paused to avoid spamming
-        const isPlaying = (audio && !audio.paused) || (video && !video.paused) || _reelsState.mockPlaying;
+        const isPlaying = (audio && !audio.paused) || (video && !video.paused) || _reelsState.mockPlaying || (hookVideoStop && !hookVideoStop.paused);
         if (isPlaying) {
             if (audio) audio.pause();
             if (video) video.pause();
             if (fadeVideo) fadeVideo.pause();
+            if (hookVideoStop) hookVideoStop.pause();
             if (_reelsState._bgmAudioEl) _reelsState._bgmAudioEl.pause();
             
             _reelsState.mockPlaying = false;
@@ -1467,6 +1931,53 @@ function reelsUpdatePreview() {
     if (panel && (panel.classList.contains('active') || panel.style.display !== 'none')) {
         _reelsState.previewRAF = requestAnimationFrame(() => reelsUpdatePreview());
     }
+}
+
+function _drawSubtitlePreviewRange(ctx, style, canvasW, canvasH) {
+    if (!ctx || !style) return;
+    ctx.save();
+    ctx.setLineDash([10, 6]);
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(0, 224, 255, 0.9)';
+    ctx.fillStyle = 'rgba(0, 224, 255, 0.08)';
+
+    if (style.advanced_textbox_enabled) {
+        const x = parseFloat(style.advanced_textbox_x) || 0;
+        const y = parseFloat(style.advanced_textbox_y) || 0;
+        const w = Math.max(80, parseFloat(style.advanced_textbox_w) || canvasW * 0.8);
+        const h = Math.max(40, parseFloat(style.advanced_textbox_h) || 200);
+        ctx.strokeRect(x, y, w, h);
+        ctx.restore();
+        return;
+    }
+
+    const cx = (typeof style.pos_x === 'number' && style.pos_x <= 1) ? style.pos_x * canvasW : (style.pos_x || canvasW / 2);
+    const cy = (typeof style.pos_y === 'number' && style.pos_y <= 1) ? style.pos_y * canvasH : (style.pos_y || canvasH * 0.5);
+    const wrapPercent = Math.max(20, Math.min(120, parseFloat(style.wrap_width_percent) || 90));
+    const textW = Math.max(200, Math.floor(canvasW * (wrapPercent / 100)));
+    const fontSize = parseFloat(style.fontsize) || 74;
+    const lineSpacing = parseFloat(style.line_spacing) || 0;
+    const lines = Math.max(1, parseInt(style.wrap_lines, 10) || 2);
+    const lineH = fontSize * 1.2;
+    const textH = lineH * lines + lineSpacing * Math.max(0, lines - 1);
+    const padX = parseFloat(style.box_padding_x) || 12;
+    const padY = parseFloat(style.box_padding_y) || 8;
+
+    const x = cx - textW / 2 - padX;
+    const y = cy - textH / 2 - padY;
+    const w = textW + padX * 2;
+    const h = textH + padY * 2;
+    ctx.strokeRect(x, y, w, h);
+    ctx.fillRect(x, y, w, h);
+
+    ctx.setLineDash([]);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(0, 224, 255, 0.45)';
+    ctx.beginPath();
+    ctx.moveTo(cx, y);
+    ctx.lineTo(cx, y + h);
+    ctx.stroke();
+    ctx.restore();
 }
 
 /**
@@ -1607,7 +2118,7 @@ function _reelsRefreshWatermarkUI() {
             <label style="display:flex;align-items:center;gap:2px;">底色:<input class="wm-bgcolor" type="color" value="${wm.bgColor || '#000000'}" style="width:24px;height:20px;border:none;cursor:pointer;" oninput="_reelsSyncWatermarkFromUI()"></label>
             <label style="display:flex;align-items:center;gap:2px;">底透明:<input class="wm-bgopacity input input-small" type="number" value="${Math.round((wm.bgOpacity ?? 0.5) * 100)}" min="0" max="100" style="width:42px;font-size:11px;padding:3px;" oninput="_reelsSyncWatermarkFromUI()">%</label>
             <select class="wm-position select" style="width:70px;font-size:11px;padding:3px;" onchange="_reelsSyncWatermarkFromUI()">${posOptions.replace(`value="${wm.position || 'top-right'}"`, `value="${wm.position || 'top-right'}" selected`)}</select>
-            <button class="btn btn-secondary" style="font-size:10px;padding:2px 6px;color:#ff6b6b;" onclick="reelsRemoveWatermark(${i})">✕</button>
+            <button class="btn btn-secondary" style="font-size:10px;padding:2px 6px;color:#f87171;" onclick="reelsRemoveWatermark(${i})">✕</button>
         </div>
     `).join('');
 }
@@ -1678,25 +2189,72 @@ function _getPreviewMasterElement() {
     const video = document.getElementById('reels-preview-video');
     const isVideo = task.bgPath && !_isImagePath(task.bgPath);
     if (isVideo && video && video.src && video.readyState >= 1) return video;
+    // 覆层视频作为时钟源（当没有单独配音和背景视频时）
+    const cvVideo = document.getElementById('reels-preview-contentvideo');
+    if (task.contentVideoPath && cvVideo && cvVideo.src && cvVideo.readyState >= 1 && !cvVideo.muted) return cvVideo;
     const bgm = _reelsState._bgmAudioEl;
     if (task.bgmPath && bgm && bgm.src && bgm.readyState >= 1) return bgm;
     return null;
 }
 
+function _isPreviewLoopEnabled() {
+    const el = document.getElementById('reels-preview-loop');
+    return el ? !!el.checked : true;
+}
+
+function _applyPreviewLoopMode() {
+    const enabled = _isPreviewLoopEnabled();
+    const task = _getSelectedTask();
+    const video = document.getElementById('reels-preview-video');
+    const audio = document.getElementById('reels-preview-audio');
+    const cvVideo = document.getElementById('reels-preview-contentvideo');
+    const bgm = _reelsState._bgmAudioEl;
+
+    const hasAudio = !!(task && task.audioPath && audio && audio.src);
+    const hasVideo = !!(task && task.bgPath && !_isImagePath(task.bgPath || task.videoPath) && video && video.src);
+    const hasCvVideo = !!(task && task.contentVideoPath && cvVideo && cvVideo.src);
+
+    if (audio) audio.loop = enabled && hasAudio;
+    if (video) video.loop = enabled && hasVideo;
+    if (cvVideo) cvVideo.loop = enabled && hasCvVideo;
+    if (bgm) bgm.loop = enabled;
+    if (_reelsState.previewFadeVideo) _reelsState.previewFadeVideo.loop = enabled;
+}
+
+function reelsOnPreviewLoopModeChange() {
+    _applyPreviewLoopMode();
+}
+
 function _getPreviewCurrentTime() {
-    const master = _getPreviewMasterElement();
-    if (master) {
-        const t = master.currentTime || 0;
-        // 变速时 currentTime 要按比例缩放以匹配 _getPreviewDuration 的缩放后时长
-        const task = _getSelectedTask();
-        const aDurScale = (task && task.audioDurScale) ? (task.audioDurScale / 100) : 1;
-        return t * aDurScale;
-    } else {
-        if (_reelsState.mockPlaying) {
-            return Math.max(0, (performance.now() / 1000) - (_reelsState.mockStartTime || 0));
+    const task = _getSelectedTask();
+    const hookDur = _reelsState.hookDuration || 0;
+    const coverDur = (task && task.cover && task.cover.enabled) ? (parseFloat(task.cover.duration) || 0.01) : 0;
+    const offsetDur = hookDur + coverDur;
+
+    // When mock clock is running (Cover/Hook phases, or no-media mode), use it as primary
+    if (_reelsState.mockPlaying) {
+        const elapsed = Math.max(0, (performance.now() / 1000) - (_reelsState.mockStartTime || 0));
+        if (_isPreviewLoopEnabled()) {
+            const dur = _getPreviewDuration();
+            if (dur > 0) return elapsed % dur;
         }
-        return _reelsState.mockPausedTime || 0;
+        return elapsed;
     }
+
+    // Master media actively playing (main content phase after Cover+Hook)
+    const master = _getPreviewMasterElement();
+    if (master && !master.paused) {
+        let t = master.currentTime || 0;
+        if (master.id === 'reels-preview-contentvideo') {
+            const trimStart = parseFloat(task.contentVideoTrimStart) || 0;
+            t = Math.max(0, t - trimStart);
+        }
+        const aDurScale = (task && task.audioDurScale) ? (task.audioDurScale / 100) : 1;
+        return (t * aDurScale) + offsetDur;
+    }
+
+    // Paused state (initial, after seek, after user pause): use saved position
+    return _reelsState.mockPausedTime || 0;
 }
 
 function _getPreviewDuration() {
@@ -1713,15 +2271,44 @@ function _getPreviewDuration() {
     const aDurScale = (task && task.audioDurScale) ? (task.audioDurScale / 100) : 1;
     const scaledADur = aDur * aDurScale;
 
+    // 前置阶段总时长
+    const hookDur = _reelsState.hookDuration || 0;
+    const coverDur = (task && task.cover && task.cover.enabled) ? (parseFloat(task.cover.duration) || 0.01) : 0;
+    const offsetDur = hookDur + coverDur;
+
     // 自定义时长优先
     if (task && task.customDuration && task.customDuration > 0) {
-        return task.customDuration;
+        return task.customDuration + offsetDur;
     }
     // 有音频时以变速后的音频时长为准（背景自动循环）
     if (scaledADur > 0) {
-        return Math.max(scaledADur, subDur * aDurScale);
+        return Math.max(scaledADur, subDur * aDurScale) + offsetDur;
     }
-    // 无音频时以视频时长为准，若仍无时长则推算虚拟进度
+
+    // ── 内容视频 (Content Video) 时长优先于背景 ──
+    const cvVideo = document.getElementById('reels-preview-contentvideo');
+    let cvDur = 0;
+    if (task && task.contentVideoPath) {
+        // 情况1: 图片序列文件夹 → duration = frameCount / 30
+        if (_reelsState.cvSequence && _reelsState.cvSequence.path === task.contentVideoPath && _reelsState.cvSequence.files.length > 0) {
+            cvDur = _reelsState.cvSequence.files.length / 30;
+        }
+        // 情况2: 普通视频文件 → 用 <video> 元素的 duration
+        else if (cvVideo && cvVideo.src && isFinite(cvVideo.duration) && cvVideo.duration > 0) {
+            const trimStart = parseFloat(task.contentVideoTrimStart) || 0;
+            const trimEnd   = parseFloat(task.contentVideoTrimEnd) || 0;
+            if (trimEnd > trimStart && trimStart >= 0) {
+                cvDur = trimEnd - trimStart;
+            } else {
+                cvDur = cvVideo.duration - trimStart;
+            }
+        }
+    }
+    if (cvDur > 0) {
+        return Math.max(cvDur, subDur) + offsetDur;
+    }
+
+    // 无音频、无覆层视频时以背景视频时长为准，若仍无时长则推算虚拟进度
     const baseDur = Math.max(vDur, subDur, 0);
     if (baseDur <= 0 && !_getPreviewMasterElement()) {
         let maxOverlayEnd = 0;
@@ -1732,9 +2319,10 @@ function _getPreviewDuration() {
         }
         const demoWords = ((document.getElementById('reels-preview-text') || {}).value || '').split(/\s+/).filter(Boolean);
         const totalDur = Math.max(3, (demoWords.length || 1) * 0.6);
-        return maxOverlayEnd > 0 ? maxOverlayEnd + 0.5 : totalDur;
+        const contentDur = maxOverlayEnd > 0 ? maxOverlayEnd + 0.5 : totalDur;
+        return contentDur + offsetDur;
     }
-    return baseDur;
+    return baseDur + offsetDur;
 }
 
 function _getPreviewLoopFadeConfig() {
@@ -1761,6 +2349,7 @@ function _applyPreviewAudioMix() {
     const task = _getSelectedTask();
     const audio = document.getElementById('reels-preview-audio');
     const video = document.getElementById('reels-preview-video');
+    const contentVideoEl = document.getElementById('reels-preview-contentvideo');
     const cfg = _getPreviewAudioMixConfig();
     const hasVoice = !!(task && task.audioPath && audio && audio.src);
 
@@ -1776,6 +2365,21 @@ function _applyPreviewAudioMix() {
             // 无配音时预览以背景原声为主，和旧导出行为一致。
             video.volume = 1.0;
             video.muted = false;
+        }
+    }
+
+    // ── 覆层视频 (Content Video) 音频 ──
+    // 当没有单独的语音配音(audioPath)时，使用覆层视频的音频轨道
+    if (contentVideoEl) {
+        const hasContentVideo = !!(task && task.contentVideoPath && contentVideoEl.src && contentVideoEl.readyState >= 1);
+        if (hasContentVideo && !hasVoice) {
+            // 覆层视频有音频且没有单独的配音 → 播放覆层音频
+            contentVideoEl.muted = false;
+            contentVideoEl.volume = cfg.voiceGain > 0 ? cfg.voiceGain : 1.0;
+        } else {
+            // 有单独配音或没有覆层 → 静音覆层视频
+            contentVideoEl.muted = true;
+            contentVideoEl.volume = 0;
         }
     }
 
@@ -2067,11 +2671,49 @@ function _calcPreviewLoopFadeFrame() {
 
 function _syncBackgroundVideoToMaster() {
     const task = _getSelectedTask();
+    if (!task) return;
+
+    // Skip sync during hook or cover phase (hook video renders separately, cover is static)
+    if (_reelsState.hookPhase || _reelsState.coverPhase) return;
+
+    let masterTime = _getPreviewCurrentTime();
+    // Offset by hook + cover duration so content time is relative to main phase start
+    const hookDur = _reelsState.hookDuration || 0;
+    const coverDur = (task && task.cover && task.cover.enabled) ? (parseFloat(task.cover.duration) || 0.01) : 0;
+    const offsetDur = hookDur + coverDur;
+    if (offsetDur > 0) masterTime = Math.max(0, masterTime - offsetDur);
+    if (!isFinite(masterTime) || masterTime < 0) return;
+
+    // --- Sync Content Video ---
+    const contentVideoEl = document.getElementById('reels-preview-contentvideo');
+    const master = _getPreviewMasterElement();
+    if (contentVideoEl && contentVideoEl.src && contentVideoEl.readyState >= 1) {
+        if (contentVideoEl !== master) {
+            if (contentVideoEl.duration > 0) {
+                const trimStart = parseFloat(task.contentVideoTrimStart) || 0;
+                const trimEnd = parseFloat(task.contentVideoTrimEnd) || 0;
+                let cvDur = contentVideoEl.duration;
+                if (trimStart > 0 && trimEnd > trimStart) {
+                    cvDur = Math.max(0.1, trimEnd - trimStart);
+                }
+                const target = (masterTime % cvDur) + trimStart;
+                if (Math.abs((contentVideoEl.currentTime || 0) - target) > 0.25) {
+                    try { contentVideoEl.currentTime = target; } catch (e) { }
+                }
+                const isPlaying = (master && !master.paused) || !!_reelsState.mockPlaying;
+                if (isPlaying && contentVideoEl.paused) {
+                    contentVideoEl.play().catch(() => { });
+                } else if (!isPlaying && !contentVideoEl.paused) {
+                    contentVideoEl.pause();
+                }
+            }
+        }
+    }
+
+    // --- Sync Background Video ---
     const video = document.getElementById('reels-preview-video');
     const audio = document.getElementById('reels-preview-audio');
-    if (!task || !video || !video.src || video.readyState < 1 || _isImagePath(task.bgPath || task.videoPath)) return;
-    const masterTime = _getPreviewCurrentTime();
-    if (!isFinite(masterTime) || masterTime < 0) return;
+    if (!video || !video.src || video.readyState < 1 || _isImagePath(task.bgPath || task.videoPath)) return;
     if (video.duration > 0) {
         const target = masterTime % video.duration;
         if (Math.abs((video.currentTime || 0) - target) > 0.25) {
@@ -2416,41 +3058,45 @@ async function reelsAlignAllTasks() {
 
 function reelsOnWorkModeChange() {
     const mode = _getWorkMode();
-    const audioBtn = document.getElementById('reels-audio-btn');
-    const srtBtn = document.getElementById('reels-srt-btn');
-    const txtBtn = document.getElementById('reels-txt-btn');
-    const manualBtn = document.getElementById('reels-manual-btn');
-    const alignBtn = document.getElementById('reels-align-btn');
+    // 隐藏对应的菜单项 wrap，或直接元素
+    const audioBtn = document.getElementById('reels-audio-input')?.nextElementSibling;
+    const srtBtn = document.getElementById('reels-srt-input')?.nextElementSibling;
+    const txtWrap = document.getElementById('reels-txt-btn-wrap');
+    const manualWrap = document.getElementById('reels-manual-btn-wrap');
+    const alignWrap = document.getElementById('reels-align-btn-wrap');
     const alignLang = document.getElementById('reels-align-lang');
-    const bgLabel = document.getElementById('reels-bg-btn');
+    
+    // 背景的文字
+    const bgInput = document.getElementById('reels-video-input');
+    const bgLabel = bgInput ? bgInput.nextElementSibling : null;
 
     if (mode === 'srt') {
         // 人声Reels: 背景 + 配音 + SRT
         if (audioBtn) audioBtn.style.display = '';
         if (srtBtn) srtBtn.style.display = '';
-        if (txtBtn) txtBtn.style.display = 'none';
-        if (manualBtn) manualBtn.style.display = 'none';
-        if (alignBtn) alignBtn.style.display = 'none';
+        if (txtWrap) txtWrap.style.display = 'none';
+        if (manualWrap) manualWrap.style.display = 'none';
+        if (alignWrap) alignWrap.style.display = 'none';
         if (alignLang) alignLang.style.display = 'none';
-        if (bgLabel) bgLabel.textContent = '📁 背景';
+        if (bgLabel) bgLabel.innerHTML = '📁 导入背景素材';
     } else if (mode === 'dubbed_text') {
         // 配音+文本: 背景 + 配音 + TXT
         if (audioBtn) audioBtn.style.display = '';
         if (srtBtn) srtBtn.style.display = 'none';
-        if (txtBtn) txtBtn.style.display = '';
-        if (manualBtn) manualBtn.style.display = '';
-        if (alignBtn) alignBtn.style.display = '';
+        if (txtWrap) txtWrap.style.display = '';
+        if (manualWrap) manualWrap.style.display = '';
+        if (alignWrap) alignWrap.style.display = '';
         if (alignLang) alignLang.style.display = '';
-        if (bgLabel) bgLabel.textContent = '📁 背景';
+        if (bgLabel) bgLabel.innerHTML = '📁 导入背景素材';
     } else if (mode === 'voiced_bg') {
         // 带声视频: 带声视频 + TXT
         if (audioBtn) audioBtn.style.display = 'none';
         if (srtBtn) srtBtn.style.display = 'none';
-        if (txtBtn) txtBtn.style.display = '';
-        if (manualBtn) manualBtn.style.display = '';
-        if (alignBtn) alignBtn.style.display = '';
+        if (txtWrap) txtWrap.style.display = '';
+        if (manualWrap) manualWrap.style.display = '';
+        if (alignWrap) alignWrap.style.display = '';
         if (alignLang) alignLang.style.display = '';
-        if (bgLabel) bgLabel.textContent = '📁 带声视频';
+        if (bgLabel) bgLabel.innerHTML = '📁 导入带声视频';
     }
 }
 
@@ -2770,32 +3416,32 @@ function _renderTaskList() {
         let statusParts;
         if (workMode === 'voiced_bg') {
             statusParts = [
-                hasBg ? '<span style="color:#4ecdc4;">BG</span>' : '<span style="color:#ff6b6b;">BG</span>',
+                hasBg ? '<span style="color:#4ecdc4;">BG</span>' : '<span style="color:#f87171;">BG</span>',
             ];
             if (hasSrt) {
                 statusParts.push(`<span style="color:#4ecdc4;">SRT</span>`);
             } else if (hasTxt) {
                 statusParts.push(`<span style="color:#ffa502;">TXT</span>`);
             } else {
-                statusParts.push('<span style="color:#ff6b6b;">TXT</span>');
+                statusParts.push('<span style="color:#f87171;">TXT</span>');
             }
         } else if (workMode === 'dubbed_text') {
             statusParts = [
-                hasBg ? '<span style="color:#4ecdc4;">BG</span>' : '<span style="color:#ff6b6b;">BG</span>',
-                hasAudio ? '<span style="color:#4ecdc4;">VO</span>' : '<span style="color:#ff6b6b;">VO</span>',
+                hasBg ? '<span style="color:#4ecdc4;">BG</span>' : '<span style="color:#f87171;">BG</span>',
+                hasAudio ? '<span style="color:#4ecdc4;">VO</span>' : '<span style="color:#f87171;">VO</span>',
             ];
             if (hasSrt) {
                 statusParts.push(`<span style="color:#4ecdc4;">SRT</span>`);
             } else if (hasTxt) {
                 statusParts.push(`<span style="color:#ffa502;">TXT</span>`);
             } else {
-                statusParts.push('<span style="color:#ff6b6b;">TXT</span>');
+                statusParts.push('<span style="color:#f87171;">TXT</span>');
             }
         } else {
             statusParts = [
-                hasBg ? '<span style="color:#4ecdc4;">BG</span>' : '<span style="color:#ff6b6b;">BG</span>',
-                hasAudio ? '<span style="color:#4ecdc4;">VO</span>' : '<span style="color:#ff6b6b;">VO</span>',
-                hasSrt ? `<span style="color:#4ecdc4;">SRT</span>` : '<span style="color:#ff6b6b;">SRT</span>',
+                hasBg ? '<span style="color:#4ecdc4;">BG</span>' : '<span style="color:#f87171;">BG</span>',
+                hasAudio ? '<span style="color:#4ecdc4;">VO</span>' : '<span style="color:#f87171;">VO</span>',
+                hasSrt ? `<span style="color:#4ecdc4;">SRT</span>` : '<span style="color:#f87171;">SRT</span>',
             ];
         }
         const statusText = statusParts.join(' ');
@@ -2833,7 +3479,7 @@ function _renderTaskList() {
                  style="display:flex; align-items:center; gap:4px; padding:5px 6px; margin-bottom:2px;
                         border-radius:5px; cursor:pointer; transition:background .12s;
                         background: ${selected ? 'rgba(0,212,255,0.15)' : 'transparent'};
-                        border-left: 3px solid ${selected ? '#00D4FF' : 'transparent'};
+                        border-left: 3px solid ${selected ? '#4c9eff' : 'transparent'};
                         ${selected ? 'box-shadow: inset 0 0 0 1px rgba(0,212,255,0.3);' : ''}">
                 <span style="font-size:12px; font-weight:${selected ? '600' : '400'}; color:${selected ? '#fff' : 'var(--text-primary)'}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:60px; max-width:120px;">${shortName}</span>
                 ${ovPreview}
@@ -2848,22 +3494,69 @@ function _renderTaskList() {
     if (selectedEl) selectedEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 }
 
+// ═══════════════════════════════════════════════════════
+// Cover Edit Mode Toggle
+// ═══════════════════════════════════════════════════════
+function reelsToggleCoverEditMode(enable) {
+    _reelsState._coverEditMode = enable;
+    
+    let coverBanner = document.getElementById('rbt-cover-edit-banner');
+    if (!coverBanner) {
+        coverBanner = document.createElement('div');
+        coverBanner.id = 'rbt-cover-edit-banner';
+        coverBanner.style.cssText = 'position:absolute;top:0;left:0;right:0;background:rgba(255,215,0,0.9);color:#000;font-size:12px;font-weight:bold;text-align:center;padding:6px;z-index:99;cursor:pointer;display:none;';
+        coverBanner.innerHTML = '✨ 当前处于【封面卡片专属编辑模式】 点击退出';
+        coverBanner.onclick = () => reelsToggleCoverEditMode(false);
+        const playerArea = document.querySelector('.player-wrapper') || document.querySelector('.preview-player-wrapper') || document.getElementById('reels-preview-canvas').parentElement;
+        if (playerArea) {
+            playerArea.style.position = 'relative'; 
+            playerArea.appendChild(coverBanner);
+        }
+    }
+    if (coverBanner) coverBanner.style.display = enable ? 'block' : 'none';
+    
+    if (_reelsState.selectedIdx >= 0) {
+        reelsSelectTask(_reelsState.selectedIdx);
+    }
+}
+
 function reelsSelectTask(idx) {
     // ── 保存当前任务的覆层 ──
     const prevTask = _reelsState.tasks[_reelsState.selectedIdx];
     if (prevTask && _reelsState.overlayProxy && _reelsState.overlayProxy.overlayMgr) {
-        prevTask.overlays = [...(_reelsState.overlayProxy.overlayMgr.overlays || [])];
+        if (_reelsState._coverEditMode && prevTask.cover) {
+            prevTask.cover.overlays = [...(_reelsState.overlayProxy.overlayMgr.overlays || [])];
+        } else {
+            prevTask.overlays = [...(_reelsState.overlayProxy.overlayMgr.overlays || [])];
+        }
     }
 
     _reelsState.selectedIdx = idx;
     _renderTaskList();
     const task = _reelsState.tasks[idx];
     if (!task) return;
+    const taskStyle = _resolveSubtitleStyleForTask(task);
+    if (taskStyle) _writeStyleToUI(taskStyle);
+    
+    // Sync subtitle preset UI with the selected task
+    const defaultPreset = localStorage.getItem(REELS_DEFAULT_PRESET_KEY) || '';
+    const presetName = task._subtitlePreset || defaultPreset || '';
+    const hiddenInput = document.getElementById('reels-preset-select');
+    if (hiddenInput) hiddenInput.value = presetName;
+    const selectTrigger = document.getElementById('reels-preset-select-trigger');
+    if (selectTrigger) {
+        const span = selectTrigger.querySelector('span');
+        if (span) span.textContent = presetName || '-- 改全部样式 --';
+    }
 
     // ── 加载新任务的覆层 ──
     if (_reelsState.overlayProxy && _reelsState.overlayProxy.overlayMgr) {
         const mgr = _reelsState.overlayProxy.overlayMgr;
-        mgr.overlays = task.overlays ? [...task.overlays] : [];
+        if (_reelsState._coverEditMode && task.cover) {
+            mgr.overlays = task.cover.overlays ? [...task.cover.overlays] : [];
+        } else {
+            mgr.overlays = task.overlays ? [...task.overlays] : [];
+        }
         // 刷新覆层面板
         if (_reelsState.overlayPanel) {
             _reelsState.overlayPanel.deselectOverlay();
@@ -2931,7 +3624,6 @@ function reelsSelectTask(idx) {
             video.pause();
             video.src = filePath;
             video.load();
-            video.loop = !!voicePath;
             // 强制加载第一帧 — seek 到 0.01s 触发帧数据加载
             video.addEventListener('loadeddata', function _onLoaded() {
                 video.removeEventListener('loadeddata', _onLoaded);
@@ -2961,12 +3653,140 @@ function reelsSelectTask(idx) {
         }
     }
 
+    // ── 加载 Hook 视频 ──
+    // 与导出一致：task.hookFile 优先，回退到全局前置路径
+    const hookVideo = document.getElementById('reels-preview-hook-video');
+    const globalIntroPath = (document.getElementById('reels-intro-path') || {}).value || '';
+    // Hook 文件解析链：task.hookFile → task.hook.path → 全局前置路径
+    let effectiveHookFile = task.hookFile || (task.hook && task.hook.enabled && task.hook.path) || globalIntroPath || '';
+    // 验证文件存在（防止残留路径导致假 hook 阶段）
+    if (effectiveHookFile && window.require) {
+        try {
+            const fs = window.require('fs');
+            if (!fs.existsSync(effectiveHookFile)) {
+                console.warn(`[Preview] Hook file not found, clearing: ${effectiveHookFile}`);
+                effectiveHookFile = '';
+            }
+        } catch (e) { /* ignore */ }
+    }
+    if (hookVideo) {
+        hookVideo.pause();
+        _reelsState.hookVideoReady = false;
+        _reelsState.hookDuration = 0;
+        _reelsState.hookPhase = false;
+
+        if (effectiveHookFile) {
+            const hookUrl = _toPlayablePath(effectiveHookFile, null);
+            hookVideo.src = hookUrl;
+            hookVideo.playbackRate = task.hookSpeed || 1.0;
+            hookVideo.load();
+            hookVideo.onloadedmetadata = () => {
+                let dur = hookVideo.duration || 0;
+                // Apply trim（与导出 concatVideo 一致）
+                const trimStart = (task.hookTrimStart != null && task.hookTrimStart > 0) ? task.hookTrimStart : 0;
+                const trimEnd = (task.hookTrimEnd != null && task.hookTrimEnd > 0) ? task.hookTrimEnd : dur;
+                dur = Math.max(0, trimEnd - trimStart);
+                // Apply speed（与导出 concatVideo 一致）
+                const speed = task.hookSpeed || 1.0;
+                dur = dur / speed;
+                _reelsState.hookDuration = dur;
+                _reelsState.hookVideoReady = true;
+                hookVideo.currentTime = trimStart || 0.01;
+                console.log(`[Preview] Hook video loaded, duration: ${dur.toFixed(2)}s (raw: ${hookVideo.duration}s, trim: ${trimStart}-${trimEnd}, speed: ${speed}x)`);
+                _updatePreviewTimeUI(0, _getPreviewDuration());
+            };
+            // 强制在 trimEnd 处停止（防止播放超出裁剪范围，与导出 FFmpeg 裁剪一致）
+            hookVideo.ontimeupdate = () => {
+                const trimEnd = (task.hookTrimEnd != null && task.hookTrimEnd > 0) ? task.hookTrimEnd : Infinity;
+                if (hookVideo.currentTime >= trimEnd) {
+                    hookVideo.pause();
+                }
+            };
+        } else {
+            hookVideo.removeAttribute('src');
+            hookVideo.ontimeupdate = null;
+        }
+    }
+
+    const cvVideo = document.getElementById('reels-preview-contentvideo');
+    _reelsState.previewContentImage = null; // reset
+    if (cvVideo) {
+        if (task.contentVideoPath) {
+            let isDir = false;
+            if (window.require) {
+                const fs = window.require('fs');
+                if (fs.existsSync(task.contentVideoPath) && fs.statSync(task.contentVideoPath).isDirectory()) {
+                    isDir = true;
+                    if (_reelsState.cvSequence.path !== task.contentVideoPath) {
+                        _reelsState.cvSequence.path = task.contentVideoPath;
+                        _reelsState.cvSequence.files = fs.readdirSync(task.contentVideoPath)
+                            .filter(f => !f.startsWith('.') && /\.(png|jpg|jpeg|webp)$/i.test(f)).sort();
+                        _reelsState.cvSequence.loadedImages = {};
+                        
+                        const path = window.require('path');
+                        for (const f of _reelsState.cvSequence.files) {
+                            const img = new Image();
+                            img.src = _toPlayablePath(path.join(task.contentVideoPath, f), null);
+                            _reelsState.cvSequence.loadedImages[f] = img;
+                        }
+                    }
+                    cvVideo.pause();
+                    cvVideo.removeAttribute('src');
+                }
+            }
+
+            if (!isDir) {
+                if (_isImagePath(task.contentVideoPath)) {
+                    const img = new Image();
+                    img.onload = () => { _reelsState.previewContentImage = img; };
+                    img.src = _toPlayablePath(task.contentVideoPath, null);
+                    cvVideo.pause();
+                    cvVideo.removeAttribute('src');
+                } else {
+                    const cvPath = _toPlayablePath(task.contentVideoPath, null);
+                    if (cvVideo.src !== cvPath) {
+                        cvVideo.pause();
+                        cvVideo.src = cvPath;
+                        cvVideo.load();
+                        try { cvVideo.currentTime = parseFloat(task.contentVideoTrimStart) || 0; } catch (e) { }
+                    }
+                }
+            }
+        } else {
+            cvVideo.pause();
+            cvVideo.removeAttribute('src');
+        }
+    }
+
+    // ── 加载 Cover 素材 ──
+    _reelsState._previewCoverImage = null;
+    _reelsState._previewCoverVideo = null;
+    if (task.cover && task.cover.bgPath) {
+        const cPath = task.cover.bgPath;
+        const isVideo = /\.(mp4|mov|mkv|webm)$/i.test(cPath);
+        if (isVideo) {
+            const vid = document.createElement('video');
+            vid.crossOrigin = 'anonymous';
+            vid.muted = true;
+            vid.src = _toPlayablePath(cPath, null);
+            vid.load();
+            vid.onloadeddata = () => { vid.currentTime = 0.05; };
+            _reelsState._previewCoverVideo = vid; // Store dynamically created cover video
+        } else {
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            img.src = _toPlayablePath(cPath, null);
+            _reelsState._previewCoverImage = img;
+        }
+    }
+
     const previewText = document.getElementById('reels-preview-text');
     if (previewText && task.segments.length > 0) {
         previewText.value = task.segments[0].text;
     }
 
     _updateTimelineForTask(task);
+    _applyPreviewLoopMode();
     _reelsState.mockPlaying = false;
     _reelsState.mockPausedTime = 0;
     _updatePreviewTimeUI(0, _getPreviewDuration());
@@ -3024,29 +3844,38 @@ function reelsRemoveTask(idx) {
 function reelsTogglePlay() {
     const video = document.getElementById('reels-preview-video');
     const audio = document.getElementById('reels-preview-audio');
+    const hookVideo = document.getElementById('reels-preview-hook-video');
     const fadeVideo = _reelsState.previewFadeVideo;
     const btn = document.getElementById('reels-preview-play');
     const task = _getSelectedTask();
     _applyPreviewAudioMix();
+    _applyPreviewLoopMode();
 
     const hasAudio = !!(task && task.audioPath && audio && audio.src);
     const hasVideo = !!(task && task.bgPath && !_isImagePath(task.bgPath) && video && video.src);
+    // 与导出一致：task.hookFile 优先，全局前置回退
+    const hasHook = !!(hookVideo && hookVideo.src && _reelsState.hookDuration > 0);
     const master = _getPreviewMasterElement();
     const hasMedia = !!master;
-    const isPlaying = hasMedia ? !master.paused : !!_reelsState.mockPlaying;
+    const hookPlaying = hookVideo && !hookVideo.paused;
+    const isPlaying = hasMedia ? !master.paused : (!!_reelsState.mockPlaying || hookPlaying);
 
     // ── BGM 音频元素 ──
     const bgmAudio = _reelsState._bgmAudioEl;
 
     if (isPlaying) {
+        const savedTime = _getPreviewCurrentTime();
         if (master) {
             if (audio) audio.pause();
             if (video) video.pause();
             if (fadeVideo) fadeVideo.pause();
-        } else {
-            _reelsState.mockPlaying = false;
-            _reelsState.mockPausedTime = _getPreviewCurrentTime();
         }
+        // 覆层视频也要暂停
+        const cvEl = document.getElementById('reels-preview-contentvideo');
+        if (cvEl && !cvEl.paused) cvEl.pause();
+        _reelsState.mockPlaying = false;
+        _reelsState.mockPausedTime = savedTime;
+        if (hookVideo) hookVideo.pause();
         if (bgmAudio) bgmAudio.pause();
         if (btn) btn.textContent = '▶️';
         return;
@@ -3059,57 +3888,199 @@ function reelsTogglePlay() {
     if (durT > 0 && curT >= durT - 0.05) {
         if (hasAudio) audio.currentTime = 0;
         if (hasVideo) video.currentTime = 0;
-        if (!hasMedia) _reelsState.mockPausedTime = 0;
+        if (hasHook) {
+            const trimStart = (task.hookTrimStart != null && task.hookTrimStart > 0) ? task.hookTrimStart : 0;
+            hookVideo.currentTime = trimStart || 0.01;
+        }
+        _reelsState.mockPausedTime = 0;
     }
 
-    if (!hasMedia) {
+    const hookDur = _reelsState.hookDuration || 0;
+    const coverDur = (task && task.cover && task.cover.enabled) ? (parseFloat(task.cover.duration) || 0.01) : 0;
+    
+    const inCoverPhase = coverDur > 0 && curT < coverDur;
+    const inHookPhase = hookDur > 0 && curT >= coverDur && curT < (coverDur + hookDur);
+
+    if (inCoverPhase) {
+        if (hasHook && hookVideo) hookVideo.pause();
         _reelsState.mockPlaying = true;
-        _reelsState.mockStartTime = (performance.now() / 1000) - (_reelsState.mockPausedTime || 0);
-    } else {
-        if (hasAudio && audio && task && task.audioPath) {
-            // 应用音频变速：audioDurScale=150% → playbackRate=0.667
-            const aDurScale = task.audioDurScale || 100;
-            audio.playbackRate = (aDurScale !== 100) ? (100 / aDurScale) : 1.0;
-            audio.preservesPitch = true;
-            audio.play().catch(() => { });
+        _reelsState.mockStartTime = (performance.now() / 1000) - (_reelsState.mockPausedTime || curT);
+    } else if (hasHook && inHookPhase) {
+        // ── Hook 阶段：先播放 Hook 视频 ──
+        hookVideo.playbackRate = task.hookSpeed || 1.0;
+        hookVideo.play().catch(() => { });
+
+        // 同时启用 mock 时钟来驱动总时间
+        _reelsState.mockPlaying = true;
+        _reelsState.mockStartTime = (performance.now() / 1000) - (_reelsState.mockPausedTime || curT);
+
+        // 主音视频暂不播放（Hook 结束后由 _syncHookPhaseTransition 启动）
+        if (!hasMedia) {
+            // 就用 mock 时钟
         }
-        if (hasVideo && video) {
-            if (hasAudio && task && task.audioPath && video.duration > 0) {
-                try { video.currentTime = (audio.currentTime || 0) % video.duration; } catch (e) { }
+    } else {
+        // ── 正片阶段：正常播放 ──
+        if (hasHook && hookVideo) hookVideo.pause();
+
+        if (!hasMedia) {
+            _reelsState.mockPlaying = true;
+            _reelsState.mockStartTime = (performance.now() / 1000) - (_reelsState.mockPausedTime || 0);
+        } else {
+            if (hasAudio && audio && task && task.audioPath) {
+                // 应用音频变速：audioDurScale=150% → playbackRate=0.667
+                const aDurScale = task.audioDurScale || 100;
+                audio.playbackRate = (aDurScale !== 100) ? (100 / aDurScale) : 1.0;
+                audio.preservesPitch = true;
+                audio.play().catch(() => { });
             }
-            video.play().catch(() => { });
-            if (fadeVideo && hasAudio && task && task.audioPath) {
-                fadeVideo.play().catch(() => { });
+            if (hasVideo && video) {
+                if (hasAudio && task && task.audioPath && video.duration > 0) {
+                    try { video.currentTime = (audio.currentTime || 0) % video.duration; } catch (e) { }
+                }
+                video.play().catch(() => { });
+                if (fadeVideo && hasAudio && task && task.audioPath) {
+                    fadeVideo.play().catch(() => { });
+                }
+            }
+            // 覆层视频作为 master 时也要启动播放
+            const cvEl = document.getElementById('reels-preview-contentvideo');
+            if (cvEl && cvEl.src && !cvEl.muted && cvEl.paused) {
+                cvEl.play().catch(() => { });
             }
         }
     }
 
-    // ── 同步播放 BGM ──
-    if (bgmAudio && bgmAudio.src && task && task.bgmPath) {
+    // ── 同步播放 BGM (仅正片阶段) ──
+    if (!inHookPhase && bgmAudio && bgmAudio.src && task && task.bgmPath) {
         bgmAudio.currentTime = _getPreviewCurrentTime() || 0;
         bgmAudio.play().catch(() => { });
     }
     if (btn) btn.textContent = '⏸️';
 }
 
+/**
+ * Hook → Main 阶段自动切换
+ * 在 reelsUpdatePreview 循环中调用，检测 Hook 结束后自动启动主音视频
+ * 与导出的 FFmpeg xfade 行为一致：有转场时，正片在 transitionDur 前就开始播放
+ */
+function _syncHookPhaseTransition() {
+    const curT = _getPreviewCurrentTime();
+    const task = _getSelectedTask();
+    if (!task) return;
+
+    const hookVideo = document.getElementById('reels-preview-hook-video');
+    const coverDur = (task.cover && task.cover.enabled) ? (parseFloat(task.cover.duration) || 0.01) : 0;
+    const hookDur = _reelsState.hookDuration || 0;
+    
+    if (coverDur <= 0 && hookDur <= 0) return;
+
+    const inHookPhase = hookDur > 0 && curT >= coverDur && curT < (coverDur + hookDur);
+    const inMainPhase = curT >= (coverDur + hookDur);
+
+    if (_reelsState.mockPlaying) {
+        // 进入 Hook 阶段
+        if (inHookPhase && hookVideo && hookVideo.paused) {
+            hookVideo.playbackRate = task.hookSpeed || 1.0;
+            hookVideo.play().catch(() => { });
+        }
+        
+        // 进入 主视频 阶段
+        if (inMainPhase) {
+            if (hookVideo && !hookVideo.paused) hookVideo.pause();
+
+            _reelsState.mockPlaying = false;
+            _reelsState.hookPhase = false;
+            _reelsState.coverPhase = false;
+
+            const audio = document.getElementById('reels-preview-audio');
+        const video = document.getElementById('reels-preview-video');
+        const fadeVideo = _reelsState.previewFadeVideo;
+        const hasAudio = !!(task && task.audioPath && audio && audio.src);
+        const hasVideo = !!(task && task.bgPath && !_isImagePath(task.bgPath) && video && video.src);
+
+        const hookTransition = task.hookTransition || 'none';
+        const transDur = hookTransition !== 'none' ? (task.hookTransDuration || 0.5) : 0;
+
+        if (hasAudio && audio) {
+            // 有转场时，正片从转场重叠量开始（与 FFmpeg acrossfade 一致）
+            audio.currentTime = transDur > 0 ? Math.min(transDur, audio.duration || 0) : 0;
+            const aDurScale = task.audioDurScale || 100;
+            audio.playbackRate = (aDurScale !== 100) ? (100 / aDurScale) : 1.0;
+            audio.preservesPitch = true;
+            audio.play().catch(() => { });
+        }
+        if (hasVideo && video) {
+            video.currentTime = 0;
+            video.play().catch(() => { });
+            if (fadeVideo && hasAudio) fadeVideo.play().catch(() => { });
+        }
+
+        // 覆层视频作为 master 时也要启动播放
+        const cvEl = document.getElementById('reels-preview-contentvideo');
+        if (cvEl && cvEl.src && !cvEl.muted && cvEl.paused) {
+            cvEl.currentTime = 0;
+            cvEl.play().catch(() => { });
+        }
+
+        // 没有主媒体时，继续使用 mock 时钟
+        const hasCvMaster = !!(cvEl && cvEl.src && !cvEl.muted);
+        if (!hasAudio && !hasVideo && !hasCvMaster) {
+            _reelsState.mockPlaying = true;
+            // mockStartTime 不需要重设，因为总时间是连续的
+        }
+
+        // 启动 BGM
+        const bgmAudio = _reelsState._bgmAudioEl;
+        if (bgmAudio && bgmAudio.src && task && task.bgmPath) {
+            bgmAudio.currentTime = 0;
+            bgmAudio.play().catch(() => { });
+        }
+
+        console.log(`[Preview] Hook phase ended (transition: ${hookTransition}, transDur: ${transDur}s), starting main content`);
+        }
+    }
+}
+
 function _onSeek(e) {
     const video = document.getElementById('reels-preview-video');
     const audio = document.getElementById('reels-preview-audio');
+    const hookVideo = document.getElementById('reels-preview-hook-video');
     const duration = _getPreviewDuration();
     if (!(duration > 0)) return;
     const target = (e.target.value / 100) * duration;
     const task = _getSelectedTask();
     const master = _getPreviewMasterElement();
-    if (!master) {
+
+    const hookDur = _reelsState.hookDuration || 0;
+    const coverDur = (task && task.cover && task.cover.enabled) ? (parseFloat(task.cover.duration) || 0.01) : 0;
+    const seekInCoverPhase = coverDur > 0 && target < coverDur;
+    const seekInHookPhase = hookDur > 0 && target >= coverDur && target < (coverDur + hookDur);
+
+    // Hook/Cover 阶段由 mock 时钟驱动，必须始终更新 mock 时间
+    if (!master || seekInHookPhase || seekInCoverPhase) {
         _reelsState.mockPausedTime = target;
         _reelsState.mockStartTime = (performance.now() / 1000) - target;
     }
 
+    // ── Hook video seek ──
+    if (hookVideo && hookVideo.src && hookDur > 0) {
+        if (seekInHookPhase) {
+            const trimStart = (task && task.hookTrimStart != null && task.hookTrimStart > 0) ? task.hookTrimStart : 0;
+            const speed = (task && task.hookSpeed) || 1.0;
+            hookVideo.currentTime = trimStart + ((target - coverDur) * speed);
+        } else {
+            // 正片阶段：Hook 视频不需要 seek
+        }
+    }
+
+    // ── Main content seek (offset by hookDur + coverDur) ──
+    const contentTarget = hookDur > 0 || coverDur > 0 ? Math.max(0, target - hookDur - coverDur) : target;
+
     if (task && task.audioPath && audio && audio.src && isFinite(audio.duration) && audio.duration > 0) {
-        audio.currentTime = Math.max(0, Math.min(target, audio.duration));
+        audio.currentTime = Math.max(0, Math.min(contentTarget, audio.duration));
     }
     if (video && video.duration > 0) {
-        video.currentTime = (task && task.audioPath) ? (target % video.duration) : Math.max(0, Math.min(target, video.duration));
+        video.currentTime = (task && task.audioPath) ? (contentTarget % video.duration) : Math.max(0, Math.min(contentTarget, video.duration));
         const fadeVideo = _reelsState.previewFadeVideo;
         if (fadeVideo && task && task.audioPath) {
             const cfg = _getPreviewLoopFadeConfig();
@@ -3120,7 +4091,7 @@ function _onSeek(e) {
     // ── 同步 BGM seek ──
     const bgmAudio = _reelsState._bgmAudioEl;
     if (bgmAudio && bgmAudio.src && bgmAudio.duration > 0) {
-        bgmAudio.currentTime = target % bgmAudio.duration;
+        bgmAudio.currentTime = contentTarget % bgmAudio.duration;
     }
     _updatePreviewTimeUI(target, duration);
     if (_reelsState.timelineEditor) {
@@ -3137,7 +4108,7 @@ function _onVideoTimeUpdate() {
         _syncBackgroundVideoToMaster();
         return;
     }
-    const cur = video.currentTime || 0;
+    const cur = _getPreviewCurrentTime();
     const dur = _getPreviewDuration();
     _updatePreviewTimeUI(cur, dur);
     if (_reelsState.timelineEditor) _reelsState.timelineEditor.setPlayhead(cur);
@@ -3146,7 +4117,7 @@ function _onVideoTimeUpdate() {
 function _onAudioTimeUpdate() {
     const audio = document.getElementById('reels-preview-audio');
     if (!audio) return;
-    const cur = audio.currentTime || 0;
+    const cur = _getPreviewCurrentTime();
     const dur = _getPreviewDuration();
     _syncBackgroundVideoToMaster();
     _updatePreviewTimeUI(cur, dur);
@@ -3162,12 +4133,14 @@ function _onVideoLoaded() {
         canvas.height = 1920;
     }
     _ensurePreviewFadeVideo(video);
+    _applyPreviewLoopMode();
     _applyPreviewAudioMix();
     _updateTimelineForTask(_getSelectedTask());
     _updatePreviewTimeUI(_getPreviewCurrentTime(), _getPreviewDuration());
 }
 
 function _onAudioLoaded() {
+    _applyPreviewLoopMode();
     _applyPreviewAudioMix();
     _updateTimelineForTask(_getSelectedTask());
     _updatePreviewTimeUI(_getPreviewCurrentTime(), _getPreviewDuration());
@@ -3177,18 +4150,31 @@ function _onAudioLoaded() {
 // Preset management (fully ported from AutoSub preset_manager.py)
 // ═══════════════════════════════════════════════════════
 
+function reelsOpenSubtitlePresetPicker(anchorEl) {
+    if (!window._openStyledPresetPicker) return;
+    const hiddenInput = document.getElementById('reels-preset-select');
+    const currentVal = hiddenInput ? hiddenInput.value : '';
+    window._openStyledPresetPicker(anchorEl, currentVal, (selectedVal) => {
+        if (hiddenInput) {
+            hiddenInput.value = selectedVal || '';
+            // Trigger the same logic as the old onchange event if necessary
+            if (typeof reelsLoadPresetQuick === 'function') {
+                reelsLoadPresetQuick();
+            } else if (typeof reelsLoadPreset === 'function') {
+                reelsLoadPreset();
+            }
+        }
+        const span = anchorEl.querySelector('span');
+        if (span) {
+            span.textContent = selectedVal || '-- 改全部样式 --';
+        }
+    });
+}
+window.reelsOpenSubtitlePresetPicker = reelsOpenSubtitlePresetPicker;
+
 function _reelsRefreshPresetList() {
-    const select = document.getElementById('reels-preset-select');
-    if (!select || !window.ReelsStyleEngine) return;
-    const data = ReelsStyleEngine.loadSubtitlePresets();
-    const defaultName = localStorage.getItem(REELS_DEFAULT_PRESET_KEY) || '';
-    select.innerHTML = '<option value="">-- 选择预设 --</option>';
-    for (const name of Object.keys(data.presets || {})) {
-        const opt = document.createElement('option');
-        opt.value = name;
-        opt.textContent = name === defaultName ? `⭐ ${name}` : name;
-        select.appendChild(opt);
-    }
+    const hidden = document.getElementById('reels-preset-select');
+    if (!hidden || !window.ReelsStyleEngine) return;
     _reelsRefreshDefaultPresetIndicator();
 }
 
@@ -3295,16 +4281,20 @@ async function reelsSavePreset() {
     }
 }
 
-function reelsLoadPreset() {
+function reelsLoadPreset(silent = false) {
     const select = document.getElementById('reels-preset-select');
     if (!select) return;
     const name = select.value;
-    if (!name) { alert('请先选择一个预设'); return; }
+    if (!name) { if (!silent) alert('请先选择一个预设'); return; }
     if (window.ReelsStyleEngine) {
         const style = ReelsStyleEngine.applySubtitlePreset(name);
         _writeStyleToUI(style);
         reelsUpdatePreview();
     }
+}
+
+function reelsLoadPresetQuick() {
+    reelsLoadPreset(true);
 }
 
 function reelsDeletePreset() {
@@ -3494,8 +4484,114 @@ function reelsCancelExport() {
     }
 }
 
+// ═══════════════════════════════════════════════════════
+// Cover PNG Export Utility
+// ═══════════════════════════════════════════════════════
+async function _exportSaveCoverPng(task, outputDirTrimmed, baseName) {
+    if (!task.cover || !task.cover.enabled || task.cover.exportSeparate === false) return null;
+
+    try {
+        const offCanvas = document.createElement('canvas');
+        offCanvas.width = 1080;
+        offCanvas.height = 1920;
+        const ctx = offCanvas.getContext('2d');
+
+        // Draw cover background
+        let bgImg = null;
+        if (task.cover.bgPath) {
+            const isVideo = /\.(mp4|mov|mkv|webm)$/i.test(task.cover.bgPath);
+            if (isVideo) {
+                bgImg = await new Promise((resolve) => {
+                    const vid = document.createElement('video');
+                    vid.crossOrigin = 'anonymous';
+                    vid.muted = true;
+                    vid.onloadeddata = () => { vid.currentTime = 0.05; };
+                    vid.onseeked = () => resolve(vid);
+                    vid.onerror = () => resolve(null);
+                    vid.src = _toPlayablePath(task.cover.bgPath, null);
+                });
+            } else {
+                bgImg = await new Promise((resolve) => {
+                    const img = new Image();
+                    img.crossOrigin = 'anonymous';
+                    img.onload = () => resolve(img);
+                    img.onerror = () => resolve(null);
+                    img.src = _toPlayablePath(task.cover.bgPath, null);
+                });
+            }
+        }
+        
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, 1080, 1920);
+        if (bgImg) {
+            _drawVideoCover(ctx, bgImg, 1080, 1920, task.cover.bgScale || task.bgScale || 100);
+        }
+
+        // Draw Cover overlays
+        if (task.cover.overlays && task.cover.overlays.length > 0 && window.ReelsOverlay) {
+            for (const ov of task.cover.overlays) {
+                if (ov.disabled) continue;
+                ReelsOverlay.drawOverlay(ctx, ov, 0, 1080, 1920);
+            }
+        }
+
+        if (typeof _drawWatermarks === 'function') {
+            _drawWatermarks(ctx, 1080, 1920);
+        }
+
+        const dataUrl = offCanvas.toDataURL('image/png');
+        const outputPath = `${outputDirTrimmed}/${baseName}_封面.png`;
+
+        if (window.electronAPI && window.electronAPI.apiCall) {
+            await window.electronAPI.apiCall('file/write-base64', { path: outputPath, content: dataUrl });
+        }
+        return outputPath;
+    } catch (e) {
+        console.error('[Export Cover] Error:', e);
+        return null;
+    }
+}
+
+// ═══════════════════════════════════════════════════════
+// Cover MP4 Export Utility
+// ═══════════════════════════════════════════════════════
+async function _exportCoverVideo(task, taskStyle, outputDirTrimmed, baseName) {
+    if (!task.cover || !task.cover.enabled || !task.cover.duration || parseFloat(task.cover.duration) <= 0) return null;
+    try {
+        const offCanvas = document.createElement('canvas');
+        offCanvas.width = 1080;
+        offCanvas.height = 1920;
+        const outputPath = `${outputDirTrimmed}/temp_${baseName}_cover_piece.mp4`;
+        
+        await window.reelsWysiwygExport({
+            canvas: offCanvas,
+            style: taskStyle,
+            segments: [],
+            overlays: task.cover.overlays || [],
+            backgroundPath: task.cover.bgPath || task.bgPath,
+            bgMode: 'single',
+            outputPath: outputPath,
+            customDuration: parseFloat(task.cover.duration),
+            fps: 30,
+            voiceVolume: 0,
+            bgVolume: 0,
+            bgScale: task.cover.bgScale || task.bgScale || 100,
+        });
+        return outputPath;
+    } catch (e) {
+        console.error('[Export Cover Video] Error:', e);
+        return null;
+    }
+}
+
 async function reelsStartExport() {
     const workMode = _getWorkMode();
+    
+    if (!localStorage.getItem('reelsQualityReminderShown')) {
+        const proceed = confirm("【画质选择提醒】\\n\\n现已支持多种输出画质，您可以在底部的「🚀 导出设置」中调整。\\n\\n建议您先导出一个片段对比一下画质是否有明显差别，若无差别强烈建议选择「普通均衡 (Reels推荐)」以获得 3-5 倍的渲染速度提升。\\n（注：实测在绿幕口播视频中，高质量和普通会有一些差别）\\n\\n您要继续当前导出吗？（本提示仅显示一次）");
+        if (!proceed) return;
+        localStorage.setItem('reelsQualityReminderShown', 'true');
+    }
 
     // ── 导出前同步当前任务的覆层（用户可能删除/修改了覆层但尚未切换任务） ──
     const curTask = _reelsState.tasks[_reelsState.selectedIdx];
@@ -3526,14 +4622,15 @@ async function reelsStartExport() {
     const tasks = _reelsState.tasks.filter((t, idx) => {
         const hasSub = !!t.srtPath && (t.segments || []).length > 0;
         const bgPath = t.bgPath || t.videoPath;
-        const hasBg = !!bgPath;
+        const hasMultiClip = t.bgMode === 'multi' && Array.isArray(t.bgClipPool) && t.bgClipPool.length > 0;
+        const hasBg = !!bgPath || hasMultiClip;
         const hasVoice = !!t.audioPath;
-        // 有覆层（文案卡片 或 滚动字幕）则不强制要求字幕
+        // 有覆层（文字卡片 或 滚动字幕）则不强制要求字幕
         const ov = (t.overlays && t.overlays.length > 0) ? t.overlays[0] : null;
         const hasOverlay = ov && (ov.title_text || ov.body_text || ov.content || ov.scroll_title);
 
         if (workMode === 'voiced_bg') {
-            // 带声视频模式：需要背景 + (字幕 或 文案卡片)
+            // 带声视频模式：需要背景 + (字幕 或 文字卡片)
             if (!hasBg || (!hasSub && !hasOverlay)) {
                 const missing = [];
                 if (!hasBg) missing.push('带声视频');
@@ -3545,7 +4642,7 @@ async function reelsStartExport() {
         }
 
         // SRT 模式和配音+文本模式
-        // 有文案卡片时不要求字幕
+        // 有文字卡片时不要求字幕
         if ((!hasSub && !hasOverlay) || !hasBg) {
             const missing = [];
             if (!hasBg) missing.push('背景');
@@ -3554,7 +4651,7 @@ async function reelsStartExport() {
             return false;
         }
         if (hasVoice) return true;
-        // 有文案卡片但无配音/字幕，也允许导出（图片背景时需要文字卡片来确定时长）
+        // 有文字卡片但无配音/字幕，也允许导出（图片背景时需要文字卡片来确定时长）
         if (hasOverlay && !hasSub && !hasVoice) {
             return true;
         }
@@ -3581,9 +4678,11 @@ async function reelsStartExport() {
 
     const quality = document.getElementById('reels-quality').value;
     const suffix = document.getElementById('reels-suffix').value || '_subtitled';
-    const style = _readStyleFromUI();
-    const crfMap = { high: 15, medium: 18, low: 23 };
-    const crf = crfMap[quality] || 18;
+    _persistSubtitleStyleByScope(_readStyleFromUI());
+    const crfMap = { high: 15, medium: 18, low: 23, ultrafast: 26 };
+    const presetMap = { high: 'medium', medium: 'fast', low: 'faster', ultrafast: 'ultrafast' };
+    const crf = crfMap[quality] || 23;
+    const qualityPreset = presetMap[quality] || 'faster';
     const useKaraoke = document.getElementById('reels-karaoke-hl');
     const karaokeHL = useKaraoke ? useKaraoke.checked : false;
     let voiceVolume = parseFloat((document.getElementById('reels-voice-volume') || {}).value || '100');
@@ -3639,6 +4738,7 @@ async function reelsStartExport() {
             break;
         }
         const task = tasks[i];
+        const taskStyle = _resolveSubtitleStyleForTask(task);
         if (statusEl) statusEl.textContent = `导出中 ${i + 1}/${tasks.length}: ${task.fileName}`;
 
         try {
@@ -3719,22 +4819,104 @@ async function reelsStartExport() {
             const voiceSource = task.audioPath || (workMode === 'voiced_bg' ? bgPath : null);
             let finalOutputPath = outputPath;
 
-            // ── WYSIWYG 逐帧渲染导出（与预览 100% 一致）──
-            const canUseWysiwyg = typeof window.reelsWysiwygExport === 'function'
-                && window.electronAPI && window.electronAPI.reelsComposeWysiwyg;
+            // ── 读取导出格式 ──
+            const exportFormat = (document.getElementById('reels-export-format') || {}).value || 'mp4';
+            const doPng = exportFormat === 'png-layers' || exportFormat === 'mp4+png';
+            const doMp4 = exportFormat === 'mp4' || exportFormat === 'mp4+png';
 
-            if (canUseWysiwyg) {
+            // ── 封面静帧单独输出 ──
+            if (task.cover && task.cover.enabled !== false && task.cover.exportSeparate !== false) {
+                 await _exportSaveCoverPng(task, outputDirTrimmed, baseName);
+            }
+
+            // ── 封面视频拼接输出 ──
+            let coverMp4Path = null;
+            if (task.cover && task.cover.enabled !== false && doMp4 && parseFloat(task.cover.duration || 0) > 0) {
+                 coverMp4Path = await _exportCoverVideo(task, taskStyle, outputDirTrimmed, baseName);
+            }
+
+            // ═══ PNG 分层序列导出 ═══
+            if (doPng && typeof window.reelsLayeredExport === 'function') {
+                const offCanvas = document.createElement('canvas');
+                offCanvas.width = 1080;
+                offCanvas.height = 1920;
+
+                const subtitleToggle = document.getElementById('reels-subtitle-toggle');
+                const showSubtitle = !subtitleToggle || subtitleToggle.checked;
+
+                const layeredResult = await window.reelsLayeredExport({
+                    canvas: offCanvas,
+                    style: taskStyle,
+                    segments: showSubtitle ? (task.segments || []) : [],
+                    overlays: task.overlays || [],
+                    backgroundPath: bgPath,
+                    bgMode: task.bgMode || 'single',
+                    bgClipPool: task.bgClipPool || [],
+                    bgTransition: task.bgTransition || 'crossfade',
+                    bgTransDur: task.bgTransDur || 0.5,
+                    contentVideoPath: task.contentVideoPath || null,
+                    contentVideoTrimStart: task.contentVideoTrimStart != null ? task.contentVideoTrimStart : null,
+                    contentVideoTrimEnd: task.contentVideoTrimEnd != null ? task.contentVideoTrimEnd : null,
+                    contentVideoScale: task.contentVideoScale || 100,
+                    contentVideoX: task.contentVideoX || 'center',
+                    contentVideoY: task.contentVideoY || 'center',
+                    voicePath: voiceSource || null,
+                    outputDir: outputDirTrimmed,
+                    taskName: baseName,
+                    targetWidth: 1080,
+                    targetHeight: 1920,
+                    fps: 30,
+                    voiceVolume: (workMode === 'voiced_bg' && !task.audioPath) ? bgVolume / 100 : voiceVolume / 100,
+                    bgVolume: bgVolume / 100,
+                    loopFade,
+                    loopFadeDur,
+                    customDuration: task.customDuration || customDuration || 0,
+                    bgmPath: task.bgmPath || '',
+                    bgmVolume: (task.bgmVolume != null ? task.bgmVolume : 10) / 100,
+                    bgScale: task.bgScale || 100,
+                    bgDurScale: task.bgDurScale || 100,
+                    audioDurScale: task.audioDurScale || 100,
+                    isCancelled: () => !_reelsState.isExporting,
+                    onProgress: (pct) => {
+                        if (statusEl) statusEl.textContent = `分层导出 ${i + 1}/${tasks.length}: ${task.fileName} (${pct}%)`;
+                    },
+                    onLog: (msg) => console.log(`[Layered] ${task.fileName}: ${msg}`),
+                });
+                if (layeredResult && layeredResult.cancelled) {
+                    canceled = true;
+                    break;
+                }
+                finalOutputPath = layeredResult?.layersDir || outputDirTrimmed;
+
+            }
+
+            // ═══ MP4 视频导出（WYSIWYG）═══
+            if (doMp4 && (typeof window.reelsWysiwygExport === 'function')
+                && window.electronAPI && window.electronAPI.reelsComposeWysiwyg) {
                 // 创建离屏 canvas
                 const offCanvas = document.createElement('canvas');
                 offCanvas.width = 1080;
                 offCanvas.height = 1920;
 
+                const subtitleToggle = document.getElementById('reels-subtitle-toggle');
+                const showSubtitle = !subtitleToggle || subtitleToggle.checked;
+
                 const wysiwygResult = await window.reelsWysiwygExport({
                     canvas: offCanvas,
-                    style,
-                    segments: task.segments || [],
+                    style: taskStyle,
+                    segments: showSubtitle ? (task.segments || []) : [],
                     overlays: task.overlays || [],
                     backgroundPath: bgPath,
+                    bgMode: task.bgMode || 'single',
+                    bgClipPool: task.bgClipPool || [],
+                    bgTransition: task.bgTransition || 'crossfade',
+                    bgTransDur: task.bgTransDur || 0.5,
+                    contentVideoPath: task.contentVideoPath || null,
+                    contentVideoTrimStart: task.contentVideoTrimStart != null ? task.contentVideoTrimStart : null,
+                    contentVideoTrimEnd: task.contentVideoTrimEnd != null ? task.contentVideoTrimEnd : null,
+                    contentVideoScale: task.contentVideoScale || 100,
+                    contentVideoX: task.contentVideoX || 'center',
+                    contentVideoY: task.contentVideoY || 'center',
                     voicePath: voiceSource || null,
                     outputPath,
                     targetWidth: 1080,
@@ -3757,6 +4939,8 @@ async function reelsStartExport() {
                     stereoWidth: _getReverbConfig().stereoWidth,
                     audioFxTarget: _getReverbConfig().audioFxTarget,
                     useGPU: gpuEnabled,
+                    crf,
+                    qualityPreset,
                     isCancelled: () => !_reelsState.isExporting,
                     onProgress: (pct) => {
                         if (statusEl) statusEl.textContent = `导出中 ${i + 1}/${tasks.length}: ${task.fileName} (${pct}%)`;
@@ -3769,13 +4953,19 @@ async function reelsStartExport() {
                 }
             } else if (hasVoiceAudio && voiceSource) {
                 // ── 回退: ASS 字幕方式导出（需要配音）──
+                const aDurScale = task.audioDurScale || 100;
+                const factor = aDurScale / 100;
+                const scaledSegments = (factor !== 1.0 && task.segments) 
+                    ? task.segments.map(s => ({ ...s, start: s.start * factor, end: s.end * factor, words: s.words ? s.words.map(w => ({...w, start: w.start * factor, end: w.end * factor})) : undefined }))
+                    : task.segments;
+
                 const assContent = window.ReelsSubtitleProcessor
-                    ? ReelsSubtitleProcessor.generateEnhancedASS(task.segments, style, {
+                    ? ReelsSubtitleProcessor.generateEnhancedASS(scaledSegments, taskStyle, {
                         karaokeHighlight: karaokeHL,
                         videoW: 1080,
                         videoH: 1920,
                     })
-                    : generateASS(task.segments, style);
+                    : generateASS(task.segments, taskStyle);
 
                 const resp = await _reelsComposeViaBackend({
                     background_path: bgPath,
@@ -3792,13 +4982,19 @@ async function reelsStartExport() {
                     bgm_volume: (task.bgmVolume != null ? task.bgmVolume : 10) / 100,
                 });
             } else if (window.electronAPI && window.electronAPI.burnSubtitles) {
+                const aDurScale = task.audioDurScale || 100;
+                const factor = aDurScale / 100;
+                const scaledSegments = (factor !== 1.0 && task.segments) 
+                    ? task.segments.map(s => ({ ...s, start: s.start * factor, end: s.end * factor, words: s.words ? s.words.map(w => ({...w, start: w.start * factor, end: w.end * factor})) : undefined }))
+                    : task.segments;
+
                 const assContent = window.ReelsSubtitleProcessor
-                    ? ReelsSubtitleProcessor.generateEnhancedASS(task.segments, style, {
+                    ? ReelsSubtitleProcessor.generateEnhancedASS(scaledSegments, taskStyle, {
                         karaokeHighlight: karaokeHL,
                         videoW: 1080,
                         videoH: 1920,
                     })
-                    : generateASS(task.segments, style);
+                    : generateASS(task.segments, taskStyle);
                 await window.electronAPI.burnSubtitles({
                     videoPath: bgPath, assContent, outputPath, crf,
                     useGPU: gpuEnabled,
@@ -3807,13 +5003,15 @@ async function reelsStartExport() {
                 console.warn('[Reels] FFmpeg IPC not available, skipping:', task.fileName);
             }
 
-        // 拼接前置片段 (Hook -> Main)
+        // 拼接前置片段 (Hook -> Main) — 仅 MP4 模式
             const finalHookPath = task.hookFile || introPath || '';
-            if (finalHookPath && window.electronAPI && window.electronAPI.concatVideo) {
-                const concatOutput = outputPath.replace('.mp4', '_final.mp4');
+            let currentOutputToConcat = outputPath;
+
+            if (doMp4 && finalHookPath && window.electronAPI && window.electronAPI.concatVideo) {
+                const concatOutput = outputPath.replace('.mp4', '_final_tmp.mp4');
                 await window.electronAPI.concatVideo({
                     introPath: finalHookPath,
-                    mainPath: outputPath,
+                    mainPath: currentOutputToConcat,
                     outputPath: concatOutput,
                     speed: task.hookSpeed || 1.0,
                     trimStart: task.hookTrimStart !== undefined ? task.hookTrimStart : null,
@@ -3824,8 +5022,35 @@ async function reelsStartExport() {
                     targetHeight: 1920,
                     fps: 30
                 });
-                finalOutputPath = concatOutput;
+                currentOutputToConcat = concatOutput;
             }
+
+            // 拼接封面片段 (Cover -> [Hook] -> Main)
+            if (coverMp4Path && doMp4 && window.electronAPI && window.electronAPI.concatVideo) {
+                const coverConcatOutput = outputPath.replace('.mp4', '_final.mp4');
+                if (statusEl) statusEl.textContent = `拼接中 ${i + 1}/${tasks.length}: 合并封面视频...`;
+                await window.electronAPI.concatVideo({
+                    introPath: coverMp4Path,
+                    mainPath: currentOutputToConcat,
+                    outputPath: coverConcatOutput,
+                    speed: 1.0,
+                    transition: 'none',
+                    transDuration: 0,
+                    targetWidth: 1080,
+                    targetHeight: 1920,
+                    fps: 30
+                });
+                currentOutputToConcat = coverConcatOutput;
+            } else if (currentOutputToConcat.includes('_final_tmp.mp4')) {
+                // 如果只拼接了 Hook 没有 Cover，重命名 _final_tmp 为 _final
+                const finalTarget = outputPath.replace('.mp4', '_final.mp4');
+                try {
+                    await window.electronAPI.apiCall('file/rename', { source: currentOutputToConcat, target: finalTarget, copy: false });
+                    currentOutputToConcat = finalTarget;
+                } catch (e) { console.error('Rename final_tmp failed', e); }
+            }
+
+            finalOutputPath = currentOutputToConcat;
             okCount += 1;
             _reelsState.lastExportOutputPath = finalOutputPath;
             _reelsUpdateLastOutputUI(finalOutputPath);
@@ -3880,12 +5105,12 @@ function reelsResegment() {
         alert('字幕处理器未加载');
         return;
     }
-    const style = _readStyleFromUI();
     const videoW = 1080; // Reels 竖屏
     let totalProcessed = 0;
 
     for (const task of _reelsState.tasks) {
         if (!task.segments || task.segments.length === 0) continue;
+        const style = _resolveSubtitleStyleForTask(task);
         const result = ReelsSubtitleProcessor.smartSegmentation(task.segments, style, videoW);
         if (result && result.length > 0) {
             task.segments = result;
@@ -3930,7 +5155,13 @@ function reelsExportSRT() {
         return;
     }
     if (window.ReelsSubtitleProcessor) {
-        const srtContent = ReelsSubtitleProcessor.segmentsToSRT(task.segments);
+        const aDurScale = task.audioDurScale || 100;
+        const factor = aDurScale / 100;
+        const scaledSegments = (factor !== 1.0 && task.segments) 
+            ? task.segments.map(s => ({ ...s, start: s.start * factor, end: s.end * factor, words: s.words ? s.words.map(w => ({...w, start: w.start * factor, end: w.end * factor})) : undefined }))
+            : task.segments;
+
+        const srtContent = ReelsSubtitleProcessor.segmentsToSRT(scaledSegments);
         const blob = new Blob([srtContent], { type: 'text/plain' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -3948,6 +5179,8 @@ function reelsExportSRT() {
 function reelsSaveProject() {
     if (!window.ReelsProject) { alert('项目管理模块未加载'); return; }
     const style = _readStyleFromUI();
+    _persistSubtitleStyleByScope(style);
+    const globalStyle = _cloneSubtitleStyle(_reelsState.globalSubtitleStyle) || style;
     const exportOpts = {
         outputDir: (document.getElementById('reels-output-dir') || {}).value || '',
         quality: (document.getElementById('reels-quality') || {}).value || 'medium',
@@ -3955,6 +5188,7 @@ function reelsSaveProject() {
         voiceVolume: parseFloat((document.getElementById('reels-voice-volume') || {}).value || '100') || 100,
         bgVolume: parseFloat((document.getElementById('reels-bg-volume') || {}).value || '5') || 5,
         useGPU: (document.getElementById('reels-use-gpu') || {}).checked || false,
+        previewLoop: (document.getElementById('reels-preview-loop') || {}).checked !== false,
         loopFade: (document.getElementById('reels-loop-fade') || {}).checked !== false,
         loopFadeDuration: parseFloat((document.getElementById('reels-loop-fade-dur') || {}).value || '1') || 1,
         introPath: (document.getElementById('reels-intro-path') || {}).value || '',
@@ -3964,10 +5198,11 @@ function reelsSaveProject() {
         reverbMix: parseFloat((document.getElementById('reels-reverb-mix') || {}).value || '30') || 30,
         stereoWidth: parseFloat((document.getElementById('reels-stereo-width') || {}).value || '100') || 100,
         audioFxTarget: (document.getElementById('reels-audio-fx-target') || {}).value || 'all',
+        subtitleStyleApplyAll: _isStyleApplyAllEnabled(),
     };
     ReelsProject.saveProject({
         tasks: _reelsState.tasks,
-        style,
+        style: globalStyle,
         exportOpts,
         selectedIdx: _reelsState.selectedIdx,
     });
@@ -3984,7 +5219,7 @@ async function reelsLoadProject() {
 
     // 恢复样式
     if (result.style && Object.keys(result.style).length > 0) {
-        _writeStyleToUI(result.style);
+        _reelsState.globalSubtitleStyle = _cloneSubtitleStyle(result.style);
     }
 
     // 恢复导出选项
@@ -3998,6 +5233,7 @@ async function reelsLoadProject() {
         if (opts.voiceVolume !== undefined && opts.voiceVolume !== null) setVal('reels-voice-volume', String(opts.voiceVolume));
         if (opts.bgVolume !== undefined && opts.bgVolume !== null) setVal('reels-bg-volume', String(opts.bgVolume));
         setCheck('reels-use-gpu', opts.useGPU);
+        setCheck('reels-preview-loop', opts.previewLoop !== false);
         setCheck('reels-loop-fade', opts.loopFade !== false);
         if (opts.loopFadeDuration !== undefined && opts.loopFadeDuration !== null) {
             const dur = parseFloat(opts.loopFadeDuration);
@@ -4010,7 +5246,13 @@ async function reelsLoadProject() {
         if (opts.reverbMix !== undefined) setVal('reels-reverb-mix', String(opts.reverbMix));
         if (opts.stereoWidth !== undefined) setVal('reels-stereo-width', String(opts.stereoWidth));
         if (opts.audioFxTarget !== undefined) setVal('reels-audio-fx-target', opts.audioFxTarget);
+        setCheck('reels-style-apply-all', opts.subtitleStyleApplyAll !== false);
+        _applyPreviewLoopMode();
     }
+
+    const selectedTask = _reelsState.tasks[_reelsState.selectedIdx] || null;
+    const styleToShow = _resolveSubtitleStyleForTask(selectedTask);
+    if (styleToShow) _writeStyleToUI(styleToShow);
 
     _renderTaskList();
     _applyPreviewAudioMix();
@@ -4072,9 +5314,11 @@ document.addEventListener('DOMContentLoaded', () => {
     setInterval(() => {
         if (_reelsState.tasks.length > 0 && window.ReelsProject) {
             const style = _readStyleFromUI();
+            _persistSubtitleStyleByScope(style);
+            const globalStyle = _cloneSubtitleStyle(_reelsState.globalSubtitleStyle) || style;
             ReelsProject.autoSaveProject({
                 tasks: _reelsState.tasks,
-                style,
+                style: globalStyle,
                 selectedIdx: _reelsState.selectedIdx,
             });
         }

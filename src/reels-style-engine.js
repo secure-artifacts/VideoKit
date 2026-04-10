@@ -131,6 +131,19 @@ const DEFAULT_SUBTITLE_STYLE = {
     // Letter jump
     letter_jump_scale: 1.5,
     letter_jump_duration: 0.2,
+    // Word pop random
+    word_pop_random_min_scale: 0.86,
+    word_pop_random_max_scale: 1.34,
+    word_pop_random_duration: 0.22,
+    word_pop_random_unread_opacity: 0.0,
+    word_pop_random_read_opacity: 1.0,
+    word_pop_random_pulse_min_scale: 1.08,
+    word_pop_random_pulse_max_scale: 1.38,
+    word_pop_random_pulse_duration: 0.22,
+    // Block typography (line-fit square layout)
+    block_typography_enabled: false,
+    block_scale_min: 0.78,
+    block_scale_max: 1.6,
     // Blur → Sharp
     blur_sharp_max: 20,
     blur_sharp_clear_frac: 0.4,
@@ -180,6 +193,7 @@ const DEFAULT_SUBTITLE_STYLE = {
     advanced_textbox_w: 100,
     advanced_textbox_h: 100,
     advanced_textbox_align: 'center',
+    advanced_textbox_valign: 'center',
 
     // ── Advanced text-box extra params ──
     adv_bg_enabled: false,

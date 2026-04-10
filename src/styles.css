@@ -1,16 +1,16 @@
 /* 全局样式 */
 :root {
-    --bg-primary: #1a1a2e;
-    --bg-secondary: #16213e;
-    --bg-card: #0f3460;
-    --accent: #e94560;
-    --accent-hover: #ff6b6b;
-    --text-primary: #ffffff;
-    --text-secondary: #a0a0a0;
-    --border-color: rgba(255, 255, 255, 0.1);
-    --success: #00d9a5;
-    --warning: #ffc107;
-    --error: #ff4757;
+    --bg-primary: #181818;
+    --bg-secondary: #1e1e1e;
+    --bg-card: #2a2a2a;
+    --accent: #4c9eff;
+    --accent-hover: #6bb0ff;
+    --text-primary: #e4e4e4;
+    --text-secondary: #8b8b8b;
+    --border-color: rgba(255, 255, 255, 0.08);
+    --success: #34d399;
+    --warning: #fbbf24;
+    --error: #f87171;
 }
 
 * {
@@ -20,8 +20,8 @@
 }
 
 body {
-    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-    background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+    background: var(--bg-primary);
     color: var(--text-primary);
     min-height: 100vh;
     overflow: hidden;
@@ -35,9 +35,8 @@ body {
 
 /* 标题栏 (现在和导航栏合并为一行) */
 .titlebar {
-    height: 44px;
-    /* 从52px缩减，并容纳标签页 */
-    background: rgba(0, 0, 0, 0.4);
+    height: 38px;
+    background: #111111;
     display: flex;
     align-items: center;
     justify-content: flex-start;
@@ -45,7 +44,7 @@ body {
     /* 避开Mac左侧红绿灯 */
     padding-right: 16px;
     -webkit-app-region: drag;
-    border-bottom: 1px solid var(--border-color);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .titlebar-drag-region {
@@ -54,8 +53,8 @@ body {
 }
 
 .app-title {
-    font-size: 13px;
-    font-weight: 500;
+    font-size: 12px;
+    font-weight: 600;
     color: var(--text-secondary);
     margin: 0;
     margin-right: 20px;
@@ -75,12 +74,12 @@ body {
 }
 
 .tab {
-    padding: 4px 12px;
+    padding: 5px 14px;
     background: transparent;
     border: none;
-    border-radius: 6px;
+    border-radius: 4px;
     color: var(--text-secondary);
-    font-size: 12px;
+    font-size: 11.5px;
     font-weight: 500;
     cursor: pointer;
     transition: all 0.2s ease;
@@ -100,7 +99,8 @@ body {
 .content {
     flex: 1;
     overflow-y: auto;
-    padding: 20px;
+    padding: 16px;
+    scrollbar-gutter: stable;
 }
 
 .panel {
@@ -118,18 +118,18 @@ body {
 
 /* 表单区域 */
 .form-section {
-    background: rgba(255, 255, 255, 0.03);
+    background: var(--bg-secondary);
     border: 1px solid var(--border-color);
-    border-radius: 12px;
-    padding: 20px;
-    margin-bottom: 16px;
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 12px;
 }
 
 .section-title {
-    font-size: 14px;
+    font-size: 12px;
     font-weight: 600;
-    color: var(--accent);
-    margin-bottom: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 10px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
 }
@@ -139,12 +139,12 @@ body {
 .textarea,
 .select {
     width: 100%;
-    padding: 12px 16px;
-    background: rgba(0, 0, 0, 0.3);
+    padding: 7px 10px;
+    background: #141414;
     border: 1px solid var(--border-color);
-    border-radius: 8px;
+    border-radius: 4px;
     color: var(--text-primary);
-    font-size: 14px;
+    font-size: 12px;
     transition: all 0.2s ease;
 }
 
@@ -153,7 +153,7 @@ body {
 .select:focus {
     outline: none;
     border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(233, 69, 96, 0.2);
+    box-shadow: 0 0 0 2px rgba(76, 158, 255, 0.15);
 }
 
 .input::placeholder,
@@ -207,23 +207,23 @@ body {
 
 /* 按钮 */
 .btn {
-    padding: 10px 20px;
+    padding: 7px 14px;
     border: none;
-    border-radius: 8px;
-    font-size: 14px;
+    border-radius: 4px;
+    font-size: 12px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.2s ease;
 }
 
 .btn-primary {
-    background: linear-gradient(135deg, var(--accent) 0%, #ff6b6b 100%);
+    background: var(--accent);
     color: white;
 }
 
 .btn-primary:hover {
     transform: translateY(-2px);
-    box-shadow: 0 8px 20px rgba(233, 69, 96, 0.4);
+    box-shadow: 0 4px 12px rgba(76, 158, 255, 0.3);
 }
 
 .btn-secondary {
@@ -237,8 +237,8 @@ body {
 }
 
 .btn-small {
-    padding: 6px 12px;
-    font-size: 12px;
+    padding: 5px 10px;
+    font-size: 11px;
 }
 
 .btn-large {
@@ -252,7 +252,7 @@ body {
 .params-grid {
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 10px;
 }
 
 .param-row {
@@ -263,7 +263,7 @@ body {
 }
 
 .param-row label {
-    font-size: 14px;
+    font-size: 12px;
     color: var(--text-secondary);
     white-space: nowrap;
 }
@@ -280,7 +280,7 @@ body {
     align-items: center;
     gap: 8px;
     cursor: pointer;
-    font-size: 14px;
+    font-size: 12px;
 }
 
 .checkbox-label input[type="checkbox"] {
@@ -346,7 +346,7 @@ body {
 /* 状态框 */
 .status-box {
     padding: 12px;
-    background: rgba(0, 0, 0, 0.2);
+    background: var(--bg-secondary);
     border-radius: 8px;
 }
 
@@ -375,7 +375,7 @@ body {
 
 .progress-bar-inner {
     height: 100%;
-    background: linear-gradient(90deg, var(--accent), var(--accent-hover));
+    background: var(--accent);
     border-radius: 3px;
     width: 0%;
     animation: none;
@@ -419,7 +419,7 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-    background: rgba(0, 0, 0, 0.2);
+    background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
@@ -535,7 +535,7 @@ body {
     align-items: center;
     gap: 12px;
     padding: 16px;
-    background: rgba(0, 0, 0, 0.2);
+    background: var(--bg-secondary);
     border: 2px solid var(--border-color);
     border-radius: 10px;
     transition: all 0.2s ease;
@@ -543,7 +543,7 @@ body {
 
 .mode-option input:checked+.mode-label {
     border-color: var(--accent);
-    background: rgba(233, 69, 96, 0.15);
+    background: rgba(76, 158, 255, 0.15);
 }
 
 .mode-icon {
@@ -567,7 +567,7 @@ body {
     height: 112px;
     object-fit: cover;
     border-radius: 8px;
-    background: rgba(0, 0, 0, 0.3);
+    background: var(--bg-secondary);
 }
 
 .video-details h4 {
@@ -586,16 +586,105 @@ body {
     line-height: 1.8;
 }
 
-/* Range 滑块 */
+/* Range 滑块 (精致圆形拇指 + 细轨道) */
 input[type="range"] {
-    accent-color: var(--accent);
+    -webkit-appearance: none;
+    appearance: none;
+    height: 3px;
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 2px solid #ffffff;
+    cursor: pointer;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+    background: var(--accent-hover);
+}
+
+/* Color Picker (精致圆角) */
+input[type="color"] {
+    -webkit-appearance: none;
+    appearance: none;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    cursor: pointer;
+    background: transparent;
+}
+
+input[type="color"]::-webkit-color-swatch-wrapper {
+    padding: 2px;
+}
+
+input[type="color"]::-webkit-color-swatch {
+    border: none;
+    border-radius: 2px;
+}
+
+/* Number Input (紧凑) */
+input[type="number"] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+}
+
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+    opacity: 0;
+    height: 0;
+}
+
+/* ═══ Reels 面板 — 紧凑密度覆盖 ═══ */
+#batch-reels-panel .reels-column {
+    scrollbar-gutter: stable;
+}
+
+#batch-reels-panel label {
+    font-size: 11px;
+}
+
+#batch-reels-panel input[type="text"],
+#batch-reels-panel input[type="number"],
+#batch-reels-panel select {
+    font-size: 11px;
+    padding: 4px 6px;
+    background: #141414;
+    border: 1px solid var(--border-color);
+    border-radius: 3px;
+    color: var(--text-primary);
+}
+
+#batch-reels-panel input[type="text"]:focus,
+#batch-reels-panel input[type="number"]:focus,
+#batch-reels-panel select:focus {
+    border-color: var(--accent);
+    outline: none;
+}
+
+/* Reels 折叠标题 */
+#batch-reels-panel details > summary {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    cursor: pointer;
+    user-select: none;
+    letter-spacing: 0.3px;
 }
 
 /* ═══ Reels 面板拖拽分隔条 ═══ */
 .reels-resize-handle {
-    width: 5px;
+    width: 4px;
     cursor: col-resize;
-    background: var(--border-color);
+    background: transparent;
     transition: background .15s;
     flex-shrink: 0;
     position: relative;
@@ -604,7 +693,7 @@ input[type="range"] {
 
 .reels-resize-handle:hover,
 .reels-resize-handle.active {
-    background: rgba(0, 212, 255, 0.6);
+    background: rgba(76, 158, 255, 0.5);
 }
 
 .reels-resize-handle::after {
@@ -614,4 +703,83 @@ input[type="range"] {
     bottom: 0;
     left: -3px;
     right: -3px;
+}
+
+/* ═══ 三栏重排: Tasks | Preview | Inspector ═══ */
+#reels-col-tasks { order: 1; }
+.reels-resize-handle[data-left="reels-col-tasks"] { order: 2; }
+#reels-col-subtitle { order: 5; border-left: 1px solid var(--border-color); }
+.reels-resize-handle[data-left="reels-col-subtitle"] { display: none; }
+#reels-col-preview { order: 3; }
+.reels-resize-handle[data-left="reels-col-preview"] { order: 4; }
+
+/* ═══ 预览区 ═══ */
+#reels-preview-viewport {
+    background: #0a0a0a !important;
+}
+
+/* ═══ 专业时间线栏 ═══ */
+.reels-timeline-bar {
+    flex-shrink: 0;
+    border-top: 1px solid var(--border-color);
+    background: #111111;
+    display: flex;
+    flex-direction: column;
+}
+
+.reels-timeline-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 12px;
+    background: #0e0e0e;
+    border-bottom: 1px solid var(--border-color);
+    cursor: pointer;
+    user-select: none;
+}
+
+.reels-timeline-header span {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+}
+
+.reels-timeline-header .tl-toggle {
+    font-size: 9px;
+    color: var(--text-secondary);
+}
+
+.reels-timeline-header.collapsed .tl-toggle {
+    transform: rotate(-90deg);
+}
+
+.reels-timeline-body {
+    height: 160px;
+    overflow: hidden;
+}
+
+.reels-timeline-body.collapsed {
+    height: 0;
+}
+
+/* ═══ 工具栏下拉菜单 ═══ */
+.reels-toolbar-dropdown.show,
+.rbt-toolbar-dropdown.show {
+    display: block !important;
+}
+
+.reels-dropdown-item,
+.rbt-dropdown-item {
+    padding: 6px 12px;
+    font-size: 12px;
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: background 0.12s;
+}
+
+.reels-dropdown-item:hover,
+.rbt-dropdown-item:hover {
+    background: rgba(255, 255, 255, 0.06);
 }

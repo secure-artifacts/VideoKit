@@ -53,6 +53,13 @@ async function ttsWorkflow(data) {
     const apiKeys = elevenlabs.loadKeys();
     if (!apiKeys || apiKeys.length === 0) throw new Error('未配置 API Key');
 
+    if (subtitle_text) {
+        const gladiaKeysData = settings.loadGladiaKeys();
+        if (!gladiaKeysData.keys || gladiaKeysData.keys.length === 0) {
+            throw new Error('未配置 Gladia (AI字幕转录) API Key！任务被拒绝，以防浪费TTS额度 (请在设置中配置)');
+        }
+    }
+
     // 创建输出文件夹
     const today = new Date();
     const dateStr = today.toISOString().split('T')[0];

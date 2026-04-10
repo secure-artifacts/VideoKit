@@ -113,6 +113,10 @@ function _findFileRecursive(dir, fileName, maxDepth) {
 async function prepareBg(opts) {
     let {
         backgroundPath,
+        bgMode = 'single',
+        bgClipPool = [],
+        bgTransition = 'crossfade',
+        bgTransDur = 0.5,
         targetWidth = 1080,
         targetHeight = 1920,
         fps = 30,
@@ -122,12 +126,156 @@ async function prepareBg(opts) {
         bgScale = 100,
     } = opts;
 
+    const ffmpeg = findFFmpeg();
+    const settings = require('./settings');
+    const framesDir = path.join(settings.getSecureTmpDir(), `reels_bg_${generateId()}`);
+    fs.mkdirSync(framesDir, { recursive: true });
+
+    // 构建缩放+裁切滤镜
+    const scaleFactor = (bgScale || 100) / 100;
+    let scaleCropFilter;
+    if (Math.abs(scaleFactor - 1.0) < 0.01) {
+        scaleCropFilter = `scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=increase,crop=${targetWidth}:${targetHeight}`;
+    } else {
+        const scaledW = Math.round(targetWidth * scaleFactor);
+        const scaledH = Math.round(targetHeight * scaleFactor);
+        if (scaleFactor >= 1.0) {
+            scaleCropFilter = `scale=${scaledW}:${scaledH}:force_original_aspect_ratio=increase,crop=${targetWidth}:${targetHeight}`;
+        } else {
+            scaleCropFilter = `scale=${scaledW}:${scaledH}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2:color=black`;
+        }
+        console.log(`[WYSIWYG-BG] 背景缩放: ${bgScale}%, filter: ${scaleCropFilter}`);
+    }
+
+    // ═══ 多素材拼接模式 ═══
+    if (bgMode === 'multi' && Array.isArray(bgClipPool) && bgClipPool.length > 0) {
+        console.log(`[WYSIWYG-BG] 多素材拼接: ${bgClipPool.length} 个素材, 目标时长: ${duration}s, 转场: ${bgTransition} ${bgTransDur}s`);
+
+        // 过滤出实际存在的文件
+        const validClips = bgClipPool.filter(p => p && fs.existsSync(p));
+        if (validClips.length === 0) {
+            throw new Error('素材池中没有有效的文件');
+        }
+
+        // 获取每个素材的时长
+        const clipDurations = [];
+        for (const clip of validClips) {
+            const dur = isImageMedia(clip) ? 5.0 : await getMediaDuration(clip);
+            clipDurations.push({ path: clip, duration: Math.max(dur, 0.5), isImage: isImageMedia(clip) });
+        }
+
+        // 随机选择素材直到总时长 >= 目标时长
+        const selectedClips = [];
+        let totalDur = 0;
+        const transOverlap = bgTransition !== 'none' ? bgTransDur : 0;
+        let attempts = 0;
+        while (totalDur < duration && attempts < 200) {
+            const pick = clipDurations[Math.floor(Math.random() * clipDurations.length)];
+            selectedClips.push(pick);
+            totalDur += pick.duration - (selectedClips.length > 1 ? transOverlap : 0);
+            attempts++;
+        }
+
+        console.log(`[WYSIWYG-BG] 选中 ${selectedClips.length} 个片段, 预计总时长: ${totalDur.toFixed(2)}s`);
+
+        if (selectedClips.length === 1) {
+            // 仅一个片段，直接处理
+            const clip = selectedClips[0];
+            if (clip.isImage) {
+                const args = ['-y', '-i', clip.path, '-vf', scaleCropFilter, '-frames:v', '1', `${framesDir}/frame_000001.png`];
+                await runFFmpegSync(ffmpeg, args);
+                return { framesDir, frameCount: 1 };
+            } else {
+                await extractSimpleLoop(ffmpeg, clip.path, framesDir, scaleCropFilter, fps, duration);
+            }
+        } else {
+            // 多片段拼接
+            const args = ['-y'];
+            for (const clip of selectedClips) {
+                if (clip.isImage) {
+                    args.push('-loop', '1', '-t', '5', '-i', clip.path);
+                } else {
+                    args.push('-i', clip.path);
+                }
+            }
+
+            // 构建 filter_complex
+            const filterParts = [];
+            
+            if (bgTransition !== 'none' && bgTransDur > 0) {
+                // 带转场的 xfade 拼接
+                const xfadeTransMap = {
+                    crossfade: 'fade',
+                    fade_black: 'fadeblack',
+                    fade_white: 'fadewhite',
+                    slide_left: 'slideleft',
+                    slide_right: 'slideright',
+                    wipe: 'wipeleft',
+                };
+                const xfadeTrans = xfadeTransMap[bgTransition] || 'fade';
+                const tDur = Math.max(0.1, bgTransDur);
+
+                // 预处理每个输入
+                for (let i = 0; i < selectedClips.length; i++) {
+                    filterParts.push(`[${i}:v]${scaleCropFilter},setpts=PTS-STARTPTS[v${i}]`);
+                }
+
+                // 链式 xfade
+                let prevLabel = 'v0';
+                let cumulativeOffset = 0;
+                for (let i = 1; i < selectedClips.length; i++) {
+                    cumulativeOffset += selectedClips[i - 1].duration - tDur;
+                    const outLabel = i === selectedClips.length - 1 ? 'vout' : `vx${i}`;
+                    const offset = Math.max(0, cumulativeOffset).toFixed(3);
+                    filterParts.push(
+                        `[${prevLabel}][v${i}]xfade=transition=${xfadeTrans}:duration=${tDur.toFixed(3)}:offset=${offset}[${outLabel}]`
+                    );
+                    prevLabel = outLabel;
+                }
+
+                args.push(
+                    '-filter_complex', filterParts.join(';'),
+                    '-map', `[${prevLabel}]`,
+                    '-t', String(duration),
+                    '-r', String(fps),
+                    '-an',
+                    `${framesDir}/frame_%06d.png`,
+                );
+            } else {
+                // 无转场: concat 硬切
+                for (let i = 0; i < selectedClips.length; i++) {
+                    filterParts.push(`[${i}:v]${scaleCropFilter},setpts=PTS-STARTPTS[v${i}]`);
+                }
+                const concatLabels = selectedClips.map((_, i) => `[v${i}]`).join('');
+                filterParts.push(`${concatLabels}concat=n=${selectedClips.length}:v=1:a=0[vout]`);
+
+                args.push(
+                    '-filter_complex', filterParts.join(';'),
+                    '-map', '[vout]',
+                    '-t', String(duration),
+                    '-r', String(fps),
+                    '-an',
+                    `${framesDir}/frame_%06d.png`,
+                );
+            }
+
+            console.log(`[WYSIWYG-BG] FFmpeg 多素材命令 (${selectedClips.length} clips)...`);
+            await runFFmpegSync(ffmpeg, args);
+        }
+
+        // 统计帧数
+        const files = fs.readdirSync(framesDir).filter(f => f.endsWith('.png'));
+        console.log(`[WYSIWYG-BG] 多素材帧提取完成: ${files.length} 帧`);
+        return { framesDir, frameCount: files.length };
+    }
+
+    // ═══ 单素材模式（原有逻辑）═══
+
     // 路径验证 + 自动搜索修复
     if (!backgroundPath) {
         throw new Error('背景素材路径为空');
     }
     if (!path.isAbsolute(backgroundPath) || !fs.existsSync(backgroundPath)) {
-        // backgroundPath 不是绝对路径或文件不存在，尝试自动搜索
         const bareFileName = path.basename(backgroundPath);
         console.log(`[WYSIWYG-BG] 背景路径无效，尝试搜索文件: "${bareFileName}"`);
         
@@ -152,37 +300,9 @@ async function prepareBg(opts) {
         }
     }
 
-    const ffmpeg = findFFmpeg();
-    const settings = require('./settings');
-    const framesDir = path.join(settings.getSecureTmpDir(), `reels_bg_${generateId()}`);
-    fs.mkdirSync(framesDir, { recursive: true });
-
     const isImage = isImageMedia(backgroundPath);
-    
-    // 构建缩放+裁切滤镜，支持 bgScale 参数
-    const scaleFactor = (bgScale || 100) / 100;
-    let scaleCropFilter;
-    if (Math.abs(scaleFactor - 1.0) < 0.01) {
-        // 默认 100%: 标准 cover 模式
-        scaleCropFilter = `scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=increase,crop=${targetWidth}:${targetHeight}`;
-    } else {
-        // 带缩放：先放大到 scaleFactor 倍的 cover 尺寸，再裁切到目标尺寸
-        // 例如 150% → 先 scale 到 1.5x cover 大小，crop 到 1080x1920（等效 zoom in）
-        // 50% → 先 scale 到 0.5x cover 大小，pad 到目标尺寸（等效 zoom out）
-        const scaledW = Math.round(targetWidth * scaleFactor);
-        const scaledH = Math.round(targetHeight * scaleFactor);
-        if (scaleFactor >= 1.0) {
-            // Zoom in: 放大后裁切
-            scaleCropFilter = `scale=${scaledW}:${scaledH}:force_original_aspect_ratio=increase,crop=${targetWidth}:${targetHeight}`;
-        } else {
-            // Zoom out: 缩小后黑边填充
-            scaleCropFilter = `scale=${scaledW}:${scaledH}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2:color=black`;
-        }
-        console.log(`[WYSIWYG-BG] 背景缩放: ${bgScale}%, filter: ${scaleCropFilter}`);
-    }
 
     if (isImage) {
-        // 图片背景：直接缩放 + 输出一帧（后续代码会重复使用）
         const args = [
             '-y', '-i', backgroundPath,
             '-vf', scaleCropFilter,
@@ -196,15 +316,13 @@ async function prepareBg(opts) {
     // 视频背景
     const bgDuration = await getMediaDuration(backgroundPath);
     const fadeEnabled = loopFade && bgDuration > 0;
-    const fadeDur = Math.min(loopFadeDur || 1.0, bgDuration * 0.4); // 不超过背景时长40%
+    const fadeDur = Math.min(loopFadeDur || 1.0, bgDuration * 0.4);
 
     if (fadeEnabled && bgDuration > 0 && duration > bgDuration) {
-        // 需要循环 + 淡入淡出（使用 xfade）
         const step = bgDuration - fadeDur;
-        const segCount = Math.min(Math.ceil(duration / step) + 1, 20); // 最多20段
+        const segCount = Math.min(Math.ceil(duration / step) + 1, 20);
 
         if (segCount >= 2) {
-            // 多路输入 + xfade
             const args = ['-y'];
             for (let i = 0; i < segCount; i++) {
                 args.push('-i', backgroundPath);
@@ -236,11 +354,9 @@ async function prepareBg(opts) {
             console.log(`[WYSIWYG-BG] xfade 循环: ${segCount}段, fadeDur=${fadeDur}s`);
             await runFFmpegSync(ffmpeg, args);
         } else {
-            // 段数不足，简单循环
             await extractSimpleLoop(ffmpeg, backgroundPath, framesDir, scaleCropFilter, fps, duration);
         }
     } else {
-        // 简单循环（无淡入淡出，或不需要循环）
         await extractSimpleLoop(ffmpeg, backgroundPath, framesDir, scaleCropFilter, fps, duration);
     }
 
@@ -279,14 +395,94 @@ function runFFmpegSync(ffmpeg, args) {
 }
 
 // ═══════════════════════════════════════════════════════
+// 阶段 1.5: 预处理视频/GIF覆层 → 提取原分辨率PNG帧序列 (保留Alpha透明度)
+// ═══════════════════════════════════════════════════════
+
+async function prepareOverlay(opts) {
+    let {
+        overlayPath,
+        fps = 30,
+        duration = 10,  // 需要提取的总时长（跟随背景或者设定视频时长）
+        trimStart = null,
+        trimEnd = null,
+    } = opts;
+
+    if (!overlayPath || !fs.existsSync(overlayPath)) {
+        throw new Error(`覆层视频不存在: ${overlayPath}`);
+    }
+
+    const ffmpeg = findFFmpeg();
+    const settings = require('./settings');
+    const crypto = require('crypto');
+    
+    // 生成基于文件内容元特征和提取参数的唯一哈希值
+    let cacheHash = `overlay_${generateId()}`;
+    try {
+        const stat = fs.statSync(overlayPath);
+        cacheHash = crypto.createHash('md5').update(`${overlayPath}_${stat.size}_${stat.mtimeMs}_${fps}_${duration}_${trimStart}_${trimEnd}`).digest('hex');
+    } catch(e) { /* fallback generates unique id */ }
+
+    const cacheBase = path.join(settings.getSecureTmpDir(), 'videokit_overlay_cache');
+    if (!fs.existsSync(cacheBase)) fs.mkdirSync(cacheBase, { recursive: true });
+    
+    const framesDir = path.join(cacheBase, cacheHash);
+
+    // [缓存击中逻辑]
+    if (fs.existsSync(framesDir)) {
+        const files = fs.readdirSync(framesDir).filter(f => f.endsWith('.png'));
+        if (files.length > 0) {
+            console.log(`[WYSIWYG-OVERLAY] 覆层缓存命中: ${files.length} 帧 (${framesDir})`);
+            return { framesDir, frameCount: files.length };
+        }
+    } else {
+        fs.mkdirSync(framesDir, { recursive: true });
+    }
+
+    // 动图/视频原分辨率提取，带流循环，输出为 PNG 保留 Alpha 透明度
+    // 只有动图和视频需要提取。对于单张图片不需要走到这一步。
+    const args = ['-y'];
+
+    // 如果指定了起止点，则不使用无限循环，而是精确截取
+    if (trimStart != null && trimStart !== '') {
+        args.push('-ss', String(trimStart));
+        let actualTrimDur = parseFloat(duration);
+        if (trimEnd != null && trimEnd !== '') {
+            actualTrimDur = Math.max(0, parseFloat(trimEnd) - parseFloat(trimStart));
+            duration = Math.min(parseFloat(duration), actualTrimDur); // 此时 duration 依然决定了最多提取多少秒
+        }
+    } else {
+        args.push('-stream_loop', '-1');  // 无 trim 时无线循环 
+    }
+
+    args.push(
+        '-i', overlayPath,
+        '-t', String(duration),
+        '-r', String(fps),
+        '-an',
+        `${framesDir}/frame_%06d.png`
+    );
+
+    await runFFmpegSync(ffmpeg, args);
+
+    const files = fs.readdirSync(framesDir).filter(f => f.endsWith('.png'));
+    console.log(`[WYSIWYG-OVERLAY] 覆层提取完成: ${files.length} 帧 (${framesDir})`);
+    return { framesDir, frameCount: files.length };
+}
+
+// ═══════════════════════════════════════════════════════
 // 阶段 2: FFmpeg 编码器会话管理
 // ═══════════════════════════════════════════════════════
+
+let _cachedGPUProbeResults = {};
 
 /**
  * 探测 GPU 编码器是否可用：试编码 3 帧纯色测试帧
  * 如果 GPU 编码器初始化失败（驱动/硬件不支持），快速返回 false
  */
 function _probeGPUEncoder(ffmpegPath, vcodec, encoderArgs, width, height, fps) {
+    if (_cachedGPUProbeResults[vcodec] !== undefined) {
+        return _cachedGPUProbeResults[vcodec];
+    }
     try {
         const settings = require('./settings');
         const testOut = settings.secureTmpFile('gpu_probe', '.mp4');
@@ -313,10 +509,12 @@ function _probeGPUEncoder(ffmpegPath, vcodec, encoderArgs, width, height, fps) {
 
         if (testProc.status === 0) {
             console.log(`[WYSIWYG] GPU 编码器 ${vcodec} 可用 ✓`);
+            _cachedGPUProbeResults[vcodec] = true;
             return true;
         } else {
             const stderr = (testProc.stderr || '').toString().slice(-500);
             console.warn(`[WYSIWYG] GPU 编码器 ${vcodec} 不可用 (code=${testProc.status}): ${stderr}`);
+            _cachedGPUProbeResults[vcodec] = false;
             return false;
         }
     } catch (e) {
@@ -365,7 +563,9 @@ async function startSession(opts) {
     // 编码器选择：GPU 硬件加速 vs CPU（带自动回退）
     let encoderArgs;
     const platform = process.platform;
-    const cpuFallbackArgs = ['-c:v', 'libx264', '-preset', 'medium', '-crf', '15'];
+    const qualityPreset = opts.qualityPreset || 'faster';
+    const crf = opts.crf || 23;
+    const cpuFallbackArgs = ['-c:v', 'libx264', '-preset', qualityPreset, '-crf', String(crf)];
     let gpuFailed = false;
 
     if (useGPU) {
@@ -378,10 +578,18 @@ async function startSession(opts) {
                 gpuFailed = true;
             }
         } else if (platform === 'win32') {
-            const gpuArgs = ['-c:v', 'h264_nvenc', '-preset', 'p5', '-cq', '15', '-b:v', '0'];
-            if (_probeGPUEncoder(ffmpeg, 'h264_nvenc', gpuArgs, width, height, fps)) {
-                encoderArgs = gpuArgs;
-                console.log(`[WYSIWYG] 使用 GPU 编码 (NVENC, CQ=15)`);
+            const nvencArgs = ['-c:v', 'h264_nvenc', '-preset', 'p5', '-cq', '15', '-b:v', '0'];
+            const amfArgs = ['-c:v', 'h264_amf'];
+            const qsvArgs = ['-c:v', 'h264_qsv'];
+            if (_probeGPUEncoder(ffmpeg, 'h264_nvenc', nvencArgs, width, height, fps)) {
+                encoderArgs = nvencArgs;
+                console.log(`[WYSIWYG] 使用 GPU 编码 (NVENC, NVIDIA)`);
+            } else if (_probeGPUEncoder(ffmpeg, 'h264_amf', amfArgs, width, height, fps)) {
+                encoderArgs = amfArgs;
+                console.log(`[WYSIWYG] 使用 GPU 编码 (AMF, AMD)`);
+            } else if (_probeGPUEncoder(ffmpeg, 'h264_qsv', qsvArgs, width, height, fps)) {
+                encoderArgs = qsvArgs;
+                console.log(`[WYSIWYG] 使用 GPU 编码 (QSV, Intel)`);
             } else {
                 gpuFailed = true;
             }
@@ -1045,6 +1253,12 @@ function cleanup(session) {
 
 function cleanupBg(framesDir) {
     if (!framesDir || !fs.existsSync(framesDir)) return;
+    
+    // 覆层的 PNG 序列作为长期重复使用的资源，不在这里直接随临时目录清理（依赖外部应用清理或用户手动清理临时区）
+    if (framesDir.includes('videokit_overlay_cache')) {
+        return;
+    }
+
     try {
         const files = fs.readdirSync(framesDir);
         for (const f of files) {
@@ -1063,6 +1277,29 @@ function cleanupBg(framesDir) {
 
 async function handleWysiwygIPC(action, data) {
     switch (action) {
+        case 'probe-gpu': {
+            const ffmpeg = findFFmpeg();
+            const platform = process.platform;
+            if (platform === 'darwin') {
+                const ok = _probeGPUEncoder(ffmpeg, 'h264_videotoolbox', ['-c:v', 'h264_videotoolbox', '-b:v', '1M'], 256, 256, 30);
+                let chipName = 'Apple VT';
+                try {
+                    const cpuModel = require('os').cpus()[0].model;
+                    if (cpuModel.toLowerCase().includes('apple')) {
+                        chipName = cpuModel + ' (VT)';
+                    }
+                } catch(e) {}
+                return { available: ok, name: ok ? chipName : 'CPU' };
+            } else if (platform === 'win32') {
+                if (_probeGPUEncoder(ffmpeg, 'h264_nvenc', ['-c:v', 'h264_nvenc', '-b:v', '1M'], 256, 256, 30)) return { available: true, name: 'Nvidia NVENC' };
+                if (_probeGPUEncoder(ffmpeg, 'h264_amf', ['-c:v', 'h264_amf'], 256, 256, 30)) return { available: true, name: 'AMD AMF' };
+                if (_probeGPUEncoder(ffmpeg, 'h264_qsv', ['-c:v', 'h264_qsv'], 256, 256, 30)) return { available: true, name: 'Intel QSV' };
+                return { available: false, name: 'CPU' };
+            }
+            return { available: false, name: 'CPU' };
+        }
+        case 'prepare-overlay':
+            return prepareOverlay(data);
         case 'prepare-bg':
             return prepareBg(data);
         case 'start':

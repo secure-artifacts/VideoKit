@@ -1,5 +1,5 @@
 /**
- * reels-batch-table.js — 批量文案卡片表格管理
+ * reels-batch-table.js — 批量文字卡片表格管理
  *
  * 表格驱动的批量生产面板：
  *   - 每行 = 一个 Reel 任务
@@ -36,6 +36,10 @@ const _batchTableState = {
     // ── 批量选择 ──
     selectedRows: new Set(),
     actionsCollapsed: false,
+    mediaPoolOpen: false,
+    // ── 工程管理 ──
+    projectDir: '',
+    projectName: 'UntitledProject.json',
 };
 
 // ── 标签页辅助 ──
@@ -288,7 +292,7 @@ function _initLangPicker(container) {
                  style="padding:6px 12px;cursor:pointer;font-size:12px;color:#ccc;
                         border-bottom:1px solid rgba(255,255,255,0.04);
                         display:flex;justify-content:space-between;align-items:center;
-                        ${hiddenInput.value === l.name ? 'background:rgba(0,212,255,0.12);color:#00D4FF;' : ''}
+                        ${hiddenInput.value === l.name ? 'background:rgba(0,212,255,0.12);color:var(--accent);' : ''}
                         ${l.pinned ? 'font-weight:600;' : ''}">
                 <span>${l.name}</span>
                 <span style="font-size:10px;color:#666;">${l.en}</span>
@@ -357,6 +361,11 @@ function _renderBatchTable() {
     const state = window._reelsState;
     if (!state) return;
 
+    // ── 保存滚动位置（在 innerHTML 销毁前） ──
+    const oldScrollWrap = container.querySelector('.rbt-table-wrap');
+    const _savedScrollTop = oldScrollWrap ? oldScrollWrap.scrollTop : 0;
+    const _savedScrollLeft = oldScrollWrap ? oldScrollWrap.scrollLeft : 0;
+
     // DEBUG: 追踪 bgScale 持久化
     const _dbgScales = (state.tasks || []).slice(0, 3).map((t, i) => `[${i}] bgScale=${t.bgScale} bgDur=${t.bgDurScale} audioDur=${t.audioDurScale}`);
     console.log('[BatchTable._renderBatchTable] 渲染前 task scales:', _dbgScales.join(', '));
@@ -388,130 +397,226 @@ function _renderBatchTable() {
     const batchSubOpts = subtitlePresets.map(t =>
         `<option value="${_escHtml(t)}">${_escHtml(t)}</option>`
     ).join('');
+
     const batchCardOpts = cardTemplates.map(t =>
         `<option value="${_escHtml(t.name)}">${_escHtml(t.name)} (${t.count}层)</option>`
     ).join('');
 
     container.innerHTML = `
         <div class="rbt-panel">
-            <!-- ═══ 标签栏 ═══ -->
-            <div class="rbt-tabbar">
-                <div class="rbt-tabs-scroll">
+            <!-- ═══ 标签栏与工程管理 ═══ -->
+            <div class="rbt-tabbar" style="display:flex; justify-content:space-between; align-items:center;">
+                <div class="rbt-tabs-scroll" style="flex:1;">
                     ${tabsHtml}
                     <div class="rbt-tab rbt-tab-add" title="新建标签页">＋</div>
                 </div>
-            </div>
-
-            <!-- ═══ 素材文件夹 + 刷新 ═══ -->
-            <div class="rbt-material-bar">
-                <span style="font-size:12px;color:#888;">📁 素材文件夹:</span>
-                <span class="rbt-mat-path" title="${_escHtml(matDir)}">${matDirShort || '<i style="color:#555">未设置</i>'}</span>
-                <button class="rbt-btn" id="rbt-select-mat-dir" style="font-size:11px;padding:3px 10px;">📂 选择</button>
-                <button class="rbt-btn rbt-btn-refresh" id="rbt-refresh-mat" title="扫描文件夹并同步最新素材" ${!matDir ? 'disabled' : ''}>🔄 一键刷新</button>
-                ${lastRefresh ? `<span class="rbt-refresh-time">上次刷新: ${lastRefresh}</span>` : ''}
-                <span style="flex:1"></span>
-                <button id="rbt-toggle-actions-btn" style="background:#222; border:1px solid #333; color:#ccc; padding:2px 8px; border-radius:4px; font-size:11px; cursor:pointer;" title="隐藏/显示操作面板">${_batchTableState.actionsCollapsed ? '🔽 展开操作面板' : '🔼 收起操作面板'}</button>
-            </div>
-
-            <div class="rbt-header" style="align-items: flex-start;">
-
-                <div class="rbt-actions" style="display:${_batchTableState.actionsCollapsed ? 'none' : 'flex'}; flex-direction:column; gap:6px; align-items:flex-start;">
-                    <!-- Line 1: 文件/素材加载 (File & Assets Load) -->
-                    <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
-                        <button class="rbt-btn" id="rbt-upload-folder" title="选择文件夹，自动按文件类型分类+同名配对">📂 导入素材 (整个文件夹)</button>
-                        <button class="rbt-btn" id="rbt-upload-bg" title="批量添加背景素材（图片/视频）">🖼 批量导入背景</button>
-                        <button class="rbt-btn" id="rbt-set-bgm-btn" title="选择一篇配乐，应用到所有勾选的行">🎵 导入统一配乐</button>
-                        <span class="rbt-sep"></span>
-                        <button class="rbt-btn" id="rbt-upload-audio" title="批量添加人声音频">🔊 批量导入人声</button>
-                        <button class="rbt-btn" id="rbt-upload-srt" title="批量加载SRT字幕文件，按顺序或同名分配到各行">📝 批量导入srt</button>
-                        <button class="rbt-btn" id="rbt-upload-txt" title="批量加载人声文案TXT文件">📃 批量导入人声字幕txt</button>
-                    </div>
-
-                    <!-- Line 2: 分配规则与预设 (Allocation Rules) -->
-                    <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
-                        <button class="rbt-btn" id="rbt-upload-hook" title="批量配置选中行的前置视频和转场">🪝 批量设置钩子视频</button>
-                        <button class="rbt-btn" id="rbt-cycle-fill-btn" title="将素材池按权重交错分配到各行，自动避免相邻重复">🔄 素材循环使用设置</button>
-                        <label title="开启后，拖入视频按下方模式分配" style="display:flex;align-items:center;gap:4px;font-size:11px;color:#ccc;background:#222;border:1px solid #333;border-radius:4px;padding:3px 8px;cursor:pointer;">
-                            <input type="checkbox" id="rbt-video-drop-route-enabled" ${_batchTableState.videoDropRouteEnabled ? 'checked' : ''}>
-                            视频分配模式
-                        </label>
-                        <select id="rbt-video-drop-route-mode" style="font-size:11px;padding:3px 6px;background:#222;color:#ccc;border:1px solid #333;border-radius:4px;${_batchTableState.videoDropRouteEnabled ? '' : 'opacity:.6;'}" ${_batchTableState.videoDropRouteEnabled ? '' : 'disabled'}>
-                            <option value="hook" ${_batchTableState.videoDropRouteMode === 'hook' ? 'selected' : ''}>🪝 视频→前置Hook</option>
-                            <option value="bg" ${_batchTableState.videoDropRouteMode === 'bg' ? 'selected' : ''}>🎬 视频→背景</option>
-                            <option value="audio" ${_batchTableState.videoDropRouteMode === 'audio' ? 'selected' : ''}>🎙 视频→人声</option>
-                        </select>
-                    </div>
-
-                    <!-- Line 3: 表格快捷录入 (Quick Paste & Fill) -->
-                    <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
-                        <button class="rbt-btn" id="rbt-paste-txtcontent" title="从表格复制文案，批量粘贴到「字幕文本」列">📋 粘贴字幕文本</button>
-                        <button class="rbt-btn" id="rbt-paste-btn" title="从 Google 表格粘贴标题+内容">📋 粘贴覆层文案</button>
-                        <button class="rbt-btn" id="rbt-paste-scroll-btn" title="从 Google 表格粘贴滚动字幕标题+内容">🔄 粘贴滚动字幕</button>
-                    </div>
-
-                    <!-- Line 4: 对齐生成 (Alignment Automation) -->
-                    <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
-                        <select id="rbt-align-source" style="font-size:11px;padding:3px 6px;background:#222;color:#ccc;border:1px solid #333;border-radius:4px;">
-                            <option value="audio">🎙 用人声对齐</option>
-                            <option value="video">🎬 用视频对齐</option>
-                        </select>
-                        <div style="position:relative;display:inline-block;" id="rbt-lang-picker-wrap">
-                            <button id="rbt-lang-picker-btn" style="font-size:11px;padding:3px 10px;background:#222;color:#ccc;border:1px solid #333;border-radius:4px;cursor:pointer;min-width:90px;text-align:left;">英语 ▾</button>
-                            <input type="hidden" id="rbt-align-lang" value="英语">
-                            <div id="rbt-lang-dropdown" style="display:none;position:absolute;top:100%;left:0;z-index:9999;background:#222;border:1px solid #333;border-radius:6px;width:220px;max-height:320px;box-shadow:0 8px 24px rgba(0,0,0,0.6);overflow:hidden;">
-                                <input id="rbt-lang-search" type="text" placeholder="🔍 搜索语言..." style="width:100%;box-sizing:border-box;padding:6px 10px;border:none;border-bottom:1px solid #333;background:#1a1a1a;color:#ddd;font-size:12px;outline:none;">
-                                <div id="rbt-lang-list" style="max-height:270px;overflow-y:auto;"></div>
-                            </div>
-                        </div>
-                        <button class="rbt-btn" id="rbt-align-all-btn" title="对齐所有有文案的任务，生成字幕时间轴">🔗 一键对齐字幕</button>
-                        <label style="display:flex;align-items:center;gap:3px;font-size:10px;color:#888;cursor:pointer;">
-                            <input type="checkbox" id="rbt-force-realign"> 强制重新对齐
-                        </label>
-                    </div>
-
-                    <!-- Line 5: 工程与系统管理 (Project Management & Settings) -->
-                    <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
-                        <button class="rbt-btn" id="rbt-add-row-btn" title="添加空行">➕ 添加行</button>
-                        <button class="rbt-btn rbt-btn-danger" id="rbt-clear-btn" title="清空当前标签页所有行">🧹 清空</button>
-                        <span class="rbt-sep"></span>
-                        <button class="rbt-btn" id="rbt-save-config-btn" title="导出所有标签页配置为JSON工程文件">💾 保存工程</button>
-                        <button class="rbt-btn" id="rbt-load-config-btn" title="从JSON工程文件恢复所有标签页">📂 加载工程</button>
-                        <input type="file" id="rbt-file-config" class="rbt-hidden-input" accept=".json">
-                        <span class="rbt-sep"></span>
-                        <button class="rbt-btn" id="rbt-col-settings-btn" title="设置显示哪些列">⚙️ 列设置</button>
-                        <button class="rbt-btn" id="rbt-close-btn" title="关闭表格">✕ 关闭界面</button>
-                    </div>
+                <div style="padding-right:12px; display:flex; align-items:center; gap:8px;">
+                    <span style="font-size:11px;color:#888;">📦 当前工程:</span>
+                    <span id="rbt-project-mgr-btn" style="font-size:12px;color:var(--accent);cursor:pointer;text-decoration:underline;font-weight:bold;" title="点击设置保存目录与管理多工程">${_escHtml(_batchTableState.projectName || 'UntitledProject.json')}</span>
                 </div>
             </div>
 
-            <!-- ═══ 批量选择操作栏 ═══ -->
-            <div class="rbt-batch-actions-bar" id="rbt-batch-bar">
-                <label class="rbt-batch-label"><input type="checkbox" id="rbt-select-all"> 全选</label>
-                <button class="rbt-btn" id="rbt-invert-select" style="font-size:10px;padding:2px 8px;">反选</button>
-                <button class="rbt-btn" id="rbt-deselect-all" style="font-size:10px;padding:2px 8px;">取消</button>
-                <span class="rbt-sep"></span>
-                <span style="font-size:11px;color:#888;">批量设置:</span>
-                <select id="rbt-batch-sub-tpl" class="rbt-select" style="width:120px;font-size:11px;">
-                    <option value="">字幕模板...</option>
-                    ${batchSubOpts}
-                </select>
-                <button class="rbt-btn" id="rbt-apply-batch-sub" style="font-size:10px;padding:2px 8px;">应用</button>
-                <select id="rbt-batch-card-tpl" class="rbt-select" style="width:140px;font-size:11px;">
-                    <option value="">覆层预设...</option>
-                    ${batchCardOpts}
-                </select>
-                <button class="rbt-btn" id="rbt-apply-batch-card" style="font-size:10px;padding:2px 8px;">应用</button>
-                <span class="rbt-sep"></span>
-                <button class="rbt-btn rbt-btn-danger" id="rbt-clear-overlay-btn" style="font-size:10px;padding:2px 8px;" title="清空勾选行的覆层标题/内容/结尾（未勾选则清空全部）">🧹 清空覆层</button>
-                <span class="rbt-sep"></span>
-                <span style="font-size:11px;color:#888;">缩放:</span>
-                <label style="display:flex;align-items:center;gap:2px;font-size:10px;color:#4fc3f7;" title="批量设置选中行的背景图片缩放">🔍<input type="number" id="rbt-batch-bgscale" min="50" max="300" value="100" step="5" style="width:40px;font-size:10px;padding:1px 2px;background:#1a1a3a;color:#4fc3f7;border:1px solid #4a6a8a;border-radius:3px;text-align:center;">%</label>
-                <label style="display:flex;align-items:center;gap:2px;font-size:10px;color:#81c784;" title="批量设置选中行的背景素材时长缩放">⏱🖼<input type="number" id="rbt-batch-bgdurscale" min="10" max="500" value="100" step="5" style="width:40px;font-size:10px;padding:1px 2px;background:#1a1a3a;color:#81c784;border:1px solid #4a6a8a;border-radius:3px;text-align:center;">%</label>
-                <label style="display:flex;align-items:center;gap:2px;font-size:10px;color:#ffb74d;" title="批量设置选中行的人声音频素材时长缩放">⏱🔊<input type="number" id="rbt-batch-audiodurscale" min="10" max="500" value="100" step="5" style="width:40px;font-size:10px;padding:1px 2px;background:#1a1a3a;color:#ffb74d;border:1px solid #4a6a8a;border-radius:3px;text-align:center;">%</label>
-                <button class="rbt-btn" id="rbt-apply-batch-scale" style="font-size:10px;padding:2px 8px;">应用缩放</button>
-                <span class="rbt-sep"></span>
-                <button class="rbt-btn rbt-btn-accent" id="rbt-export-selected-btn" style="font-size:10px;padding:2px 8px;display:none;" title="仅将勾选的行导出到主任务列表（表格数据不变）">📤 仅导出选中行</button>
-                <span id="rbt-selected-count" style="font-size:11px;color:#00D4FF;margin-left:8px;"></span>
+            <!-- ═══ Body Split: Media Sidebar + Main Content ═══ -->
+            <div class="rbt-body-row">
+
+            ${_batchTableState.mediaPoolOpen ? `
+            <!-- ═══ LEFT: Media Pool Sidebar ═══ -->
+            <div class="rbt-media-sidebar" id="rbt-media-sidebar">
+                <div class="rbt-ms-header">
+                    <span style="font-weight:bold; color:var(--accent-color); font-size:13px;">🗃️ 素材池</span>
+                    <button id="rbt-close-media-sidebar" class="rbt-btn" style="padding:1px 6px; font-size:10px; background:#3a2020; border-color:#5a3030; color:#f87171;">✕</button>
+                </div>
+                <div class="rbt-ms-resize-handle" id="rbt-ms-resize"></div>
+                <div class="rbt-ms-actions">
+                    <button class="rbt-btn rbt-ms-btn" id="rbt-ms-import-files" title="选择多个文件">📄 文件</button>
+                    <button class="rbt-btn rbt-ms-btn" id="rbt-ms-import-folder" title="选择文件夹，拆散其中所有文件">📁 目录</button>
+                    <button class="rbt-btn rbt-ms-btn" id="rbt-ms-import-seq" title="整个目录作为一个序列帧素材">🎞️ 序列帧</button>
+                </div>
+                <div class="rbt-ms-linked-dir">
+                    <div style="font-size:10px; color:#555; font-weight:bold; margin-bottom:4px;">🔗 绑定文件夹</div>
+                    <div style="display:flex; gap:4px; align-items:center;">
+                        <span id="rbt-ms-dir-path" style="flex:1; font-size:10px; color:#888; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${_escHtml(matDir)}">${matDirShort || '<i style="color:#555">未绑定</i>'}</span>
+                        <button class="rbt-btn" id="rbt-ms-select-dir" style="padding:1px 6px; font-size:9px;">📂</button>
+                        <button class="rbt-btn" id="rbt-ms-refresh-dir" style="padding:1px 6px; font-size:9px; background:#1a3a2a; border-color:#2a5a3a; color:#8f8;" ${!matDir ? 'disabled' : ''}>🔄</button>
+                    </div>
+                    ${lastRefresh ? `<div style="font-size:9px; color:#555; margin-top:2px;">上次: ${lastRefresh}</div>` : ''}
+                </div>
+                <div class="rbt-ms-filters" id="rbt-ms-filter-list">
+                    <div class="rbt-ms-filter active" data-filter="all">📁 全部 <span class="rbt-ms-count">(0)</span></div>
+                    <div class="rbt-ms-section">[ 视觉 ]</div>
+                    <div class="rbt-ms-filter" data-filter="bg">🖼️ 背景</div>
+                    <div class="rbt-ms-filter" data-filter="overlay">🎬 覆层</div>
+                    <div class="rbt-ms-filter" data-filter="hook">🪝 钩子</div>
+                    <div class="rbt-ms-filter" data-filter="universal">♾️ 通用</div>
+                    <div class="rbt-ms-section">[ 音频 ]</div>
+                    <div class="rbt-ms-filter" data-filter="voice">🎙 人声</div>
+                    <div class="rbt-ms-filter" data-filter="bgm">🎵 配乐</div>
+                    <div class="rbt-ms-section">[ 文本 ]</div>
+                    <div class="rbt-ms-filter" data-filter="text">📝 字幕</div>
+                </div>
+                <div class="rbt-ms-bulk">
+                    <select class="rbt-select" id="rbt-ms-bulk-role" style="width:100%; height:24px; font-size:11px;">
+                        <option value="">-- 批量改角色 --</option>
+                        <option value="bg">🖼 背景素材</option>
+                        <option value="overlay">🎬 视频覆层</option>
+                        <option value="hook">🪝 钩子视频</option>
+                        <option value="universal">♾️ 通用视觉</option>
+                        <option value="voice">🎙 人声配音</option>
+                        <option value="bgm">🎵 全局配乐</option>
+                    </select>
+                    <button class="rbt-btn" id="rbt-ms-apply-bulk" style="width:100%; margin-top:4px; font-size:11px;">应用角色</button>
+                </div>
+                <div class="rbt-ms-pool" id="rbt-ms-pool">
+                    <div style="color:#555; font-size:12px; text-align:center; padding:20px 8px;">
+                        📥 拖拽文件到此处<br>或点击上方按钮导入
+                    </div>
+                </div>
+                <div class="rbt-ms-footer">
+                    <button class="rbt-btn" id="rbt-ms-clear" style="width:100%; border-color:rgba(239,68,68,0.3); color:#f87171; font-size:11px;">🧹 清空素材池</button>
+                </div>
+            </div>
+            ` : ''}
+
+            <!-- ═══ RIGHT: Main Task Content ═══ -->
+            <div class="rbt-main-col">
+
+            <div style="display:flex; align-items:center; padding:4px 12px; border-bottom:1px solid #1a1a3a; background:#101028; gap:8px;">
+                <button id="rbt-toggle-actions-btn" style="background:#222; border:1px solid #333; color:#ccc; padding:2px 8px; border-radius:4px; font-size:11px; cursor:pointer;" title="隐藏/显示操作面板">${_batchTableState.actionsCollapsed ? '🔽 展开操作面板' : '🔼 收起操作面板'}</button>
+                <span style="flex:1;"></span>
+                ${!_batchTableState.mediaPoolOpen && matDir ? `<span style="font-size:10px; color:#666;">📁 ${_escHtml(matDirShort)}</span>` : ''}
+            </div>
+
+            <div class="rbt-header" style="height:auto; max-height:none; padding:8px 12px; flex-direction:column; gap:6px; align-items:stretch;">
+                <div id="rbt-actions-wrapper" style="display:${_batchTableState.actionsCollapsed ? 'none' : 'flex'}; flex-direction:column; gap:0;">
+                
+                    <!-- === 1. 基础系统与工程管理 === -->
+                    <div class="rbt-actions" style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:6px; margin-bottom:6px;">
+                        <span style="font-size:11px;color:#aaa;font-weight:bold;margin-right:4px;">工程管理:</span>
+                        <button class="rbt-btn" id="rbt-add-row-btn" style="padding:2px 8px;font-size:11px;background:rgba(40,80,40,0.6);border:1px solid rgba(80,180,80,0.3);color:#a0e0b0;">添加行</button>
+                        <button class="rbt-btn" id="rbt-clear-btn" style="padding:2px 8px;font-size:11px;background:rgba(120,40,40,0.6);border:1px solid rgba(220,80,80,0.3);color:#f48484;" title="清空全部">清空</button>
+                        <span style="color:rgba(255,255,255,0.2);margin:0 2px;">|</span>
+                        <button class="rbt-btn" id="rbt-save-config-btn" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;">保存工程</button>
+                        <button class="rbt-btn" id="rbt-load-config-btn" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;">加载工程</button>
+                        <input type="file" id="rbt-file-config" class="rbt-hidden-input" accept=".json">
+                        <span style="color:rgba(255,255,255,0.2);margin:0 2px;">|</span>
+                        <button class="rbt-btn" id="rbt-col-settings-btn" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;">列设置</button>
+                        <button class="rbt-btn" id="rbt-close-btn" style="padding:2px 8px;font-size:11px;background:rgba(120,40,40,0.6);border:1px solid rgba(220,80,80,0.3);color:#f48484;">关闭界面</button>
+                    </div>
+
+                    <!-- === 2. 核心数据调度与录入 === -->
+                    <div class="rbt-actions" style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:6px; margin-bottom:6px;">
+                        <span style="font-size:11px;color:#aaa;font-weight:bold;margin-right:4px;">数据录入:</span>
+                        <button id="rbt-open-media-pool-btn" class="rbt-btn" style="background:${_batchTableState.mediaPoolOpen ? 'rgba(50,70,160,0.6)' : 'rgba(40,60,120,0.6)'}; color:#9bb0ff; border:1px solid rgba(80,120,220,0.3); font-size:11px; padding:2px 8px;">${_batchTableState.mediaPoolOpen ? '收起素材池' : '打开素材池'}</button>
+                        <button class="rbt-btn" id="rbt-cycle-fill-btn" style="background:rgba(255,255,255,0.05); color:#ccc; border:1px solid rgba(255,255,255,0.1); padding:2px 8px; font-size:11px;" title="打开素材循环填充面板">素材使用设置</button>
+                        <span style="color:rgba(255,255,255,0.2);margin:0 2px;">|</span>
+                        <button class="rbt-btn" id="rbt-paste-txtcontent" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;" title="从剪贴板粘贴到人声字幕列">粘贴人声对齐字幕</button>
+                        <button class="rbt-btn" id="rbt-paste-btn" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;" title="从 Google 表格粘贴覆层文案(支持标题/内容/结尾多列格式)">粘贴覆层文案</button>
+                        <button class="rbt-btn" id="rbt-paste-scroll-btn" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;" title="从 Google 表格批量粘贴滚动字幕">粘贴滚动字幕</button>
+                        <button class="rbt-btn" id="rbt-paste-clip-ab" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;" title="A/B双版文案">粘贴剪辑文案 (A/B版)</button>
+                    </div>
+
+                    <!-- === 4. 批量参数修剪 (Scaling) === -->
+                    <div class="rbt-actions" style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:6px; margin-bottom:6px;">
+                        <span style="font-size:11px;color:#aaa;font-weight:bold;margin-right:4px;">整体参数缩放:</span>
+                        <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#ccc;" title="批量设置选中行的背景图片缩放">BG
+                            <input type="number" id="rbt-batch-bgscale" min="50" max="300" value="100" step="5" style="width:45px;background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);color:#ccc;padding:2px;font-size:11px;text-align:center;"> %
+                        </label>
+                        <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#ccc;" title="批量设置选中行的背景素材时长缩放">BG时长
+                            <input type="number" id="rbt-batch-bgdurscale" min="10" max="500" value="100" step="5" style="width:45px;background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);color:#ccc;padding:2px;font-size:11px;text-align:center;"> %
+                        </label>
+                        <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#ccc;" title="批量设置选中行的人声音频素材时长缩放">音频时长
+                            <input type="number" id="rbt-batch-audiodurscale" min="10" max="500" value="100" step="5" style="width:45px;background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);color:#ccc;padding:2px;font-size:11px;text-align:center;"> %
+                        </label>
+                        <button class="rbt-btn" id="rbt-apply-batch-scale" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;">应用缩放</button>
+                    </div>
+
+                    <!-- === 5. AI与配音网络引擎 (AI & Voices) === -->
+                    <div class="rbt-actions" style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:6px; margin-bottom:6px;">
+                        <span style="font-size:11px;color:#aaa;font-weight:bold;margin-right:4px;">人声流水线:</span>
+                        <span style="font-size:11px;color:#888;">AI模型:</span>
+                        <select id="rbt-tts-model" class="rbt-select" style="width:145px;height:24px;font-size:11px;padding:0 4px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);color:#ccc;">
+                            <option value="eleven_v3">v3 (情感标签)</option>
+                            <option value="eleven_turbo_v2_5">Eleven Turbo v2.5</option>
+                            <option value="eleven_multilingual_v2">Eleven Multilingual v2</option>
+                            <option value="eleven_monolingual_v1">Eleven Monolingual v1</option>
+                        </select>
+                        <span style="font-size:11px;color:#888;">配音底色:</span>
+                        <select id="rbt-tts-default-voice" class="rbt-select" style="width:110px;height:24px;font-size:11px;padding:0 4px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);color:#ccc;"><option value="">-- 选择默认音色 --</option></select>
+                        <button class="rbt-btn" id="rbt-refresh-voices-btn" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;" title="刷新列表">刷新</button>
+                        <button class="rbt-btn" id="rbt-apply-voice-all-btn" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;" title="应用全部空行">应用全部</button>
+                        <span style="color:rgba(255,255,255,0.2);margin:0 2px;">|</span>
+                        <button class="rbt-btn" id="rbt-paste-ai-raw-btn" style="font-size:11px;padding:2px 8px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;">粘贴AI原文案</button>
+                        <button class="rbt-btn" id="rbt-paste-tts-btn" style="font-size:11px;padding:2px 8px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;">粘贴TTS素材</button>
+                        <!-- 幽灵事件锚点 -->
+                        <div style="display:none;">
+                            <button id="rbt-ai-gemini-btn"></button><button id="rbt-ai-tts-all-btn"></button><button id="rbt-ai-auto-all-btn"></button><button id="rbt-export-selected-btn"></button>
+                        </div>
+                    </div>
+
+                    <!-- === 6. 字幕对齐后处理 (Alignment) === -->
+                    <div class="rbt-actions" style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:6px; margin-bottom:6px;">
+                        <span style="font-size:11px;color:#aaa;font-weight:bold;margin-right:4px;">对齐设定:</span>
+                        <select id="rbt-align-source" class="rbt-select" style="width:auto;height:24px;font-size:11px;padding:0 4px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);color:#ccc;">
+                            <option value="audio">用人声对齐</option>
+                            <option value="video">视频对齐</option>
+                        </select>
+                        <select id="rbt-align-txt-col" class="rbt-select" style="width:auto;height:24px;font-size:11px;padding:0 4px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);color:#ccc;">
+                            <option value="txtContent">选列：[人声字幕]</option>
+                            <option value="ttsText">选列：[TTS文案]</option>
+                            <option value="overlay_title">选列：[覆层标题]</option>
+                            <option value="overlay_body">选列：[覆层内容]</option>
+                        </select>
+                        <div style="position:relative;display:flex;align-items:center;">
+                            <button class="rbt-btn" id="rbt-lang-picker-btn" style="padding:2px 8px;font-size:11px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);color:#ccc;width:95px;display:flex;justify-content:space-between;align-items:center;height:24px;">英语 ▾</button>
+                            <div id="rbt-lang-dropdown" style="display:none;position:absolute;top:100%;left:0;margin-top:4px;width:180px;background:#101028;border:1px solid rgba(255,255,255,0.15);border-radius:4px;z-index:9999;box-shadow:0 8px 32px rgba(0,0,0,0.8);">
+                                <div style="padding:4px;border-bottom:1px solid rgba(255,255,255,0.05);background:rgba(0,0,0,0.2);">
+                                    <input type="text" id="rbt-lang-search" placeholder="搜索语种..." style="width:100%;background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);color:#fff;padding:2px 6px;font-size:11px;border-radius:2px;box-sizing:border-box;">
+                                </div>
+                                <div id="rbt-lang-list" style="max-height:220px;overflow-y:auto;"></div>
+                            </div>
+                            <input type="hidden" id="rbt-align-lang" value="英语">
+                        </div>
+                        <button class="rbt-btn" id="rbt-align-all-btn" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;">一键对齐字幕</button>
+                        <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#999;cursor:pointer;"><input type="checkbox" id="rbt-force-realign" style="margin:0;transform:scale(0.8);"> 强制覆盖已对齐任务</label>
+                    </div>
+
+                    <!-- === 7. 终极任务执行台 (Execution Block) === -->
+                    <div class="rbt-actions" style="display:flex; gap:8px; align-items:center; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:6px; margin-bottom:6px;">
+                        <span style="font-size:11px; color:#aaa; font-weight:bold; margin-right:4px;">执行动作:</span>
+                        <select id="rbt-unified-execute-mode" class="rbt-select" style="width:auto; height:24px; font-size:11px; background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.1); border-radius:4px; padding:0 8px; color:#ccc; cursor:pointer; outline:none;">
+                            <option value="rbt-ai-auto-all-btn">一键: 执行AI大全家桶 (改写+配音合成+对齐生成)</option>
+                            <option value="rbt-ai-gemini-btn">分步: 仅执行 AI 改写及处理文案</option>
+                            <option value="rbt-ai-tts-all-btn">分步: 仅执行 批量生成配音及本地时间轴提取</option>
+                        </select>
+                        <button class="rbt-btn" id="rbt-unified-execute-btn" style="background:rgba(255,255,255,0.1); color:#fff; border:1px solid rgba(255,255,255,0.2); font-size:11px; padding:2px 16px; border-radius:4px; cursor:pointer;">启动流水线执行</button>
+                        <button class="rbt-btn" id="rbt-ai-settings-btn" style="padding:2px 10px;font-size:11px;background:rgba(168,85,247,0.15);border:1px solid rgba(168,85,247,0.3);color:#a78bfa;border-radius:4px;cursor:pointer;" title="配置 Gemini API Key 和自定义 Prompt 指令">⚙️ AI设置</button>
+                    </div>
+
+                    <!-- === 8. 批量模板配置 (Select/Preset/Templates) === -->
+                    <div class="rbt-actions" id="rbt-batch-bar" style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:0; padding-bottom:0; border-bottom:none;">
+                        <span style="font-size:11px;color:#aaa;font-weight:bold;margin-right:4px;">批量预设:</span>
+                        <label style="display:flex;align-items:center;font-size:11px;color:#ccc;cursor:pointer;gap:4px;"><input type="checkbox" id="rbt-select-all" style="margin:0;transform:scale(0.8);"> 全选</label>
+                        <button class="rbt-btn" id="rbt-invert-select" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;">反选</button>
+                        <button class="rbt-btn" id="rbt-deselect-all" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;">取消</button>
+                        <span style="color:rgba(255,255,255,0.2);margin:0 2px;">|</span>
+                        <button class="rbt-btn" id="rbt-ai-preset-btn" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;" title="一键覆盖选中行参数">任务预设设置</button>
+                        <button class="rbt-btn" id="rbt-import-task-preset-btn" style="padding:2px 6px;font-size:10px;background:rgba(100,100,255,0.1);border:1px solid rgba(100,100,255,0.2);color:#8b8bfa;" title="导入任务组合预设 JSON 文件">📥</button>
+                        <span style="color:rgba(255,255,255,0.2);margin:0 2px;">|</span>
+                        <select id="rbt-batch-sub-tpl" style="display:none;"><option value="">字幕模板...</option>${batchSubOpts}</select>
+                        <div id="rbt-sub-tpl-trigger" class="rbt-select rbt-select-trigger" style="width:130px;height:24px;font-size:11px;padding:0 8px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);color:#ccc;display:flex;align-items:center;">
+                            <span id="rbt-sub-tpl-label" style="flex:1;">字幕模板...</span><span style="font-size:8px;">▼</span>
+                        </div>
+                        <button class="rbt-btn" id="rbt-apply-batch-sub" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;">应用</button>
+                        <button class="rbt-btn" id="rbt-import-sub-preset-btn" style="padding:2px 6px;font-size:10px;background:rgba(100,100,255,0.1);border:1px solid rgba(100,100,255,0.2);color:#8b8bfa;" title="导入字幕预设 JSON 文件">📥</button>
+                        <select id="rbt-batch-card-tpl" class="rbt-select" style="width:90px;height:24px;font-size:11px;padding:0 4px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);color:#ccc;">
+                            <option value="">覆层预设...</option>${batchCardOpts}
+                        </select>
+                        <button class="rbt-btn" id="rbt-apply-batch-card" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;">应用</button>
+                        <button class="rbt-btn" id="rbt-import-card-preset-btn" style="padding:2px 6px;font-size:10px;background:rgba(100,100,255,0.1);border:1px solid rgba(100,100,255,0.2);color:#8b8bfa;" title="导入覆层预设 JSON 文件">📥</button>
+                        <span id="rbt-selected-count" style="margin-left:auto;font-size:11px;color:#aaa;"></span>
+                    </div>
+
+                </div>
             </div>
 
             <!-- hidden file inputs -->
@@ -527,26 +632,51 @@ function _renderBatchTable() {
                     <thead>
                         <tr>
                             <th class="rbt-col-drag" style="width:24px;"></th>
-                            <th class="rbt-col-chk" style="width:30px;text-align:center;">☐</th>
+                            <th class="rbt-col-chk" style="width:30px;text-align:center;">
+                                <input type="checkbox" id="rbt-header-select-all" style="margin:0;transform:scale(0.9);cursor:pointer;" title="全选所有行">
+                            </th>
                             <th class="rbt-col-num">#</th>
-                            <th class="rbt-col-hook">🪝 前置Hook</th>
-                            <th class="rbt-col-bg">🖼 背景素材</th>
-                            <th class="rbt-col-bgscale">🔍 背景缩放</th>
-                            <th class="rbt-col-bgdurscale">⏱🖼 背景时长</th>
-                            <th class="rbt-col-audio">🔊 人声音频层</th>
-                            <th class="rbt-col-audiodurscale">⏱🔊 人声变速</th>
-                            <th class="rbt-col-srt">📝 字幕SRT</th>
-                            <th class="rbt-col-txtcontent">📃 字幕文本</th>
-                            <th class="rbt-col-bgm">🎵 配乐</th>
-                            <th class="rbt-col-title">📋 覆层标题</th>
-                            <th class="rbt-col-body">📋 覆层内容</th>
-                            <th class="rbt-col-footer">📋 覆层结尾</th>
-                            <th class="rbt-col-scroll-title">🔄 滚动标题</th>
-                            <th class="rbt-col-scroll-body">🔄 滚动内容</th>
-                            <th class="rbt-col-dur">⏱ 时长(s)</th>
-                            <th class="rbt-col-tpl">🎬 字幕模板</th>
-                            <th class="rbt-col-tpl">📦 覆层预设</th>
+
+                            <!-- 元数据与配置列 -->
                             <th class="rbt-col-act">操作</th>
+                            <th class="rbt-col-tpl">字幕模板</th>
+                            <th class="rbt-col-tpl">覆层预设</th>
+                            <th class="rbt-col-dur">时长(s)</th>
+
+                            <!-- 🌟 视频封面层 (Gold) -->
+                            <th class="rbt-col-cover-media rbt-grp-cover"><div class="rbt-th-wrap"><span>封面素材</span><button class="rbt-th-folder" data-folder-col="cover_media" title="选择文件夹批量分配">📁</button><button class="rbt-th-clear" data-clear-col="cover_media" title="清空该列">清</button></div></th>
+                            <th class="rbt-col-cover-text rbt-grp-cover"><div class="rbt-th-wrap"><span>封面文案</span><button class="rbt-th-paste" data-paste-col="cover_text" title="从剪贴板粘贴到该列">📋</button><button class="rbt-th-clear" data-clear-col="cover_text" title="清空该列">清</button></div></th>
+
+                            <!-- 🟦 画面基础层 (Blue) -->
+                            <th class="rbt-col-hook rbt-grp-video"><div class="rbt-th-wrap"><span>前置Hook</span><button class="rbt-th-clear" data-clear-col="hook" title="清空该列">清</button></div></th>
+                            <th class="rbt-col-bg rbt-grp-video"><div class="rbt-th-wrap"><span>背景素材</span><button class="rbt-th-folder" data-folder-col="bg" title="选择文件夹批量分配">📁</button><button class="rbt-th-clear" data-clear-col="bg" title="清空该列">清</button></div></th>
+                            <th class="rbt-col-bgscale rbt-grp-video">背景缩放</th>
+                            <th class="rbt-col-bgdurscale rbt-grp-video">背景时长</th>
+
+                            <!-- 🎬 视频覆层 (Cyan) -->
+                            <th class="rbt-col-contentvideo rbt-grp-cv"><div class="rbt-th-wrap"><span>视频覆层</span><button class="rbt-th-folder" data-folder-col="contentvideo" title="选择文件夹批量分配">📁</button><button class="rbt-th-clear" data-clear-col="contentvideo" title="清空该列">清</button></div></th>
+                            <th class="rbt-col-cvtrim rbt-grp-cv">✂️ 裁切</th>
+                            <th class="rbt-col-cvscale rbt-grp-cv">视频缩放</th>
+                            <th class="rbt-col-cvpos rbt-grp-cv">视频位置</th>
+
+                            <th class="rbt-col-bgm rbt-grp-video"><div class="rbt-th-wrap"><span>配乐</span><button class="rbt-th-folder" data-folder-col="bgm" title="选择文件夹批量分配">📁</button><button class="rbt-th-clear" data-clear-col="bgm" title="清空该列">清</button></div></th>
+
+                            <!-- 🟪 人声与音频层 (Purple) -->
+                            <th class="rbt-col-ai_script rbt-grp-audio"><div class="rbt-th-wrap"><span>AI 原文案</span><button class="rbt-th-paste" data-paste-col="aiScript" title="从剪贴板粘贴到该列">📋</button><button class="rbt-th-clear" data-clear-col="ai_script" title="清空该列">清</button></div></th>
+                            <th class="rbt-col-tts_text rbt-grp-audio"><div class="rbt-th-wrap"><span>TTS文案</span><button class="rbt-th-paste" data-paste-col="ttsText" title="从剪贴板粘贴到该列">📋</button><button class="rbt-th-clear" data-clear-col="tts_text" title="清空该列">清</button></div></th>
+                            <th class="rbt-col-tts_voice rbt-grp-audio"><div class="rbt-th-wrap"><span>TTS音色</span><button class="rbt-th-paste" data-paste-col="ttsVoiceId" title="从剪贴板粘贴到该列">📋</button></div></th>
+                            <th class="rbt-col-srt rbt-grp-audio"><div class="rbt-th-wrap"><span>字幕SRT</span><button class="rbt-th-folder" data-folder-col="srt" title="选择文件夹批量分配">📁</button><button class="rbt-th-clear" data-clear-col="srt" title="清空该列">清</button></div></th>
+                            <th class="rbt-col-txtcontent rbt-grp-audio"><div class="rbt-th-wrap"><span>粘贴人声对齐字幕</span><button class="rbt-th-paste" data-paste-col="txtContent" title="从剪贴板粘贴到该列">📋</button><button class="rbt-th-clear" data-clear-col="txt" title="清空该列">清</button></div></th>
+                            <th class="rbt-col-audio rbt-grp-audio"><div class="rbt-th-wrap"><span>人声音频层</span><button class="rbt-th-folder" data-folder-col="audio" title="选择文件夹批量分配">📁</button><button class="rbt-th-clear" data-clear-col="audio" title="清空该列">清</button></div></th>
+                            <th class="rbt-col-audiodurscale rbt-grp-audio">人声变速</th>
+
+                            <!-- 🟧 覆层 (Amber) -->
+                            <th class="rbt-col-pip rbt-grp-ovl"><div class="rbt-th-wrap"><span>图像覆层</span><button class="rbt-th-folder" data-folder-col="pip" title="选择文件夹批量分配">📁</button><button class="rbt-th-clear" data-clear-col="pip" title="清空该列">清</button></div></th>
+                            <th class="rbt-col-title rbt-grp-ovl"><div class="rbt-th-wrap"><span>覆层标题</span><button class="rbt-th-paste" data-paste-col="overlay_title" title="从剪贴板粘贴到该列">📋</button><button class="rbt-th-clear" data-clear-col="overlay_title" title="清空该列">清</button></div></th>
+                            <th class="rbt-col-body rbt-grp-ovl"><div class="rbt-th-wrap"><span>覆层内容</span><button class="rbt-th-paste" data-paste-col="overlay_body" title="从剪贴板粘贴到该列">📋</button><button class="rbt-th-clear" data-clear-col="overlay_body" title="清空该列">清</button></div></th>
+                            <th class="rbt-col-footer rbt-grp-ovl"><div class="rbt-th-wrap"><span>覆层结尾</span><button class="rbt-th-paste" data-paste-col="overlay_footer" title="从剪贴板粘贴到该列">📋</button><button class="rbt-th-clear" data-clear-col="overlay_footer" title="清空该列">清</button></div></th>
+                            <th class="rbt-col-scroll-title rbt-grp-ovl"><div class="rbt-th-wrap"><span>滚动标题</span><button class="rbt-th-paste" data-paste-col="scroll_title" title="从剪贴板粘贴到该列">📋</button><button class="rbt-th-clear" data-clear-col="scroll_title" title="清空该列">清</button></div></th>
+                            <th class="rbt-col-scroll-body rbt-grp-ovl"><div class="rbt-th-wrap"><span>滚动内容</span><button class="rbt-th-paste" data-paste-col="scroll_body" title="从剪贴板粘贴到该列">📋</button><button class="rbt-th-clear" data-clear-col="scroll_body" title="清空该列">清</button></div></th>
                         </tr>
                     </thead>
                     <tbody id="rbt-tbody">
@@ -560,15 +690,19 @@ function _renderBatchTable() {
                 <div class="rbt-footer-hint">提示: 先粘贴文案创建行 → 再批量添加素材自动按顺序分配 | 设置素材文件夹后可一键刷新同步最新文件</div>
                 <button class="rbt-btn rbt-btn-primary" id="rbt-apply-btn">✅ 应用更改并关闭</button>
             </div>
+
+            </div><!-- /rbt-main-col -->
+            </div><!-- /rbt-body-row -->
         </div>
             <div id="rbt-hook-modal" style="display:none;position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:99999;align-items:center;justify-content:center;">
-                <div style="background:#1a1a2e;padding:20px;border-radius:8px;border:1px solid #333;width:400px;display:flex;flex-direction:column;gap:12px;">
+                <div style="background:#181818;padding:20px;border-radius:8px;border:1px solid #333;width:400px;display:flex;flex-direction:column;gap:12px;">
                     <h3 style="margin:0;color:#fff;font-size:14px;display:flex;align-items:center;gap:6px;">🪝 前置/Hook 设置</h3>
                     
                     <div style="font-size:12px;color:#ccc;display:flex;align-items:center;gap:8px;">
                         <span>Hook:</span>
                         <input type="text" id="rbt-hook-path" style="flex:1;background:#222;color:#ccc;border:1px solid #333;padding:4px;font-size:11px;" readonly placeholder="未选择 (留空则从正片开始)">
                         <button class="rbt-btn" id="rbt-hook-select-btn" style="padding:4px 8px;">浏览素材</button>
+                        <input type="file" id="rbt-hook-file-input" style="display:none;" accept=".mp4,.mov,.mkv,.webm,.avi,.jpg,.jpeg,.png,.webp">
                     </div>
 
                     <div id="rbt-hook-preview-container" style="display:none;width:100%;height:160px;background:#000;border-radius:4px;overflow:hidden;position:relative;border:1px solid #333;">
@@ -627,6 +761,69 @@ function _renderBatchTable() {
                     </div>
                 </div>
             </div>
+
+            <!-- Cover Modal -->
+            <div id="rbt-cover-modal" style="display:none;position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:99999;align-items:center;justify-content:center;">
+                <div style="background:#181818;padding:20px;border-radius:8px;border:1px solid #333;width:420px;display:flex;flex-direction:column;gap:12px;">
+                    <h3 style="margin:0;color:#fff;font-size:14px;display:flex;align-items:center;justify-content:space-between;">
+                        <span>🌟 视频封面设置</span>
+                        <div style="display:flex;gap:4px;font-weight:normal;">
+                            <select id="rbt-cover-preset-sel" style="width:110px;background:#222;color:#ccc;border:1px solid #444;font-size:11px;padding:2px;border-radius:4px;">
+                                <option value="">---预设---</option>
+                            </select>
+                            <button id="rbt-cover-preset-save" class="rbt-btn" style="padding:2px 6px;font-size:11px;" title="保存当前所有设置到预设库">💾 保存</button>
+                            <button id="rbt-cover-preset-del" class="rbt-btn" style="padding:2px 6px;font-size:11px;color:#f66;" title="删除选项">❌</button>
+                        </div>
+                    </h3>
+                    
+                    <div style="font-size:12px;color:#ccc;display:flex;align-items:center;gap:8px;">
+                        <input type="checkbox" id="rbt-cover-enabled" style="margin:0;transform:scale(1.2);">
+                        <label for="rbt-cover-enabled" style="font-weight:bold;color:#ffd700;cursor:pointer;">启用封面</label>
+                        <span style="flex:1;"></span>
+                        <input type="checkbox" id="rbt-cover-export-separate" style="margin:0;">
+                        <label for="rbt-cover-export-separate" style="color:#aaa;cursor:pointer;">同时单独导出(PNG)</label>
+                    </div>
+
+                    <div style="background:#222;padding:10px;border-radius:4px;display:flex;flex-direction:column;gap:8px;border:1px solid #333;">
+                        <div style="font-size:11px;color:#888;">封面背景图 (留空则使用背景视频第一帧)</div>
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <input type="text" id="rbt-cover-bg-path" style="flex:1;background:#111;color:#ccc;border:1px solid #333;padding:4px;font-size:11px;" readonly placeholder="未选择 (使用背景首帧)">
+                            <button class="rbt-btn" id="rbt-cover-bg-btn" style="padding:4px 8px;">浏览素材</button>
+                            <input type="file" id="rbt-cover-file-input" style="display:none;" accept=".jpg,.jpeg,.png,.webp,.bmp">
+                        </div>
+                        <div id="rbt-cover-preview-container" style="display:none;width:100%;height:140px;background:#000;border-radius:4px;overflow:hidden;position:relative;border:1px solid #333;align-items:center;justify-content:center;">
+                            <img id="rbt-cover-preview-img" style="max-width:100%;max-height:100%;object-fit:contain;display:none;">
+                            <span id="rbt-cover-preview-hint" style="color:#666;font-size:12px;">自动提取视频第1帧</span>
+                        </div>
+                    </div>
+
+                    <div style="background:#222;padding:10px;border-radius:4px;display:flex;flex-direction:column;gap:8px;border:1px solid #333;">
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <span style="font-size:11px;color:#888;">与正片合并滞留(秒):</span>
+                            <input type="number" id="rbt-cover-duration" value="0" step="0.1" min="0" max="10.0" style="width:50px;background:#111;color:#fff;border:1px solid #333;padding:4px;text-align:center;">
+                            <span style="font-size:10px;color:#666;">(仅提取图片设为0)</span>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:8px;margin-top:2px;">
+                            <span style="font-size:11px;color:#888;">套用文字卡片模版:</span>
+                            <select id="rbt-cover-overlay-sel" style="flex:1;background:#111;color:#ffd700;border:1px solid #544414;padding:4px;font-size:11px;border-radius:4px;outline:none;">
+                                <option value="">-- 使用独立卡片配置 --</option>
+                            </select>
+                        </div>
+                        <div style="display:flex;align-items:center;justify-content:center;margin-top:4px;">
+                            <button class="rbt-btn" id="rbt-cover-edit-overlay-btn" style="width:100%;padding:6px;background:rgba(255,215,0,0.1);border:1px solid rgba(255,215,0,0.3);color:#ffd700;">✏️ 定制该封面的专属排版</button>
+                        </div>
+                    </div>
+                    
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;">
+                        <button class="rbt-btn" id="rbt-cover-batch-apply" style="padding:6px 12px;background:#321;border:1px solid #643;color:#fc8;">应用到全部行</button>
+                        <div style="display:flex;gap:8px;">
+                            <button class="rbt-btn" id="rbt-cover-cancel" style="padding:6px 16px;">取消</button>
+                            <button class="rbt-btn rbt-btn-primary" id="rbt-cover-save" style="padding:6px 16px;">保存单行配置</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
         </div>
     `;
 
@@ -641,16 +838,58 @@ function _renderBatchTable() {
 
     // 更新批量选中计数
     _updateBatchSelectCount();
+
+    // ── 恢复滚动位置 ──
+    const newScrollWrap = container.querySelector('.rbt-table-wrap');
+    if (newScrollWrap && (_savedScrollTop || _savedScrollLeft)) {
+        newScrollWrap.scrollTop = _savedScrollTop;
+        newScrollWrap.scrollLeft = _savedScrollLeft;
+    }
+}
+
+function _applyOverlayField(task, fieldCategory, str) {
+    if (!task.overlays) task.overlays = [];
+    if (fieldCategory.startsWith('scroll_')) {
+        let ov = task.overlays.find(o => o && o.type === 'scroll');
+        if (!ov) {
+            ov = window.ReelsOverlay ? window.ReelsOverlay.createScrollOverlay({ start: 0, end: 9999 }) : { scroll_title:'', content:'', type: 'scroll' };
+            ov.scroll_title = '';
+            ov.content = '';
+            task.overlays.push(ov);
+        }
+        if (fieldCategory === 'scroll_title') ov.scroll_title = str;
+        if (fieldCategory === 'scroll_body') ov.content = str;
+    } else if (fieldCategory.startsWith('overlay_')) {
+        let ov = task.overlays.find(o => o && (o.type === 'textcard' || !o.type || o.type === ''));
+        if (!ov) {
+            ov = window.ReelsOverlay ? window.ReelsOverlay.createTextCardOverlay({ start: 0, end: 9999 }) : { title_text:'', body_text:'', footer_text:'', type: 'textcard' };
+            ov.title_text = '';
+            ov.body_text = '';
+            ov.footer_text = '';
+            task.overlays.push(ov);
+        }
+        if (fieldCategory === 'overlay_title') ov.title_text = str;
+        if (fieldCategory === 'overlay_body') ov.body_text = str;
+        if (fieldCategory === 'overlay_footer') ov.footer_text = str;
+    } else if (fieldCategory === 'cover_text') {
+        if (!task.cover) task.cover = { enabled: true, overlays: [] };
+        let ov = (task.cover.overlays && task.cover.overlays.length > 0) ? task.cover.overlays[0] : null;
+        if (!ov) {
+            ov = window.ReelsOverlay ? window.ReelsOverlay.createTextCardOverlay({ start: 0, end: 9999 }) : { title_text:'', body_text:'', footer_text:'', type: 'textcard' };
+            task.cover.overlays = [ov];
+        }
+        ov.title_text = str;
+    }
 }
 
 function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
     // 提取覆层信息
-    const ov = (task.overlays || [])[0];
+    const ov = (task.overlays || []).find(o => o && (o.type === 'textcard' || !o.type || o.type === ''));
     const title = ov ? (ov.title_text || '') : '';
     const body = ov ? (ov.body_text || '') : '';
     const footer = ov ? (ov.footer_text || '') : '';
     // 滚动字幕覆层信息
-    const scrollOv = (task.overlays || []).find(o => o.type === 'scroll');
+    const scrollOv = (task.overlays || []).find(o => o && o.type === 'scroll');
     const scrollTitle = scrollOv ? (scrollOv.scroll_title || '') : '';
     const scrollBody = scrollOv ? (scrollOv.content || '') : '';
     const bgName = _shortName(task.bgPath || task.videoPath || '');
@@ -661,20 +900,42 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
     const bgmName = _shortName(task.bgmPath || '');
 
     // 缩略图生成
+    const bgMode = task.bgMode || 'single';
+    const bgClipPool = task.bgClipPool || [];
     let bgContent = bgName || '<span class="rbt-placeholder">拖拽/双击</span>';
     const bgPath = task.bgPath || task.videoPath;
-    if (bgPath) {
+
+    if (bgMode === 'multi' && bgClipPool.length > 0) {
+        // 多素材模式 — 显示素材池信息
+        const transLabel = {none:'硬切', crossfade:'交叉淡化', fade_black:'黑场过渡', fade_white:'白场过渡', slide_left:'左滑', slide_right:'右滑', wipe:'擦除'}[task.bgTransition || 'crossfade'] || '交叉淡化';
+        const thumbs = bgClipPool.slice(0, 3).map(p => {
+            const url = window.electronAPI && window.electronAPI.toFileUrl ? window.electronAPI.toFileUrl(p) : `file://${p}`;
+            const isImg = /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(p);
+            return isImg
+                ? `<img class="rbt-thumb-previewable" src="${_escHtml(url)}" style="width:24px;height:24px;object-fit:cover;border-radius:3px;border:1px solid #333;cursor:zoom-in;">`
+                : `<video class="rbt-thumb-previewable" src="${_escHtml(url)}#t=1" preload="metadata" style="width:24px;height:24px;object-fit:cover;border-radius:3px;border:1px solid #333;background:#000;cursor:zoom-in;"></video>`;
+        }).join('');
+        bgContent = `<div style="display:flex;flex-direction:column;gap:3px;">
+            <div style="display:flex;align-items:center;gap:4px;">
+                <span style="font-size:9px;background:#2a1f5e;color:#b8a0ff;padding:1px 5px;border-radius:3px;font-weight:600;">多素材</span>
+                <span style="font-size:10px;color:#aaa;">${bgClipPool.length}个素材</span>
+                <button class="rbt-bg-pool-manage" data-idx="${idx}" style="font-size:9px;background:transparent;border:1px solid #444;color:#8af;border-radius:3px;padding:1px 5px;cursor:pointer;" title="管理素材池">管理</button>
+            </div>
+            <div style="display:flex;gap:2px;align-items:center;">${thumbs}${bgClipPool.length > 3 ? `<span style="font-size:9px;color:#666;">+${bgClipPool.length - 3}</span>` : ''}</div>
+            <div style="font-size:9px;color:#888;">✨${transLabel} ${task.bgTransDur || 0.5}s</div>
+        </div>`;
+    } else if (bgPath) {
         const isImg = /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(bgPath);
         const urlObj = task.bgSrcUrl || (window.electronAPI && window.electronAPI.toFileUrl ? window.electronAPI.toFileUrl(bgPath) : `file://${bgPath}`);
         if (isImg) {
             bgContent = `<div style="display:flex;align-items:center;gap:6px;">
-                            <img src="${_escHtml(urlObj)}" style="width:32px;height:32px;object-fit:cover;border-radius:4px;flex-shrink:0;">
-                            <span class="rbt-file-name" style="flex:1;font-size:10px;word-break:break-all;" title="${_escHtml(bgPath)}">${_escHtml(bgPath)}</span>
+                            <img class="rbt-thumb-previewable" src="${_escHtml(urlObj)}" style="width:32px;height:32px;object-fit:cover;border-radius:4px;flex-shrink:0;cursor:zoom-in;">
+                            <span class="rbt-file-name" style="flex:1;font-size:10px;word-break:break-all;" title="${_escHtml(bgPath)}">${_escHtml(_shortName(bgPath))}</span>
                          </div>`;
         } else {
             bgContent = `<div style="display:flex;align-items:center;gap:6px;">
-                            <video src="${_escHtml(urlObj)}#t=1" preload="metadata" style="width:32px;height:32px;object-fit:cover;border-radius:4px;flex-shrink:0;background:#000;"></video>
-                            <span class="rbt-file-name" style="flex:1;font-size:10px;word-break:break-all;" title="${_escHtml(bgPath)}">${_escHtml(bgPath)}</span>
+                            <video class="rbt-thumb-previewable" src="${_escHtml(urlObj)}#t=1" preload="metadata" style="width:32px;height:32px;object-fit:cover;border-radius:4px;flex-shrink:0;background:#000;cursor:zoom-in;"></video>
+                            <span class="rbt-file-name" style="flex:1;font-size:10px;word-break:break-all;" title="${_escHtml(bgPath)}">${_escHtml(_shortName(bgPath))}</span>
                          </div>`;
         }
     } else {
@@ -683,22 +944,44 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
 
     // Hook缩略图生成
     const hookName = _shortName(task.hookFile || '');
-    let hookContent = hookName || '<span class="rbt-placeholder">拖拽/双击配置</span>';
+    let hookContent = hookName || '<span class="rbt-placeholder">双击添加/设置</span>';
     if (task.hookFile) {
         const hIsImg = /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(task.hookFile);
         const hUrlObj = window.electronAPI && window.electronAPI.toFileUrl ? window.electronAPI.toFileUrl(task.hookFile) : `file://${task.hookFile}`;
         hookContent = `<div class="rbt-hook-set" style="display:flex;align-items:center;gap:4px;cursor:pointer;" title="双击重新配置\n${_escHtml(task.hookFile)}">
                             ${hIsImg ? 
-                                `<img src="${_escHtml(hUrlObj)}" style="width:28px;height:28px;object-fit:cover;border-radius:3px;flex-shrink:0;">` :
-                                `<video src="${_escHtml(hUrlObj)}#t=0.5" preload="metadata" style="width:28px;height:28px;object-fit:cover;border-radius:3px;flex-shrink:0;background:#111;"></video>`
+                                `<img class="rbt-thumb-previewable" src="${_escHtml(hUrlObj)}" style="width:28px;height:28px;object-fit:cover;border-radius:3px;flex-shrink:0;cursor:zoom-in;">` :
+                                `<video class="rbt-thumb-previewable" src="${_escHtml(hUrlObj)}#t=0.5" preload="metadata" style="width:28px;height:28px;object-fit:cover;border-radius:3px;flex-shrink:0;background:#111;cursor:zoom-in;"></video>`
                             }
                             <div style="flex:1;display:flex;flex-direction:column;min-width:0;line-height:1.2;">
                               <span class="rbt-file-name" style="font-size:10px;word-break:break-all;">${_escHtml(hookName)}</span>
-                              <span style="font-size:9px;color:#a0d0ff;">${task.hookTransition && task.hookTransition !== 'none' ? `✨${task.hookTransition}(${task.hookTransDuration || 0.5}s)` : '⚡硬切'} | ${task.hookSpeed ? task.hookSpeed + 'x' : '1x'}</span>
+                              <span style="font-size:9px;color:#a0d0ff;zoom:0.9;">${task.hookTransition && task.hookTransition !== 'none' ? `✨${task.hookTransition}(${task.hookTransDuration || 0.5}s)` : '⚡硬切'} | ${task.hookSpeed ? task.hookSpeed + 'x' : '1x'} <span style="color:#666;margin-left:2px;">(双击设置)</span></span>
                             </div>
                        </div>`;
     } else {
-        hookContent = `<div class="rbt-hook-set" style="cursor:pointer;" title="双击配置Hook属性"><span class="rbt-file-name" title="">${hookContent}</span></div>`;
+        hookContent = `<div class="rbt-hook-set" style="cursor:pointer;color:#888;font-size:10px;" title="双击配置Hook属性">➕ 双击设置</div>`;
+    }
+
+    // PIP缩略图生成
+    const pipPath = task.pipPath || '';
+    const pipName = _shortName(pipPath);
+    let pipContent = pipName || '<span class="rbt-placeholder">拖拽/双击</span>';
+    if (pipPath) {
+        const isPipImg = /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(pipPath);
+        const pipUrlObj = window.electronAPI && window.electronAPI.toFileUrl ? window.electronAPI.toFileUrl(pipPath) : `file://${pipPath}`;
+        if (isPipImg) {
+            pipContent = `<div style="display:flex;align-items:center;gap:6px;">
+                            <img class="rbt-thumb-previewable" src="${_escHtml(pipUrlObj)}" style="width:32px;height:32px;object-fit:cover;border-radius:4px;flex-shrink:0;cursor:zoom-in;">
+                            <span class="rbt-file-name" style="flex:1;font-size:10px;word-break:break-all;" title="${_escHtml(pipPath)}">${_escHtml(pipName)}</span>
+                         </div>`;
+        } else {
+            pipContent = `<div style="display:flex;align-items:center;gap:6px;">
+                            <video class="rbt-thumb-previewable" src="${_escHtml(pipUrlObj)}#t=1" preload="metadata" style="width:32px;height:32px;object-fit:cover;border-radius:4px;flex-shrink:0;background:#000;cursor:zoom-in;"></video>
+                            <span class="rbt-file-name" style="flex:1;font-size:10px;word-break:break-all;" title="${_escHtml(pipPath)}">${_escHtml(pipName)}</span>
+                         </div>`;
+        }
+    } else {
+        pipContent = `<span class="rbt-file-name" style="width:100%;" title="">${pipContent}</span>`;
     }
 
     const subTplOptions = subtitlePresets.map(t =>
@@ -709,11 +992,71 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
         `<option value="${_escHtml(t.name)}" ${task._overlayPresetName === t.name ? 'selected' : ''}>${_escHtml(t.name)} (${t.count}层)</option>`
     ).join('');
 
+    // --- Cover Cover --- 
+    const coverEnabled = task.cover && task.cover.enabled;
+    const coverBgPath = task.cover && task.cover.bgPath ? task.cover.bgPath : '';
+    let coverContent = '';
+    if (coverEnabled) {
+        if (coverBgPath) {
+             const cIsImg = /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(coverBgPath);
+             const cUrlObj = window.electronAPI && window.electronAPI.toFileUrl ? window.electronAPI.toFileUrl(coverBgPath) : `file://${coverBgPath}`;
+             coverContent = `<div class="rbt-cover-set" style="display:flex;align-items:center;gap:4px;cursor:pointer;" title="双击配置封面">
+                                 ${cIsImg ? 
+                                     `<img class="rbt-thumb-previewable" src="${_escHtml(cUrlObj)}" style="width:28px;height:28px;object-fit:cover;border-radius:3px;flex-shrink:0;">` :
+                                     `<video class="rbt-thumb-previewable" src="${_escHtml(cUrlObj)}#t=0.5" style="width:28px;height:28px;object-fit:cover;border-radius:3px;flex-shrink:0;background:#111;"></video>`
+                                 }
+                                 <div style="flex:1;min-width:0;font-size:9px;color:#ffd700;line-height:1.1;">✨封面开启<br>已设底图</div>
+                            </div>`;
+        } else {
+             coverContent = `<div class="rbt-cover-set" style="cursor:pointer;color:#ffd700;font-size:10px;line-height:1.2;" title="双击配置封面"><span style="display:inline-block;background:rgba(255,215,0,0.15);padding:2px 4px;border-radius:2px;border:1px solid rgba(255,215,0,0.3);">✨封面开启<br><span style="font-size:8px;color:#aaa;">(取第1帧)</span></span></div>`;
+        }
+    } else {
+        coverContent = `<div class="rbt-cover-set" style="cursor:pointer;color:#888;font-size:10px;display:flex;align-items:center;" title="双击添加封面"><span class="rbt-file-name" style="width:100%;"><span class="rbt-placeholder">拖拽/双击</span></span></div>`;
+    }
+
+    const coverOvl = (task.cover && task.cover.overlays && task.cover.overlays.length > 0) ? task.cover.overlays[0] : null;
+    let coverTextStr = '';
+    if (coverOvl) {
+        coverTextStr = coverOvl.title_text || coverOvl.body_text || '<自定义>';
+    }
+
     return `
         <tr data-idx="${idx}" draggable="true" class="rbt-row ${idx === (window._reelsState?.selectedIdx || -1) ? 'rbt-row-selected' : ''} ${task._justRefreshed ? 'rbt-row-refreshed' : ''}">
             <td class="rbt-col-drag"><span class="rbt-drag-handle" title="拖拽调整顺序">☰</span></td>
             <td class="rbt-col-chk" style="text-align:center;"><input type="checkbox" class="rbt-row-check" data-idx="${idx}" ${_batchTableState.selectedRows.has(idx) ? 'checked' : ''}></td>
             <td class="rbt-col-num">${idx + 1}</td>
+            <td class="rbt-col-act">
+                <button class="rbt-row-btn rbt-select-btn" data-idx="${idx}" title="预览此任务">👁</button>
+                <button class="rbt-row-btn rbt-clone-btn" data-idx="${idx}" title="复制此行">📋</button>
+                <button class="rbt-row-btn rbt-delete-btn" data-idx="${idx}" title="删除此行">🗑</button>
+            </td>
+            <td class="rbt-col-tpl">
+                <div class="rbt-sub-tpl-trigger rbt-select" data-idx="${idx}" style="cursor:pointer;font-size:10px;padding:0 4px;height:22px;display:flex;align-items:center;justify-content:space-between;user-select:none;" title="点击选择字幕模板（含样式预览）">
+                    <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${task._subtitlePreset ? _escHtml(task._subtitlePreset) : '默认'}</span>
+                    <span style="font-size:8px;margin-left:2px;flex-shrink:0;">▼</span>
+                </div>
+            </td>
+            <td class="rbt-col-tpl">
+                <select class="rbt-select rbt-card-tpl-select" data-idx="${idx}">
+                    <option value="">无预设</option>
+                    ${cardTplOptions}
+                </select>
+            </td>
+            <td class="rbt-col-dur">
+                <input type="number" class="rbt-textarea rbt-dur-input" data-idx="${idx}" min="0" max="600" step="0.5"
+                    value="${task.customDuration ? task.customDuration : ''}" placeholder="自动" style="width:55px;text-align:center;" title="留空=自动跟随音频/视频时长，输入数字=自定义秒数">
+            </td>
+            <td class="rbt-col-cover-media rbt-droppable" data-field="cover_media">
+                <div style="display:flex;align-items:center;gap:2px;">
+                    <div style="flex:1;min-width:0;overflow:hidden;">${coverContent}</div>
+                    ${coverEnabled ? `<button class="rbt-field-clear" data-idx="${idx}" data-field="cover_media" title="关闭封面功能">✕</button>` : ''}
+                </div>
+            </td>
+            <td class="rbt-col-cover-text rbt-droppable" data-field="cover_text">
+                <div style="display:flex;align-items:center;gap:2px;">
+                    <textarea class="rbt-textarea rbt-cover-text-input" data-idx="${idx}" rows="1" placeholder="暂无" title="封面主标题文案">${_escHtml(coverTextStr)}</textarea>
+                </div>
+            </td>
             <td class="rbt-col-hook rbt-droppable" data-field="hook">
                 <div style="display:flex;align-items:center;gap:2px;">
                     <div style="flex:1;min-width:0;overflow:hidden;">${hookContent}</div>
@@ -722,84 +1065,193 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
             </td>
             <td class="rbt-col-bg rbt-droppable" data-field="bg">
                 <div style="display:flex;align-items:center;gap:2px;">
+                    <button class="rbt-bg-pool-manage" data-idx="${idx}" style="flex:0 0 auto;width:20px;height:20px;border-radius:4px;border:1px solid ${bgMode === 'multi' ? '#7c5cff' : '#333'};background:${bgMode === 'multi' ? '#2a1f5e' : 'transparent'};color:${bgMode === 'multi' ? '#b8a0ff' : '#666'};font-size:11px;cursor:pointer;padding:0;line-height:18px;" title="${bgMode === 'multi' ? '多素材模式 - 点击管理' : '单素材模式 - 点击切换到多素材'}">${bgMode === 'multi' ? '🎞' : '🔁'}</button>
                     <div style="flex:1;min-width:0;overflow:hidden;">${bgContent}</div>
-                    ${bgPath ? `<button class="rbt-field-clear" data-idx="${idx}" data-field="bg" title="清除背景">✕</button>` : ''}
+                    ${(bgPath || (bgMode === 'multi' && bgClipPool.length > 0)) ? `<button class="rbt-field-clear" data-idx="${idx}" data-field="bg" title="清除背景">✕</button>` : ''}
                 </div>
             </td>
             <td class="rbt-col-bgscale">
-                <div style="display:flex;flex-direction:column;gap:2px;align-items:center;min-width:70px;">
-                    <input type="range" class="rbt-bgscale-slider" data-idx="${idx}" min="50" max="300" value="${task.bgScale || 100}"
-                           style="width:60px;height:14px;accent-color:#4fc3f7;" title="背景图片缩放比例">
-                    <div style="display:flex;align-items:center;gap:2px;">
-                        <input type="number" class="rbt-bgscale-input" data-idx="${idx}" min="50" max="300" step="5"
-                               value="${task.bgScale || 100}" style="width:42px;text-align:center;font-size:10px;padding:1px 2px;background:#1a1a2e;color:#ccc;border:1px solid #333;border-radius:3px;">
-                        <span style="font-size:10px;color:#666;">%</span>
+                <div class="rbt-clutter-free-scale">
+                    <div class="rbt-scale-display">${task.bgScale || 100}%</div>
+                    <div class="rbt-scale-controls">
+                        <div style="display:flex;align-items:center;gap:2px;">
+                            <input type="number" class="rbt-bgscale-input" data-idx="${idx}" min="50" max="300" step="5"
+                                   value="${task.bgScale || 100}" style="width:42px;text-align:center;font-size:10px;padding:1px 2px;background:#181818;color:#ccc;border:1px solid #333;border-radius:3px;">
+                            <span style="font-size:10px;color:#666;">%</span>
+                        </div>
+                        <input type="range" class="rbt-bgscale-slider" data-idx="${idx}" min="50" max="300" value="${task.bgScale || 100}"
+                               style="width:60px;height:12px;accent-color:#4fc3f7;" title="背景图片缩放比例">
                     </div>
                 </div>
             </td>
             <td class="rbt-col-bgdurscale">
-                <div style="display:flex;flex-direction:column;gap:2px;align-items:center;min-width:70px;">
-                    <input type="range" class="rbt-bgdurscale-slider" data-idx="${idx}" min="10" max="500" value="${task.bgDurScale || 100}"
-                           style="width:60px;height:14px;accent-color:#81c784;" title="背景素材时长缩放比例">
-                    <div style="display:flex;align-items:center;gap:2px;">
-                        <input type="number" class="rbt-bgdurscale-input" data-idx="${idx}" min="10" max="500" step="5"
-                               value="${task.bgDurScale || 100}" style="width:42px;text-align:center;font-size:10px;padding:1px 2px;background:#1a1a2e;color:#ccc;border:1px solid #333;border-radius:3px;">
-                        <span style="font-size:10px;color:#666;">%</span>
+                <div class="rbt-clutter-free-scale">
+                    <div class="rbt-scale-display">${task.bgDurScale || 100}%</div>
+                    <div class="rbt-scale-controls">
+                        <div style="display:flex;align-items:center;gap:2px;">
+                            <input type="number" class="rbt-bgdurscale-input" data-idx="${idx}" min="10" max="500" step="5"
+                                   value="${task.bgDurScale || 100}" style="width:42px;text-align:center;font-size:10px;padding:1px 2px;background:#181818;color:#ccc;border:1px solid #333;border-radius:3px;">
+                            <span style="font-size:10px;color:#666;">%</span>
+                        </div>
+                        <input type="range" class="rbt-bgdurscale-slider" data-idx="${idx}" min="10" max="500" value="${task.bgDurScale || 100}"
+                               style="width:60px;height:12px;accent-color:#81c784;" title="背景素材时长缩放比例">
                     </div>
                 </div>
             </td>
-            <td class="rbt-col-audio rbt-droppable" data-field="audio">
-                <div style="display:flex;align-items:center;gap:2px;">
-                    <span class="rbt-file-name" style="flex:1" title="双击加载 | ${_escHtml(task.audioPath || '')}">${audioName || '<span class="rbt-placeholder">双击加载</span>'}</span>
-                    ${audioName ? `<button class="rbt-field-clear" data-idx="${idx}" data-field="audio" title="清除人声">✕</button>` : ''}
+            <td class="rbt-col-contentvideo rbt-droppable" data-field="contentvideo">
+                ${(() => {
+                    const cvPath = task.contentVideoPath || '';
+                    const cvName = _shortName(cvPath);
+                    let cvContent = cvName || '<span class="rbt-placeholder">拖拽/双击</span>';
+                    if (cvPath) {
+                        const isImg = /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(cvPath);
+                        const cvUrl = window.electronAPI && window.electronAPI.toFileUrl ? window.electronAPI.toFileUrl(cvPath) : `file://${cvPath}`;
+                        cvContent = `<div style="display:flex;align-items:center;gap:6px;">
+                            ${isImg
+                                ? `<img class="rbt-thumb-previewable" src="${_escHtml(cvUrl)}" style="width:32px;height:32px;object-fit:cover;border-radius:4px;flex-shrink:0;cursor:zoom-in;">`
+                                : `<video class="rbt-thumb-previewable" src="${_escHtml(cvUrl)}#t=1" preload="metadata" style="width:32px;height:32px;object-fit:cover;border-radius:4px;flex-shrink:0;background:#000;cursor:zoom-in;"></video>`}
+                            <span class="rbt-file-name" style="flex:1;font-size:10px;word-break:break-all;" title="${_escHtml(cvPath)}">${_escHtml(cvName)}</span>
+                        </div>`;
+                    }
+                    return `<div style="display:flex;align-items:center;gap:2px;">
+                        <div style="flex:1;min-width:0;overflow:hidden;">${cvContent}</div>
+                        ${cvPath ? `<button class="rbt-field-clear" data-idx="${idx}" data-field="contentvideo" title="清除视频覆层">✕</button>` : ''}
+                    </div>`;
+                })()}
+            </td>
+            <td class="rbt-col-cvtrim">
+                <div class="rbt-cv-trim-cell" data-idx="${idx}" style="cursor:pointer;font-size:10px;padding:2px 4px;border-radius:4px;text-align:center;
+                    ${task.contentVideoTrimStart != null || task.contentVideoTrimEnd != null
+                        ? 'background:rgba(76,158,255,0.15);color:#4c9eff;border:1px solid rgba(76,158,255,0.3);'
+                        : 'color:#666;border:1px dashed #333;'}"
+                    title="双击设置裁切区间">
+                    ${task.contentVideoTrimStart != null || task.contentVideoTrimEnd != null
+                        ? `✂️ ${task.contentVideoTrimStart != null ? Number(task.contentVideoTrimStart).toFixed(1) : '0'}s → ${task.contentVideoTrimEnd != null ? Number(task.contentVideoTrimEnd).toFixed(1) : '尾'}`
+                        : '全段'}
                 </div>
             </td>
-            <td class="rbt-col-audiodurscale">
-                <div style="display:flex;flex-direction:column;gap:2px;align-items:center;min-width:70px;">
-                    <input type="range" class="rbt-audiodurscale-slider" data-idx="${idx}" min="10" max="500" value="${task.audioDurScale || 100}"
-                           style="width:60px;height:14px;accent-color:#ffb74d;" title="人声变速比例">
-                    <div style="display:flex;align-items:center;gap:2px;">
-                        <input type="number" class="rbt-audiodurscale-input" data-idx="${idx}" min="10" max="500" step="5"
-                               value="${task.audioDurScale || 100}" style="width:42px;text-align:center;font-size:10px;padding:1px 2px;background:#1a1a2e;color:#ccc;border:1px solid #333;border-radius:3px;">
-                        <span style="font-size:10px;color:#666;">%</span>
+            <td class="rbt-col-cvscale">
+                <div class="rbt-clutter-free-scale">
+                    <div class="rbt-scale-display">${task.contentVideoScale || 100}%</div>
+                    <div class="rbt-scale-controls">
+                        <div style="display:flex;align-items:center;gap:2px;">
+                            <input type="number" class="rbt-cvscale-input" data-idx="${idx}" min="10" max="300" step="5"
+                                   value="${task.contentVideoScale || 100}" style="width:42px;text-align:center;font-size:10px;padding:1px 2px;background:#181818;color:#ccc;border:1px solid #333;border-radius:3px;">
+                            <span style="font-size:10px;color:#666;">%</span>
+                        </div>
+                        <input type="range" class="rbt-cvscale-slider" data-idx="${idx}" min="10" max="300" value="${task.contentVideoScale || 100}"
+                               style="width:60px;height:12px;accent-color:#00bcd4;" title="视频覆层缩放比例 (100%=自动适配宽度)">
                     </div>
                 </div>
             </td>
-            <td class="rbt-col-srt rbt-droppable" data-field="srt">
-                <div style="display:flex;align-items:center;gap:2px;">
-                    <span class="rbt-file-name" style="flex:1" title="双击加载 | ${_escHtml(task.srtPath || '')}">${srtName || '<span class="rbt-placeholder">双击加载</span>'}</span>
-                    ${srtName ? `<button class="rbt-field-clear" data-idx="${idx}" data-field="srt" title="清除字幕">✕</button>` : ''}
-                </div>
-            </td>
-            <td class="rbt-col-txtcontent">
-                <div style="position:relative;">
-                    <textarea class="rbt-textarea rbt-txtcontent-input" data-idx="${idx}" rows="2" placeholder="粘贴或输入文案..." title="双击放大编辑">${_escHtml(task.txtContent || '')}</textarea>
-                    ${task.txtContent ? `<button class="rbt-field-clear" data-idx="${idx}" data-field="txt" title="清除文案" style="position:absolute;top:2px;right:2px;">✕</button>` : ''}
-                </div>
-                <div style="display:flex;align-items:center;gap:4px;margin-top:2px;">
-                    <span style="font-size:10px;color:${task.aligned ? '#4ade80' : task.txtContent ? '#facc15' : '#666'};">${task.aligned ? '✅ 已对齐' : task.txtContent ? '⏳ 待对齐' : ''}</span>
-                    ${task.srtPath ? `<span style="font-size:10px;color:#888;" title="${_escHtml(task.srtPath)}">📄 ${_shortName(task.srtPath)}</span>` : ''}
+            <td class="rbt-col-cvpos">
+                <div style="display:flex;flex-direction:column;gap:2px;font-size:10px;">
+                    <div style="display:flex;align-items:center;gap:2px;">
+                        <span style="color:#666;min-width:12px;">X:</span>
+                        <input type="text" class="rbt-cvpos-x" data-idx="${idx}" value="${task.contentVideoX || 'center'}"
+                               style="width:50px;font-size:10px;padding:1px 3px;background:#181818;color:#ccc;border:1px solid #333;border-radius:3px;text-align:center;"
+                               placeholder="center" title="center = 水平居中, 或输入像素值">
+                    </div>
+                    <div style="display:flex;align-items:center;gap:2px;">
+                        <span style="color:#666;min-width:12px;">Y:</span>
+                        <input type="text" class="rbt-cvpos-y" data-idx="${idx}" value="${task.contentVideoY || 'center'}"
+                               style="width:50px;font-size:10px;padding:1px 3px;background:#181818;color:#ccc;border:1px solid #333;border-radius:3px;text-align:center;"
+                               placeholder="center" title="center = 垂直居中, 或输入像素值">
+                    </div>
                 </div>
             </td>
             <td class="rbt-col-bgm">
                 <div style="display:flex;align-items:center;gap:4px;">
                     <input type="checkbox" class="rbt-bgm-check" data-idx="${idx}" title="勾选后可批量设置配乐">
-                    <span class="rbt-file-name rbt-bgm-pick" data-idx="${idx}" title="双击加载 | ${_escHtml(task.bgmPath || '')}"
-                          style="cursor:pointer;flex:1;">${bgmName || '<span class="rbt-placeholder">双击选择</span>'}</span>
+                    <span class="rbt-file-name rbt-bgm-pick" data-idx="${idx}" title="拖拽/双击 | ${_escHtml(task.bgmPath || '')}"
+                          style="cursor:pointer;flex:1;">${bgmName || '<span class="rbt-placeholder">拖拽/双击</span>'}</span>
                     ${bgmName ? `<button class="rbt-field-clear" data-idx="${idx}" data-field="bgm" title="清除配乐">✕</button>` : ''}
                 </div>
-                <div style="display:flex;align-items:center;gap:4px;margin-top:3px;">
-                    <span style="font-size:10px;color:#888;white-space:nowrap;">🔉</span>
-                    <input type="range" class="rbt-bgm-vol" data-idx="${idx}" min="0" max="100" value="${task.bgmVolume != null ? task.bgmVolume : 30}"
-                           style="flex:1;height:14px;accent-color:#9b59b6;" title="配乐音量">
-                    <span class="rbt-bgm-vol-label" style="font-size:10px;color:#888;min-width:28px;text-align:right;">${task.bgmVolume != null ? task.bgmVolume : 30}%</span>
+                <div class="rbt-clutter-free-scale" style="height:18px; margin-top:2px;">
+                    <div class="rbt-scale-display" style="font-size:10px;">🎵 Vol: ${task.bgmVolume != null ? task.bgmVolume : 30}%</div>
+                    <div class="rbt-scale-controls" style="flex-direction:row; inset:0;">
+                        <span style="font-size:10px;color:#888;white-space:nowrap;">🔉</span>
+                        <input type="range" class="rbt-bgm-vol" data-idx="${idx}" min="0" max="100" value="${task.bgmVolume != null ? task.bgmVolume : 30}"
+                               style="flex:1; min-width:0; height:12px; accent-color:#9b59b6;" title="配乐音量">
+                        <span class="rbt-bgm-vol-label" style="font-size:10px;color:#888;min-width:28px;text-align:right;">${task.bgmVolume != null ? task.bgmVolume : 30}%</span>
+                    </div>
+                </div>
+            </td>
+            <td class="rbt-col-ai_script">
+                <div style="position:relative;">
+                    <textarea class="rbt-textarea rbt-ai-script-input" data-idx="${idx}" rows="2" placeholder="粘贴需要被处理的原文案..." title="双击放大编辑">${_escHtml(task.aiScript || '')}</textarea>
+                    ${task.aiScript ? `<button class="rbt-field-clear" data-idx="${idx}" data-field="ai_script" title="清除原文案" style="position:absolute;top:2px;right:2px;">✕</button>` : ''}
+                </div>
+            </td>
+            <td class="rbt-col-tts_text">
+                <div style="position:relative;">
+                    <textarea class="rbt-textarea rbt-tts-text-input" data-idx="${idx}" rows="2" placeholder="粘贴配音文案..." 
+                              style="${task.aiTtsDiffWarning ? 'border:1px solid #ef4444; background:rgba(239, 68, 68, 0.1);' : ''}"
+                              title="${task.aiTtsDiffWarning ? '⚠️ 警告：检测到配音文案与原文存在字符差异！请检查是否发生了改词！' : '双击放大编辑'}">${_escHtml(task.ttsText || '')}</textarea>
+                    ${task.ttsText ? `<button class="rbt-field-clear" data-idx="${idx}" data-field="tts_text" title="清除文案" style="position:absolute;top:2px;right:2px;">✕</button>` : ''}
+                </div>
+                <div style="display:flex;align-items:center;min-height:14px;margin-top:2px;">
+                    ${task.aiTtsDiffWarning ? `<div class="diff-warning-badge" style="margin-top:6px;font-size:12px;color:#ef4444;font-weight:bold;text-align:right;">⚠️词汇变动警告 <span class="diff-modal-btn" data-field="tts" data-idx="${idx}" style="color:#3b82f6;cursor:pointer;margin-left:8px;text-decoration:underline;">[🔍比对]</span></div>` : ''}
+                </div>
+            </td>
+            <td class="rbt-col-tts_voice">
+                <div style="display:flex;flex-direction:column;gap:4px;">
+                    <input type="text" class="rbt-input rbt-tts-voice-input" data-idx="${idx}" value="${_escHtml(task.ttsVoiceId || '')}" placeholder="Voice ID" style="width:80px;font-size:10px;padding:2px;border:1px solid #333;background:#111;color:#fff;">
+                    <button class="rbt-btn rbt-tts-gen-btn" data-idx="${idx}" style="font-size:10px;padding:2px;background:#5e5ce6;color:#fff;border:none;">▶ 生成配音</button>
+                    ${task.status === 'generating' ? '<span style="font-size:10px;color:#ffd43b;">Generating...</span>' : task.status === 'success' ? '<span style="font-size:10px;color:#4ade80;font-weight:bold;">✅ 最新生成完成</span>' : task.status === 'error' ? '<span style="font-size:10px;color:#ff3333;">❌ 出错</span>' : ''}
+                </div>
+            </td>
+            <td class="rbt-col-srt rbt-droppable" data-field="srt">
+                <div style="display:flex;align-items:center;gap:2px;">
+                    <span class="rbt-file-name" style="flex:1" title="拖拽/双击 | ${_escHtml(task.srtPath || '')}">${srtName || '<span class="rbt-placeholder">拖拽/双击</span>'}</span>
+                    ${srtName ? `<button class="rbt-srt-edit-btn" data-idx="${idx}" title="编辑这套外部SRT文件内容" style="padding:0 4px;font-size:10px;background:#384050;border:1px solid #556;color:#ccc;cursor:pointer;border-radius:3px;">✎ 直接修改</button><button class="rbt-field-clear" data-idx="${idx}" data-field="srt" title="清除字幕">✕</button>` : ''}
+                </div>
+            </td>
+            <td class="rbt-col-txtcontent">
+                <div style="position:relative;">
+                    <textarea class="rbt-textarea rbt-txtcontent-input" data-idx="${idx}" rows="2" 
+                              ${task.srtPath ? 'disabled placeholder="[已使用外部SRT]"' : 'placeholder="粘贴或输入文案..."'} 
+                              style="${task.srtPath ? 'opacity:0.3;cursor:not-allowed;' : ''} ${task.aiTextDiffWarning ? 'border:1px solid #ef4444; background:rgba(239, 68, 68, 0.1);' : ''}"
+                              title="${task.aiTextDiffWarning ? '⚠️ 警告：AI断行产生的文本与【🧠 AI 原文案】存在字符差异。可能发生了改词或删词，请仔细检查比对！\n\n如有错误请直接修改。' : (task.srtPath ? '外部SRT优先级更高，文案处于禁用状态' : '双击放大编辑')}">${_escHtml(task.txtContent || '')}</textarea>
+                    ${task.txtContent && !task.srtPath ? `<button class="rbt-field-clear" data-idx="${idx}" data-field="txt" title="清除文案" style="position:absolute;top:2px;right:2px;">✕</button>` : ''}
+                </div>
+                <div style="display:flex;align-items:center;gap:4px;margin-top:2px;min-height:14px;">
+                    <span style="font-size:10px;color:${task.aligned ? '#4ade80' : task.txtContent && !task.srtPath ? '#facc15' : '#666'};">${task.aligned ? '✅ 已对齐' : task.txtContent && !task.srtPath ? '⏳ 待对齐' : ''}</span>
+                    ${task.aiTextDiffWarning ? `<div class="diff-warning-badge" style="margin-top:6px;font-size:12px;color:#ef4444;font-weight:bold;text-align:right;">⚠️词汇变动警告 <span class="diff-modal-btn" data-field="txt" data-idx="${idx}" style="color:#3b82f6;cursor:pointer;margin-left:8px;text-decoration:underline;">[🔍比对]</span></div>` : ''}
+                </div>
+            </td>
+            <td class="rbt-col-audio rbt-droppable" data-field="audio">
+                <div style="display:flex;align-items:center;gap:2px;">
+                    ${audioName ? `<button class="rbt-table-play-btn" data-src="${_escHtml(task.audioPath)}" style="background:none;border:none;cursor:pointer;font-size:14px;padding:0 4px;" title="点击试听">▶️</button>` : ''}
+                    <span class="rbt-file-name" style="flex:1" title="拖拽/双击 | ${_escHtml(task.audioPath || '')}">${audioName || '<span class="rbt-placeholder">拖拽/双击</span>'}</span>
+                    ${audioName ? `<button class="rbt-field-clear" data-idx="${idx}" data-field="audio" title="清除人声">✕</button>` : ''}
+                </div>
+            </td>
+            <td class="rbt-col-audiodurscale">
+                <div class="rbt-clutter-free-scale">
+                    <div class="rbt-scale-display">${task.audioDurScale || 100}%</div>
+                    <div class="rbt-scale-controls">
+                        <div style="display:flex;align-items:center;gap:2px;">
+                            <input type="number" class="rbt-audiodurscale-input" data-idx="${idx}" min="10" max="500" step="5"
+                                   value="${task.audioDurScale || 100}" style="width:42px;text-align:center;font-size:10px;padding:1px 2px;background:#181818;color:#ccc;border:1px solid #333;border-radius:3px;">
+                            <span style="font-size:10px;color:#666;">%</span>
+                        </div>
+                        <input type="range" class="rbt-audiodurscale-slider" data-idx="${idx}" min="10" max="500" value="${task.audioDurScale || 100}"
+                               style="width:60px;height:12px;accent-color:#ffb74d;" title="人声变速比例">
+                    </div>
+                </div>
+            </td>
+            <td class="rbt-col-pip rbt-droppable" data-field="pip">
+                <div style="display:flex;align-items:center;gap:2px;">
+                    <div style="flex:1;min-width:0;overflow:hidden;display:flex;">${pipContent}</div>
+                    ${task.pipPath ? `<button class="rbt-field-clear" data-idx="${idx}" data-field="pip" title="清除图像覆层">✕</button>` : ''}
                 </div>
             </td>
             <td class="rbt-col-title">
-                <textarea class="rbt-textarea rbt-title-input" data-idx="${idx}" rows="2" title="双击放大编辑">${_escHtml(title)}</textarea>
+                <textarea class="rbt-textarea rbt-title-input" data-idx="${idx}" rows="2" title="双击放大编辑" style="${title === '标题文字' ? 'color:#ff5555;' : ''}">${_escHtml(title)}</textarea>
             </td>
             <td class="rbt-col-body">
-                <textarea class="rbt-textarea rbt-body-input" data-idx="${idx}" rows="2" title="双击放大编辑">${_escHtml(body)}</textarea>
+                <textarea class="rbt-textarea rbt-body-input" data-idx="${idx}" rows="2" title="双击放大编辑" style="${body === '内容文字' ? 'color:#ff5555;' : ''}">${_escHtml(body)}</textarea>
             </td>
             <td class="rbt-col-footer">
                 <textarea class="rbt-textarea rbt-footer-input" data-idx="${idx}" rows="2" title="双击放大编辑">${_escHtml(footer)}</textarea>
@@ -809,27 +1261,6 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
             </td>
             <td class="rbt-col-scroll-body">
                 <textarea class="rbt-textarea rbt-scroll-body-input" data-idx="${idx}" rows="2" title="双击放大编辑">${_escHtml(scrollBody)}</textarea>
-            </td>
-            <td class="rbt-col-dur">
-                <input type="number" class="rbt-textarea rbt-dur-input" data-idx="${idx}" min="0" max="600" step="0.5"
-                    value="${task.customDuration ? task.customDuration : ''}" placeholder="自动" style="width:55px;text-align:center;" title="留空=自动跟随音频/视频时长，输入数字=自定义秒数">
-            </td>
-            <td class="rbt-col-tpl">
-                <select class="rbt-select rbt-sub-tpl-select" data-idx="${idx}">
-                    <option value="">默认</option>
-                    ${subTplOptions}
-                </select>
-            </td>
-            <td class="rbt-col-tpl">
-                <select class="rbt-select rbt-card-tpl-select" data-idx="${idx}">
-                    <option value="">无预设</option>
-                    ${cardTplOptions}
-                </select>
-            </td>
-            <td class="rbt-col-act">
-                <button class="rbt-row-btn rbt-select-btn" data-idx="${idx}" title="预览此任务">👁</button>
-                <button class="rbt-row-btn rbt-clone-btn" data-idx="${idx}" title="复制此行">📋</button>
-                <button class="rbt-row-btn rbt-delete-btn" data-idx="${idx}" title="删除此行">🗑</button>
             </td>
         </tr>
     `;
@@ -843,10 +1274,29 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
 function _bindBatchTableEvents() {
     const container = _batchTableState.container;
 
-    // Toggle actions
-    container.querySelector('#rbt-toggle-actions-btn')?.addEventListener('click', () => {
-        _batchTableState.actionsCollapsed = !_batchTableState.actionsCollapsed;
-        _renderBatchTable();
+    // Toggle actions panel
+    const toggleActionsBtn = container.querySelector('#rbt-toggle-actions-btn');
+    if (toggleActionsBtn) {
+        toggleActionsBtn.addEventListener('click', () => {
+            _batchTableState.actionsCollapsed = !_batchTableState.actionsCollapsed;
+            _renderBatchTable();
+        });
+    }
+
+    // Toggle modern UI mode
+    const toggleUIModeBtn = container.querySelector('#rbt-toggle-ui-mode-btn');
+    if (toggleUIModeBtn) {
+        toggleUIModeBtn.addEventListener('click', () => {
+            // _batchTableState.useModernUI = !_batchTableState.useModernUI; 废弃
+            _renderBatchTable();
+        });
+    }
+
+    // Toggle "更多操作" dropdown
+    container.querySelector('#rbt-more-tools-toggle')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const dd = container.querySelector('#rbt-more-tools-dropdown');
+        if (dd) dd.classList.toggle('show');
     });
 
     // Close
@@ -888,8 +1338,73 @@ function _bindBatchTableEvents() {
             }
         });
     }
+    
+    // ══ Global Hover Preview ══
+    let hoverTooltip = container.querySelector('#rbt-hover-preview-tooltip');
+    if (!hoverTooltip) {
+        hoverTooltip = document.createElement('div');
+        hoverTooltip.id = 'rbt-hover-preview-tooltip';
+        hoverTooltip.style.cssText = 'position:fixed; z-index:999999; display:none; background:#000; border:1px solid #48548a; border-radius:8px; box-shadow:0 12px 40px rgba(0,0,0,0.8); overflow:hidden; pointer-events:none;';
+        document.body.appendChild(hoverTooltip); // attach to body to prevent clipping
+    }
+    
+    let previewTimeout;
+    container.addEventListener('mouseover', (e) => {
+        const target = e.target;
+        if (target.classList.contains('rbt-thumb-previewable')) {
+            clearTimeout(previewTimeout);
+            previewTimeout = setTimeout(() => {
+                const src = target.getAttribute('src');
+                if (!src) return;
+                
+                const isVideo = target.tagName === 'VIDEO';
+                const pureSrc = src.split('#')[0]; // strip hash
+                
+                const rect = target.getBoundingClientRect();
+                
+                if (isVideo) {
+                    hoverTooltip.innerHTML = `<video src="${_escHtml(pureSrc)}" autoplay loop muted style="max-width:360px; max-height:360px; display:block; object-fit:contain; background:#000;"></video>`;
+                } else {
+                    hoverTooltip.innerHTML = `<img src="${_escHtml(pureSrc)}" style="max-width:360px; max-height:360px; display:block; object-fit:contain; background:#111;">`;
+                }
+                
+                hoverTooltip.style.display = 'block';
+                
+                let top = rect.top - 10;
+                let left = rect.right + 15;
+                
+                // Keep tooltip on screen
+                if (top + 360 > window.innerHeight) {
+                    top = window.innerHeight - 380;
+                }
+                if (left + 360 > window.innerWidth) {
+                    left = rect.left - 380; 
+                }
+                
+                hoverTooltip.style.top = `${Math.max(10, top)}px`;
+                hoverTooltip.style.left = `${Math.max(10, left)}px`;
+                
+                if (isVideo) {
+                    const v = hoverTooltip.querySelector('video');
+                    if (v) {
+                        v.playbackRate = 1.5;
+                        v.play().catch(()=>{});
+                    }
+                }
+            }, 300);
+        }
+    });
 
-    // ══ Material folder selection & refresh ══
+    container.addEventListener('mouseout', (e) => {
+        const target = e.target;
+        if (target.classList.contains('rbt-thumb-previewable')) {
+            clearTimeout(previewTimeout);
+            hoverTooltip.style.display = 'none';
+            hoverTooltip.innerHTML = '';
+        }
+    });
+
+    // ══ Material folder selection & refresh (now in sidebar) ══
     container.querySelector('#rbt-select-mat-dir')?.addEventListener('click', async () => {
         if (window.electronAPI && window.electronAPI.selectDirectory) {
             const dir = await window.electronAPI.selectDirectory();
@@ -905,6 +1420,22 @@ function _bindBatchTableEvents() {
     container.querySelector('#rbt-refresh-mat')?.addEventListener('click', () => {
         _refreshMaterialFolder();
     });
+    // Sidebar versions of the same (rbt-ms-select-dir / rbt-ms-refresh-dir)
+    container.querySelector('#rbt-ms-select-dir')?.addEventListener('click', async () => {
+        if (window.electronAPI && window.electronAPI.selectDirectory) {
+            const dir = await window.electronAPI.selectDirectory();
+            if (dir) {
+                const tab = _getActiveTab();
+                tab.materialDir = dir;
+                _renderBatchTable();
+            }
+        } else {
+            alert('请在桌面应用中使用此功能');
+        }
+    });
+    container.querySelector('#rbt-ms-refresh-dir')?.addEventListener('click', () => {
+        _refreshMaterialFolder();
+    });
 
     // ══ Hook Batch settings ══
     container.querySelector('#rbt-upload-hook')?.addEventListener('click', () => {
@@ -918,18 +1449,17 @@ function _bindBatchTableEvents() {
 
     const hookModal = container.querySelector('#rbt-hook-modal');
     if (hookModal) {
-        container.querySelector('#rbt-hook-select-btn')?.addEventListener('click', async () => {
-            if (window.electronAPI && window.electronAPI.selectFile) {
-                const res = await window.electronAPI.selectFile({
-                    title: '选择前置Hook短片',
-                    properties: ['openFile'],
-                    filters: [{name: '视频文件', extensions: ['mp4', 'mov', 'mkv', 'webm', 'avi']}]
-                });
-                if (res && res.length > 0) {
-                    container.querySelector('#rbt-hook-path').value = res[0];
-                    _updateHookPreview();
-                }
-            }
+        container.querySelector('#rbt-hook-select-btn')?.addEventListener('click', () => {
+            container.querySelector('#rbt-hook-file-input')?.click();
+        });
+        
+        container.querySelector('#rbt-hook-file-input')?.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const filePath = (typeof getFileNativePath === 'function') ? getFileNativePath(file) : (file.path || file.name);
+            container.querySelector('#rbt-hook-path').value = filePath;
+            _updateHookPreview();
+            e.target.value = '';
         });
         
         container.querySelector('#rbt-hook-start')?.addEventListener('input', () => {
@@ -982,6 +1512,13 @@ function _bindBatchTableEvents() {
             const hookSpeed = parseFloat(container.querySelector('#rbt-hook-speed').value) || 1;
             const hookTrans = container.querySelector('#rbt-hook-transition').value || 'none';
             const hookTransDur = parseFloat(container.querySelector('#rbt-hook-trans-dur').value) || 0.5;
+            const selectedIdx = window._reelsState ? window._reelsState.selectedIdx : -1;
+            const selectedIndices = _getSelectedIndices();
+            const shouldRefreshPreview = (
+                typeof reelsSelectTask === 'function' &&
+                selectedIdx >= 0 &&
+                (idx === selectedIdx || (idx < 0 && selectedIndices.includes(selectedIdx)))
+            );
 
             const applyToTask = (task) => {
                 task.hookFile = hookFile;
@@ -995,24 +1532,236 @@ function _bindBatchTableEvents() {
             if (idx >= 0) {
                 applyToTask(window._reelsState.tasks[idx]);
             } else {
-                const indices = _getSelectedIndices();
-                indices.forEach(i => {
+                selectedIndices.forEach(i => {
                     const task = window._reelsState.tasks[i];
                     if (task) applyToTask(task);
                 });
             }
             hookModal.style.display = 'none';
             _renderBatchTable();
+            if (shouldRefreshPreview) {
+                reelsSelectTask(selectedIdx);
+            }
+        });
+    }
+
+    // ══ Cover modal events ══
+    const coverModal = container.querySelector('#rbt-cover-modal');
+    if (coverModal) {
+        // 关闭及空白区域点击
+        coverModal.addEventListener('click', (e) => {
+            if (e.target === coverModal) {
+                coverModal.style.display = 'none';
+            }
+        });
+        container.querySelector('#rbt-cover-cancel')?.addEventListener('click', () => {
+            coverModal.style.display = 'none';
+        });
+
+        // 取背景图按钮
+        container.querySelector('#rbt-cover-bg-btn')?.addEventListener('click', () => {
+             container.querySelector('#rbt-cover-file-input')?.click();
+        });
+        container.querySelector('#rbt-cover-file-input')?.addEventListener('change', (e) => {
+            if (e.target.files && e.target.files.length > 0) {
+                let filePath = '';
+                if (window.electronAPI && window.electronAPI.getFilePath) {
+                    filePath = window.electronAPI.getFilePath(e.target.files[0]) || e.target.files[0].path;
+                } else {
+                    filePath = e.target.files[0].path;
+                }
+                container.querySelector('#rbt-cover-bg-path').value = filePath;
+                
+                // 更新预览
+                const isImg = /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(filePath);
+                const url = window.electronAPI && window.electronAPI.toFileUrl ? window.electronAPI.toFileUrl(filePath) : `file://${filePath}`;
+                const previewImg = container.querySelector('#rbt-cover-preview-img');
+                const hint = container.querySelector('#rbt-cover-preview-hint');
+                previewImg.style.display = 'block';
+                hint.style.display = 'none';
+                previewImg.src = url;
+            }
+        });
+
+        // 保存配置
+        container.querySelector('#rbt-cover-save')?.addEventListener('click', () => {
+            const idxStr = coverModal.dataset.editIdx;
+            if (!idxStr) return;
+            const idx = parseInt(idxStr);
+            const coverEnabled = container.querySelector('#rbt-cover-enabled').checked;
+            const separateExport = container.querySelector('#rbt-cover-export-separate').checked;
+            const coverBgPath = container.querySelector('#rbt-cover-bg-path').value.trim();
+            const coverDuration = parseFloat(container.querySelector('#rbt-cover-duration').value) || 0;
+            const selectedIdx = window._reelsState ? window._reelsState.selectedIdx : -1;
+            const selectedIndices = _getSelectedIndices();
+            const shouldRefreshPreview = (
+                typeof reelsSelectTask === 'function' &&
+                selectedIdx >= 0 &&
+                (idx === selectedIdx || (idx < 0 && selectedIndices.includes(selectedIdx)))
+            );
+
+            const applyToTask = (task) => {
+                if (!task.cover) task.cover = {};
+                task.cover.enabled = coverEnabled;
+                task.cover.exportSeparate = separateExport;
+                task.cover.bgPath = coverBgPath;
+                task.cover.duration = coverDuration;
+                if (!task.cover.overlays) task.cover.overlays = [];
+                
+                const selOvlTpl = container.querySelector('#rbt-cover-overlay-sel')?.value || '';
+                if (selOvlTpl && selOvlTpl !== task.cover.overlayTpl && window.ReelsOverlay) {
+                    let presets = {};
+                    try { presets = JSON.parse(localStorage.getItem('reels_overlay_group_presets') || '{}'); } catch(e) {}
+                    const presetData = presets[selOvlTpl];
+                    if (presetData && Array.isArray(presetData)) {
+                        const newOvls = presetData.map(o => JSON.parse(JSON.stringify(o)));
+                        const oldTextOvl = task.cover.overlays.find(o => o.type === 'textcard' || o.type === 'scroll') || {title_text: task.title || ''};
+                        const title = oldTextOvl.title_text || '';
+                        for (const ov of newOvls) {
+                            if (ov.type === 'textcard') { ov.title_text = title; } 
+                            else if (ov.type === 'scroll') { ov.content = title; }
+                        }
+                        task.cover.overlays = newOvls;
+                    }
+                }
+                task.cover.overlayTpl = selOvlTpl;
+            };
+
+            if (idx >= 0) {
+                applyToTask(window._reelsState.tasks[idx]);
+            } else {
+                selectedIndices.forEach(i => {
+                    const task = window._reelsState.tasks[i];
+                    if (task) applyToTask(task);
+                });
+            }
+            coverModal.style.display = 'none';
+            _renderBatchTable();
+            if (shouldRefreshPreview) {
+                reelsSelectTask(selectedIdx);
+            }
+        });
+
+        // 绑定批量应用按钮
+        container.querySelector('#rbt-cover-batch-apply')?.addEventListener('click', () => {
+             const idxStr = coverModal.dataset.editIdx;
+             if (!idxStr) return;
+             // First trigger single save to apply current UI values to the current task
+             container.querySelector('#rbt-cover-save').click();
+             
+             const idx = parseInt(idxStr);
+             const sourceTask = window._reelsState.tasks[idx];
+             if (!sourceTask || !sourceTask.cover) return;
+
+             for (let i = 0; i < window._reelsState.tasks.length; i++) {
+                 if (i === idx) continue;
+                 const t = window._reelsState.tasks[i];
+                 t.cover = JSON.parse(JSON.stringify(sourceTask.cover));
+                 // Inherit local title logic
+                 const tTitle = t.title || t.baseName || '';
+                 const ovs = t.cover.overlays || [];
+                 for (const ov of ovs) {
+                     if (ov.type === 'textcard') { ov.title_text = tTitle; } 
+                     else if (ov.type === 'scroll') { ov.content = tTitle; }
+                 }
+             }
+             if (typeof showToast === 'function') showToast('已将该封面配置应用到全部行！', 'success');
+             _renderBatchTable();
+        });
+
+        // Cover Preset Handlers
+        const presetSel = container.querySelector('#rbt-cover-preset-sel');
+        container.querySelector('#rbt-cover-preset-save')?.addEventListener('click', () => {
+             const pname = prompt('请输入你要保存的封面预设名称 (例如: 蓝底黄字模版):');
+             if (!pname) return;
+             const newP = {
+                  enabled: container.querySelector('#rbt-cover-enabled').checked,
+                  exportSeparate: container.querySelector('#rbt-cover-export-separate').checked,
+                  bgPath: container.querySelector('#rbt-cover-bg-path').value.trim(),
+                  duration: parseFloat(container.querySelector('#rbt-cover-duration').value) || 0,
+                  overlayTpl: container.querySelector('#rbt-cover-overlay-sel')?.value || ''
+             };
+             let pStore = {};
+             try { pStore = JSON.parse(localStorage.getItem('videokit_cover_presets') || '{}'); } catch(e){}
+             pStore[pname] = newP;
+             localStorage.setItem('videokit_cover_presets', JSON.stringify(pStore));
+             if (typeof showToast === 'function') showToast('预设已保存！', 'success');
+             if (typeof _openCoverModal === 'function') _openCoverModal(parseInt(coverModal.dataset.editIdx));
+             if(presetSel) presetSel.value = pname;
+        });
+
+        container.querySelector('#rbt-cover-preset-del')?.addEventListener('click', () => {
+             if(!presetSel) return;
+             const pname = presetSel.value;
+             if (!pname) return alert('请先在下拉框选择一个已有预设名称');
+             let pStore = {};
+             try { pStore = JSON.parse(localStorage.getItem('videokit_cover_presets') || '{}'); } catch(e){}
+             delete pStore[pname];
+             localStorage.setItem('videokit_cover_presets', JSON.stringify(pStore));
+             presetSel.value = '';
+             if (typeof showToast === 'function') showToast('预设已删除！', 'success');
+             if (typeof _openCoverModal === 'function') _openCoverModal(parseInt(coverModal.dataset.editIdx));
+        });
+
+        presetSel?.addEventListener('change', () => {
+             const pname = presetSel.value;
+             if (!pname) return;
+             let pStore = {};
+             try { pStore = JSON.parse(localStorage.getItem('videokit_cover_presets') || '{}'); } catch(e){}
+             const p = pStore[pname];
+             if (p) {
+                 container.querySelector('#rbt-cover-enabled').checked = p.enabled;
+                 container.querySelector('#rbt-cover-export-separate').checked = p.exportSeparate;
+                 container.querySelector('#rbt-cover-bg-path').value = p.bgPath || '';
+                 container.querySelector('#rbt-cover-duration').value = p.duration || 0;
+                 if (container.querySelector('#rbt-cover-overlay-sel')) container.querySelector('#rbt-cover-overlay-sel').value = p.overlayTpl || '';
+                 
+                 const prevImg = container.querySelector('#rbt-cover-preview-img');
+                 const hint = container.querySelector('#rbt-cover-preview-hint');
+                 if (p.bgPath && prevImg && hint) {
+                     const url = window.electronAPI && window.electronAPI.toFileUrl ? window.electronAPI.toFileUrl(p.bgPath) : `file://${p.bgPath}`;
+                     prevImg.src = url;
+                     prevImg.style.display = 'block';
+                     hint.style.display = 'none';
+                 } else if (prevImg && hint) {
+                     prevImg.style.display = 'none';
+                     hint.style.display = 'block';
+                 }
+             }
+        });
+
+        // 绑定编辑覆层卡的拉起
+        container.querySelector('#rbt-cover-edit-overlay-btn')?.addEventListener('click', () => {
+             const idxStr = coverModal.dataset.editIdx;
+             if (!idxStr) return;
+             const idx = parseInt(idxStr);
+             const task = window._reelsState.tasks[idx];
+             if (!task) return;
+             
+             // 先强制把当前的UI设定落盘保存一下
+             container.querySelector('#rbt-cover-save').click();
+             
+             // 虽然刚才click关掉了modal，但不影响后续开Edit
+             if (typeof reelsToggleCoverEditMode === 'function') {
+                 reelsToggleCoverEditMode(true);
+             }
         });
     }
 
     // ══ Batch selection events ══
-    container.querySelector('#rbt-select-all')?.addEventListener('change', (e) => {
+    const handleSelectAll = (e) => {
+        const checked = e.target.checked;
         const tasks = window._reelsState.tasks || [];
-        _batchTableState.selectedRows = new Set(e.target.checked ? tasks.map((_, i) => i) : []);
-        container.querySelectorAll('.rbt-row-check').forEach(cb => cb.checked = e.target.checked);
+        _batchTableState.selectedRows = new Set(checked ? tasks.map((_, i) => i) : []);
+        container.querySelectorAll('.rbt-row-check').forEach(cb => cb.checked = checked);
+        const sa = container.querySelector('#rbt-select-all');
+        const ha = container.querySelector('#rbt-header-select-all');
+        if (sa && sa !== e.target) sa.checked = checked;
+        if (ha && ha !== e.target) ha.checked = checked;
         _updateBatchSelectCount();
-    });
+    };
+    container.querySelector('#rbt-select-all')?.addEventListener('change', handleSelectAll);
+    container.querySelector('#rbt-header-select-all')?.addEventListener('change', handleSelectAll);
     container.querySelector('#rbt-invert-select')?.addEventListener('click', () => {
         const tasks = window._reelsState.tasks || [];
         const newSet = new Set();
@@ -1047,6 +1796,25 @@ function _bindBatchTableEvents() {
         _renderBatchTable();
         alert(`✅ 已将字幕模板「${val}」应用到 ${indices.length} 行`);
     });
+
+    // ══ 字幕模板自定义下拉框交互 (使用统一选择器) ══
+    const subTplTrigger = container.querySelector('#rbt-sub-tpl-trigger');
+    const subTplSelect = container.querySelector('#rbt-batch-sub-tpl');
+    const subTplLabel = container.querySelector('#rbt-sub-tpl-label');
+    
+    if (subTplTrigger) {
+        subTplTrigger.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const currentVal = subTplSelect?.value || '';
+            _openStyledPresetPicker(subTplTrigger, currentVal, (val) => {
+                if (subTplSelect) subTplSelect.value = val;
+                if (subTplLabel) {
+                    subTplLabel.textContent = val || '字幕模板...';
+                    subTplLabel.style.color = val ? '#fff' : '';
+                }
+            });
+        });
+    }
     container.querySelector('#rbt-apply-batch-card')?.addEventListener('click', () => {
         const val = container.querySelector('#rbt-batch-card-tpl')?.value;
         if (!val) { alert('请先选择覆层预设'); return; }
@@ -1084,6 +1852,17 @@ function _bindBatchTableEvents() {
         _renderBatchTable();
         alert(`✅ 已将缩放设置 ${parts.length > 0 ? '(' + parts.join(', ') + ')' : '(100%)'} 应用到 ${indices.length} 行`);
     });
+    // Toggle Media Pool Sidebar
+    container.querySelector('#rbt-open-media-pool-btn')?.addEventListener('click', () => {
+        _batchTableState.mediaPoolOpen = !_batchTableState.mediaPoolOpen;
+        _renderBatchTable();
+    });
+    container.querySelector('#rbt-close-media-sidebar')?.addEventListener('click', () => {
+        _batchTableState.mediaPoolOpen = false;
+        _renderBatchTable();
+    });
+    // Media sidebar import buttons
+    _bindMediaSidebarEvents(container);
 
     // Add row
     container.querySelector('#rbt-add-row-btn')?.addEventListener('click', () => {
@@ -1099,6 +1878,254 @@ function _bindBatchTableEvents() {
         }
     });
 
+    // AI Processing
+    // AI Processing
+    container.querySelector('#rbt-ai-gemini-btn')?.addEventListener('click', () => {
+        const indices = _getSelectedIndices();
+        const tasks = window._reelsState?.tasks || [];
+        if (tasks.length === 0) return alert('❌ 当前表格为空，无法执行！');
+        
+        const targetIdxs = indices.length > 0 ? indices : tasks.map((_, i) => i);
+        const validIdxs = targetIdxs.filter(i => tasks[i].aiScript && tasks[i].aiScript.trim().length > 0);
+        
+        let msg = `即将开始【批量 AI 处理文案】操作：\n\n`;
+        msg += `【预期处理数据清单】\n`;
+        msg += `· 目标范围：${indices.length > 0 ? `已选中的 ${indices.length} 行` : `全部 ${tasks.length} 行`}\n`;
+        msg += `· 有效数据：检测到 ${validIdxs.length} 行「🧠 AI 原文案」列有内容将被处理\n`;
+        if (validIdxs.length > 0) msg += `· 对应行号：[ ${validIdxs.map(i => i + 1).join(', ')} ]\n\n`;
+        else msg += `\n⚠️ 警告：当前目标中没有任何行填写了「🧠 AI 原文案」，执行将失败！\n\n`;
+        msg += `【处理规则】\n1. 读取有效行的「🧠 AI 原文案」。\n2. 使用选择的「Prompt指令预设」调用模型。\n3. 结果自动填入「🤖 TTS文案」列。\n\n是否确认开始执行此操作？`;
+        
+        if (!confirm(msg)) return;
+        _ensureAIColumnsVisible();
+        _runGeminiBatchProcessing();
+    });
+    
+    container.querySelector('#rbt-ai-tts-all-btn')?.addEventListener('click', () => {
+        const indices = _getSelectedIndices();
+        const tasks = window._reelsState?.tasks || [];
+        if (tasks.length === 0) return alert('❌ 当前表格为空，无法执行！');
+        
+        const targetIdxs = indices.length > 0 ? indices : tasks.map((_, i) => i);
+        const validIdxs = targetIdxs.filter(i => tasks[i].ttsText && tasks[i].ttsText.trim().length > 0);
+        
+        let msg = `即将开始【分步配音字幕】操作：\n\n`;
+        msg += `【预期处理数据清单】\n`;
+        msg += `· 目标范围：${indices.length > 0 ? `已选中的 ${indices.length} 行` : `全部 ${tasks.length} 行`}\n`;
+        msg += `· 有效数据：检测到 ${validIdxs.length} 行「🤖 TTS文案」将生成配音\n`;
+        if (validIdxs.length > 0) msg += `· 对应行号：[ ${validIdxs.map(i => i + 1).join(', ')} ]\n\n`;
+        else msg += `\n⚠️ 警告：当前目标中没有任何行填写了「🤖 TTS文案」，执行将失败！\n\n`;
+        msg += `【处理规则】\n1. 读取有效行的「🤖 TTS文案」。\n2. 依据当前配置的「发音人」合成音频。\n3. 生成完毕后本地持久化保存至该任务。\n\n是否确认开始执行？`;
+        
+        if (!confirm(msg)) return;
+        _ensureAIColumnsVisible();
+        _runTTSBatchProcessing();
+    });
+
+    // 绑定新的融合执行大按钮
+    container.querySelector('#rbt-unified-execute-btn')?.addEventListener('click', () => {
+        const modeBtnId = container.querySelector('#rbt-unified-execute-mode').value;
+        const targetBtn = container.querySelector('#' + modeBtnId);
+        if (targetBtn) {
+            targetBtn.click(); // 通过隐藏按钮触发原生绑定事件
+        }
+    });
+    container.querySelector('#rbt-ai-auto-all-btn')?.addEventListener('click', async () => {
+        const indices = _getSelectedIndices();
+        const tasks = window._reelsState?.tasks || [];
+        if (tasks.length === 0) return alert('❌ 当前表格为空，无法执行！');
+        
+        const targetIdxs = indices.length > 0 ? indices : tasks.map((_, i) => i);
+        const aiValid = targetIdxs.filter(i => tasks[i].aiScript && tasks[i].aiScript.trim().length > 0);
+        const hasTxtContent = targetIdxs.some(i => tasks[i].txtContent && tasks[i].txtContent.trim().length > 0);
+        
+        let msg = `即将开始【🚀 自动全家桶 (AI改写 + 配音 + 字幕对齐)】操作：\n\n`;
+        msg += `【预期处理数据清单】\n`;
+        msg += `· 目标范围：${indices.length > 0 ? `已选中的 ${indices.length} 行` : `全部 ${tasks.length} 行`}\n`;
+        msg += `· 发动机一：检测到 ${aiValid.length} 行「🧠 AI 原文案」作为源头数据将被 AI 改写\n`;
+        if (aiValid.length > 0) msg += `· 对应行号：[ ${aiValid.map(i => i + 1).join(', ')} ]\n\n`;
+        else msg += `\n⚠️ 警告：当前目标中没有填写「🧠 AI 原文案」，第一阶段将失败！\n\n`;
+        msg += `【三步流水线】\n`;
+        msg += `① 读取「🧠 AI 原文案」→ Gemini 改写 → 填入「🤖 TTS文案」+ 「人声字幕」\n`;
+        msg += `② 读取「🤖 TTS文案」→ ElevenLabs 合成配音\n`;
+        msg += `③ 配音 + 「人声字幕」→ Gladia 转录对齐 → 生成 SRT 时间轴\n\n`;
+        if (!hasTxtContent) msg += `💡 提示：「人声字幕」列暂无内容，第③步将跳过（可先在AI Prompt中配置断句输出）\n\n`;
+        msg += `是否确认开启一条龙处理流程？`;
+        
+        if (!confirm(msg)) return;
+        
+        _ensureAIColumnsVisible();
+        // Step 1: Run Gemini AI Script processing
+        showToast('🚀 全家桶 Step 1/3：AI 文案处理中...', 'info');
+        const aiSuccess = await _runGeminiBatchProcessing();
+        if (!aiSuccess) return; // Halt if AI step was aborted or failed
+        
+        // Wait briefly for UI to render
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // Step 2: Run TTS Generation
+        showToast('🚀 全家桶 Step 2/3：TTS 配音生成中...', 'info');
+        await _runTTSBatchProcessing();
+        
+        // Wait briefly for TTS results to settle
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // Step 3: Run Subtitle Alignment (only if there are tasks with txtContent + audio)
+        const tasksWithTextAndAudio = (window._reelsState?.tasks || []).filter(t => 
+            (t.txtContent && t.txtContent.trim()) && t.audioPath && !t.aligned
+        );
+        if (tasksWithTextAndAudio.length > 0) {
+            showToast(`🚀 全家桶 Step 3/3：字幕对齐中 (${tasksWithTextAndAudio.length} 行)...`, 'info');
+            await _batchAlignAllTasks();
+            showToast('🎉 全家桶三步流水线全部完成！', 'success', 5000);
+        } else {
+            showToast('✅ 全家桶完成（AI + 配音）。无人声字幕，跳过对齐步骤。', 'success', 5000);
+        }
+    });
+
+    container.querySelector('#rbt-ai-preset-btn')?.addEventListener('click', () => {
+        _applyAiPresetBatch();
+    });
+
+    // ── AI 设置弹窗 ──
+    container.querySelector('#rbt-ai-settings-btn')?.addEventListener('click', () => {
+        _openAISettingsModal();
+    });
+
+    // ── 导入字幕预设 ──
+    container.querySelector('#rbt-import-sub-preset-btn')?.addEventListener('click', () => {
+        if (typeof reelsImportPresets === 'function') {
+            reelsImportPresets();
+        } else {
+            alert('字幕预设导入功能未加载');
+        }
+    });
+
+    // ── 导入覆层预设 ──
+    container.querySelector('#rbt-import-card-preset-btn')?.addEventListener('click', () => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.json';
+        input.onchange = (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                try {
+                    const data = JSON.parse(ev.target.result);
+                    // data 应该是 { presetName: { overlays: [...] }, ... } 格式
+                    const key = 'reels_overlay_preset_templates';
+                    let existing = {};
+                    try { existing = JSON.parse(localStorage.getItem(key) || '{}'); } catch (ex) {}
+                    let added = 0, skipped = 0;
+                    for (const [name, val] of Object.entries(data)) {
+                        if (existing[name]) { skipped++; continue; }
+                        existing[name] = val;
+                        added++;
+                    }
+                    localStorage.setItem(key, JSON.stringify(existing));
+                    _renderBatchTable();
+                    if (typeof showToast === 'function') showToast(`覆层预设导入完成：新增 ${added} 个，跳过 ${skipped} 个`, 'success');
+                    else alert(`覆层预设导入完成：新增 ${added} 个，跳过 ${skipped} 个`);
+                } catch (ex) {
+                    alert('文件解析失败: ' + ex.message);
+                }
+            };
+            reader.readAsText(file);
+        };
+        input.click();
+    });
+
+    // ── 导入任务组合预设 ──
+    container.querySelector('#rbt-import-task-preset-btn')?.addEventListener('click', () => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.json';
+        input.onchange = (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                try {
+                    const data = JSON.parse(ev.target.result);
+                    const key = 'rbt_task_presets';
+                    let existing = {};
+                    try { existing = JSON.parse(localStorage.getItem(key) || '{}'); } catch (ex) {}
+                    let added = 0, skipped = 0;
+                    for (const [name, val] of Object.entries(data)) {
+                        if (existing[name]) { skipped++; continue; }
+                        existing[name] = val;
+                        added++;
+                    }
+                    localStorage.setItem(key, JSON.stringify(existing));
+                    if (typeof showToast === 'function') showToast(`任务预设导入完成：新增 ${added} 个，跳过 ${skipped} 个`, 'success');
+                    else alert(`任务预设导入完成：新增 ${added} 个，跳过 ${skipped} 个`);
+                } catch (ex) {
+                    alert('文件解析失败: ' + ex.message);
+                }
+            };
+            reader.readAsText(file);
+        };
+        input.click();
+    });
+
+    // ══ TTS Model & Voice controls ══
+    // 恢复已保存的模型选择
+    const savedModel = localStorage.getItem('rbt_tts_model') || 'eleven_v3';
+    const modelSelect = container.querySelector('#rbt-tts-model');
+    if (modelSelect) modelSelect.value = savedModel;
+    modelSelect?.addEventListener('change', () => {
+        localStorage.setItem('rbt_tts_model', modelSelect.value);
+    });
+
+    // 刷新音色列表
+    container.querySelector('#rbt-refresh-voices-btn')?.addEventListener('click', () => {
+        _rbtVoiceCache = null; // 清除缓存，强制重新从API加载
+        _rbtLoadVoiceList();
+    });
+    // 应用音色到全部空行
+    container.querySelector('#rbt-apply-voice-all-btn')?.addEventListener('click', () => {
+        const voiceSelect = container.querySelector('#rbt-tts-default-voice');
+        const voiceId = voiceSelect?.value;
+        const voiceName = voiceSelect?.options[voiceSelect.selectedIndex]?.text || '';
+        if (!voiceId) { alert('请先选择一个音色'); return; }
+        const tasks = window._reelsState?.tasks || [];
+        let applied = 0;
+        for (const task of tasks) {
+            if (!task.ttsVoiceId || !task.ttsVoiceId.trim()) {
+                task.ttsVoiceId = voiceId;
+                applied++;
+            }
+        }
+        _renderBatchTable();
+        showToast(`已将音色「${voiceName}」应用到 ${applied} 个空行`, 'success');
+    });
+    // 首次自动加载音色列表
+    _rbtLoadVoiceList();
+
+    // PIP Batch upload
+    container.querySelector('#rbt-upload-pip')?.addEventListener('click', () => {
+        // reuse the same file input but redirect variable
+        _batchTableState._pipBatchMode = true;
+        let fileInput = container.querySelector('#rbt-file-pip');
+        if (!fileInput) {
+            fileInput = document.createElement('input');
+            fileInput.type = 'file';
+            fileInput.id = 'rbt-file-pip';
+            fileInput.multiple = true;
+            fileInput.style.display = 'none';
+            fileInput.accept = 'image/*,video/*';
+            container.appendChild(fileInput);
+            fileInput.addEventListener('change', (e) => {
+                _batchAssignFiles(Array.from(e.target.files), 'pip');
+                e.target.value = '';
+            });
+        }
+        fileInput.click();
+    });
+
+
+
     // Column visibility settings
     container.querySelector('#rbt-col-settings-btn')?.addEventListener('click', (e) => {
         _showColumnSettingsPopup(e.target);
@@ -1109,20 +2136,22 @@ function _bindBatchTableEvents() {
         _showCycleFillDialog();
     });
 
-    // Paste
-    container.querySelector('#rbt-paste-btn')?.addEventListener('click', () => {
-        _batchPasteFromSheet();
-    });
-    container.querySelector('#rbt-paste-scroll-btn')?.addEventListener('click', () => {
-        _batchPasteScrollFromSheet();
+    // Cycle fill materials
+    container.querySelector('#rbt-cycle-fill-btn')?.addEventListener('click', () => {
+        _showCycleFillDialog();
     });
 
-    // Save config
+    // Save config (Legacy manual export)
     container.querySelector('#rbt-save-config-btn')?.addEventListener('click', () => {
         _batchExportConfig();
     });
 
-    // Load config
+    // Project Manager
+    container.querySelector('#rbt-project-mgr-btn')?.addEventListener('click', () => {
+        _showProjectManager();
+    });
+
+    // Load config (Legacy manual import)
     container.querySelector('#rbt-load-config-btn')?.addEventListener('click', () => {
         container.querySelector('#rbt-file-config').click();
     });
@@ -1157,6 +2186,84 @@ function _bindBatchTableEvents() {
     container.querySelector('#rbt-paste-txtcontent')?.addEventListener('click', () => {
         _batchPasteTxtContent();
     });
+    container.querySelector('#rbt-paste-btn')?.addEventListener('click', () => {
+        _batchPasteFromSheet();
+    });
+    container.querySelector('#rbt-paste-scroll-btn')?.addEventListener('click', () => {
+        _batchPasteScrollFromSheet();
+    });
+    container.querySelector('#rbt-paste-ai-raw-btn')?.addEventListener('click', () => {
+        _batchPasteAiScript();
+    });
+    container.querySelector('#rbt-paste-tts-btn')?.addEventListener('click', () => {
+        _batchPasteTTSContent();
+    });
+
+    // ── 内容视频层相关事件 ──
+    container.querySelector('#rbt-upload-content-video')?.addEventListener('click', () => {
+        let fileInput = container.querySelector('#rbt-file-contentvideo');
+        if (!fileInput) {
+            fileInput = document.createElement('input');
+            fileInput.type = 'file';
+            fileInput.id = 'rbt-file-contentvideo';
+            fileInput.multiple = true;
+            fileInput.style.display = 'none';
+            fileInput.accept = '.mp4,.mov,.mkv,.avi,.wmv,.flv,.webm';
+            container.appendChild(fileInput);
+            fileInput.addEventListener('change', (e) => {
+                _batchAssignFiles(Array.from(e.target.files), 'contentvideo');
+                e.target.value = '';
+            });
+        }
+        fileInput.click();
+    });
+
+    // ✂️ 粘贴剪辑文案 (A/B 双版本)
+    container.querySelector('#rbt-paste-clip-ab')?.addEventListener('click', () => {
+        _showClipAbPasteModal();
+    });
+
+    // 内容视频缩放: input + slider
+    container.addEventListener('input', (e) => {
+        if (e.target.classList.contains('rbt-cvscale-input') || e.target.classList.contains('rbt-cvscale-slider')) {
+            const idx = parseInt(e.target.dataset.idx);
+            const task = window._reelsState.tasks[idx];
+            if (!task) return;
+            const val = parseInt(e.target.value) || 100;
+            task.contentVideoScale = val;
+            // Sync input <-> slider
+            const row = e.target.closest('tr');
+            if (row) {
+                const sibling = row.querySelector(e.target.classList.contains('rbt-cvscale-input') ? '.rbt-cvscale-slider' : '.rbt-cvscale-input');
+                if (sibling) sibling.value = val;
+                const display = row.querySelector('.rbt-col-cvscale .rbt-scale-display');
+                if (display) display.textContent = val + '%';
+            }
+        }
+    });
+
+    // 内容视频位置 X/Y
+    container.addEventListener('change', (e) => {
+        if (e.target.classList.contains('rbt-cvpos-x') || e.target.classList.contains('rbt-cvpos-y')) {
+            const idx = parseInt(e.target.dataset.idx);
+            const task = window._reelsState.tasks[idx];
+            if (!task) return;
+            const val = e.target.value.trim() || 'center';
+            if (e.target.classList.contains('rbt-cvpos-x')) task.contentVideoX = val;
+            else task.contentVideoY = val;
+        }
+    });
+
+    // 裁切单元格双击 → 打开裁切弹窗
+    container.addEventListener('dblclick', (e) => {
+        const trimCell = e.target.closest('.rbt-cv-trim-cell');
+        if (trimCell) {
+            const idx = parseInt(trimCell.dataset.idx);
+            _showTrimModal(idx);
+            return;
+        }
+    });
+
     container.querySelector('#rbt-align-all-btn')?.addEventListener('click', () => {
         _batchAlignAllTasks();
     });
@@ -1244,6 +2351,125 @@ function _bindBatchTableEvents() {
         e.target.value = '';
     });
 
+    // ── 表格内输入框快捷批量粘贴 ──
+    container.querySelector('#rbt-tbody')?.addEventListener('paste', (e) => {
+        const target = e.target;
+        if (!target.matches('textarea, input.rbt-input, input.rbt-tts-voice-input')) return;
+
+        const pastedData = (e.clipboardData || window.clipboardData).getData('text');
+        if (!pastedData) return;
+
+        // 使用 TSV 引号解析器，正确处理 Google Sheets 单元格内的换行
+        const tsvRows = _parseBatchTSV(pastedData);
+        
+        const startIdx = parseInt(target.dataset.idx, 10);
+        if (isNaN(startIdx)) return;
+
+        let fieldCategory = null;
+        if (target.classList.contains('rbt-ai-script-input')) fieldCategory = 'aiScript';
+        else if (target.classList.contains('rbt-tts-text-input')) fieldCategory = 'ttsText';
+        else if (target.classList.contains('rbt-txtcontent-input')) fieldCategory = 'txtContent';
+        else if (target.classList.contains('rbt-title-input')) fieldCategory = 'overlay_title';
+        else if (target.classList.contains('rbt-body-input')) fieldCategory = 'overlay_body';
+        else if (target.classList.contains('rbt-footer-input')) fieldCategory = 'overlay_footer';
+        else if (target.classList.contains('rbt-scroll-title-input')) fieldCategory = 'scroll_title';
+        else if (target.classList.contains('rbt-scroll-body-input')) fieldCategory = 'scroll_body';
+        else if (target.classList.contains('rbt-tts-voice-input')) fieldCategory = 'ttsVoiceId';
+        else if (target.dataset.field) fieldCategory = target.dataset.field;
+
+        let maxCols = Math.max(...tsvRows.map(r => r.length));
+        while(maxCols > 1) {
+            let hasData = false;
+            for (let r=0; r<tsvRows.length; r++) {
+                if (tsvRows[r][maxCols-1] && tsvRows[r][maxCols-1].trim() !== '') {
+                    hasData = true; break;
+                }
+            }
+            if (hasData) break;
+            maxCols--;
+        }
+
+        if (maxCols > 1) {
+            e.preventDefault();
+            _showMultiColumnPasteModal(tsvRows, startIdx, fieldCategory);
+            return;
+        }
+
+        const lines = tsvRows.map(row => (row[0] || '').trim()).filter(s => s.length > 0);
+
+        if (lines.length > 1) {
+            e.preventDefault();
+
+            if (!fieldCategory) return;
+
+            const state = window._reelsState;
+            let filled = 0, created = 0;
+            let dataIdx = 0;
+
+            for (let i = startIdx; i < state.tasks.length && dataIdx < lines.length; i++) {
+                const task = state.tasks[i];
+                const str = lines[dataIdx];
+                if (fieldCategory === 'aiScript') task.aiScript = str;
+                else if (fieldCategory === 'ttsText') task.ttsText = str;
+                else if (fieldCategory === 'txtContent') { task.txtContent = str; task.aligned = false; }
+                else if (fieldCategory === 'ttsVoiceId') task.ttsVoiceId = str;
+                else if (fieldCategory.startsWith('overlay_') || fieldCategory.startsWith('scroll_')) {
+                    _applyOverlayField(task, fieldCategory, str);
+                }
+                dataIdx++;
+                filled++;
+            }
+
+            const newRows = lines.slice(dataIdx);
+            if (newRows.length > 0) {
+                if (confirm(`粘贴了 ${lines.length} 行数据，当前表格剩下行数不足以装下。\\n是否自动创建 ${newRows.length} 行新任务并继续向下填充？`)) {
+                    for (const str of newRows) {
+                        const taskName = `card_${String(state.tasks.length + 1).padStart(3, '0')}`;
+                        const newTask = {
+                            baseName: taskName,
+                            fileName: `${taskName}.mp4`,
+                            bgPath: null, bgSrcUrl: null,
+                            audioPath: null, srtPath: null,
+                            segments: [],
+                            videoPath: null, srcUrl: null,
+                            overlays: [],
+                            aligned: false,
+                            bgScale: 100, bgDurScale: 100, audioDurScale: 100
+                        };
+                        
+                        if (fieldCategory === 'aiScript') newTask.aiScript = str;
+                        else if (fieldCategory === 'ttsText') newTask.ttsText = str;
+                        else if (fieldCategory === 'txtContent') { newTask.txtContent = str; newTask.aligned = false; }
+                        else if (fieldCategory === 'ttsVoiceId') newTask.ttsVoiceId = str;
+                        else if (fieldCategory.startsWith('overlay_') || fieldCategory.startsWith('scroll_')) {
+                            _applyOverlayField(newTask, fieldCategory, str);
+                        }
+                        
+                        state.tasks.push(newTask);
+                        created++;
+                    }
+                }
+            }
+
+            const scrollWrap = container.querySelector('.rbt-table-wrap');
+            const scrollTop = scrollWrap ? scrollWrap.scrollTop : 0;
+            const scrollLeft = scrollWrap ? scrollWrap.scrollLeft : 0;
+            
+            _renderBatchTable();
+            
+            const newScrollWrap = container.querySelector('.rbt-table-wrap');
+            if (newScrollWrap) {
+                newScrollWrap.scrollTop = scrollTop;
+                newScrollWrap.scrollLeft = scrollLeft;
+            }
+            if (typeof showToast === 'function') {
+                showToast(`✅ 快捷批量粘贴成功：向下覆盖填充 ${filled} 行，新建 ${created} 行`, 'success');
+            } else {
+                alert(`✅ 快捷批量粘贴成功：向下覆盖填充 ${filled} 行，新建 ${created} 行`);
+            }
+        }
+    });
+
     // ── 拖拽文件到批量表格 ──
     const panel = container.querySelector('.rbt-panel') || container;
     let _dropOverlay = null;
@@ -1259,20 +2485,108 @@ function _bindBatchTableEvents() {
         if (_dropOverlay) { _dropOverlay.remove(); _dropOverlay = null; }
     };
     let _dragCounter = 0;
-    panel.addEventListener('dragenter', (e) => { e.preventDefault(); _dragCounter++; _showDropOverlay(); });
-    panel.addEventListener('dragleave', (e) => { e.preventDefault(); _dragCounter--; if (_dragCounter <= 0) { _dragCounter = 0; _hideDropOverlay(); } });
+    panel.addEventListener('dragenter', (e) => {
+        e.preventDefault();
+        // Don't show panel overlay when dragging over sidebar
+        if (e.target.closest && e.target.closest('#rbt-media-sidebar')) return;
+        _dragCounter++;
+        _showDropOverlay();
+    });
+    panel.addEventListener('dragleave', (e) => { 
+        e.preventDefault(); 
+        if (e.target.classList && e.target.classList.contains('rbt-droppable')) {
+            e.target.classList.remove('rbt-drag-over');
+        }
+        _dragCounter--; 
+        if (_dragCounter <= 0) { 
+            _dragCounter = 0; 
+            _hideDropOverlay(); 
+            panel.querySelectorAll('.rbt-droppable.rbt-drag-over').forEach(c => c.classList.remove('rbt-drag-over'));
+        } 
+    });
     panel.addEventListener('dragover', (e) => {
         e.preventDefault();
+        // Let media sidebar handle its own dragover
+        if (e.target.closest && e.target.closest('#rbt-media-sidebar')) return;
         // 内部行拖拽时不覆盖 dropEffect
         if (_dragSrcIdx == null) e.dataTransfer.dropEffect = 'copy';
+        
+        // Highlight logic for specific droppable columns
+        const cell = e.target.closest('.rbt-droppable');
+        panel.querySelectorAll('.rbt-droppable.rbt-drag-over').forEach(c => {
+            if (c !== cell) c.classList.remove('rbt-drag-over');
+        });
+        if (cell) cell.classList.add('rbt-drag-over');
     });
     panel.addEventListener('drop', (e) => {
         _dragCounter = 0;
         _hideDropOverlay();
+        panel.querySelectorAll('.rbt-droppable.rbt-drag-over').forEach(c => c.classList.remove('rbt-drag-over'));
+        // If drop lands inside media sidebar, let the sidebar's own handler deal with it
+        if (e.target.closest && e.target.closest('#rbt-media-sidebar')) return;
+
+        // Handle Pool Item Drop to Row
+        let poolIdxStr = e.dataTransfer.getData('application/x-media-pool-idx');
+        if (poolIdxStr) {
+            e.preventDefault();
+            const poolIdx = parseInt(poolIdxStr);
+            const rowEl = e.target.closest('.rbt-row');
+            if (!rowEl) return;
+            const taskIdx = parseInt(rowEl.dataset.idx);
+            
+            const dropCell = e.target.closest('.rbt-droppable');
+            const targetField = dropCell ? dropCell.dataset.field : null;
+
+            const item = window._mediaPool.items[poolIdx];
+            const task = window._reelsState.tasks[taskIdx];
+            if (item && task) {
+                if (targetField === 'contentvideo') { task.contentVideoPath = item.path; }
+                else if (targetField === 'bg') { task.bgPath = item.path; task.videoPath = item.path; }
+                else if (targetField === 'hook') { if (!task.hook) task.hook = {}; task.hook.enabled = true; task.hook.path = item.path; }
+                else if (targetField === 'audio') { task.audioPath = item.path; }
+                else if (targetField === 'srt') { task.srtPath = item.path; }
+                else if (targetField === 'cover_media') { if (!task.cover) task.cover = {}; task.cover.enabled = true; task.cover.bgPath = item.path; }
+                else if (targetField === 'pip') { task.pipPath = item.path; }
+                // Default fallback if dropped on non-specific column
+                else if (item.type === 'seq') { task.bgPath = item.path; task.videoPath = item.path; }
+                else if (item.isAudio) { task.audioPath = item.path; }
+                else if (item.ext === 'srt') { task.srtPath = item.path; }
+                else if (item.ext === 'txt') { task.txtContent = ''; task.txtPath = item.path; }
+                else { task.bgPath = item.path; task.videoPath = item.path; }
+                
+                _renderBatchTable();
+                if (typeof showToast === 'function') showToast(`✅ 已将素材 ${item.name} 分配到第 ${taskIdx + 1} 行`, 'success');
+            }
+            return;
+        }
+
         // 如果是内部行拖拽排序（无文件），不拦截，让 tbody 的 drop 处理
+        if (_dragSrcIdx != null) return;
+
         const files = Array.from(e.dataTransfer.files || []);
         if (!files.length) return;
         e.preventDefault();
+
+        // ── 精确落到 cover_media 单元格时，直接设为封面背景 ──
+        const dropCell = e.target.closest('.rbt-droppable');
+        if (dropCell && dropCell.dataset.field === 'cover_media') {
+            const row = dropCell.closest('.rbt-row');
+            if (row && files[0]) {
+                const idx = parseInt(row.dataset.idx);
+                const task = window._reelsState.tasks[idx];
+                if (task) {
+                    const filePath = files[0].path || files[0].name;
+                    if (!task.cover) task.cover = {};
+                    task.cover.enabled = true;
+                    task.cover.bgPath = filePath;
+                    if (!task.cover.overlays) task.cover.overlays = [];
+                    _renderBatchTable();
+                    if (typeof reelsSelectTask === 'function') reelsSelectTask(idx);
+                    if (typeof showToast === 'function') showToast(`✅ 已设置第 ${idx + 1} 行封面背景`, 'success');
+                }
+            }
+            return;
+        }
 
         // 按扩展名分类
         const bgExts = new Set(['mp4', 'mov', 'mkv', 'avi', 'wmv', 'flv', 'webm', 'jpg', 'jpeg', 'png', 'webp']);
@@ -1318,31 +2632,384 @@ function _bindBatchTableEvents() {
         })();
     });
 
-    // ── 清空覆层文案 ──
-    container.querySelector('#rbt-clear-overlay-btn')?.addEventListener('click', () => {
+    // ── 批量清空列（勾选优先，未勾选则全部） ──
+    const _getClearTargets = () => {
         const state = window._reelsState;
-        if (!state || !state.tasks) return;
+        if (!state || !state.tasks) return { state: null, indices: [], label: '0行' };
         let indices = _getSelectedIndices();
-        const targetLabel = indices.length > 0 ? `勾选的 ${indices.length} 行` : '所有行';
-        if (indices.length === 0) {
-            indices = state.tasks.map((_, i) => i);
+        const label = indices.length > 0 ? `勾选的 ${indices.length} 行` : '所有行';
+        if (indices.length === 0) indices = state.tasks.map((_, i) => i);
+        return { state, indices, label };
+    };
+
+    const _clearTaskField = (task, field) => {
+        if (!task) return;
+        switch (field) {
+            case 'cover_media':
+                if (task.cover) {
+                    task.cover.enabled = false;
+                    task.cover.bgPath = '';
+                }
+                break;
+            case 'cover_text':
+                if (task.cover && task.cover.overlays && task.cover.overlays.length > 0) {
+                    task.cover.overlays[0].title_text = '';
+                    task.cover.overlays[0].body_text = '';
+                }
+                break;
+            case 'hook':
+                task.hookFile = '';
+                task.hookTrimStart = null;
+                task.hookTrimEnd = null;
+                task.hookSpeed = 1;
+                task.hookTransition = 'none';
+                task.hookTransDuration = 0.5;
+                break;
+            case 'bg':
+                task.bgPath = '';
+                task.videoPath = '';
+                task.bgSrcUrl = '';
+                task.bgMode = 'single';
+                task.bgClipPool = [];
+                task.bgTransition = 'crossfade';
+                break;
+            case 'tts_text':
+                task.ttsText = '';
+                break;
+            case 'tts_voice':
+                task.ttsVoiceId = '';
+                break;
+            case 'pip':
+                task.pipPath = '';
+                break;
+            case 'audio':
+                task.audioPath = '';
+                break;
+            case 'srt':
+                task.srtPath = '';
+                task.aligned = false;
+                break;
+            case 'txt':
+                task.txtContent = '';
+                task.aligned = false;
+                break;
+            case 'ai_script':
+                task.aiScript = '';
+                break;
+            case 'bgm':
+                task.bgmPath = '';
+                break;
+            case 'contentvideo':
+                task.contentVideoPath = '';
+                task.contentVideoTrimStart = null;
+                task.contentVideoTrimEnd = null;
+                task.contentVideoScale = 100;
+                task.contentVideoX = 'center';
+                task.contentVideoY = 'center';
+                break;
+            case 'overlay':
+                if (task.overlays && task.overlays.length > 0) {
+                    for (const ov of task.overlays) {
+                        ov.title_text = '';
+                        ov.body_text = '';
+                        ov.footer_text = '';
+                        ov.scroll_title = '';
+                        ov.content = '';
+                    }
+                }
+                break;
+            case 'overlay_title':
+                if (task.overlays && task.overlays.length > 0) {
+                    for (const ov of task.overlays) ov.title_text = '';
+                }
+                break;
+            case 'overlay_body':
+                if (task.overlays && task.overlays.length > 0) {
+                    for (const ov of task.overlays) ov.body_text = '';
+                }
+                break;
+            case 'overlay_footer':
+                if (task.overlays && task.overlays.length > 0) {
+                    for (const ov of task.overlays) ov.footer_text = '';
+                }
+                break;
+            case 'scroll_title':
+                if (task.overlays && task.overlays.length > 0) {
+                    for (const ov of task.overlays) ov.scroll_title = '';
+                }
+                break;
+            case 'scroll_body':
+                if (task.overlays && task.overlays.length > 0) {
+                    for (const ov of task.overlays) ov.content = '';
+                }
+                break;
+            default:
+                break;
         }
-        if (!confirm(`确定清空${targetLabel}的覆层文案（标题+内容+结尾）？`)) return;
-        for (const idx of indices) {
-            const task = state.tasks[idx];
-            if (!task) continue;
-            if (task.overlays && task.overlays.length > 0) {
-                for (const ov of task.overlays) {
-                    ov.title_text = '';
-                    ov.body_text = '';
-                    ov.footer_text = '';
-                    ov.scroll_title = '';
-                    ov.content = '';
+    };
+
+    // ── 列标题清空按钮 ──
+    container.querySelector('#rbt-table thead')?.addEventListener('click', (e) => {
+        const btn = e.target.closest('.rbt-th-clear');
+        if (!btn) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const field = btn.dataset.clearCol;
+        if (!field) return;
+        const labelMap = {
+            hook: 'Hook',
+            bg: '背景',
+            contentvideo: '视频覆层',
+            tts_text: 'TTS文案',
+            tts_voice: 'TTS音色',
+            pip: '图像覆层',
+            audio: '人声',
+            srt: 'SRT',
+            txt: 'TXT文案',
+            ai_script: 'AI原文案',
+            bgm: '配乐',
+            overlay_title: '覆层标题',
+            overlay_body: '覆层内容',
+            overlay_footer: '覆层结尾',
+            scroll_title: '滚动标题',
+            scroll_body: '滚动内容',
+            cover_media: '封面素材',
+            cover_text: '封面文案'
+        };
+        const { state, indices, label } = _getClearTargets();
+        if (!state || indices.length === 0) return;
+        const fieldLabel = labelMap[field] || '该列';
+        if (!confirm(`确定清空${label}的${fieldLabel}？`)) return;
+        for (const idx of indices) _clearTaskField(state.tasks[idx], field);
+        
+        const scrollWrap = container.querySelector('.rbt-table-wrap');
+        const scrollTop = scrollWrap ? scrollWrap.scrollTop : 0;
+        const scrollLeft = scrollWrap ? scrollWrap.scrollLeft : 0;
+        _renderBatchTable();
+        const newScrollWrap = container.querySelector('.rbt-table-wrap');
+        if (newScrollWrap) {
+            newScrollWrap.scrollTop = scrollTop;
+            newScrollWrap.scrollLeft = scrollLeft;
+        }
+        
+        if (typeof showToast === 'function') showToast(`✅ 已清空${label}的${fieldLabel}`, 'success');
+    });
+
+    // ── 列标题粘贴按钮 ──
+    container.querySelector('#rbt-table thead')?.addEventListener('click', async (e) => {
+        const btn = e.target.closest('.rbt-th-paste');
+        if (!btn) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const fieldCategory = btn.dataset.pasteCol;
+        if (!fieldCategory) return;
+
+        let raw = '';
+        try { raw = await navigator.clipboard.readText(); } catch (ex) {
+            showToast('无法读取剪贴板，请使用 Ctrl+V 在输入框中粘贴', 'error');
+            return;
+        }
+        if (!raw || !raw.trim()) { showToast('剪贴板为空', 'error'); return; }
+
+        const tsvRows = _parseBatchTSV(raw);
+        let maxCols = Math.max(...tsvRows.map(r => r.length));
+        while(maxCols > 1) {
+            let hasData = false;
+            for (let r=0; r<tsvRows.length; r++) {
+                if (tsvRows[r][maxCols-1] && tsvRows[r][maxCols-1].trim() !== '') { hasData = true; break; }
+            }
+            if (hasData) break;
+            maxCols--;
+        }
+        if (maxCols > 1) {
+            _showMultiColumnPasteModal(tsvRows, 0, fieldCategory);
+            return;
+        }
+
+        const lines = tsvRows.map(row => (row[0] || '').trim()).filter(s => s.length > 0);
+        if (!lines.length) { showToast('未检测到有效数据', 'error'); return; }
+
+        const state = window._reelsState;
+        if (!state) return;
+
+        let filled = 0, created = 0;
+        let dataIdx = 0;
+
+        for (let i = 0; i < state.tasks.length && dataIdx < lines.length; i++) {
+            const task = state.tasks[i];
+            const str = lines[dataIdx];
+            if (fieldCategory === 'aiScript') task.aiScript = str;
+            else if (fieldCategory === 'ttsText') task.ttsText = str;
+            else if (fieldCategory === 'txtContent') { task.txtContent = str; task.aligned = false; }
+            else if (fieldCategory === 'ttsVoiceId') task.ttsVoiceId = str;
+            else if (fieldCategory.startsWith('overlay_') || fieldCategory.startsWith('scroll_')) {
+                _applyOverlayField(task, fieldCategory, str);
+            }
+            dataIdx++;
+            filled++;
+        }
+
+        const newRows = lines.slice(dataIdx);
+        if (newRows.length > 0) {
+            if (confirm(`剪贴板有 ${lines.length} 条数据，当前只有 ${state.tasks.length} 行。\n是否自动创建 ${newRows.length} 行新任务？`)) {
+                for (const str of newRows) {
+                    const taskName = `card_${String(state.tasks.length + 1).padStart(3, '0')}`;
+                    const newTask = {
+                        baseName: taskName, fileName: `${taskName}.mp4`,
+                        bgPath: null, bgSrcUrl: null, audioPath: null, srtPath: null,
+                        segments: [], videoPath: null, srcUrl: null, overlays: [],
+                        aligned: false, bgScale: 100, bgDurScale: 100, audioDurScale: 100
+                    };
+                    if (fieldCategory === 'aiScript') newTask.aiScript = str;
+                    else if (fieldCategory === 'ttsText') newTask.ttsText = str;
+                    else if (fieldCategory === 'txtContent') { newTask.txtContent = str; }
+                    else if (fieldCategory === 'ttsVoiceId') newTask.ttsVoiceId = str;
+                    else if (fieldCategory.startsWith('overlay_') || fieldCategory.startsWith('scroll_')) {
+                        _applyOverlayField(newTask, fieldCategory, str);
+                    }
+                    state.tasks.push(newTask);
+                    created++;
                 }
             }
         }
+
+        const scrollWrap = container.querySelector('.rbt-table-wrap');
+        const scrollTop = scrollWrap ? scrollWrap.scrollTop : 0;
+        const scrollLeft = scrollWrap ? scrollWrap.scrollLeft : 0;
+        
         _renderBatchTable();
-        if (typeof showToast === 'function') showToast(`✅ 已清空${targetLabel}的覆层文案`, 'success');
+        
+        const newScrollWrap = container.querySelector('.rbt-table-wrap');
+        if (newScrollWrap) {
+            newScrollWrap.scrollTop = scrollTop;
+            newScrollWrap.scrollLeft = scrollLeft;
+        }
+
+        showToast(`✅ 粘贴到列完成：覆盖 ${filled} 行，新建 ${created} 行`, 'success');
+    });
+
+    // ── 列标题文件夹按钮 ──
+    container.querySelector('#rbt-table thead')?.addEventListener('click', async (e) => {
+        const btn = e.target.closest('.rbt-th-folder');
+        if (!btn) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const colType = btn.dataset.folderCol;
+        if (!colType) return;
+
+        if (!window.electronAPI || !window.electronAPI.selectDirectory) {
+            showToast('请在桌面应用中使用此功能', 'error');
+            return;
+        }
+
+        const dir = await window.electronAPI.selectDirectory();
+        if (!dir) return;
+
+        btn.textContent = '⏳';
+        btn.disabled = true;
+
+        try {
+            const files = await window.electronAPI.scanDirectory(dir);
+            if (!files || files.length === 0) {
+                showToast('文件夹为空或无法读取', 'error');
+                return;
+            }
+
+            // 按列类型过滤匹配的文件扩展名
+            const extMap = {
+                bg:    new Set(['mp4','mov','mkv','avi','wmv','flv','webm','jpg','jpeg','png','webp','gif','bmp']),
+                audio: new Set(['mp3','wav','m4a','aac','flac','ogg','wma','mp4','mov']),
+                srt:   new Set(['srt']),
+                bgm:   new Set(['mp3','wav','m4a','aac','flac','ogg']),
+                pip:   new Set(['jpg','jpeg','png','webp','gif','bmp','svg']),
+                contentvideo: new Set(['mp4','mov','mkv','avi','wmv','flv','webm']),
+            };
+            const validExts = extMap[colType] || extMap.bg;
+
+            const matched = files
+                .filter(f => {
+                    const ext = (f.name || '').split('.').pop().toLowerCase();
+                    return validExts.has(ext);
+                })
+                .sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { numeric: true }));
+
+            if (matched.length === 0) {
+                showToast(`文件夹中没有找到匹配的文件`, 'error');
+                return;
+            }
+
+            const state = window._reelsState;
+            if (!state) return;
+
+            let filled = 0, created = 0;
+            let dataIdx = 0;
+
+            // 分配到现有行
+            for (let i = 0; i < state.tasks.length && dataIdx < matched.length; i++) {
+                const task = state.tasks[i];
+                const fpath = matched[dataIdx].path;
+                if (colType === 'bg') {
+                    task.bgPath = fpath; task.videoPath = fpath; task.bgSrcUrl = '';
+                } else if (colType === 'audio') {
+                    task.audioPath = fpath;
+                } else if (colType === 'srt') {
+                    task.srtPath = fpath;
+                } else if (colType === 'bgm') {
+                    task.bgmPath = fpath;
+                } else if (colType === 'pip') {
+                    if (!task.overlays) task.overlays = [];
+                    const pipOverlay = task.overlays.find(o => o && o.type === 'pip');
+                    if (pipOverlay) { pipOverlay.src = fpath; }
+                    else { task.overlays.push({ type: 'pip', src: fpath, x: 0, y: 0, w: 200, h: 200, start: 0, end: 9999 }); }
+                } else if (colType === 'contentvideo') {
+                    task.contentVideoPath = fpath;
+                    if (task.contentVideoScale == null) task.contentVideoScale = 100;
+                    if (task.contentVideoX == null) task.contentVideoX = 'center';
+                    if (task.contentVideoY == null) task.contentVideoY = 'center';
+                }
+                dataIdx++;
+                filled++;
+            }
+
+            // 超出部分提示创建新行
+            const remaining = matched.length - dataIdx;
+            if (remaining > 0) {
+                if (confirm(`文件夹有 ${matched.length} 个文件，当前只有 ${state.tasks.length} 行。\n是否自动创建 ${remaining} 行新任务？`)) {
+                    for (; dataIdx < matched.length; dataIdx++) {
+                        const fpath = matched[dataIdx].path;
+                        const fname = matched[dataIdx].name || '';
+                        const baseName = fname.replace(/\.[^.]+$/, '');
+                        const newTask = {
+                            baseName, fileName: `${baseName}.mp4`,
+                            bgPath: null, bgSrcUrl: null, audioPath: null, srtPath: null,
+                            segments: [], videoPath: null, srcUrl: null, overlays: [],
+                            aligned: false, bgScale: 100, bgDurScale: 100, audioDurScale: 100
+                        };
+                        if (colType === 'bg') { newTask.bgPath = fpath; newTask.videoPath = fpath; }
+                        else if (colType === 'audio') newTask.audioPath = fpath;
+                        else if (colType === 'srt') newTask.srtPath = fpath;
+                        else if (colType === 'bgm') newTask.bgmPath = fpath;
+                        else if (colType === 'pip') {
+                            newTask.overlays = [{ type: 'pip', src: fpath, x: 0, y: 0, w: 200, h: 200, start: 0, end: 9999 }];
+                        } else if (colType === 'contentvideo') {
+                            newTask.contentVideoPath = fpath;
+                            newTask.contentVideoScale = 100;
+                            newTask.contentVideoX = 'center';
+                            newTask.contentVideoY = 'center';
+                        }
+                        state.tasks.push(newTask);
+                        created++;
+                    }
+                }
+            }
+
+            _renderBatchTable();
+            const colLabels = { bg: '背景素材', audio: '人声音频', srt: '字幕SRT', bgm: '配乐', pip: '图片覆层', contentvideo: '视频覆层' };
+            showToast(`✅ ${colLabels[colType] || colType}：分配 ${filled} 个文件，新建 ${created} 行`, 'success');
+        } finally {
+            btn.textContent = '📁';
+            btn.disabled = false;
+        }
     });
 
     // 仅导出选中行（表格数据不变）
@@ -1390,9 +3057,11 @@ function _bindBatchTableEvents() {
             _dragSrcIdx = null;
         });
         tbody2.addEventListener('dragover', (e) => {
-            if (_dragSrcIdx == null) return;
+            const hasPoolItem = e.dataTransfer.types.includes('application/x-media-pool-idx');
+            // Allow dragover if dragging a row OR dragging a pool item
+            if (_dragSrcIdx == null && !hasPoolItem) return;
             e.preventDefault();
-            e.dataTransfer.dropEffect = 'move';
+            e.dataTransfer.dropEffect = hasPoolItem ? 'copy' : 'move';
             const row = e.target.closest('.rbt-row');
             tbody2.querySelectorAll('.rbt-drag-over-row').forEach(r => r.classList.remove('rbt-drag-over-row'));
             if (row) row.classList.add('rbt-drag-over-row');
@@ -1402,6 +3071,10 @@ function _bindBatchTableEvents() {
             if (row) row.classList.remove('rbt-drag-over-row');
         });
         tbody2.addEventListener('drop', (e) => {
+            tbody2.querySelectorAll('.rbt-drag-over-row').forEach(r => r.classList.remove('rbt-drag-over-row'));
+            // If dragging from media pool, panel's drop handler will catch it, do not reorder rows here
+            if (_dragSrcIdx == null) return;
+            
             e.preventDefault();
             const row = e.target.closest('.rbt-row');
             if (!row || _dragSrcIdx == null) return;
@@ -1487,6 +3160,84 @@ function _bindBatchTableEvents() {
                 const task = window._reelsState && window._reelsState.tasks[idx];
                 if (task) { task.audioDurScale = parseInt(e.target.value) || 100; console.log(`[Scale] row${idx} audioDurScale=${task.audioDurScale}`); }
             }
+            if (e.target.classList.contains('rbt-tts-text-input')) {
+                const idx = parseInt(e.target.dataset.idx);
+                const task = window._reelsState && window._reelsState.tasks[idx];
+                if (task) task.ttsText = e.target.value;
+            }
+            if (e.target.classList.contains('rbt-tts-voice-input')) {
+                const idx = parseInt(e.target.dataset.idx);
+                const task = window._reelsState && window._reelsState.tasks[idx];
+                if (task) task.ttsVoiceId = e.target.value;
+            }
+            if (e.target.classList.contains('rbt-ai-script-input') || e.target.classList.contains('rbt-txtcontent-input') || e.target.classList.contains('rbt-tts-text-input')) {
+                const idx = parseInt(e.target.dataset.idx);
+                const task = window._reelsState && window._reelsState.tasks[idx];
+                if (task) {
+                    if (e.target.classList.contains('rbt-ai-script-input')) task.aiScript = e.target.value;
+                    if (e.target.classList.contains('rbt-txtcontent-input')) task.txtContent = e.target.value;
+                    if (e.target.classList.contains('rbt-tts-text-input')) task.ttsText = e.target.value;
+                    
+                    const normalizeText = (str) => {
+                        let s = (str || '');
+                        s = s.replace(/\[.*?\]/g, ''); 
+                        s = s.replace(/<.*?>/g, ''); 
+                        return s.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '').toLowerCase();
+                    };
+                    const origNorm = normalizeText(task.aiScript);
+                    
+                    const isDiffTxt = (origNorm !== normalizeText(task.txtContent)) && (task.txtContent && task.txtContent.trim().length > 0) && (task.aiScript && task.aiScript.trim().length > 0);
+                    task.aiTextDiffWarning = !!isDiffTxt;
+                    
+                    const isDiffTts = (origNorm !== normalizeText(task.ttsText)) && (task.ttsText && task.ttsText.trim().length > 0) && (task.aiScript && task.aiScript.trim().length > 0);
+                    task.aiTtsDiffWarning = !!isDiffTts;
+                    
+                    // 实时更新UI报警状态
+                    const row = e.target.closest('tr.rbt-row');
+                    if (row) {
+                        const txtArea = row.querySelector('.rbt-txtcontent-input');
+                        if (txtArea) {
+                            if (isDiffTxt) {
+                                txtArea.style.border = '1px solid #ef4444';
+                                txtArea.style.background = 'rgba(239, 68, 68, 0.1)';
+                                txtArea.title = '⚠️ 警告：AI断行产生的文本与【🧠 AI 原文案】存在字符差异。可能发生了改词或删词，请仔细检查比对！\n\n如有错误请直接修改。';
+                            } else {
+                                txtArea.style.border = '';
+                                txtArea.style.background = '';
+                                txtArea.title = txtArea.disabled ? '外部SRT优先级更高，文案处于禁用状态' : '双击放大编辑';
+                            }
+                        }
+                        const tagSpan = row.querySelector('.rbt-col-txtcontent .diff-warning-badge');
+                        if (isDiffTxt && !tagSpan) {
+                            const wrapper = row.querySelector('.rbt-col-txtcontent > div');
+                            if (wrapper) wrapper.insertAdjacentHTML('beforeend', '<div class="diff-warning-badge" style="margin-top:6px;font-size:12px;color:#ef4444;font-weight:bold;text-align:right;">⚠️词汇变动警告 <span class="diff-modal-btn" data-field="txt" data-idx="' + idx + '" style="color:#3b82f6;cursor:pointer;margin-left:8px;text-decoration:underline;">[🔍比对]</span></div>');
+                        } else if (!isDiffTxt && tagSpan) {
+                            tagSpan.remove();
+                        }
+                        
+                        const ttsArea = row.querySelector('.rbt-tts-text-input');
+                        if (ttsArea) {
+                            if (isDiffTts) {
+                                ttsArea.style.border = '1px solid #ef4444';
+                                ttsArea.style.background = 'rgba(239, 68, 68, 0.1)';
+                                ttsArea.title = '⚠️ 警告：检测到配音文案与原文存在字符差异！请检查是否发生了改词！';
+                            } else {
+                                ttsArea.style.border = '';
+                                ttsArea.style.background = '';
+                                ttsArea.title = '双击放大编辑';
+                            }
+                        }
+                        
+                        const tagSpanTts = row.querySelector('.rbt-col-tts_text .diff-warning-badge');
+                        if (isDiffTts && !tagSpanTts) {
+                            const wrapperTts = row.querySelector('.rbt-col-tts_text > div');
+                            if (wrapperTts) wrapperTts.insertAdjacentHTML('beforeend', '<div class="diff-warning-badge" style="margin-top:6px;font-size:12px;color:#ef4444;font-weight:bold;text-align:right;">⚠️词汇变动警告 <span class="diff-modal-btn" data-field="tts" data-idx="' + idx + '" style="color:#3b82f6;cursor:pointer;margin-left:8px;text-decoration:underline;">[🔍比对]</span></div>');
+                        } else if (!isDiffTts && tagSpanTts) {
+                            tagSpanTts.remove();
+                        }
+                    }
+                }
+            }
         });
         // Row checkbox change handler
         tbody.addEventListener('change', (e) => {
@@ -1508,6 +3259,21 @@ function _bindBatchTableEvents() {
                 _applyBatchTableChanges();
                 reelsToggleBatchTable();
                 if (typeof reelsSelectTask === 'function') reelsSelectTask(idx);
+                return;
+            }
+            // 对比差异按钮
+            const diffBtn = e.target.closest('.rbt-diff-btn, .diff-modal-btn');
+            if (diffBtn) {
+                const idx = parseInt(diffBtn.dataset.idx);
+                const field = diffBtn.dataset.field;
+                const task = window._reelsState.tasks[idx];
+                if (task) {
+                    if (field === 'txt') {
+                        _showDiffModal(task.aiScript, task.txtContent, 'txt', idx);
+                    } else if (field === 'tts') {
+                        _showDiffModal(task.aiScript, task.ttsText, 'tts', idx);
+                    }
+                }
                 return;
             }
             // 复制行按钮
@@ -1535,6 +3301,29 @@ function _bindBatchTableEvents() {
                 _renderBatchTable();
                 return;
             }
+            // 模板选择器触发
+            const subTplBtn = e.target.closest('.rbt-sub-tpl-trigger');
+            if (subTplBtn) {
+                e.stopPropagation();
+                const idx = parseInt(subTplBtn.dataset.idx);
+                const task = window._reelsState.tasks[idx];
+                const currentVal = task._subtitlePreset || '';
+                _openStyledPresetPicker(subTplBtn, currentVal, (val) => {
+                    task._subtitlePreset = val;
+                    const span = subTplBtn.querySelector('span');
+                    if (span) span.textContent = val || '默认';
+                    // 不必全表重新渲染，只做数据记录
+                });
+                return;
+            }
+            // 多素材池管理按钮
+            const poolBtn = e.target.closest('.rbt-bg-pool-manage');
+            if (poolBtn) {
+                e.stopPropagation();
+                const idx = parseInt(poolBtn.dataset.idx);
+                _showBgPoolDialog(idx);
+                return;
+            }
             // 单字段清除按钮
             const clearBtn = e.target.closest('.rbt-field-clear');
             if (clearBtn) {
@@ -1544,24 +3333,88 @@ function _bindBatchTableEvents() {
                 const task = window._reelsState.tasks[idx];
                 if (!task) return;
                 switch (field) {
+                    case 'cover_media':
+                        if (task.cover) {
+                            task.cover.enabled = false;
+                            task.cover.bgPath = '';
+                        }
+                        break;
                     case 'hook': 
                         task.hookFile = ''; 
+                        task.hookTrimStart = null;
+                        task.hookTrimEnd = null;
                         task.hookSpeed = 1; 
                         task.hookTransition = 'none'; 
+                        task.hookTransDuration = 0.5;
                         break;
-                    case 'bg': task.bgPath = ''; task.videoPath = ''; task.bgSrcUrl = ''; break;
+                    case 'bg': task.bgPath = ''; task.videoPath = ''; task.bgSrcUrl = ''; task.bgMode = 'single'; task.bgClipPool = []; task.bgTransition = 'crossfade'; task.bgTransDur = 0.5; break;
+                    case 'contentvideo': task.contentVideoPath = ''; task.contentVideoTrimStart = null; task.contentVideoTrimEnd = null; task.contentVideoScale = 100; task.contentVideoX = 'center'; task.contentVideoY = 'center'; break;
+                    case 'tts_text': task.ttsText = ''; break;
+                    case 'pip': task.pipPath = ''; break;
                     case 'audio': task.audioPath = ''; break;
                     case 'srt': task.srtPath = ''; task.aligned = false; break;
                     case 'txt': task.txtContent = ''; task.aligned = false; break;
+                    case 'ai_script': task.aiScript = ''; break;
                     case 'bgm': task.bgmPath = ''; break;
                 }
                 _renderBatchTable();
+                return;
+            }
+            // SRT Edit button
+            const srtEditBtn = e.target.closest('.rbt-srt-edit-btn');
+            if (srtEditBtn) {
+                e.stopPropagation();
+                const idx = parseInt(srtEditBtn.dataset.idx);
+                _showSrtFileEditorModal(idx);
+                return;
+            }
+            // TTS 生成按钮
+            const ttsGenBtn = e.target.closest('.rbt-tts-gen-btn');
+            if (ttsGenBtn) {
+                e.stopPropagation();
+                const idx = parseInt(ttsGenBtn.dataset.idx);
+                _runSingleTTS(idx);
+                return;
+            }
+            // 音频播放试听按钮
+            const playBtn = e.target.closest('.rbt-table-play-btn');
+            if (playBtn) {
+                e.stopPropagation();
+                const src = playBtn.dataset.src;
+                if (!src) return;
+                
+                if (!window._rbtGlobalAudio) {
+                    window._rbtGlobalAudio = new Audio();
+                }
+                
+                const isPlayingThis = (playBtn.textContent === '⏸️');
+                // 重置所有播放按钮图标
+                document.querySelectorAll('.rbt-table-play-btn').forEach(btn => btn.textContent = '▶️');
+                
+                if (isPlayingThis) {
+                    window._rbtGlobalAudio.pause();
+                    window._rbtGlobalAudio.currentTime = 0;
+                } else {
+                    window._rbtGlobalAudio.src = 'file://' + src;
+                    window._rbtGlobalAudio.play().catch(err => console.error('Audio play failed:', err));
+                    playBtn.textContent = '⏸️';
+                    window._rbtGlobalAudio.onended = () => { playBtn.textContent = '▶️'; };
+                    window._rbtGlobalAudio.onerror = () => { playBtn.textContent = '▶️'; alert('播放失败！文件可能不存在或路径不合法'); };
+                }
                 return;
             }
         });
         // 双击放大编辑 及 双击文件单元格
         tbody.addEventListener('dblclick', (e) => {
             if (e.target.tagName === 'TEXTAREA' && e.target.classList.contains('rbt-textarea')) {
+                if (e.target.disabled && e.target.classList.contains('rbt-txtcontent-input')) {
+                    const idx = parseInt(e.target.dataset.idx);
+                    const task = window._reelsState.tasks[idx];
+                    if (task && task.srtPath) {
+                        _showSrtFileEditorModal(idx);
+                        return;
+                    }
+                }
                 _showTextEditorModal(e.target);
                 return;
             }
@@ -1573,9 +3426,17 @@ function _bindBatchTableEvents() {
                 }
                 return;
             }
+            const coverSet = e.target.closest('.rbt-cover-set');
+            if (coverSet) {
+                const row = coverSet.closest('.rbt-row');
+                if (row) {
+                    _openCoverModal(parseInt(row.dataset.idx));
+                }
+                return;
+            }
             // 双击文件单元格 → 选择文件
             const cell = e.target.closest('.rbt-droppable');
-            if (cell && cell.dataset.field !== 'hook') {
+            if (cell && cell.dataset.field !== 'hook' && cell.dataset.field !== 'cover_media' && cell.dataset.field !== 'cover_text') {
                 const row = cell.closest('.rbt-row');
                 if (!row) return;
                 const idx = parseInt(row.dataset.idx);
@@ -1597,8 +3458,329 @@ function _bindBatchTableEvents() {
 }
 
 // ═══════════════════════════════════════════════════════
+// 5.4 Multi-column Paste Modal
+// ═══════════════════════════════════════════════════════
+function _showMultiColumnPasteModal(tsvRows, startIdx, initialFieldCategory = null) {
+    let wrap = document.getElementById('rbt-multicol-paste-modal');
+    if (!wrap) {
+        wrap = document.createElement('div');
+        wrap.id = 'rbt-multicol-paste-modal';
+        wrap.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:99999;background:rgba(0,0,0,0.85);display:none;align-items:center;justify-content:center;backdrop-filter:blur(4px);';
+        
+        const content = document.createElement('div');
+        content.style.cssText = 'width:90%;max-width:900px;background:#181818;border:1px solid var(--border-color);border-radius:12px;padding:24px;display:flex;flex-direction:column;gap:16px;box-shadow:0 12px 32px rgba(0,0,0,0.8);max-height:85vh;';
+        
+        const header = document.createElement('div');
+        header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #333;padding-bottom:12px;';
+        header.innerHTML = '<h3 style="margin:0;color:var(--accent);font-size:18px;">📊 多列数据粘贴向导</h3>';
+        const closeBtn = document.createElement('button');
+        closeBtn.innerHTML = '✕';
+        closeBtn.style.cssText = 'background:transparent;border:none;color:#aaa;font-size:20px;cursor:pointer;padding:4px;';
+        closeBtn.onclick = () => { wrap.style.display = 'none'; };
+        header.appendChild(closeBtn);
+        
+        const bodyContent = document.createElement('div');
+        bodyContent.id = 'rbt-multicol-body';
+        bodyContent.style.cssText = 'overflow-y:auto;display:flex;flex-direction:column;gap:12px;padding-right:8px;';
+        
+        const footer = document.createElement('div');
+        footer.style.cssText = 'display:flex;justify-content:flex-end;gap:12px;align-items:center;border-top:1px solid #333;padding-top:16px;margin-top:8px;';
+        
+        const hint = document.createElement('span');
+        hint.id = 'rbt-multicol-hint';
+        hint.style.cssText = 'color:#aaa;font-size:13px;flex:1;';
+        
+        const cancelBtn = document.createElement('button');
+        cancelBtn.innerText = '取消';
+        cancelBtn.style.cssText = 'padding:8px 20px;background:#333;color:#ccc;border:1px solid #444;border-radius:6px;cursor:pointer;font-size:14px;';
+        cancelBtn.onclick = () => { wrap.style.display = 'none'; };
+        
+        const exeBtn = document.createElement('button');
+        exeBtn.innerText = '✅ 确认导入';
+        exeBtn.id = 'rbt-multicol-exec';
+        exeBtn.style.cssText = 'padding:8px 24px;background:var(--accent);color:#000;border:none;border-radius:6px;cursor:pointer;font-size:14px;font-weight:bold;';
+        
+        footer.appendChild(hint);
+        footer.appendChild(cancelBtn);
+        footer.appendChild(exeBtn);
+        
+        content.appendChild(header);
+        content.appendChild(bodyContent);
+        content.appendChild(footer);
+        wrap.appendChild(content);
+        document.body.appendChild(wrap);
+    }
+    
+    const FIELD_OPTS = [
+        { v: '', l: '-- 不导入 (忽略) --' },
+        { v: 'aiScript', l: '🧠 AI 原文案' },
+        { v: 'ttsText', l: '🤖 TTS文案' },
+        { v: 'ttsVoiceId', l: '🗣️ TTS音色' },
+        { v: 'txtContent', l: '📝 人声字幕' },
+        { v: 'overlay_title', l: '🔠 覆层标题' },
+        { v: 'overlay_body', l: '🔠 覆层内容' },
+        { v: 'overlay_footer', l: '🔠 覆层结尾' },
+        { v: 'scroll_title', l: '⏫ 滚动标题' },
+        { v: 'scroll_body', l: '⏫ 滚动内容' }
+    ];
+    
+    let maxCols = Math.max(...tsvRows.map(r => r.length));
+    while(maxCols > 1) {
+        let hasData = false;
+        for (let r=0; r<tsvRows.length; r++) {
+            if (tsvRows[r][maxCols-1] && tsvRows[r][maxCols-1].trim() !== '') {
+                hasData = true; break;
+            }
+        }
+        if (hasData) break;
+        maxCols--;
+    }
+
+    const validRowsCount = tsvRows.filter(r => r.some(c => c && c.trim().length > 0)).length;
+    document.getElementById('rbt-multicol-hint').innerText = `已检测到 ${maxCols} 列，共包含 ${validRowsCount} 行有效数据。`;
+    
+    const bodyStr = [];
+    bodyStr.push(`<div style="display:grid;grid-template-columns:80px 180px 1fr;gap:12px;font-weight:bold;color:#888;padding-bottom:8px;border-bottom:1px solid #333;">
+        <div>来源列</div>
+        <div>目标列选择</div>
+        <div>预览该列前3行数据</div>
+    </div>`);
+    
+    for (let c = 0; c < maxCols; c++) {
+        const previewItems = [];
+        for (let r = 0; r < Math.min(3, tsvRows.length); r++) {
+            const cell = (tsvRows[r][c] || '').trim();
+            if (cell) previewItems.push(cell.length > 40 ? _escHtml(cell.substring(0, 40)) + '...' : _escHtml(cell));
+        }
+        let previewStr = previewItems.join('<br/><span style="color:#555;">---</span><br/>');
+        if (!previewStr) previewStr = '<i style="color:#666">（空数据）</i>';
+        
+        let selectHtml = `<select class="rbt-multicol-select" data-col="${c}" style="width:100%;padding:8px;background:#222;color:#eee;border:1px solid #444;border-radius:4px;outline:none;font-size:13px;">`;
+        for (const opt of FIELD_OPTS) {
+            let selected = '';
+            if (c === 0 && opt.v === initialFieldCategory) selected = 'selected';
+            selectHtml += `<option value="${opt.v}" ${selected}>${opt.l}</option>`;
+        }
+        selectHtml += `</select>`;
+        
+        bodyStr.push(`<div style="display:grid;grid-template-columns:80px 180px 1fr;gap:12px;align-items:start;background:#1e1e1e;padding:12px;border-radius:6px;">
+            <div style="font-size:16px;color:#ccc;font-weight:bold;padding-top:6px;">列 ${c + 1}</div>
+            <div>${selectHtml}</div>
+            <div style="font-size:12px;color:#999;line-height:1.4;background:#111;padding:8px;border-radius:4px;max-height:80px;overflow:hidden;text-overflow:ellipsis;">${previewStr}</div>
+        </div>`);
+    }
+    
+    document.getElementById('rbt-multicol-body').innerHTML = bodyStr.join('');
+    
+    const exeBtn = document.getElementById('rbt-multicol-exec');
+    exeBtn.onclick = () => {
+        const selects = document.querySelectorAll('.rbt-multicol-select');
+        const mapping = [];
+        selects.forEach(s => mapping.push(s.value));
+        
+        _execMultiColumnPaste(tsvRows, startIdx, mapping, maxCols);
+        wrap.style.display = 'none';
+    };
+    
+    wrap.style.display = 'flex';
+}
+
+function _execMultiColumnPaste(tsvRows, startIdx, colMappings, maxCols) {
+    const state = window._reelsState;
+    const container = _batchTableState.container;
+    if (!state || !container) return;
+    
+    const validRows = tsvRows.filter(r => {
+        for(let i=0; i<maxCols; i++){
+            if(r[i] && r[i].trim().length > 0) return true;
+        }
+        return false;
+    });
+    if (validRows.length === 0) return;
+    
+    let overflown = validRows.length - (state.tasks.length - startIdx);
+    if (overflown > 0) {
+        if (!confirm(`剪贴板包含 ${validRows.length} 行数据，当前表格剩余空间不足。\n是否自动创建 ${overflown} 行新任务并继续向下填充？`)) {
+            overflown = 0; // proceed with what fits
+        } else {
+            for (let i = 0; i < overflown; i++) {
+                const taskName = `card_${String(state.tasks.length + 1).padStart(3, '0')}`;
+                const newTask = {
+                    baseName: taskName,
+                    fileName: `${taskName}.mp4`,
+                    bgPath: null, bgSrcUrl: null,
+                    audioPath: null, srtPath: null,
+                    segments: [],
+                    videoPath: null, srcUrl: null,
+                    overlays: [],
+                    aligned: false,
+                    bgScale: 100, bgDurScale: 100, audioDurScale: 100
+                };
+                state.tasks.push(newTask);
+            }
+        }
+    }
+    
+    let filled = 0;
+    for (let rIdx=0; rIdx < validRows.length; rIdx++) {
+        const rowData = validRows[rIdx];
+        const taskIdx = startIdx + rIdx;
+        if (taskIdx >= state.tasks.length) break;
+        
+        const task = state.tasks[taskIdx];
+        let rowModified = false;
+        
+        for (let cIdx = 0; cIdx < maxCols; cIdx++) {
+            const fieldCategory = colMappings[cIdx];
+            if (!fieldCategory) continue;
+            
+            let str = (rowData[cIdx] || '').trim();
+            
+            if (fieldCategory === 'aiScript') task.aiScript = str;
+            else if (fieldCategory === 'ttsText') task.ttsText = str;
+            else if (fieldCategory === 'txtContent') { task.txtContent = str; task.aligned = false; }
+            else if (fieldCategory === 'ttsVoiceId') task.ttsVoiceId = str;
+            else if (fieldCategory.startsWith('overlay_') || fieldCategory.startsWith('scroll_')) {
+                _applyOverlayField(task, fieldCategory, str);
+            }
+            rowModified = true;
+        }
+        if(rowModified) filled++;
+    }
+    
+    const scrollWrap = container.querySelector('.rbt-table-wrap');
+    const scrollTop = scrollWrap ? scrollWrap.scrollTop : 0;
+    const scrollLeft = scrollWrap ? scrollWrap.scrollLeft : 0;
+    
+    _renderBatchTable();
+    
+    const newScrollWrap = container.querySelector('.rbt-table-wrap');
+    if (newScrollWrap) {
+        newScrollWrap.scrollTop = scrollTop;
+        newScrollWrap.scrollLeft = scrollLeft;
+    }
+    
+    if (typeof showToast === 'function') {
+        showToast(`✅ 多列粘贴成功：影响了 ${filled} 行。`, 'success');
+    }
+}
+
+// ═══════════════════════════════════════════════════════
 // 5.5 Text Editor Modal
 // ═══════════════════════════════════════════════════════
+
+async function _showSrtFileEditorModal(idx) {
+    const task = window._reelsState.tasks[idx];
+    if (!task || !task.srtPath) return;
+
+    if (!window.electronAPI || !window.electronAPI.readFileText || !window.electronAPI.writeFileText) {
+        alert('无法读写本地文件，当前环境不支持。');
+        return;
+    }
+
+    let srtContent = '';
+    try {
+        srtContent = await window.electronAPI.readFileText(task.srtPath);
+    } catch (e) {
+        alert('读取 SRT 文件失败:\n' + e.message);
+        return;
+    }
+
+    let editorWrap = document.getElementById('rbt-srt-editor-modal');
+    if (!editorWrap) {
+        editorWrap = document.createElement('div');
+        editorWrap.id = 'rbt-srt-editor-modal';
+        editorWrap.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:99999;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);';
+        
+        const modalContent = document.createElement('div');
+        modalContent.style.cssText = 'width:80%;max-width:800px;background:#181818;border:1px solid var(--border-color);border-radius:12px;padding:20px;display:flex;flex-direction:column;gap:16px;box-shadow:0 12px 32px rgba(0,0,0,0.8);';
+        
+        const header = document.createElement('div');
+        header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;';
+        
+        const title = document.createElement('h3');
+        title.id = 'rbt-srt-editor-title';
+        title.style.cssText = 'margin:0;color:#ff9800;font-size:16px;display:flex;align-items:center;gap:8px;';
+        
+        const closeBtn = document.createElement('button');
+        closeBtn.innerHTML = '✕';
+        closeBtn.style.cssText = 'background:transparent;border:none;color:#aaa;font-size:18px;cursor:pointer;padding:4px;';
+        closeBtn.onclick = () => { editorWrap.remove(); };
+        
+        header.appendChild(title);
+        header.appendChild(closeBtn);
+        
+        const ta = document.createElement('textarea');
+        ta.id = 'rbt-srt-editor-textarea';
+        ta.style.cssText = 'width:100%;height:450px;background:#111;color:#eee;border:1px solid #333;border-radius:6px;padding:12px;font-size:14px;line-height:1.6;box-sizing:border-box;font-family:monospace;resize:vertical;';
+        
+        const footer = document.createElement('div');
+        footer.style.cssText = 'display:flex;justify-content:flex-end;gap:12px;align-items:center;';
+        
+        const hint = document.createElement('span');
+        hint.style.cssText = 'color:#666;font-size:12px;flex:1;';
+        hint.innerText = '小提示：直接修改文字即可。请不要破坏原有的时间轴格式。按 Esc 键退出，Ctrl+Enter 保存。';
+        
+        const cancelBtn = document.createElement('button');
+        cancelBtn.innerText = '取消 (Esc)';
+        cancelBtn.style.cssText = 'padding:8px 20px;background:#333;color:#ccc;border:1px solid #444;border-radius:6px;cursor:pointer;font-size:13px;';
+        cancelBtn.onclick = () => { editorWrap.remove(); };
+        
+        const saveBtn = document.createElement('button');
+        saveBtn.innerText = '保存到源文件 (Ctrl+Enter)';
+        saveBtn.id = 'rbt-srt-editor-save';
+        saveBtn.style.cssText = 'padding:8px 24px;background:#ff9800;color:#000;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:bold;';
+        
+        footer.appendChild(hint);
+        footer.appendChild(cancelBtn);
+        footer.appendChild(saveBtn);
+        
+        modalContent.appendChild(header);
+        modalContent.appendChild(ta);
+        modalContent.appendChild(footer);
+        editorWrap.appendChild(modalContent);
+        document.body.appendChild(editorWrap);
+        
+        ta.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                editorWrap.remove();
+            }
+            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                e.preventDefault();
+                saveBtn.click();
+            }
+        });
+        
+        modalContent.addEventListener('click', (e) => e.stopPropagation());
+        editorWrap.addEventListener('click', () => { editorWrap.remove(); });
+    } else {
+        editorWrap.style.display = 'flex';
+    }
+
+    document.getElementById('rbt-srt-editor-title').innerHTML = `📝 修改外部 SRT 字幕 <span style="font-size:11px;color:#aaa;font-weight:400;margin-left:8px;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${task.srtPath}</span>`;
+    const textarea = document.getElementById('rbt-srt-editor-textarea');
+    textarea.value = srtContent;
+    
+    document.getElementById('rbt-srt-editor-save').onclick = async () => {
+        const newText = textarea.value;
+        try {
+            await window.electronAPI.writeFileText(task.srtPath, newText);
+            editorWrap.remove();
+            
+            // Show a tiny success toast
+            const toast = document.createElement('div');
+            toast.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#2e7d32;color:#fff;padding:8px 16px;border-radius:20px;box-shadow:0 4px 12px rgba(0,0,0,0.5);z-index:999999;font-size:13px;font-weight:bold;animation:rbt-fade-in-out 2s forwards;';
+            toast.innerText = '✅ SRT 原文件已保存';
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 2500);
+            
+            _renderBatchTable();
+        } catch (e) {
+            alert('保存修改失败:\n' + e.message);
+        }
+    };
+}
 
 function _showTextEditorModal(textareaEl) {
     let editorWrap = document.getElementById('rbt-text-editor-modal');
@@ -1608,14 +3790,14 @@ function _showTextEditorModal(textareaEl) {
         editorWrap.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:99999;background:rgba(0,0,0,0.85);display:none;align-items:center;justify-content:center;backdrop-filter:blur(4px);';
         
         const modalContent = document.createElement('div');
-        modalContent.style.cssText = 'width:80%;max-width:800px;background:#1a1a2e;border:1px solid #4a6a8a;border-radius:12px;padding:20px;display:flex;flex-direction:column;gap:16px;box-shadow:0 12px 32px rgba(0,0,0,0.8);';
+        modalContent.style.cssText = 'width:80%;max-width:800px;background:#181818;border:1px solid var(--border-color);border-radius:12px;padding:20px;display:flex;flex-direction:column;gap:16px;box-shadow:0 12px 32px rgba(0,0,0,0.8);';
         
         const header = document.createElement('div');
         header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;';
         
         const title = document.createElement('h3');
         title.id = 'rbt-text-editor-title';
-        title.style.cssText = 'margin:0;color:#00D4FF;font-size:16px;';
+        title.style.cssText = 'margin:0;color:var(--accent);font-size:16px;';
         title.innerText = '大屏幕文案编辑';
         
         const closeBtn = document.createElement('button');
@@ -1645,7 +3827,7 @@ function _showTextEditorModal(textareaEl) {
         const saveBtn = document.createElement('button');
         saveBtn.innerText = '保存内容 (Ctrl+Enter)';
         saveBtn.id = 'rbt-text-editor-save';
-        saveBtn.style.cssText = 'padding:8px 24px;background:#00D4FF;color:#000;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:bold;';
+        saveBtn.style.cssText = 'padding:8px 24px;background:var(--accent);color:#000;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:bold;';
         
         footer.appendChild(hint);
         footer.appendChild(cancelBtn);
@@ -1679,12 +3861,13 @@ function _showTextEditorModal(textareaEl) {
     const saveBtn = document.getElementById('rbt-text-editor-save');
     
     let titleStr = "大屏幕文案编辑";
-    if (textareaEl.classList.contains('rbt-txtcontent-input')) titleStr = "编辑【字幕文本】";
+    if (textareaEl.classList.contains('rbt-txtcontent-input')) titleStr = "编辑【人声字幕】";
     else if (textareaEl.classList.contains('rbt-title-input')) titleStr = "编辑【覆层标题】";
     else if (textareaEl.classList.contains('rbt-body-input')) titleStr = "编辑【覆层内容】";
     else if (textareaEl.classList.contains('rbt-footer-input')) titleStr = "编辑【覆层结尾】";
     else if (textareaEl.classList.contains('rbt-scroll-title-input')) titleStr = "编辑【滚动标题】";
     else if (textareaEl.classList.contains('rbt-scroll-body-input')) titleStr = "编辑【滚动内容】";
+    else if (textareaEl.classList.contains('rbt-ai-script-input')) titleStr = "编辑【AI 原文案】";
     modalTitle.innerText = titleStr;
     
     modalTa.value = textareaEl.value;
@@ -1702,6 +3885,245 @@ function _showTextEditorModal(textareaEl) {
     };
 }
 
+function _showDiffModal(origText, newText, field, taskIdx) {
+    let wrap = document.getElementById('rbt-diff-modal');
+    if (!wrap) {
+        wrap = document.createElement('div');
+        wrap.id = 'rbt-diff-modal';
+        wrap.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:99999;display:flex;justify-content:center;align-items:center;';
+        document.body.appendChild(wrap);
+    }
+    wrap.innerHTML = '';
+    
+    // Simple block tokenization
+    const tokenize = str => str.split(/([a-zA-Z]+|[\u4e00-\u9fa5]|\s+|\[.*?\]|<.*?>)/).filter(Boolean);
+    const a = tokenize(origText || '');
+    const b = tokenize(newText || '');
+    
+    // To prevent JS out of memory or stack error for giant blocks
+    let diffTokens = [];
+    if (a.length > 3000 || b.length > 3000) {
+        diffTokens = [{val: '\n⚠️ 文本太长，无法进行高亮对比。请直接肉眼比对以下结果：\n\n【当前文本】\n' + newText + '\n\n【AI 原文案】\n' + origText, type: 'del'}];
+    } else {
+        const m = a.length, n = b.length;
+        const dp = Array(m + 1);
+        for (let i = 0; i <= m; i++) dp[i] = new Int32Array(n + 1);
+        
+        for (let i = 1; i <= m; i++) {
+            for (let j = 1; j <= n; j++) {
+                if (a[i - 1].toLowerCase() === b[j - 1].toLowerCase()) {
+                    dp[i][j] = dp[i - 1][j - 1] + 1;
+                } else {
+                    dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+                }
+            }
+        }
+        
+        let i = m, j = n;
+        while (i > 0 || j > 0) {
+            if (i > 0 && j > 0 && a[i - 1].toLowerCase() === b[j - 1].toLowerCase()) {
+                diffTokens.unshift({ val: b[j - 1], type: 'eq' });
+                i--; j--;
+            } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+                diffTokens.unshift({ val: b[j - 1], type: 'add' });
+                j--;
+            } else if (i > 0 && (j === 0 || dp[i][j - 1] < dp[i - 1][j])) {
+                diffTokens.unshift({ val: a[i - 1], type: 'del' });
+                i--;
+            }
+        }
+    }
+    
+    // Initialize interaction state
+    diffTokens.forEach(t => {
+        if (t.type === 'eq') {
+            t.inResult = true;
+        } else if (t.type === 'add') {
+            // If the user manually added a tag or formatting, WE MUST PRESERVE IT default.
+            t.inResult = true;
+
+        } else if (t.type === 'del') {
+            // AI deleted this from original text.
+            // Punctuation, spaces, and tags from the original MUST be preserved automatically!
+            if (/^[^a-zA-Z0-9\u4e00-\u9fa5]+$/.test(t.val)) {
+                t.inResult = true; 
+            } else {
+                t.inResult = false; // Real deleted words default to dropped, must click to restore.
+            }
+        }
+    });
+
+    const body = document.createElement('div');
+    body.style.cssText = 'flex:1;overflow-y:auto;line-height:1.6;font-size:15px;white-space:pre-wrap;font-family:monospace;padding:12px;background:#111;border-radius:6px;border:1px solid #333;';
+    
+    function renderDiff() {
+        let html = '';
+        diffTokens.forEach((t, i) => {
+            if (t.type === 'eq') {
+                html += _escHtml(t.val);
+            } else if (t.type === 'add') {
+                if (/^\[.*?\]$|^<.*?>$/.test(t.val)) {
+                   html += `<span style="color:#aaa;" title="已保留您手动添加的标签">${_escHtml(t.val)}</span>`;
+                } else if (/(^\s+$)/.test(t.val)) {
+                   html += t.val; 
+                } else if (/^[^a-zA-Z0-9\u4e00-\u9fa5]+$/.test(t.val)) {
+                   html += `<span style="color:#aaa;" title="已保留您手动修改的标点">${_escHtml(t.val)}</span>`;
+                } else {
+                   if (t.inResult) {
+                       html += `<span class="rbt-diff-tok" data-idx="${i}" style="cursor:pointer;background:rgba(74,222,128,0.3);color:#4ade80;text-decoration:underline;" title="点击抛弃该词 (恢复原文)">${_escHtml(t.val)}</span>`;
+                   } else {
+                       html += `<span class="rbt-diff-tok" data-idx="${i}" style="cursor:pointer;background:rgba(0,0,0,0.5);color:#555;text-decoration:line-through;" title="重新选中此词">${_escHtml(t.val)}</span>`;
+                   }
+                }
+            } else if (t.type === 'del') {
+                if (/^\[.*?\]$|^<.*?>$/.test(t.val)) {
+                   html += `<span style="color:#aaa;" title="已自动保留该原文标签">${_escHtml(t.val)}</span>`;
+                } else if (/(^\s+$)/.test(t.val)) {
+                   html += t.val; 
+                } else if (/^[^a-zA-Z0-9\u4e00-\u9fa5]+$/.test(t.val)) {
+                   html += `<span style="color:#aaa;">${_escHtml(t.val)}</span>`;
+                } else {
+                   if (!t.inResult) {
+                       html += `<span class="rbt-diff-tok" data-idx="${i}" style="cursor:pointer;background:rgba(239,68,68,0.3);color:#ef4444;text-decoration:line-through;" title="点击恢复此词">${_escHtml(t.val)}</span>`;
+                   } else {
+                       html += `<span class="rbt-diff-tok" data-idx="${i}" style="cursor:pointer;background:rgba(234,179,8,0.3);color:#eab308;border-bottom:2px solid #eab308;" title="取消恢复">${_escHtml(t.val)}</span>`;
+                   }
+                }
+            }
+        });
+        body.innerHTML = html.replace(/\n/g, '<br/>');
+    }
+    
+    body.addEventListener('click', e => {
+        const span = e.target.closest('.rbt-diff-tok');
+        if (span) {
+            const idx = parseInt(span.dataset.idx);
+            const t = diffTokens[idx];
+            t.inResult = !t.inResult;
+            // auto-restore surrounding whitespace if restoring a deleted word
+            if (t.inResult && t.type === 'del') {
+                if (idx > 0 && /(^\s+$)/.test(diffTokens[idx-1].val) && diffTokens[idx-1].type === 'del') {
+                    diffTokens[idx-1].inResult = true;
+                }
+                if (idx < diffTokens.length - 1 && /(^\s+$)/.test(diffTokens[idx+1].val) && diffTokens[idx+1].type === 'del') {
+                    diffTokens[idx+1].inResult = true;
+                }
+            }
+            // auto-reject surrounding whitespace if rejecting an added word
+            if (!t.inResult && t.type === 'add') {
+                if (idx > 0 && /(^\s+$)/.test(diffTokens[idx-1].val) && diffTokens[idx-1].type === 'add') {
+                    diffTokens[idx-1].inResult = false;
+                }
+                if (idx < diffTokens.length - 1 && /(^\s+$)/.test(diffTokens[idx+1].val) && diffTokens[idx+1].type === 'add') {
+                    diffTokens[idx+1].inResult = false;
+                }
+            }
+            renderDiff();
+        }
+    });
+
+    renderDiff();
+
+    const modalContent = document.createElement('div');
+    modalContent.style.cssText = 'width:80%;max-width:800px;background:#181818;border:1px solid var(--border-color);border-radius:12px;padding:20px;display:flex;flex-direction:column;gap:16px;box-shadow:0 12px 32px rgba(0,0,0,0.8);color:#eee;max-height:80vh;';
+    
+    const header = document.createElement('div');
+    header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #333;padding-bottom:10px;';
+    header.innerHTML = `<h3 style="margin:0;color:#ffb74d;">🔍 原文比对 (文本篡改高亮)</h3>
+                        <button id="rbt-diff-close" style="background:transparent;border:none;color:#aaa;font-size:18px;cursor:pointer;">✕</button>`;
+    
+    const hint = document.createElement('div');
+    hint.style.cssText = 'font-size:12px;color:#888;display:flex;gap:16px;align-items:center;';
+    hint.innerHTML = `
+        <span><span style="color:#4ade80;text-decoration:underline;">绿色下划线</span> = 当前多出来的词 (或改错的词)</span>
+        <span><span style="color:#ef4444;text-decoration:line-through;">红色删除线</span> = 被悄悄删掉的词 (原文)</span>
+        <span style="margin-left:auto;color:#3b82f6;font-weight:bold;">💡 互动提示：直接点击高亮的词即可一键恢复或剔除！</span>
+    `;
+
+    const footer = document.createElement('div');
+    footer.style.cssText = 'display:flex;justify-content:flex-end;gap:12px;margin-top:10px;';
+    footer.innerHTML = `
+        <button id="rbt-diff-restore" style="padding:10px 24px;background:#374151;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:bold;font-size:14px;">🔄 强制还原为原文</button>
+        <button id="rbt-diff-apply" style="padding:10px 24px;background:#3b82f6;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:bold;font-size:14px;box-shadow:0 4px 12px rgba(59,130,246,0.4);">✅ 应用并覆盖到表格</button>
+    `;
+    
+    modalContent.appendChild(header);
+    modalContent.appendChild(hint);
+    modalContent.appendChild(body);
+    modalContent.appendChild(footer);
+    wrap.appendChild(modalContent);
+    
+    wrap.style.display = 'flex';
+    
+    wrap.querySelector('#rbt-diff-close').onclick = () => wrap.style.display = 'none';
+    
+    wrap.querySelector('#rbt-diff-restore').onclick = () => {
+        const task = window._reelsState.tasks[taskIdx];
+        if (!task || !task.aiScript) return;
+        const finalText = task.aiScript;
+        if (field === 'txt') {
+            task.txtContent = finalText;
+            const tr = document.querySelector(`tr.rbt-row[data-idx="${taskIdx}"]`);
+            if (tr) {
+                const ta = tr.querySelector('.rbt-txtcontent-input');
+                if (ta) {
+                    ta.value = finalText;
+                    ta.dispatchEvent(new Event('input', {bubbles: true}));
+                    ta.dispatchEvent(new Event('change', {bubbles: true}));
+                }
+            }
+        } else if (field === 'tts') {
+            task.ttsText = finalText;
+            const tr = document.querySelector(`tr.rbt-row[data-idx="${taskIdx}"]`);
+            if (tr) {
+                const ta = tr.querySelector('.rbt-tts-text-input');
+                if (ta) {
+                    ta.value = finalText;
+                    ta.dispatchEvent(new Event('input', {bubbles: true}));
+                    ta.dispatchEvent(new Event('change', {bubbles: true}));
+                }
+            }
+        }
+        wrap.style.display = 'none';
+        
+        // Full reset of table row to ensure absolutely zero weird state bugs
+        if (typeof _renderBatchTable === 'function') setTimeout(_renderBatchTable, 50);
+    };
+    
+    wrap.querySelector('#rbt-diff-apply').onclick = () => {
+        const finalText = diffTokens.filter(t => t.inResult).map(t => t.val).join('');
+        const task = window._reelsState.tasks[taskIdx];
+        if (field === 'txt' && task) {
+            task.txtContent = finalText;
+            const tr = document.querySelector(`tr.rbt-row[data-idx="${taskIdx}"]`);
+            if (tr) {
+                const ta = tr.querySelector('.rbt-txtcontent-input');
+                if (ta) {
+                    ta.value = finalText;
+                    ta.dispatchEvent(new Event('input', {bubbles: true}));
+                    ta.dispatchEvent(new Event('change', {bubbles: true}));
+                }
+            }
+        } else if (field === 'tts' && task) {
+            task.ttsText = finalText;
+            const tr = document.querySelector(`tr.rbt-row[data-idx="${taskIdx}"]`);
+            if (tr) {
+                const ta = tr.querySelector('.rbt-tts-text-input');
+                if (ta) {
+                    ta.value = finalText;
+                    ta.dispatchEvent(new Event('input', {bubbles: true}));
+                    ta.dispatchEvent(new Event('change', {bubbles: true}));
+                }
+            }
+        }
+        wrap.style.display = 'none';
+        
+        if (typeof _renderBatchTable === 'function') setTimeout(_renderBatchTable, 50);
+    };
+    
+    wrap.onclick = (e) => { if (e.target === wrap) wrap.style.display = 'none'; };
+}
+
 // ═══════════════════════════════════════════════════════
 // 6. Apply changes from table → tasks
 // ═══════════════════════════════════════════════════════
@@ -1715,42 +4137,30 @@ function _applyBatchTableChanges() {
     const titleInputs = container.querySelectorAll('.rbt-title-input');
     const bodyInputs = container.querySelectorAll('.rbt-body-input');
     const footerInputs = container.querySelectorAll('.rbt-footer-input');
-    const subTplSelects = container.querySelectorAll('.rbt-sub-tpl-select');
     const cardTplSelects = container.querySelectorAll('.rbt-card-tpl-select');
 
     titleInputs.forEach(el => {
         const idx = parseInt(el.dataset.idx);
         const task = state.tasks[idx];
         if (!task) return;
-        if (!task.overlays || !task.overlays[0]) {
-            // Only create overlay if user actually typed something
-            const titleVal = el.value.trim();
-            if (!titleVal) return;
-            const ReelsOverlay = window.ReelsOverlay;
-            if (ReelsOverlay) {
-                task.overlays = [ReelsOverlay.createTextCardOverlay({
-                    title_text: titleVal,
-                    body_text: '',
-                    start: 0, end: 9999,
-                })];
-            }
-        } else {
-            task.overlays[0].title_text = el.value;
-        }
+        if (el.value.trim() === '' && (!task.overlays || !task.overlays.find(o => o && (o.type === 'textcard' || !o.type || o.type === '')))) return;
+        _applyOverlayField(task, 'overlay_title', el.value);
     });
 
     bodyInputs.forEach(el => {
         const idx = parseInt(el.dataset.idx);
         const task = state.tasks[idx];
-        if (!task || !task.overlays || !task.overlays[0]) return;
-        task.overlays[0].body_text = el.value;
+        if (!task) return;
+        if (el.value.trim() === '' && (!task.overlays || !task.overlays.find(o => o && (o.type === 'textcard' || !o.type || o.type === '')))) return;
+        _applyOverlayField(task, 'overlay_body', el.value);
     });
 
     footerInputs.forEach(el => {
         const idx = parseInt(el.dataset.idx);
         const task = state.tasks[idx];
-        if (!task || !task.overlays || !task.overlays[0]) return;
-        task.overlays[0].footer_text = el.value;
+        if (!task) return;
+        if (el.value.trim() === '' && (!task.overlays || !task.overlays.find(o => o && (o.type === 'textcard' || !o.type || o.type === '')))) return;
+        _applyOverlayField(task, 'overlay_footer', el.value);
     });
 
     // ── 滚动字幕列 ──
@@ -1762,13 +4172,14 @@ function _applyBatchTableChanges() {
         const task = state.tasks[idx];
         if (!task) return;
         const val = el.value.trim();
-        let scrollOv = (task.overlays || []).find(o => o.type === 'scroll');
+        let scrollOv = (task.overlays || []).find(o => o && o.type === 'scroll');
         if (!scrollOv && val) {
             const ReelsOverlay = window.ReelsOverlay;
             if (ReelsOverlay) {
                 scrollOv = ReelsOverlay.createScrollOverlay({
                     scroll_title: val, content: '', start: 0, end: 9999,
                 });
+
                 if (!task.overlays) task.overlays = [];
                 task.overlays.push(scrollOv);
             }
@@ -1782,7 +4193,7 @@ function _applyBatchTableChanges() {
         const task = state.tasks[idx];
         if (!task) return;
         const val = el.value.trim();
-        let scrollOv = (task.overlays || []).find(o => o.type === 'scroll');
+        let scrollOv = (task.overlays || []).find(o => o && o.type === 'scroll');
         if (!scrollOv && val) {
             const ReelsOverlay = window.ReelsOverlay;
             if (ReelsOverlay) {
@@ -1796,6 +4207,25 @@ function _applyBatchTableChanges() {
             scrollOv.content = el.value;
         }
     });
+
+    // ── 封面卡片文案 ──
+    const coverTextInputs = container.querySelectorAll('.rbt-cover-text-input');
+    coverTextInputs.forEach(el => {
+        const idx = parseInt(el.dataset.idx);
+        const task = state.tasks[idx];
+        if (!task) return;
+        if (!task.cover) return; // 只当封面启用或创建时绑定
+        
+        const overlays = task.cover.overlays || [];
+        if (overlays.length > 0) {
+            overlays[0].title_text = el.value;
+        } else if (el.value.trim() !== '') {
+            const textOvl = window.ReelsOverlay ? window.ReelsOverlay.createTextCardOverlay({ start: 0, end: 9999 }) : { title_text: el.value, body_text: '', footer_text: '', type: 'textcard' };
+            textOvl.title_text = el.value;
+            task.cover.overlays = [textOvl];
+        }
+    });
+
 
     // 自定义时长
     const durInputs = container.querySelectorAll('.rbt-dur-input');
@@ -1831,7 +4261,28 @@ function _applyBatchTableChanges() {
         task.audioDurScale = parseInt(el.value) || 100;
     });
 
-    // 字幕文本（用于字幕对齐）
+    // TTS 文案
+    container.querySelectorAll('.rbt-tts-text-input').forEach(el => {
+        const idx = parseInt(el.dataset.idx);
+        const task = state.tasks[idx];
+        if (task) task.ttsText = el.value;
+    });
+
+    // TTS 音色 ID
+    container.querySelectorAll('.rbt-tts-voice-input').forEach(el => {
+        const idx = parseInt(el.dataset.idx);
+        const task = state.tasks[idx];
+        if (task) task.ttsVoiceId = el.value;
+    });
+
+    // AI 原文案
+    container.querySelectorAll('.rbt-ai-script-input').forEach(el => {
+        const idx = parseInt(el.dataset.idx);
+        const task = state.tasks[idx];
+        if (task) task.aiScript = el.value;
+    });
+
+    // 人声字幕（用于字幕对齐）
     const txtContentInputs = container.querySelectorAll('.rbt-txtcontent-input');
     txtContentInputs.forEach(el => {
         const idx = parseInt(el.dataset.idx);
@@ -1844,13 +4295,8 @@ function _applyBatchTableChanges() {
         }
     });
 
-    // 字幕模板
-    subTplSelects.forEach(el => {
-        const idx = parseInt(el.dataset.idx);
-        const task = state.tasks[idx];
-        if (!task) return;
-        task._subtitlePreset = el.value || '';
-    });
+    // 覆盖层组预设 
+    // 字幕模板已通过 _openStyledPresetPicker 实时更新到了 task._subtitlePreset
 
     // 覆盖层组预设
     cardTplSelects.forEach(el => {
@@ -1912,24 +4358,83 @@ async function _batchPasteFromSheet() {
         return;
     }
 
+    const isSingleColumn = rows.every(r => r.length === 1);
+    let splitMode = 0;
+    if (isSingleColumn) {
+        const modeStr = await _showSplitPromptDialog('检测到您粘贴的内容只有一列。\\n如果这列内容内部自带多行文本，你可以选用以下格式快速智能拆分：');
+        if (modeStr === '2') splitMode = 2;
+        else if (modeStr === '3') splitMode = 3;
+    }
+
     const state = window._reelsState;
     const ReelsOverlay = window.ReelsOverlay;
     if (!state || !ReelsOverlay) return;
 
+    if (splitMode > 0) {
+        let hasErrors = true;
+        while (hasErrors) {
+            let badRows = [];
+            for (let i = 0; i < rows.length; i++) {
+                const rowText = rows[i][0] || '';
+                const lines = rowText.split('\n').map(l => l.trim()).filter(l => l);
+                if (lines.length > 0 && ((splitMode === 2 && lines.length < 2) || (splitMode === 3 && lines.length < 3))) {
+                    badRows.push({ index: i, text: rowText });
+                }
+            }
+            if (badRows.length === 0) {
+                hasErrors = false;
+                break;
+            }
+            const newTexts = await _showBatchEditDialog(badRows, splitMode, rows.length);
+            if (!newTexts) return;
+            for (const ans of newTexts) {
+                if (ans.skip) rows[ans.index][0] = '';
+                else rows[ans.index][0] = ans.text;
+            }
+        }
+    }
+
     // 解析每行数据
     const entries = [];
-    for (const row of rows) {
-        let title = '', body = '';
-        if (row.length >= 3) {
-            // 三列格式：名称 | 标题 | 内容（名称暂不用于此版本）
-            title = row[1] || '';
-            body = row[2] || '';
+    for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        let title = '', body = '', footer = '';
+        if (splitMode > 0) {
+            let rowText = row[0] || '';
+            let lines = rowText.split('\n').map(l => l.trim()).filter(l => l);
+            if (lines.length === 0) continue;
+
+            if (splitMode === 2) {
+                if (lines.length >= 1) title = lines[0];
+                if (lines.length >= 2) body = lines.slice(1).join('\n');
+            } else if (splitMode === 3) {
+                if (lines.length >= 1) title = lines[0];
+                if (lines.length >= 3) {
+                    footer = lines[lines.length - 1];
+                    body = lines.slice(1, lines.length - 1).join('\n');
+                } else if (lines.length === 2) {
+                    body = lines[1];
+                }
+            }
         } else {
-            title = row[0] || '';
-            body = row[1] || '';
+            if (row.length >= 4) {
+                // 四列格式：名称 | 标题 | 内容 | 结尾
+                title = row[1] || '';
+                body = row[2] || '';
+                footer = row[3] || '';
+            } else if (row.length >= 3) {
+                // 三列格式：标题 | 内容 | 结尾
+                title = row[0] || '';
+                body = row[1] || '';
+                footer = row[2] || '';
+            } else {
+                // 两列/单列格式：标题 | 内容
+                title = row[0] || '';
+                body = row[1] || '';
+            }
         }
-        if (!title && !body) continue;
-        entries.push({ title, body });
+        if (!title && !body && !footer) continue;
+        entries.push({ title, body, footer });
     }
 
     if (!entries.length) {
@@ -1952,14 +4457,14 @@ async function _batchPasteFromSheet() {
             const isEmpty = isDefault(titleVal) && isDefault(bodyVal);
 
             if (isEmpty) {
-                _setTaskText(task, entries[entryIdx].title, entries[entryIdx].body, ReelsOverlay);
+                _setTaskText(task, entries[entryIdx].title, entries[entryIdx].body, ReelsOverlay, entries[entryIdx].footer);
                 entryIdx++;
                 filled++;
             }
         }
         // 剩余的追加为新行
         while (entryIdx < entries.length) {
-            _createNewTextRow(state, entries[entryIdx].title, entries[entryIdx].body, ReelsOverlay);
+            _createNewTextRow(state, entries[entryIdx].title, entries[entryIdx].body, ReelsOverlay, entries[entryIdx].footer);
             entryIdx++;
             created++;
         }
@@ -1967,7 +4472,7 @@ async function _batchPasteFromSheet() {
     } else if (mode === 'new') {
         // ═══ 添加新行模式：全部新建 ═══
         for (const entry of entries) {
-            _createNewTextRow(state, entry.title, entry.body, ReelsOverlay);
+            _createNewTextRow(state, entry.title, entry.body, ReelsOverlay, entry.footer);
             created++;
         }
 
@@ -1975,10 +4480,10 @@ async function _batchPasteFromSheet() {
         // ═══ 覆盖模式：从第1行开始往下覆盖 ═══
         for (let i = 0; i < entries.length; i++) {
             if (i < state.tasks.length) {
-                _setTaskText(state.tasks[i], entries[i].title, entries[i].body, ReelsOverlay);
+                _setTaskText(state.tasks[i], entries[i].title, entries[i].body, ReelsOverlay, entries[i].footer);
                 filled++;
             } else {
-                _createNewTextRow(state, entries[i].title, entries[i].body, ReelsOverlay);
+                _createNewTextRow(state, entries[i].title, entries[i].body, ReelsOverlay, entries[i].footer);
                 created++;
             }
         }
@@ -2011,22 +4516,73 @@ async function _batchPasteScrollFromSheet() {
         return;
     }
 
+    const isSingleColumn = rows.every(r => r.length === 1);
+    let splitMode = 0;
+    if (isSingleColumn) {
+        const modeStr = await _showSplitPromptDialog('检测到您粘贴的内容只有一列且支持滚动。\\n如果单列内容有多行文本，你可以套用智能格式提取：');
+        if (modeStr === '2') splitMode = 2;
+        else if (modeStr === '3') splitMode = 3;
+    }
+
     const state = window._reelsState;
     const ReelsOverlay = window.ReelsOverlay;
     if (!state || !ReelsOverlay) return;
 
-    // 解析每行数据：3列(名, 标题, 内容), 2列(标题, 内容), 1列(内容)
+    if (splitMode > 0) {
+        let hasErrors = true;
+        while (hasErrors) {
+            let badRows = [];
+            for (let i = 0; i < rows.length; i++) {
+                const rowText = rows[i][0] || '';
+                const lines = rowText.split('\n').map(l => l.trim()).filter(l => l);
+                if (lines.length > 0 && ((splitMode === 2 && lines.length < 2) || (splitMode === 3 && lines.length < 3))) {
+                    badRows.push({ index: i, text: rowText });
+                }
+            }
+            if (badRows.length === 0) {
+                hasErrors = false;
+                break;
+            }
+            const newTexts = await _showBatchEditDialog(badRows, splitMode, rows.length);
+            if (!newTexts) return;
+            for (const ans of newTexts) {
+                if (ans.skip) rows[ans.index][0] = '';
+                else rows[ans.index][0] = ans.text;
+            }
+        }
+    }
+
+    // 解析每行数据
     const entries = [];
-    for (const row of rows) {
+    for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
         let title = '', body = '';
-        if (row.length >= 3) {
-            title = row[1] || '';
-            body = row[2] || '';
-        } else if (row.length === 2) {
-            title = row[0] || '';
-            body = row[1] || '';
+        if (splitMode > 0) {
+            let rowText = row[0] || '';
+            let lines = rowText.split('\n').map(l => l.trim()).filter(l => l);
+            if (lines.length === 0) continue;
+
+            if (splitMode === 2) {
+                if (lines.length >= 1) title = lines[0];
+                if (lines.length >= 2) body = lines.slice(1).join('\n');
+            } else if (splitMode === 3) {
+                if (lines.length >= 1) title = lines[0];
+                if (lines.length >= 3) {
+                    body = lines.slice(1, lines.length - 1).join('\n');
+                } else if (lines.length === 2) {
+                    body = lines[1];
+                }
+            }
         } else {
-            body = row[0] || '';
+            if (row.length >= 3) {
+                title = row[1] || '';
+                body = row[2] || '';
+            } else if (row.length === 2) {
+                title = row[0] || '';
+                body = row[1] || '';
+            } else {
+                body = row[0] || ''; // 单列时不提取title，默认全做body
+            }
         }
         if (!title && !body) continue;
         entries.push({ title, body });
@@ -2043,7 +4599,7 @@ async function _batchPasteScrollFromSheet() {
         let entryIdx = 0;
         for (let i = 0; i < state.tasks.length && entryIdx < entries.length; i++) {
             const task = state.tasks[i];
-            const scrollOv = (task.overlays || []).find(o => o.type === 'scroll');
+            const scrollOv = (task.overlays || []).find(o => o && o.type === 'scroll');
             const isEmpty = !scrollOv || (!(scrollOv.scroll_title || '').trim() && !(scrollOv.content || '').trim());
             if (isEmpty) {
                 _setTaskScrollText(task, entries[entryIdx].title, entries[entryIdx].body, ReelsOverlay);
@@ -2087,22 +4643,30 @@ async function _batchPasteScrollFromSheet() {
 // ═══════════════════════════════════════════════════════
 
 const _RBT_COLUMNS = [
-    { key: 'hook', label: '🪝 前置Hook', default: true },
+    { key: 'hook', label: '🪝 钩子视频', default: true },
     { key: 'bg', label: '🖼 背景素材', default: true },
     { key: 'bgscale', label: '🔍 背景缩放', default: true },
-    { key: 'bgdurscale', label: '⏱🖼 背景时长', default: true },
-    { key: 'audio', label: '🔊 音频', default: true },
-    { key: 'audiodurscale', label: '⏱🔊 音频变速', default: true },
-    { key: 'srt', label: '📝 字幕SRT', default: true },
-    { key: 'txtcontent', label: '📃 字幕文本', default: true },
-    { key: 'bgm', label: '🎵 配乐', default: true },
-    { key: 'title', label: '📋 覆层标题', default: true },
-    { key: 'body', label: '📋 覆层内容', default: true },
-    { key: 'footer', label: '📋 覆层结尾', default: true },
-    { key: 'scroll-title', label: '🔄 滚动标题', default: true },
-    { key: 'scroll-body', label: '🔄 滚动内容', default: true },
-    { key: 'dur', label: '⏱ 时长', default: true },
-    { key: 'tpl', label: '🎬 字幕/覆层预设', default: true },
+    { key: 'bgdurscale', label: '⏱️ 背景延展', default: true },
+    { key: 'contentvideo', label: '🎬 视频覆层', default: false },
+    { key: 'cvtrim', label: '✂️ 裁切区间', default: false },
+    { key: 'cvscale', label: '🔍 视频缩放', default: false },
+    { key: 'cvpos', label: '📐 视频位置', default: false },
+    { key: 'pip', label: '🖼️ 图片覆层', default: true },
+    { key: 'tts_text', label: '🤖 TTS文案', default: false },
+    { key: 'tts_voice', label: '🗣 TTS音色', default: false },
+    { key: 'audio', label: '🎙 人声配音', default: true },
+    { key: 'audiodurscale', label: '⏱️ 音频缩放', default: true },
+    { key: 'ai_script', label: '🧠 AI 原文案', default: false },
+    { key: 'bgm', label: '🎵 全局配乐', default: true },
+    { key: 'srt', label: '📝 SRT字幕', default: true },
+    { key: 'txtcontent', label: '📃 人声字幕', default: true },
+    { key: 'title', label: '📌 覆层-Title', default: true },
+    { key: 'body', label: '📌 覆层-Body', default: true },
+    { key: 'footer', label: '📌 覆层-Footer', default: true },
+    { key: 'scroll-title', label: '📜 滚动-Title', default: true },
+    { key: 'scroll-body', label: '📜 滚动-Body', default: true },
+    { key: 'dur', label: '⏱️ 预估时长', default: true },
+    { key: 'tpl', label: '🎬 字幕模板+覆层预设', default: true },
 ];
 
 function _getColVisStorageKey() {
@@ -2141,6 +4705,22 @@ function _saveColVisibility(vis) {
     localStorage.setItem(key, JSON.stringify(vis));
 }
 
+/** 点击 AI 按钮时自动显示 TTS 相关列 */
+function _ensureAIColumnsVisible() {
+    const vis = _getColVisibility();
+    let changed = false;
+    for (const colKey of ['tts_text', 'tts_voice', 'ai_script']) {
+        if (!vis[colKey]) {
+            vis[colKey] = true;
+            changed = true;
+        }
+    }
+    if (changed) {
+        _saveColVisibility(vis);
+        _applyColVisibility();
+    }
+}
+
 function _applyColVisibility() {
     const vis = _getColVisibility();
     // Remove old style
@@ -2162,6 +4742,184 @@ function _applyColVisibility() {
     styleEl.textContent = rules.join('\n');
 }
 
+// ═══════════════════════════════════════════════════════
+// 统一字幕模板样式预览选择器 (全局复用)
+// ═══════════════════════════════════════════════════════
+
+/**
+ * 生成单个预设的带样式 HTML
+ * @param {string} name - 预设名称
+ * @param {object} presetsMap - { name: styleObj, ... }
+ * @returns {string} HTML
+ */
+function _buildPresetStyledItemHTML(name, presetsMap) {
+    try {
+        const style = (presetsMap && presetsMap[name]) || {};
+        const m = window.ReelsStyleEngine ? ReelsStyleEngine.mergeStyle(style) : { ...style };
+        const tc = m.color_text || m.color || '#FFFFFF';
+        const sc = m.color_outline || m.stroke_color || '#000000';
+        const bw = m.border_width || m.stroke_width || 3;
+        const useStk = m.use_stroke !== false && m.stroke !== false;
+        const bgC = m.color_bg || m.bg_color || '#000000';
+        const useBg = m.use_box || m.bg_enabled || false;
+        const bgR = Math.round((m.box_radius || m.bg_radius || 8) * 0.4);
+        let ts = 'none';
+        if (useStk && bw > 0) {
+            const s = Math.max(1, Math.round(bw * 0.5));
+            ts = `${s}px 0 0 ${sc}, -${s}px 0 0 ${sc}, 0 ${s}px 0 ${sc}, 0 -${s}px 0 ${sc}, ${s}px ${s}px 0 ${sc}, -${s}px -${s}px 0 ${sc}`;
+        }
+        if (m.shadow_blur > 0) {
+            const extra = `2px 2px ${m.shadow_blur}px ${m.color_shadow || '#000'}`;
+            ts = ts === 'none' ? extra : ts + ', ' + extra;
+        }
+        let bgCss = '';
+        if (useBg) {
+            const bgGradCols = m.bg_gradient_colors || [];
+            if (m.bg_gradient_enabled && bgGradCols.length >= 2) {
+                bgCss = `background:linear-gradient(90deg,${bgGradCols.join(',')});`;
+            } else {
+                bgCss = `background:${bgC};`;
+            }
+            bgCss += `border-radius:${bgR}px;padding:2px 8px;`;
+        }
+        const fw = m.bold || m.font_weight >= 700 ? 'bold' : 'normal';
+        const eName = _escHtml(name);
+        return `<div class="rbt-sub-styled-item" data-val="${eName}" style="padding:5px 10px;cursor:pointer;border-bottom:1px solid #2a2a3e;">
+            <span style="font-size:15px;font-weight:${fw};line-height:1.5;${bgCss}display:inline-block;">
+                <span style="color:${tc};text-shadow:${ts};">${eName}</span>
+            </span>
+        </div>`;
+    } catch(e) {
+        return `<div class="rbt-sub-styled-item" data-val="${_escHtml(name)}" style="padding:5px 10px;cursor:pointer;border-bottom:1px solid #2a2a3e;color:#ccc;font-size:13px;">${_escHtml(name)}</div>`;
+    }
+}
+
+/**
+ * 打开统一的字幕模板选择器弹窗（position:fixed 挂到 body，不会被裁切）
+ * @param {HTMLElement} anchorEl - 触发元素，用于定位
+ * @param {string} currentVal - 当前选中值
+ * @param {function} onSelect - 回调 (selectedName) => void
+ */
+window._openStyledPresetPicker = _openStyledPresetPicker;
+function _openStyledPresetPicker(anchorEl, currentVal, onSelect) {
+    // 关闭已有弹窗
+    const existing = document.getElementById('rbt-styled-preset-picker');
+    if (existing) { existing.remove(); return; }
+
+    let presetsMap = {};
+    let names = [];
+    try {
+        const data = window.ReelsStyleEngine ? ReelsStyleEngine.loadSubtitlePresets() : { presets: {} };
+        presetsMap = data.presets || {};
+        names = Object.keys(presetsMap);
+    } catch(e) { }
+
+    if (names.length === 0) {
+        alert('暂无字幕预设。请在字幕面板中保存预设后再使用。');
+        return;
+    }
+
+    const popup = document.createElement('div');
+    popup.id = 'rbt-styled-preset-picker';
+
+    // 定位：基于触发元素
+    const rect = anchorEl.getBoundingClientRect();
+    const panelW = 340;
+    const panelMaxH = Math.min(500, window.innerHeight - 60);
+    let left = Math.min(rect.left, window.innerWidth - panelW - 10);
+    let top = rect.bottom + 4;
+    // 如果下方空间不够，改为上方弹出
+    if (top + panelMaxH > window.innerHeight) {
+        top = Math.max(10, rect.top - panelMaxH - 4);
+    }
+
+    Object.assign(popup.style, {
+        position: 'fixed',
+        left: left + 'px',
+        top: top + 'px',
+        width: panelW + 'px',
+        maxHeight: panelMaxH + 'px',
+        overflowY: 'auto',
+        zIndex: '99999',
+        background: '#1a1a2e',
+        border: '1px solid #444',
+        borderRadius: '8px',
+        boxShadow: '0 8px 32px rgba(0,0,0,0.7)',
+        padding: '0',
+    });
+
+    // 搜索区
+    const searchHtml = `
+        <div style="padding:10px; border-bottom:1px solid #2a2a3e; background:rgba(0,0,0,0.2); position:sticky; top:0; z-index:10;">
+            <input type="text" id="rbt-ssp-search" placeholder="搜索预设..." style="width:100%; box-sizing:border-box; background:#000; border:1px solid #555; border-radius:4px; color:#eee; font-size:12px; padding:6px; outline:none;" autocomplete="off">
+        </div>
+    `;
+
+    // 默认项
+    const defaultHtml = `
+        <div class="rbt-sub-styled-item" data-val="" style="margin:8px 10px; padding:8px 12px; font-size:12px; color:#aaa; border:1px dashed #444; border-radius:6px; cursor:pointer; text-align:center; transition:background 0.2s;">
+            -- 不使用/恢复默认 --
+        </div>
+    `;
+
+    // 列表区
+    const listHtml = `
+        <div id="rbt-ssp-list" style="padding-bottom:8px;">
+            ${names.map(n => _buildPresetStyledItemHTML(n, presetsMap)).join('')}
+        </div>
+    `;
+
+    popup.innerHTML = searchHtml + defaultHtml + listHtml;
+    document.body.appendChild(popup);
+
+    // 标记当前选中项
+    if (currentVal) {
+        const activeItem = popup.querySelector(`.rbt-sub-styled-item[data-val="${CSS.escape(currentVal)}"]`);
+        if (activeItem) {
+            activeItem.style.background = 'rgba(74,158,255,0.15)';
+            activeItem.style.borderLeft = '3px solid #4a9eff';
+        }
+    }
+
+    const searchInput = popup.querySelector('#rbt-ssp-search');
+    const listContainer = popup.querySelector('#rbt-ssp-list');
+
+    // 搜索高亮逻辑
+    setTimeout(() => searchInput.focus(), 30);
+    searchInput.addEventListener('input', () => {
+        const q = searchInput.value.toLowerCase();
+        Array.from(listContainer.children).forEach(el => {
+            const val = el.dataset.val.toLowerCase();
+            el.style.display = val.includes(q) ? 'block' : 'none';
+        });
+    });
+
+    // 点击项 → 选中 + 回调 并关闭
+    popup.querySelectorAll('.rbt-sub-styled-item').forEach(item => {
+        item.addEventListener('click', () => {
+            const val = item.dataset.val;
+            if (onSelect) onSelect(val);
+            popup.remove();
+            document.removeEventListener('mousedown', outsideHandler);
+        });
+        item.addEventListener('mouseenter', () => { item.style.background = 'rgba(74,158,255,0.1)'; });
+        item.addEventListener('mouseleave', () => { 
+            item.style.background = item.dataset.val === currentVal ? 'rgba(74,158,255,0.15)' : 'transparent'; 
+        });
+    });
+
+    // 点击外部关闭
+    const outsideHandler = (e) => {
+        if (!popup.contains(e.target) && e.target !== anchorEl && !anchorEl.contains(e.target)) {
+            popup.remove();
+            document.removeEventListener('mousedown', outsideHandler);
+        }
+    };
+    requestAnimationFrame(() => {
+        document.addEventListener('mousedown', outsideHandler);
+    });
+}
+
 function _showColumnSettingsPopup(anchor) {
     // Remove existing popup
     const existing = document.getElementById('rbt-col-settings-popup');
@@ -2170,36 +4928,150 @@ function _showColumnSettingsPopup(anchor) {
     const vis = _getColVisibility();
     const popup = document.createElement('div');
     popup.id = 'rbt-col-settings-popup';
-    popup.style.cssText = 'position:fixed;z-index:100000;background:#1a1a2e;border:1px solid #4a4a6a;border-radius:8px;padding:12px;min-width:200px;box-shadow:0 8px 24px rgba(0,0,0,0.6);';
-
     // Position near anchor
     const rect = anchor.getBoundingClientRect();
-    popup.style.top = (rect.bottom + 4) + 'px';
-    popup.style.right = (window.innerWidth - rect.right) + 'px';
+    const maxHeight = Math.max(200, window.innerHeight - rect.bottom - 16);
+    
+    popup.style.cssText = `position:fixed;z-index:100000;background:#141420;border:1px solid #2a2a4a;border-radius:10px;padding:16px;min-width:320px;max-width:380px;box-shadow:0 12px 40px rgba(0,0,0,0.7);` +
+                          `top:${rect.bottom + 4}px;right:${window.innerWidth - rect.right}px;max-height:${maxHeight}px;overflow-y:auto;`;
 
-    let html = '<div style="font-size:13px;font-weight:600;color:#ccc;margin-bottom:8px;">⚙️ 显示列设置</div>';
-    for (const col of _RBT_COLUMNS) {
-        const checked = vis[col.key] !== false ? 'checked' : '';
-        html += `<label style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:12px;color:#bbb;cursor:pointer;">
-            <input type="checkbox" class="rbt-col-vis-chk" data-col="${col.key}" ${checked} style="accent-color:#00D4FF;">
-            ${col.label}
-        </label>`;
+    // ── 预设方案定义 ──
+    const presets = [
+        {
+            name: '🤖 AI 全自动制作',
+            desc: '完整展示AI文案流水线',
+            cols: ['bg','bgscale','ai_script','tts_text','tts_voice','audio','audiodurscale','bgm','srt','txtcontent','dur','tpl']
+        },
+        {
+            name: '🎬 完整模式',
+            desc: '显示所有列',
+            cols: ['hook','bg','bgscale','bgdurscale','contentvideo','cvtrim','cvscale','cvpos','pip','tts_text','tts_voice','audio','audiodurscale','ai_script','bgm','srt','txtcontent','title','body','footer','scroll-title','scroll-body','dur','tpl']
+        },
+        {
+            name: '📝 动态字幕',
+            desc: '原版字幕配置 (无AI配音)',
+            cols: ['bg','bgscale','audio','audiodurscale','bgm','srt','txtcontent','dur','tpl']
+        },
+        {
+            name: '📋 覆层文案',
+            desc: '无配音的纯净覆层配置',
+            cols: ['bg','bgscale','bgm','title','body','footer','dur','tpl']
+        },
+        {
+            name: '🔄 滚动字幕',
+            desc: '无配音的滚动字幕配置',
+            cols: ['bg','bgscale','audio','audiodurscale','bgm','scroll-title','scroll-body','dur','tpl']
+        },
+        {
+            name: '✂️ 剪辑+覆层合成',
+            desc: '背景+内容视频(裁切)+覆层文案 A/B双版',
+            cols: ['bg','bgscale','contentvideo','cvtrim','cvscale','cvpos','bgm','title','body','footer','dur','tpl']
+        }
+    ];
+
+    // ── 列分类 ──
+    const colGroups = [
+        { label: '素材 & 背景', keys: ['hook','bg','bgscale','bgdurscale','pip'] },
+        { label: '🎬 视频覆层', keys: ['contentvideo','cvtrim','cvscale','cvpos'] },
+        { label: 'AI 配音与文案', keys: ['ai_script','tts_text','tts_voice'] },
+        { label: '音频', keys: ['audio','audiodurscale','bgm'] },
+        { label: '字幕 & 文本', keys: ['srt','txtcontent'] },
+        { label: '覆层文案', keys: ['title','body','footer'] },
+        { label: '滚动字幕', keys: ['scroll-title','scroll-body'] },
+        { label: '其他', keys: ['dur','tpl'] },
+    ];
+
+    // Build column label map
+    const colLabelMap = {};
+    for (const col of _RBT_COLUMNS) colLabelMap[col.key] = col.label;
+
+    let html = '<div style="font-size:13px;font-weight:600;color:#ddd;margin-bottom:10px;">⚙️ 列显示设置</div>';
+
+    // ── Presets ──
+    html += '<div style="margin-bottom:12px;">';
+    html += '<div style="font-size:10px;color:#888;font-weight:600;text-transform:uppercase;margin-bottom:6px;">快捷预设（一键配置）</div>';
+    html += '<div style="display:flex;flex-wrap:wrap;gap:4px;">';
+    for (let i = 0; i < presets.length; i++) {
+        const p = presets[i];
+        html += `<button class="rbt-col-preset-btn" data-preset="${i}" title="${p.desc}"
+            style="padding:3px 10px;border-radius:4px;border:1px solid #333;background:#1e1e38;color:#ccc;font-size:11px;cursor:pointer;transition:all .15s;white-space:nowrap;"
+            onmouseover="this.style.background='#2a2a5a';this.style.borderColor='var(--accent)';this.style.color='#fff'"
+            onmouseout="this.style.background='#1e1e38';this.style.borderColor='#333';this.style.color='#ccc'"
+        >${p.name}</button>`;
     }
-    html += `<div style="margin-top:8px;padding-top:8px;border-top:1px solid #333;display:flex;gap:8px;">
+    html += '</div></div>';
+
+    // ── Categorized columns ──
+    html += '<div style="border-top:1px solid #2a2a4a;padding-top:10px;">';
+    for (const group of colGroups) {
+        html += `<div style="margin-bottom:8px;">`;
+        html += `<div style="font-size:10px;color:#888;font-weight:600;text-transform:uppercase;margin-bottom:4px;">${group.label}</div>`;
+        html += `<div style="display:flex;flex-wrap:wrap;gap:3px 10px;">`;
+        for (const key of group.keys) {
+            const label = colLabelMap[key] || key;
+            const checked = vis[key] !== false ? 'checked' : '';
+            html += `<label style="display:flex;align-items:center;gap:4px;padding:2px 0;font-size:11px;color:#bbb;cursor:pointer;min-width:120px;">
+                <input type="checkbox" class="rbt-col-vis-chk" data-col="${key}" ${checked} style="accent-color:var(--accent);margin:0;">
+                ${label}
+            </label>`;
+        }
+        html += `</div></div>`;
+    }
+    html += '</div>';
+
+    // ── Footer buttons ──
+    html += `<div style="margin-top:10px;padding-top:10px;border-top:1px solid #2a2a4a;display:flex;gap:8px;justify-content:flex-end;">
+        <button id="rbt-col-vis-all" style="font-size:11px;padding:4px 10px;border-radius:4px;border:1px solid #555;background:transparent;color:#aaa;cursor:pointer;">全选</button>
+        <button id="rbt-col-vis-none" style="font-size:11px;padding:4px 10px;border-radius:4px;border:1px solid #555;background:transparent;color:#aaa;cursor:pointer;">全不选</button>
         <button id="rbt-col-vis-reset" style="font-size:11px;padding:4px 10px;border-radius:4px;border:1px solid #555;background:transparent;color:#aaa;cursor:pointer;">恢复默认</button>
-        <button id="rbt-col-vis-close" style="font-size:11px;padding:4px 10px;border-radius:4px;border:none;background:#00D4FF;color:#000;cursor:pointer;font-weight:600;">完成</button>
+        <button id="rbt-col-vis-close" style="font-size:11px;padding:4px 10px;border-radius:4px;border:none;background:var(--accent);color:#000;cursor:pointer;font-weight:600;">完成</button>
     </div>`;
     popup.innerHTML = html;
     document.body.appendChild(popup);
 
+    // Helper: sync checkboxes with vis state
+    const _syncCheckboxes = () => {
+        popup.querySelectorAll('.rbt-col-vis-chk').forEach(chk => {
+            chk.checked = vis[chk.dataset.col] !== false;
+        });
+    };
+
+    // Event: preset buttons
+    popup.querySelectorAll('.rbt-col-preset-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const p = presets[parseInt(btn.dataset.preset)];
+            // Turn all off first, then turn on only preset cols
+            for (const col of _RBT_COLUMNS) vis[col.key] = false;
+            for (const k of p.cols) vis[k] = true;
+            _saveColVisibility(vis);
+            _applyColVisibility();
+            _syncCheckboxes();
+        });
+    });
+
     // Event: checkbox change
     popup.querySelectorAll('.rbt-col-vis-chk').forEach(chk => {
         chk.addEventListener('change', () => {
-            const colKey = chk.dataset.col;
-            vis[colKey] = chk.checked;
+            vis[chk.dataset.col] = chk.checked;
             _saveColVisibility(vis);
             _applyColVisibility();
         });
+    });
+
+    // Event: select all
+    popup.querySelector('#rbt-col-vis-all').addEventListener('click', () => {
+        for (const col of _RBT_COLUMNS) vis[col.key] = true;
+        _saveColVisibility(vis);
+        _applyColVisibility();
+        _syncCheckboxes();
+    });
+
+    // Event: select none
+    popup.querySelector('#rbt-col-vis-none').addEventListener('click', () => {
+        for (const col of _RBT_COLUMNS) vis[col.key] = false;
+        _saveColVisibility(vis);
+        _applyColVisibility();
+        _syncCheckboxes();
     });
 
     // Event: reset
@@ -2207,9 +5079,7 @@ function _showColumnSettingsPopup(anchor) {
         for (const col of _RBT_COLUMNS) vis[col.key] = col.default;
         _saveColVisibility(vis);
         _applyColVisibility();
-        popup.querySelectorAll('.rbt-col-vis-chk').forEach(chk => {
-            chk.checked = true;
-        });
+        _syncCheckboxes();
     });
 
     // Event: close
@@ -2227,6 +5097,249 @@ function _showColumnSettingsPopup(anchor) {
         };
         document.addEventListener('mousedown', handler);
     }, 100);
+}
+
+// ═══════════════════════════════════════════════════════
+// Multi-Clip Background Pool — 多素材随机拼接管理
+// ═══════════════════════════════════════════════════════
+
+function _showBgPoolDialog(taskIdx) {
+    const state = window._reelsState;
+    if (!state || !state.tasks[taskIdx]) return;
+    const task = state.tasks[taskIdx];
+
+    // Init fields if missing
+    if (!task.bgClipPool) task.bgClipPool = [];
+    if (!task.bgTransition) task.bgTransition = 'crossfade';
+    if (!task.bgTransDur) task.bgTransDur = 0.5;
+    if (!task.bgMode) task.bgMode = task.bgClipPool.length > 0 ? 'multi' : 'single';
+
+    document.getElementById('rbt-bgpool-overlay')?.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'rbt-bgpool-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;';
+
+    const box = document.createElement('div');
+    box.style.cssText = 'background:#1a1a2e;border:1px solid #2a2a5a;border-radius:14px;padding:24px;width:580px;max-height:80vh;overflow-y:auto;box-shadow:0 16px 48px rgba(0,0,0,0.7);';
+
+    const _renderPoolUI = () => {
+        const pool = task.bgClipPool;
+        const thumbsHtml = pool.map((p, i) => {
+            const name = p.replace(/\\/g, '/').split('/').pop();
+            const url = window.electronAPI && window.electronAPI.toFileUrl ? window.electronAPI.toFileUrl(p) : `file://${p}`;
+            const isImg = /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(p);
+            return `<div class="bgpool-item" style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:#12122e;border:1px solid #2a2a4a;border-radius:6px;">
+                ${isImg
+                    ? `<img class="rbt-thumb-previewable" src="${_escHtml(url)}" style="width:40px;height:40px;object-fit:cover;border-radius:4px;cursor:zoom-in;">`
+                    : `<video class="rbt-thumb-previewable" src="${_escHtml(url)}#t=1" preload="metadata" style="width:40px;height:40px;object-fit:cover;border-radius:4px;background:#000;cursor:zoom-in;"></video>`
+                }
+                <span style="flex:1;font-size:11px;color:#ccc;word-break:break-all;" title="${_escHtml(p)}">${_escHtml(name)}</span>
+                <button class="bgpool-remove" data-pool-idx="${i}" style="width:20px;height:20px;border:1px solid #444;border-radius:4px;background:transparent;color:#f87171;font-size:12px;cursor:pointer;padding:0;line-height:18px;">✕</button>
+            </div>`;
+        }).join('');
+
+        box.innerHTML = `
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+                <div style="font-size:15px;font-weight:700;color:#ddd;">🎞 多素材背景池 — 第 ${taskIdx + 1} 行</div>
+                <button id="bgpool-close" style="width:28px;height:28px;border-radius:6px;border:1px solid #444;background:transparent;color:#aaa;font-size:14px;cursor:pointer;">✕</button>
+            </div>
+
+            <!-- 模式切换 -->
+            <div style="display:flex;gap:8px;margin-bottom:14px;">
+                <button class="bgpool-mode-btn" data-mode="single" style="flex:1;padding:8px;border-radius:6px;border:1px solid ${task.bgMode === 'single' ? 'var(--accent)' : '#333'};background:${task.bgMode === 'single' ? 'rgba(78,205,196,0.15)' : '#12122e'};color:${task.bgMode === 'single' ? 'var(--accent)' : '#888'};font-size:12px;cursor:pointer;font-weight:600;">
+                    🔁 单素材循环<br><span style="font-size:10px;font-weight:400;">一个背景视频/图片循环播放</span>
+                </button>
+                <button class="bgpool-mode-btn" data-mode="multi" style="flex:1;padding:8px;border-radius:6px;border:1px solid ${task.bgMode === 'multi' ? '#b8a0ff' : '#333'};background:${task.bgMode === 'multi' ? 'rgba(100,60,200,0.15)' : '#12122e'};color:${task.bgMode === 'multi' ? '#b8a0ff' : '#888'};font-size:12px;cursor:pointer;font-weight:600;">
+                    🎞 多素材拼接<br><span style="font-size:10px;font-weight:400;">从素材池随机组合，自动匹配时长</span>
+                </button>
+            </div>
+
+            ${task.bgMode === 'multi' ? `
+            <!-- 转场设置 -->
+            <div style="display:flex;gap:12px;align-items:center;margin-bottom:14px;padding:10px;background:#12122e;border:1px solid #2a2a4a;border-radius:8px;">
+                <span style="font-size:11px;color:#aaa;white-space:nowrap;">转场效果:</span>
+                <select id="bgpool-transition" style="flex:1;padding:4px 8px;font-size:11px;background:#1e1e38;color:#ccc;border:1px solid #333;border-radius:4px;outline:none;">
+                    <option value="none" ${task.bgTransition === 'none' ? 'selected' : ''}>⚡ 无转场（硬切）</option>
+                    <option value="crossfade" ${task.bgTransition === 'crossfade' ? 'selected' : ''}>✨ 交叉淡化</option>
+                    <option value="fade_black" ${task.bgTransition === 'fade_black' ? 'selected' : ''}>⬛ 黑场过渡</option>
+                    <option value="fade_white" ${task.bgTransition === 'fade_white' ? 'selected' : ''}>⬜ 白场过渡</option>
+                    <option value="slide_left" ${task.bgTransition === 'slide_left' ? 'selected' : ''}>◀ 左滑入</option>
+                    <option value="slide_right" ${task.bgTransition === 'slide_right' ? 'selected' : ''}>▶ 右滑入</option>
+                    <option value="wipe" ${task.bgTransition === 'wipe' ? 'selected' : ''}>🔲 擦除</option>
+                </select>
+                <span style="font-size:11px;color:#aaa;white-space:nowrap;">时长:</span>
+                <input type="number" id="bgpool-trans-dur" min="0.1" max="3" step="0.1" value="${task.bgTransDur || 0.5}"
+                    style="width:55px;padding:4px;font-size:11px;background:#1e1e38;color:#ccc;border:1px solid #333;border-radius:4px;text-align:center;">
+                <span style="font-size:10px;color:#666;">秒</span>
+            </div>
+
+            <!-- 素材池列表 -->
+            <div style="margin-bottom:12px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                    <span style="font-size:12px;color:#aaa;font-weight:600;">素材池 (${pool.length}个)</span>
+                    <div style="display:flex;gap:6px;">
+                        <button id="bgpool-add-folder" style="font-size:10px;padding:4px 10px;border-radius:4px;border:1px solid #444;background:#1e1e38;color:#8af;cursor:pointer;">📂 从文件夹导入</button>
+                        <button id="bgpool-add-files" style="font-size:10px;padding:4px 10px;border-radius:4px;border:1px solid #444;background:#1e1e38;color:#8af;cursor:pointer;">📄 选择文件</button>
+                        <button id="bgpool-clear-all" style="font-size:10px;padding:4px 10px;border-radius:4px;border:1px solid #553333;background:transparent;color:#f87171;cursor:pointer;">🗑 清空</button>
+                    </div>
+                </div>
+                <div id="bgpool-list" style="display:flex;flex-direction:column;gap:4px;max-height:240px;overflow-y:auto;padding-right:4px;">
+                    ${thumbsHtml || '<div style="text-align:center;padding:24px;color:#555;font-size:12px;">暂无素材，请从文件夹导入或拖拽文件到此处</div>'}
+                </div>
+            </div>
+
+            <!-- 拖拽区域 -->
+            <div id="bgpool-dropzone" style="border:2px dashed #333;border-radius:8px;padding:16px;text-align:center;color:#555;font-size:11px;margin-bottom:14px;transition:border-color .2s,color .2s;">
+                🎬 拖拽视频/图片文件到此处添加到素材池
+            </div>
+
+            <!-- 批量应用 -->
+            <div style="padding:10px;background:#12122e;border:1px solid #2a2a4a;border-radius:8px;margin-bottom:14px;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <span style="font-size:11px;color:#aaa;">批量应用:</span>
+                    <button id="bgpool-apply-selected" style="font-size:10px;padding:4px 10px;border-radius:4px;border:1px solid #444;background:#1e1e38;color:#ccc;cursor:pointer;">📋 应用到勾选行</button>
+                    <button id="bgpool-apply-all" style="font-size:10px;padding:4px 10px;border-radius:4px;border:1px solid #444;background:#1e1e38;color:#ccc;cursor:pointer;">📋 应用到所有行</button>
+                </div>
+            </div>
+            ` : ''}
+
+            <div style="display:flex;justify-content:flex-end;gap:8px;">
+                <button id="bgpool-done" style="padding:6px 20px;border-radius:6px;border:none;background:var(--accent);color:#000;font-weight:600;font-size:12px;cursor:pointer;">完成</button>
+            </div>
+
+            <input type="file" id="bgpool-file-input" multiple accept="video/*,image/*" style="display:none;">
+            <input type="file" id="bgpool-folder-input" webkitdirectory style="display:none;">
+        `;
+
+        // ── Events ──
+        box.querySelector('#bgpool-close')?.addEventListener('click', () => overlay.remove());
+        box.querySelector('#bgpool-done')?.addEventListener('click', () => {
+            _renderBatchTable();
+            overlay.remove();
+        });
+
+        // Mode switch
+        box.querySelectorAll('.bgpool-mode-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                task.bgMode = btn.dataset.mode;
+                _renderPoolUI();
+            });
+        });
+
+        // Transition settings
+        box.querySelector('#bgpool-transition')?.addEventListener('change', (e) => {
+            task.bgTransition = e.target.value;
+        });
+        box.querySelector('#bgpool-trans-dur')?.addEventListener('change', (e) => {
+            task.bgTransDur = Math.max(0.1, Math.min(3, parseFloat(e.target.value) || 0.5));
+        });
+
+        // Remove clip
+        box.querySelectorAll('.bgpool-remove').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const pi = parseInt(btn.dataset.poolIdx);
+                task.bgClipPool.splice(pi, 1);
+                _renderPoolUI();
+            });
+        });
+
+        // Add files
+        const fileInput = box.querySelector('#bgpool-file-input');
+        box.querySelector('#bgpool-add-files')?.addEventListener('click', () => fileInput?.click());
+        fileInput?.addEventListener('change', (e) => {
+            const files = Array.from(e.target.files);
+            for (const f of files) {
+                const path = typeof getFileNativePath === 'function' ? getFileNativePath(f) : (f.path || f.name);
+                if (path && !task.bgClipPool.includes(path)) task.bgClipPool.push(path);
+            }
+            e.target.value = '';
+            _renderPoolUI();
+        });
+
+        // Add folder
+        const folderInput = box.querySelector('#bgpool-folder-input');
+        box.querySelector('#bgpool-add-folder')?.addEventListener('click', () => folderInput?.click());
+        folderInput?.addEventListener('change', (e) => {
+            const files = Array.from(e.target.files);
+            const mediaExt = /\.(mp4|mov|avi|mkv|webm|jpg|jpeg|png|webp|gif|bmp)$/i;
+            for (const f of files) {
+                if (!mediaExt.test(f.name)) continue;
+                const path = typeof getFileNativePath === 'function' ? getFileNativePath(f) : (f.path || f.name);
+                if (path && !task.bgClipPool.includes(path)) task.bgClipPool.push(path);
+            }
+            e.target.value = '';
+            _renderPoolUI();
+        });
+
+        // Clear all
+        box.querySelector('#bgpool-clear-all')?.addEventListener('click', () => {
+            if (confirm('确定清空所有素材？')) {
+                task.bgClipPool = [];
+                _renderPoolUI();
+            }
+        });
+
+        // Drag & drop zone
+        const dropzone = box.querySelector('#bgpool-dropzone');
+        if (dropzone) {
+            dropzone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                dropzone.style.borderColor = '#b8a0ff';
+                dropzone.style.color = '#b8a0ff';
+            });
+            dropzone.addEventListener('dragleave', () => {
+                dropzone.style.borderColor = '#333';
+                dropzone.style.color = '#555';
+            });
+            dropzone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                dropzone.style.borderColor = '#333';
+                dropzone.style.color = '#555';
+                const files = Array.from(e.dataTransfer.files);
+                const mediaExt = /\.(mp4|mov|avi|mkv|webm|jpg|jpeg|png|webp|gif|bmp)$/i;
+                for (const f of files) {
+                    if (!mediaExt.test(f.name)) continue;
+                    const path = typeof getFileNativePath === 'function' ? getFileNativePath(f) : (f.path || f.name);
+                    if (path && !task.bgClipPool.includes(path)) task.bgClipPool.push(path);
+                }
+                _renderPoolUI();
+            });
+        }
+
+        // Batch apply
+        const _applyPoolToTask = (targetTask) => {
+            targetTask.bgMode = task.bgMode;
+            targetTask.bgClipPool = [...task.bgClipPool];
+            targetTask.bgTransition = task.bgTransition;
+            targetTask.bgTransDur = task.bgTransDur;
+        };
+
+        box.querySelector('#bgpool-apply-selected')?.addEventListener('click', () => {
+            const indices = _getSelectedIndices();
+            if (indices.length === 0) { alert('请先勾选要应用的行'); return; }
+            for (const i of indices) {
+                if (i !== taskIdx && state.tasks[i]) _applyPoolToTask(state.tasks[i]);
+            }
+            if (typeof showToast === 'function') showToast(`✅ 素材池已应用到 ${indices.length} 行`, 'success');
+        });
+
+        box.querySelector('#bgpool-apply-all')?.addEventListener('click', () => {
+            for (let i = 0; i < state.tasks.length; i++) {
+                if (i !== taskIdx) _applyPoolToTask(state.tasks[i]);
+            }
+            if (typeof showToast === 'function') showToast(`✅ 素材池已应用到全部 ${state.tasks.length} 行`, 'success');
+        });
+    };
+
+    _renderPoolUI();
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+
+    // Click outside to close
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) { _renderBatchTable(); overlay.remove(); }
+    });
 }
 
 // ═══════════════════════════════════════════════════════
@@ -2339,29 +5452,46 @@ function _showCycleFillDialog() {
         const existingFileInput = box.querySelector('input[type="file"]');
 
         box.innerHTML = `
-            <div style="font-size:16px;font-weight:700;margin-bottom:16px;color:#00D4FF;">🔄 循环填充素材</div>
+            <div style="font-size:16px;font-weight:700;margin-bottom:16px;color:var(--accent);">🔄 素材使用与分配设置</div>
+
+            <!-- Global Setting Block (Moved from main UI) -->
+            <div style="display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-bottom:16px; padding:10px; background:rgba(255,255,255,0.05); border-radius:8px; border:1px solid rgba(255,255,255,0.1);">
+                <button class="rbt-btn" id="rbt-cf-upload-hook">🪝 设置钩子视频 (Hook)</button>
+                <div style="width:1px; height:20px; background:rgba(255,255,255,0.2);"></div>
+                <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:#ccc;cursor:pointer;">
+                    <input type="checkbox" id="rbt-cf-video-drop-route-enabled" ${_batchTableState.videoDropRouteEnabled ? 'checked' : ''} style="accent-color:var(--accent);">
+                    视频分配模式：
+                </label>
+                <select id="rbt-cf-video-drop-route-mode" class="rbt-select" style="height:26px;padding:0 6px;${_batchTableState.videoDropRouteEnabled ? '' : 'opacity:.5;'}" ${_batchTableState.videoDropRouteEnabled ? '' : 'disabled'}>
+                    <option value="hook" ${_batchTableState.videoDropRouteMode === 'hook' ? 'selected' : ''}>🪝 分配到前置Hook</option>
+                    <option value="bg" ${_batchTableState.videoDropRouteMode === 'bg' ? 'selected' : ''}>🎬 分配到背景层</option>
+                    <option value="audio" ${_batchTableState.videoDropRouteMode === 'audio' ? 'selected' : ''}>🎙 分配到人声层</option>
+                </select>
+            </div>
             <div style="margin-bottom:12px;">
                 <span style="font-size:12px;color:#888;">选择字段：</span>
                 ${fieldOptions.map(f => `
-                    <label style="display:inline-flex;align-items:center;gap:4px;margin-right:12px;font-size:13px;color:${f.key === selectedField ? '#00D4FF' : '#aaa'};cursor:pointer;">
-                        <input type="radio" name="rbt-cf-field" value="${f.key}" ${f.key === selectedField ? 'checked' : ''} style="accent-color:#00D4FF;">
+                    <label style="display:inline-flex;align-items:center;gap:4px;margin-right:12px;font-size:13px;color:${f.key === selectedField ? 'var(--accent)' : '#aaa'};cursor:pointer;">
+                        <input type="radio" name="rbt-cf-field" value="${f.key}" ${f.key === selectedField ? 'checked' : ''} style="accent-color:var(--accent);">
                         ${f.label} (${f.items.length})
                     </label>
                 `).join('')}
             </div>
             <div style="margin-bottom:10px;">
                 <span style="font-size:12px;color:#888;">素材来源：</span>
-                <label style="display:inline-flex;align-items:center;gap:4px;margin-right:12px;font-size:13px;color:${sourceMode === 'existing' ? '#00D4FF' : '#aaa'};cursor:pointer;">
-                    <input type="radio" name="rbt-cf-source" value="existing" ${sourceMode === 'existing' ? 'checked' : ''} style="accent-color:#00D4FF;">
+                <label style="display:inline-flex;align-items:center;gap:4px;margin-right:12px;font-size:13px;color:${sourceMode === 'existing' ? 'var(--accent)' : '#aaa'};cursor:pointer;">
+                    <input type="radio" name="rbt-cf-source" value="existing" ${sourceMode === 'existing' ? 'checked' : ''} style="accent-color:var(--accent);">
                     从已有行提取
                 </label>
-                <label style="display:inline-flex;align-items:center;gap:4px;margin-right:8px;font-size:13px;color:${sourceMode === 'folder' ? '#00D4FF' : '#aaa'};cursor:pointer;">
-                    <input type="radio" name="rbt-cf-source" value="folder" ${sourceMode === 'folder' ? 'checked' : ''} style="accent-color:#00D4FF;">
+                <label style="display:inline-flex;align-items:center;gap:4px;margin-right:8px;font-size:13px;color:${sourceMode === 'folder' ? 'var(--accent)' : '#aaa'};cursor:pointer;">
+                    <input type="radio" name="rbt-cf-source" value="folder" ${sourceMode === 'folder' ? 'checked' : ''} style="accent-color:var(--accent);">
                     从文件选取
                 </label>
                 ${sourceMode === 'folder' ? `<button id="rbt-cf-pick-files" style="font-size:11px;padding:3px 10px;border-radius:4px;border:1px solid #555;background:#2a2a3a;color:#ccc;cursor:pointer;">📂 选择文件...</button>` : ''}
                 ${sourceMode === 'folder' && items.length > 0 ? `<button id="rbt-cf-clear-pool" style="font-size:11px;padding:3px 10px;border-radius:4px;border:1px solid #555;background:#3a2a2a;color:#f88;cursor:pointer;margin-left:4px;">✕ 清空素材池</button>` : ''}
             </div>
+
+
             <div style="font-size:11px;color:#666;margin-bottom:8px;">
                 共 ${totalRows} 行，其中 ${emptyRows} 行该字段为空 | 素材池: ${items.length} 个
             </div>
@@ -2371,7 +5501,7 @@ function _showCycleFillDialog() {
                 </div>
             ` : `
                 <div style="border:1px solid #333;border-radius:8px;overflow:hidden;margin-bottom:12px;">
-                    <div style="display:flex;padding:6px 12px;background:#12122a;font-size:11px;color:#888;border-bottom:1px solid #333;">
+                    <div style="display:flex;padding:6px 12px;background:#141414;font-size:11px;color:#888;border-bottom:1px solid #333;">
                         <span style="flex:1;">素材文件</span>
                         <span style="width:100px;text-align:center;">权重</span>
                         <span style="width:60px;text-align:center;">预计次数</span>
@@ -2397,7 +5527,7 @@ function _showCycleFillDialog() {
                     <button id="rbt-cf-fill-empty" style="padding:8px 16px;border-radius:6px;border:none;background:#2a5a3a;color:#8f8;cursor:pointer;font-size:13px;font-weight:600;">填充空行 (${emptyRows}行)</button>
                 ` : ''}
                 ${items.length > 0 ? `
-                    <button id="rbt-cf-fill-all" style="padding:8px 16px;border-radius:6px;border:none;background:#00D4FF;color:#000;cursor:pointer;font-size:13px;font-weight:600;">覆盖全部 (${totalRows}行)</button>
+                    <button id="rbt-cf-fill-all" style="padding:8px 16px;border-radius:6px;border:none;background:var(--accent);color:#000;cursor:pointer;font-size:13px;font-weight:600;">覆盖全部 (${totalRows}行)</button>
                 ` : ''}
             </div>
         `;
@@ -2459,6 +5589,29 @@ function _showCycleFillDialog() {
             _doCycleFill(selectedField, field.items, _getWeights(), 'all');
             overlay.remove();
         });
+
+        // ==========================================
+        // 绑定“独立素材使用与分配设置”的相关事件
+        // ==========================================
+        box.querySelector('#rbt-cf-upload-hook')?.addEventListener('click', () => {
+            const indices = _getSelectedIndices();
+            if (indices.length === 0) {
+                alert('请先在左侧勾选需要批量配置前置Hook的行（可先关闭此面板去勾选）');
+                return;
+            }
+            overlay.remove(); // 关掉本面板，打开Hook面板
+            _openHookModal(-1);
+        });
+
+        box.querySelector('#rbt-cf-video-drop-route-enabled')?.addEventListener('change', (e) => {
+            _batchTableState.videoDropRouteEnabled = e.target.checked;
+            renderContent(); // 触发重渲染，更新下拉框的禁用状态
+        });
+
+        box.querySelector('#rbt-cf-video-drop-route-mode')?.addEventListener('change', (e) => {
+            _batchTableState.videoDropRouteMode = e.target.value;
+        });
+        // ==========================================
 
         updatePreview();
     }
@@ -2587,13 +5740,164 @@ function _doCycleFill(fieldKey, items, weights, mode) {
 }
 
 /**
- * 从剪贴板批量粘贴文案到「字幕文本」列 (txtContent)
+ * 批量粘贴TTS打听： 1. TTS文案(带情感)   2. 断行文案(字幕文本)   3. TTS音色
+ */
+async function _batchPasteTTSContent() {
+    const mode = await _showPasteModeDialog();
+    if (!mode) return;
+
+    let validRows = [];
+    try {
+        const clipboardItems = await navigator.clipboard.read();
+        for (const item of clipboardItems) {
+            // 优先解析 HTML
+            if (item.types.includes('text/html')) {
+                const blob = await item.getType('text/html');
+                const html = await blob.text();
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(html, 'text/html');
+                const tableRows = doc.querySelectorAll('tr');
+
+                // 辅助函数：获取单元格文本，保留换行
+                const getCellTextWithBreaks = (cell) => {
+                    if (!cell) return '';
+                    let clone = cell.cloneNode(true);
+                    clone.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
+                    clone.querySelectorAll('p, div').forEach(el => el.insertAdjacentText('beforebegin', '\n'));
+                    return clone.textContent.trim();
+                };
+
+                tableRows.forEach(tr => {
+                    const cells = tr.querySelectorAll('td, th');
+                    if (cells.length >= 2) {
+                        const ttsText = getCellTextWithBreaks(cells[0]);
+                        const subtitleText = getCellTextWithBreaks(cells[1]);
+                        const voiceId = cells[2]?.textContent.trim() || '';
+                        if (ttsText || subtitleText) {
+                            validRows.push([ttsText, subtitleText, voiceId]);
+                        }
+                    } else if (cells.length === 1) {
+                        // 兼容只有一列的情况
+                        validRows.push([getCellTextWithBreaks(cells[0]), '', '']);
+                    }
+                });
+            }
+
+            // 如果 HTML 没数据，或者不支持，尝试纯文本
+            if (validRows.length === 0 && item.types.includes('text/plain')) {
+                const blob = await item.getType('text/plain');
+                const raw = await blob.text();
+                const rows = typeof _parseBatchTSV === 'function' ? _parseBatchTSV(raw) : raw.split(/\n/).map(line => line.split('\t'));
+                validRows = rows.filter(r => r.join('').trim().length > 0);
+            }
+        }
+    } catch (e) {
+        // 降级：让用户在弹窗里直接粘贴纯文本
+        let raw = await _showPasteDialog('📋 粘贴TTS素材 (1.情感播报词 2.画面文本 3.音色ID)');
+        if (!raw || !raw.trim()) return;
+        const rows = typeof _parseBatchTSV === 'function' ? _parseBatchTSV(raw) : raw.split(/\n/).map(line => line.split('\t'));
+        validRows = rows.filter(r => r.join('').trim().length > 0);
+    }
+
+    if (!validRows.length) {
+        alert('未检测到可以导入数据');
+        return;
+    }
+
+    const maxCols = Math.max(...validRows.map(r => r.length));
+    if (maxCols > 1) {
+        _showMultiColumnPasteModal(validRows, 0, 'ttsText');
+        return;
+    }
+
+    const state = window._reelsState;
+    const tab = _getActiveTab();
+    const tasks = tab.tasks;
+
+    let addedCount = 0;
+    let dataIdx = 0;
+
+    if (mode === 'fill') {
+        for (let i = 0; i < tasks.length && dataIdx < validRows.length; i++) {
+            const task = tasks[i];
+            const isTextEmpty = !task.ttsText && !task.txtContent;
+            if (isTextEmpty) {
+                const row = validRows[dataIdx];
+                let ttsText = row[0] || '';
+                let txtContent = row.length >= 2 ? row[1] || '' : '';
+                let voiceId = row.length >= 3 ? row[2] || '' : '';
+                
+                if (ttsText.trim()) task.ttsText = ttsText.trim();
+                if (txtContent.trim()) { task.txtContent = txtContent.trim(); task.aligned = false; }
+                if (voiceId.trim()) task.ttsVoiceId = voiceId.trim();
+
+                dataIdx++;
+                addedCount++;
+            }
+        }
+    } else if (mode === 'overwrite') {
+        for (let i = 0; i < tasks.length && dataIdx < validRows.length; i++) {
+            const task = tasks[i];
+            const row = validRows[dataIdx];
+            let ttsText = row[0] || '';
+            let txtContent = row.length >= 2 ? row[1] || '' : '';
+            let voiceId = row.length >= 3 ? row[2] || '' : '';
+
+            task.ttsText = '';
+            task.txtContent = '';
+
+            if (ttsText.trim()) task.ttsText = ttsText.trim();
+            if (txtContent.trim()) { task.txtContent = txtContent.trim(); task.aligned = false; }
+            if (voiceId.trim()) task.ttsVoiceId = voiceId.trim();
+
+            dataIdx++;
+            addedCount++;
+        }
+    }
+
+    // mode === 'new' or remaining rows
+    for (; dataIdx < validRows.length; dataIdx++) {
+        const row = validRows[dataIdx];
+        const taskName = `tts_task_${String(tasks.length + 1).padStart(3, '0')}`;
+        const ttask = {
+            baseName: taskName,
+            fileName: `${taskName}.mp4`,
+            bgPath: null, bgSrcUrl: null,
+            audioPath: null, srtPath: null,
+            segments: [],
+            videoPath: null, srcUrl: null,
+            bgScale: 100, bgDurScale: 100, audioDurScale: 100
+        };
+
+        let ttsText = row[0] || '';
+        let txtContent = row.length >= 2 ? row[1] || '' : '';
+        let voiceId = row.length >= 3 ? row[2] || '' : '';
+
+        if (ttsText.trim()) ttask.ttsText = ttsText.trim();
+        if (txtContent.trim()) { ttask.txtContent = txtContent.trim(); ttask.aligned = false; }
+        if (voiceId.trim()) ttask.ttsVoiceId = voiceId.trim();
+
+        tasks.push(ttask);
+        addedCount++;
+    }
+
+    _loadTabTasks(tab);
+    _renderBatchTable();
+    if (typeof _renderTaskList === 'function') _renderTaskList();
+    alert(`✅ 已成功通过【${mode === 'fill' ? '补全' : (mode === 'overwrite' ? '覆盖' : '新行')}】模式导入 ${addedCount} 条TTS记录`);
+}
+
+/**
+ * 从剪贴板批量粘贴文案到「人声字幕」列 (txtContent)
  * 支持：
  * - 单列：每行一条文案
  * - 多列表格：取第一列
  * - Google 表格 / Excel 复制过来的都支持
  */
 async function _batchPasteTxtContent() {
+    const mode = await _showPasteModeDialog();
+    if (!mode) return;
+
     let raw = '';
     try {
         raw = await navigator.clipboard.readText();
@@ -2602,15 +5906,20 @@ async function _batchPasteTxtContent() {
     }
     if (!raw || !raw.trim()) return;
 
+    const tsvRows = _parseBatchTSV(raw);
+    if (tsvRows.length === 0) return showToast('未能解析到文本', 'error');
+
+    const maxCols = Math.max(...tsvRows.map(r => r.length));
+    if (maxCols > 1) {
+        _showMultiColumnPasteModal(tsvRows, 0, 'txtContent');
+        return;
+    }
+
     // 解析行 — 支持 TSV 表格格式（取第一列）和纯文本（每行一条）
-    const lines = raw.split(/\n/).map(line => {
-        // 如果是 TSV，取第一列
-        const cols = line.split('\t');
-        return cols[0].trim();
-    }).filter(s => s.length > 0);
+    const lines = tsvRows.map(row => (row[0] || '').trim()).filter(s => s.length > 0);
 
     if (!lines.length) {
-        alert('未检测到有效文案数据');
+        alert('未提取到有效文本数据');
         return;
     }
 
@@ -2618,15 +5927,105 @@ async function _batchPasteTxtContent() {
     if (!state) return;
 
     let filled = 0, created = 0;
+    let dataIdx = 0;
 
-    for (let i = 0; i < lines.length; i++) {
-        if (i < state.tasks.length) {
-            // 填充已有行
-            state.tasks[i].txtContent = lines[i];
-            state.tasks[i].aligned = false;
+    if (mode === 'fill') {
+        for (let i = 0; i < state.tasks.length && dataIdx < lines.length; i++) {
+            const task = state.tasks[i];
+            if (!task.txtContent || !task.txtContent.trim()) {
+                task.txtContent = lines[dataIdx];
+                task.aligned = false;
+                dataIdx++;
+                filled++;
+            }
+        }
+    } else if (mode === 'overwrite') {
+        for (let i = 0; i < state.tasks.length && dataIdx < lines.length; i++) {
+            const task = state.tasks[i];
+            task.txtContent = lines[dataIdx];
+            task.aligned = false;
+            dataIdx++;
             filled++;
-        } else {
-            // 新建行
+        }
+    }
+
+    for (; dataIdx < lines.length; dataIdx++) {
+        const taskName = `card_${String(state.tasks.length + 1).padStart(3, '0')}`;
+        state.tasks.push({
+            baseName: taskName,
+            fileName: `${taskName}.mp4`,
+            bgPath: null, bgSrcUrl: null,
+            audioPath: null, srtPath: null,
+            segments: [],
+            videoPath: null, srcUrl: null,
+            overlays: [],
+            txtContent: lines[dataIdx],
+            aligned: false,
+            bgScale: 100, bgDurScale: 100, audioDurScale: 100
+        });
+        created++;
+    }
+
+    _renderBatchTable();
+    if (typeof _renderTaskList === 'function') _renderTaskList();
+
+    const parts = [];
+    if (filled) parts.push(`填充 ${filled} 行`);
+    if (created) parts.push(`新建 ${created} 行`);
+    alert(`✅ 人声字幕粘贴完成通过模式 [${mode}]：${parts.join('，')}`);
+}
+
+/**
+ * 从剪贴板粘贴数据到「AI 原文案」
+ */
+async function _batchPasteAiScript() {
+    const mode = await _showPasteModeDialog();
+    if (!mode) return;
+
+    let raw = '';
+    try {
+        raw = await navigator.clipboard.readText();
+    } catch (e) {
+        raw = await _showPasteDialog();
+    }
+    if (!raw || !raw.trim()) return;
+
+    // 使用 TSV 引号解析器，正确处理 Google Sheets 单元格内的换行
+    const tsvRows = _parseBatchTSV(raw);
+    const lines = tsvRows.map(row => (row[0] || '').trim()).filter(s => s.length > 0);
+
+    if (!lines.length) {
+        alert('未提取到有效文本数据');
+        return;
+    }
+
+    const state = window._reelsState;
+    if (!state) return;
+
+    let filled = 0, created = 0;
+    let dataIdx = 0;
+
+    if (mode === 'fill') {
+        for (let i = 0; i < state.tasks.length && dataIdx < lines.length; i++) {
+            const task = state.tasks[i];
+            if (!task.aiScript || !task.aiScript.trim()) {
+                task.aiScript = lines[dataIdx];
+                dataIdx++;
+                filled++;
+            }
+        }
+    } else if (mode === 'overwrite') {
+        for (let i = 0; i < state.tasks.length && dataIdx < lines.length; i++) {
+            const task = state.tasks[i];
+            task.aiScript = lines[dataIdx];
+            dataIdx++;
+            filled++;
+        }
+    }
+
+    const newRows = lines.slice(dataIdx);
+    if (newRows.length > 0 && mode !== 'fill' && confirm(`还有 ${newRows.length} 条数据尚未匹配分配任务。是否自动创建 ${newRows.length} 行新任务并填充？`)) {
+        for (const str of newRows) {
             const taskName = `card_${String(state.tasks.length + 1).padStart(3, '0')}`;
             state.tasks.push({
                 baseName: taskName,
@@ -2636,37 +6035,36 @@ async function _batchPasteTxtContent() {
                 segments: [],
                 videoPath: null, srcUrl: null,
                 overlays: [],
-                txtContent: lines[i],
+                aiScript: str,
                 aligned: false,
+                bgScale: 100, bgDurScale: 100, audioDurScale: 100
             });
             created++;
         }
     }
 
     _renderBatchTable();
-    if (typeof _renderTaskList === 'function') _renderTaskList();
-
-    const parts = [];
-    if (filled) parts.push(`填充 ${filled} 行`);
-    if (created) parts.push(`新建 ${created} 行`);
-    alert(`✅ 字幕文本粘贴完成：${parts.join('，')}`);
+    showToast(`✅ 粘贴AI原文案成功：覆盖/填充 ${filled} 行，新建 ${created} 行`, 'success');
 }
 
 // ── 辅助：设置一行的文案 ──
-function _setTaskText(task, title, body, ReelsOverlay) {
+function _setTaskText(task, title, body, ReelsOverlay, footer) {
     if (!task.overlays) task.overlays = [];
     if (!task.overlays[0]) {
         task.overlays[0] = ReelsOverlay.createTextCardOverlay({
-            title_text: '', body_text: '',
+            title_text: '', body_text: '', footer_text: '',
             start: 0, end: 9999,
         });
     }
     task.overlays[0].title_text = title;
     task.overlays[0].body_text = body;
+    if (footer !== undefined && footer !== '') {
+        task.overlays[0].footer_text = footer;
+    }
 }
 
 // ── 辅助：新建一行并填入文案 ──
-function _createNewTextRow(state, title, body, ReelsOverlay) {
+function _createNewTextRow(state, title, body, ReelsOverlay, footer) {
     const taskName = `card_${String(state.tasks.length + 1).padStart(3, '0')}`;
     state.tasks.push({
         baseName: taskName,
@@ -2678,6 +6076,7 @@ function _createNewTextRow(state, title, body, ReelsOverlay) {
         overlays: [ReelsOverlay.createTextCardOverlay({
             title_text: title,
             body_text: body,
+            footer_text: footer || '',
             start: 0, end: 9999,
         })],
     });
@@ -2686,7 +6085,7 @@ function _createNewTextRow(state, title, body, ReelsOverlay) {
 // ── 辅助：设置滚动字幕文案 ──
 function _setTaskScrollText(task, title, body, ReelsOverlay) {
     if (!task.overlays) task.overlays = [];
-    let scrollOv = task.overlays.find(o => o.type === 'scroll');
+    let scrollOv = task.overlays.find(o => o && o.type === 'scroll');
     if (!scrollOv) {
         scrollOv = ReelsOverlay.createScrollOverlay({
             scroll_title: title, content: body,
@@ -2726,7 +6125,7 @@ function _showPasteModeDialog() {
         const box = document.createElement('div');
         box.style.cssText = 'background:#1e1e2e;border:1px solid #333;border-radius:14px;padding:24px;min-width:360px;box-shadow:0 10px 40px rgba(0,0,0,0.6);';
         box.innerHTML = `
-            <div style="font-size:16px;font-weight:700;margin-bottom:16px;color:#00D4FF;">📋 选择粘贴模式</div>
+            <div style="font-size:16px;font-weight:700;margin-bottom:16px;color:var(--accent);">📋 选择粘贴模式</div>
             <div style="display:flex;flex-direction:column;gap:10px;">
                 <button class="rbt-paste-mode-btn" data-mode="fill" style="padding:12px 16px;border-radius:8px;border:1px solid #2a6b3a;background:#1a3a2a;color:#8f8;cursor:pointer;text-align:left;font-size:13px;">
                     <div style="font-weight:700;font-size:14px;margin-bottom:4px;">🔄 补全模式</div>
@@ -2764,17 +6163,17 @@ function _showPasteModeDialog() {
     });
 }
 
-function _showPasteDialog() {
+function _showPasteDialog(titleStr = '📋 粘贴表格数据') {
     return new Promise(resolve => {
         const overlay = document.createElement('div');
         overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:10001;display:flex;align-items:center;justify-content:center;';
         overlay.innerHTML = `
-            <div style="background:#1a1a3e;border-radius:12px;padding:24px;width:500px;">
-                <h3 style="margin:0 0 12px;color:#00D4FF;">📋 粘贴表格数据</h3>
-                <textarea id="rbt-paste-area" style="width:100%;height:200px;background:#12122a;border:1px solid #2a2a4a;border-radius:8px;color:#ddd;font-size:13px;padding:12px;" placeholder="从 Google 表格粘贴..."></textarea>
+            <div style="background:#1e1e1e;border-radius:12px;padding:24px;width:500px;">
+                <h3 style="margin:0 0 12px;color:var(--accent);">${titleStr}</h3>
+                <textarea id="rbt-paste-area" style="width:100%;height:200px;background:#141414;border:1px solid var(--border-color);border-radius:8px;color:#ddd;font-size:13px;padding:12px;" placeholder="从 Google 表格粘贴..."></textarea>
                 <div style="display:flex;gap:8px;margin-top:12px;justify-content:flex-end;">
                     <button id="rbt-paste-cancel" style="padding:8px 16px;background:#333;border:1px solid #555;border-radius:6px;color:#ccc;cursor:pointer;">取消</button>
-                    <button id="rbt-paste-ok" style="padding:8px 16px;background:#00D4FF;border:none;border-radius:6px;color:#000;font-weight:bold;cursor:pointer;">导入</button>
+                    <button id="rbt-paste-ok" style="padding:8px 16px;background:var(--accent);border:none;border-radius:6px;color:#000;font-weight:bold;cursor:pointer;">导入</button>
                 </div>
             </div>
         `;
@@ -2784,6 +6183,152 @@ function _showPasteDialog() {
         overlay.querySelector('#rbt-paste-ok').onclick = () => close(overlay.querySelector('#rbt-paste-area').value);
         overlay.addEventListener('click', e => { if (e.target === overlay) close(null); });
         setTimeout(() => overlay.querySelector('#rbt-paste-area')?.focus(), 100);
+    });
+}
+
+function _showSplitPromptDialog(messageText) {
+    return new Promise(resolve => {
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:10001;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(3px);';
+        
+        const htmlMessage = messageText.replace(/\\n/g, '<br>');
+        
+        overlay.innerHTML = `
+            <div style="background:#1e1e1e;border-radius:12px;padding:24px;width:400px;color:#ddd;box-shadow:0 10px 30px rgba(0,0,0,0.5);border:1px solid #333;">
+                <h3 style="margin:0 0 16px;color:#a78bfa;font-size:16px;">🪄 智能分段提取</h3>
+                <div style="font-size:13px;line-height:1.6;margin-bottom:20px;color:#ccc;">${htmlMessage}</div>
+                
+                <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:20px;">
+                    <button class="rbt-split-btn" data-val="2" style="padding:12px;background:#2a2a3a;border:1px solid #4a4a6a;border-radius:8px;color:#cce;cursor:pointer;text-align:left;transition:all 0.2s;">
+                        <div style="font-weight:bold;margin-bottom:4px;color:#a78bfa;font-size:14px;">[ 拆为两段 ]</div>
+                        <div style="font-size:12px;color:#aaa;">首行提取为标题，其余内容合并为正文</div>
+                    </button>
+                    <button class="rbt-split-btn" data-val="3" style="padding:12px;background:#2a2a3a;border:1px solid #4a4a6a;border-radius:8px;color:#cce;cursor:pointer;text-align:left;transition:all 0.2s;">
+                        <div style="font-weight:bold;margin-bottom:4px;color:#a78bfa;font-size:14px;">[ 拆为三段 ]</div>
+                        <div style="font-size:12px;color:#aaa;">首行标题，末行做结尾标签，中间所有为正文</div>
+                    </button>
+                </div>
+                
+                <div style="display:flex;justify-content:flex-end;">
+                    <button id="rbt-split-cancel" style="padding:8px 16px;background:#333;border:1px solid #555;border-radius:6px;color:#aaa;cursor:pointer;">保留全文原文，不提取</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+        const close = v => { document.body.removeChild(overlay); resolve(v); };
+        
+        overlay.querySelector('#rbt-split-cancel').onclick = () => close(null);
+        
+        overlay.querySelectorAll('.rbt-split-btn').forEach(btn => {
+             btn.onmouseenter = () => btn.style.background = '#32324a';
+             btn.onmouseleave = () => btn.style.background = '#2a2a3a';
+             btn.onclick = () => close(btn.dataset.val);
+        });
+        
+        overlay.addEventListener('click', e => { if (e.target === overlay) close(null); });
+    });
+}
+
+function _showBatchEditDialog(badRows, minLines, totalRows) {
+    return new Promise(resolve => {
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:10002;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(5px);';
+        
+        let boxesHtml = '';
+        for (let idx = 0; idx < badRows.length; idx++) {
+            const r = badRows[idx];
+            boxesHtml += `
+            <div style="background:#141414;border:1px solid #444;border-radius:6px;padding:8px;display:flex;flex-direction:column;gap:4px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <span style="font-size:11px;color:#a78bfa;font-weight:bold;"># 第 ${r.index + 1} 行</span>
+                    <label style="font-size:10px;color:#888;cursor:pointer;"><input type="checkbox" class="rbt-skip-chk" data-i="${idx}" style="vertical-align:middle;margin-right:2px;">彻底放弃此行</label>
+                </div>
+                <textarea class="rbt-box-display" data-i="${idx}" title="可以直接输入编辑，双击则全屏放大修改" style="flex:1;background:#0d0d0d;border:1px dashed #555;border-radius:4px;padding:6px;font-size:12px;color:#ccc;overflow-y:auto;white-space:pre-wrap;word-break:break-all;transition:all 0.2s;min-height:90px;max-height:140px;resize:none;font-family:system-ui;line-height:1.4;">${typeof _escHtml === 'function' ? _escHtml(r.text) : r.text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</textarea>
+            </div>`;
+        }
+
+        overlay.innerHTML = `
+            <div style="background:#1e1e1e;border-radius:12px;padding:24px;width:960px;max-width:90vw;max-height:90vh;display:flex;flex-direction:column;color:#ddd;box-shadow:0 10px 40px rgba(0,0,0,0.7);border:1px solid #333;">
+                <h3 style="margin:0 0 12px;color:#f87171;font-size:18px;display:flex;align-items:center;gap:6px;">
+                    ⚠️ 分段提取中断 (${badRows.length}/${totalRows} 行数据不合规)
+                </h3>
+                <div style="font-size:13px;line-height:1.5;margin-bottom:16px;color:#bbb;">
+                    您选择了拆分为 <strong style="color:var(--accent);">${minLines} 段</strong>，但以下贴入的文案<strong style="color:#f87171;">没有按要求换行</strong>导致程序无法智能切割。<br>
+                    请 <strong style="color:#d8b4fe;border-bottom:1px solid #d8b4fe;padding-bottom:1px;">双击</strong> 以下卡片进入放大编辑模式，补上回车把文案断开！
+                </div>
+                
+                <div style="flex:1;overflow-y:auto;margin-bottom:20px;padding-right:8px;">
+                    <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(280px, 1fr));gap:12px;">
+                        ${boxesHtml}
+                    </div>
+                </div>
+                
+                <div style="display:flex;gap:12px;justify-content:flex-end;">
+                    <button id="rbt-batch-edit-cancel" style="padding:8px 20px;background:#333;border:1px solid #555;border-radius:6px;color:#ccc;cursor:pointer;">取消整批导入</button>
+                    <button id="rbt-batch-edit-ok" style="padding:8px 20px;background:var(--accent);border:none;border-radius:6px;color:#000;font-weight:bold;cursor:pointer;">✅ 修改好了，继续提取验证</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+        
+        let activeEditIndex = -1;
+        const largeEditOverlay = document.createElement('div');
+        largeEditOverlay.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.9);z-index:10;display:none;flex-direction:column;padding:40px;border-radius:12px;';
+        largeEditOverlay.innerHTML = `
+            <div style="font-size:16px;color:#a78bfa;font-weight:bold;margin-bottom:12px;">✏️ 放大编辑文案</div>
+            <textarea id="rbt-large-edit-area" style="flex:1;background:#141414;border:1px solid #5b6abf;border-radius:8px;padding:16px;font-size:16px;color:#fff;resize:none;font-family:system-ui;margin-bottom:20px;line-height:1.5;box-shadow:inset 0 2px 10px rgba(0,0,0,0.5);"></textarea>
+            <div style="display:flex;justify-content:flex-end;gap:12px;">
+                <button id="rbt-large-edit-cancel" style="padding:8px 24px;border-radius:6px;background:#333;color:#ccc;border:1px solid #555;cursor:pointer;">取消</button>
+                <button id="rbt-large-edit-ok" style="padding:8px 24px;border-radius:6px;background:var(--accent);color:#000;font-weight:bold;border:none;cursor:pointer;">✅ 确定应用修改</button>
+            </div>
+        `;
+        overlay.querySelector('div').appendChild(largeEditOverlay);
+        
+        const largeArea = largeEditOverlay.querySelector('#rbt-large-edit-area');
+        
+        const displays = overlay.querySelectorAll('.rbt-box-display');
+        displays.forEach(disp => {
+            disp.addEventListener('dblclick', () => {
+                activeEditIndex = disp.dataset.i;
+                largeArea.value = disp.value;
+                largeEditOverlay.style.display = 'flex';
+                largeArea.focus();
+            });
+            disp.addEventListener('input', () => {
+                badRows[disp.dataset.i].text = disp.value;
+            });
+        });
+        
+        largeEditOverlay.querySelector('#rbt-large-edit-cancel').onclick = () => {
+            largeEditOverlay.style.display = 'none';
+        };
+        
+        largeEditOverlay.querySelector('#rbt-large-edit-ok').onclick = () => {
+            if (activeEditIndex >= 0) {
+                badRows[activeEditIndex].text = largeArea.value;
+                const disp = overlay.querySelector(`.rbt-box-display[data-i="${activeEditIndex}"]`);
+                disp.value = largeArea.value;
+                // Add a visual flash to show update success
+                disp.style.borderColor = '#a78bfa';
+                setTimeout(() => disp.style.borderColor = '#555', 500);
+            }
+            largeEditOverlay.style.display = 'none';
+        };
+
+        const close = (val) => { document.body.removeChild(overlay); resolve(val); };
+        
+        overlay.querySelector('#rbt-batch-edit-cancel').onclick = () => close(null);
+        
+        overlay.querySelector('#rbt-batch-edit-ok').onclick = () => {
+            const skips = overlay.querySelectorAll('.rbt-skip-chk');
+            const disps = overlay.querySelectorAll('.rbt-box-display');
+            const result = badRows.map((r, i) => ({
+                index: r.index,
+                text: disps[i].value,
+                skip: skips[i].checked
+            }));
+            close(result);
+        };
     });
 }
 
@@ -2819,7 +6364,7 @@ function _parseBatchTSV(raw) {
             }
         }
         if (cells.length > 0 && cells.some(c => c.trim())) {
-            rows.push([cells[0] || '', cells[1] || '']);
+            rows.push(cells);
         }
     }
     return rows;
@@ -2870,22 +6415,30 @@ function _applyOverlayGroupPresetToTask(task, presetName) {
             if (presets[presetName] && Array.isArray(presets[presetName])) {
                 const layers = presets[presetName];
                 const oldOverlays = task.overlays || [];
-                task.overlays = layers.map((layerData, i) => {
+                const remainingOverlays = [...oldOverlays];
+                
+                const newOverlays = layers.map(layerData => {
                     const clone = JSON.parse(JSON.stringify(layerData));
                     clone.id = 'ov_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
-                    // For non-fixed layers, preserve existing text from the task row
+                    
                     if (!clone.fixed_text) {
-                        const old = oldOverlays[i];
-                        if (old) {
+                        const matchIdx = remainingOverlays.findIndex(o => o.type === clone.type);
+                        if (matchIdx !== -1) {
+                            const old = remainingOverlays.splice(matchIdx, 1)[0];
                             if (old.title_text) clone.title_text = old.title_text;
                             if (old.body_text) clone.body_text = old.body_text;
                             if (old.footer_text) clone.footer_text = old.footer_text;
                             if (old.content) clone.content = old.content;
+                            if (old.scroll_title) clone.scroll_title = old.scroll_title;
                         }
+                    } else {
+                        const matchIdx = remainingOverlays.findIndex(o => o.type === clone.type);
+                        if (matchIdx !== -1) remainingOverlays.splice(matchIdx, 1);
                     }
-                    // Fixed layers already have text from preset — use as-is
                     return clone;
                 });
+                
+                task.overlays = [...remainingOverlays, ...newOverlays];
                 task._overlayPresetName = presetName;
                 return;
             }
@@ -2930,12 +6483,515 @@ function _batchAddEmptyRow() {
         segments: [],
         videoPath: null, srcUrl: null,
         overlays: [],
+        ttsText: '', ttsVoiceId: '', pipPath: '', status: '',
     });
 }
 
 // ═══════════════════════════════════════════════════════
-// 9a. Folder import (auto-classify + match)
+// TTS 音色列表加载
 // ═══════════════════════════════════════════════════════
+
+let _rbtVoiceCache = null;
+
+async function _rbtLoadVoiceList() {
+    const select = document.getElementById('rbt-tts-default-voice');
+    if (!select) return;
+    
+    // 记录当前选择
+    const prevValue = select.value || localStorage.getItem('rbt_tts_voice') || '';
+    
+    select.innerHTML = '<option value="">加载中...</option>';
+    
+    try {
+        // 如果有缓存，先用缓存
+        if (_rbtVoiceCache && _rbtVoiceCache.length > 0) {
+            _populateVoiceSelect(select, _rbtVoiceCache, prevValue);
+            return;
+        }
+        
+        const response = await apiFetch(`${API_BASE}/elevenlabs/voices`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+        const data = await response.json();
+        
+        if (data.voices && data.voices.length > 0) {
+            _rbtVoiceCache = data.voices;
+            _populateVoiceSelect(select, data.voices, prevValue);
+        } else {
+            select.innerHTML = '<option value="">无可用音色 (请配置API Key)</option>';
+        }
+    } catch (err) {
+        console.warn('[RBT] 加载音色列表失败:', err.message);
+        select.innerHTML = '<option value="">加载失败</option>';
+    }
+}
+
+function _populateVoiceSelect(select, voices, prevValue) {
+    select.innerHTML = '<option value="">-- 选择默认音色 --</option>';
+    for (const v of voices) {
+        const opt = document.createElement('option');
+        opt.value = v.voice_id;
+        opt.textContent = `${v.name}`;
+        if (v.voice_id === prevValue) opt.selected = true;
+        select.appendChild(opt);
+    }
+    // 持久化选择
+    select.addEventListener('change', () => {
+        localStorage.setItem('rbt_tts_voice', select.value);
+    }, { once: false });
+    
+    // 恢复上次选择
+    if (prevValue && select.value !== prevValue) {
+        select.value = prevValue;
+    }
+}
+
+// ═══════════════════════════════════════════════════════
+// AI 处理与一键配音生成
+// ═══════════════════════════════════════════════════════
+
+async function _runSingleTTS(idx) {
+    const state = window._reelsState;
+    if (!state || !state.tasks[idx]) return;
+    const task = state.tasks[idx];
+    
+    if (!task.ttsText) {
+        alert(`第 ${idx+1} 行缺少 TTS文案，无法生成配音。`);
+        return;
+    }
+    const defaultVoice = document.getElementById('rbt-tts-default-voice')?.value || 'pNInz6obpgDQGcFmaJcg';
+    const voiceId = task.ttsVoiceId || defaultVoice; // 任务级优先，否则用全局选择
+    const modelId = localStorage.getItem('rbt_tts_model') || 'eleven_v3';
+
+    task.status = 'generating';
+    _renderBatchTable();
+    
+    try {
+        const response = await apiFetch(`${API_BASE}/elevenlabs/tts-workflow`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                text: task.ttsText,
+                voice_id: voiceId,
+                model_id: modelId,
+                task_index: idx,
+                need_split: false,
+                max_duration: 60,
+                subtitle_text: task.txtContent || '', // 「字幕文本」列（中文断句）用于 Gladia 转录对齐生成 SRT
+                export_mp4: false,
+                export_fcpxml: false,
+                seamless_fcpxml: true,
+                output_dir: '' 
+            })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || '生成失败');
+        
+        task.audioPath = data.audio_path;
+        if (data.srt_path) {
+            task.srtPath = data.srt_path;
+            // 自动加载srt用于对齐预览（只有路径，无File对象，走Electron回退）
+            _readSrtFileToTask(task, null);
+            task.aligned = true; // 既然同时成功了srt，说明是对齐完的结果
+        }
+        task.status = 'success';
+        _renderBatchTable();
+        
+        // 5秒后清除成功状态，恢复原样
+        setTimeout(() => {
+            if (task.status === 'success') {
+                task.status = '';
+                _renderBatchTable();
+            }
+        }, 5000);
+        
+        return true;
+    } catch (e) {
+        task.status = 'error';
+        _renderBatchTable();
+        showToast('生成报错: ' + e.message, 'error', 8000);
+        return false;
+    }
+}
+
+async function _runTTSBatchProcessing() {
+    const indices = _getSelectedIndices();
+    const tasks = window._reelsState?.tasks || [];
+    if (tasks.length === 0) {
+        alert('❌ 任务拒绝执行\n\n【原因】：当前表格完全为空。\n【操作】：请先新建任务行，或从上方导入媒体/通过链接粘贴数据。');
+        return false;
+    }
+    
+    const targetIdxs = indices.length > 0 ? indices : tasks.map((_, i) => i);
+    
+    // Validate if there's actually anything to TTS
+    const hasTtsText = targetIdxs.some(idx => tasks[idx].ttsText && tasks[idx].ttsText.trim().length > 0);
+    if (!hasTtsText) {
+        alert('❌ 任务拒绝执行 (数据缺失)\n\n【缺失数据列】：「🤖 TTS文案」列内容为空\n【当前需要】    ：生成配音必须依赖该列提供的纯文本内容。\n\n【建议操作】：\n1. 手动双击「🤖 TTS文案」单元格输入文字；\n2. 或者先在「🧠 AI 原文案」列填入长文本，并点击【🪄 AI处理文案】让模型自动填充该列。');
+        return false;
+    }
+
+    const hasExistingAudio = targetIdxs.some(idx => tasks[idx].ttsText && tasks[idx].ttsText.trim() && tasks[idx].audioPath);
+    let forceOverwrite = false;
+    if (hasExistingAudio) {
+        forceOverwrite = confirm('⚠️ 检测到目标中存在【已经生成过配音】的行。\n\n▶ 点击【确定】则强制重新生成，覆盖它们的原配音和原对齐。\n▶ 点击【取消】则保护它们，仅对还没生成的空白行进行生成。\n\n是否强行覆盖重造已有音频？');
+    }
+    
+    let success = 0;
+    let failed = 0;
+    for (const idx of targetIdxs) {
+        const task = tasks[idx];
+        const canRun = (forceOverwrite || !task.audioPath) && task.ttsText && task.ttsText.trim().length > 0;
+        if (canRun) {
+            const isSuccess = await _runSingleTTS(idx);
+            if (isSuccess) success++;
+            else failed++;
+        }
+    }
+    
+    if (failed > 0) {
+        showToast(`批量配音结束：处理 ${success} 行，失败 ${failed} 行，请查看具体报错！`, 'error', 5000);
+    } else if (success > 0) {
+        showToast(`批量配音生成完毕，共成功处理 ${success} 行`, 'success');
+    } else {
+        showToast(`没有可用行需要生成配音`, 'info');
+    }
+}
+
+async function _runGeminiBatchProcessing() {
+    const indices = _getSelectedIndices();
+    const tasks = window._reelsState?.tasks || [];
+    if (tasks.length === 0) {
+        alert('❌ 任务拒绝执行\n\n【原因】：当前表格完全为空。\n【操作】：请先新建任务行并填入数据。');
+        return false;
+    }
+    const targetIdxs = indices.length > 0 ? indices : tasks.map((_, i) => i);
+    
+    showToast(`正在使用 AI 处理 ${targetIdxs.length} 行文案...`, 'info');
+    
+    try {
+        const payload = targetIdxs.map(idx => ({
+            idx: idx,
+            text: tasks[idx].aiScript || ''
+        })).filter(o => o.text.trim().length > 0);
+
+        if (payload.length === 0) {
+            alert('❌ 任务拒绝执行 (数据缺失)\n\n【缺失数据列】：「🧠 AI 原文案」列内容为空\n【当前需要】    ：大模型需要基于原始参考素材进行改写。\n\n【建议操作】：请先在「🧠 AI 原文案」列中双击粘贴您想要改写的长文章、大纲或参考内容，然后再执行此操作。');
+            return false;
+        }
+
+        let lineBreakMode = 'ai';
+        let lbMaxChars = 16;
+        try {
+            const settingsResp = await apiFetch('settings/gemini-keys');
+            const settingsData = await settingsResp.json();
+            if (settingsData) {
+                if (settingsData.lineBreakMode) lineBreakMode = settingsData.lineBreakMode;
+                if (settingsData.lbMaxChars) lbMaxChars = settingsData.lbMaxChars;
+            }
+        } catch (e) {
+            console.warn('获取 Gemini 设置失败，使用默认 AI 断行', e);
+        }
+
+        const response = await apiFetch(`${API_BASE}/ai/process-scripts`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ scripts: payload })
+        });
+        
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'AI处理请求失败');
+        
+        console.log('[AI文案] API 响应数据:', JSON.stringify(data).slice(0, 500));
+        console.log('[AI文案] results 类型:', typeof data.results, '长度:', Array.isArray(data.results) ? data.results.length : 'N/A');
+        
+        let count = 0;
+        if (data.results && Array.isArray(data.results)) {
+            for (const res of data.results) {
+                console.log(`[AI文案] 结果项 idx=${res.idx}, tts_text=${(res.tts_text||'').slice(0,50)}...`);
+                const task = tasks[res.idx];
+                if (task) {
+                    if (task.ttsText !== res.tts_text) {
+                        task.audioPath = null;
+                        task.srtPath = null;
+                        task.aligned = false;
+                    }
+                    task.ttsText = res.tts_text;
+                    if (lineBreakMode === 'script') {
+                        // 使用系统自带脚本断行，剔除大括号和尖括号标签
+                        const cleanText = (res.tts_text || '').replace(/\[.*?\]/g, '').replace(/<.*?>/g, '').trim();
+                        task.txtContent = typeof _rbtSmartLineBreak === 'function' ? _rbtSmartLineBreak(cleanText, lbMaxChars) : cleanText;
+                    } else {
+                        // AI 原生断行
+                        task.txtContent = res.display_text;
+                    }
+                    // --- 自动比对：提取字母/数字/汉字（忽略标点和换行空格），如果不一致则报警 ---
+                    const normalizeText = (str) => {
+                        let s = (str || '');
+                        s = s.replace(/\[.*?\]/g, ''); // 去除方括号标签 e.g. [calm]
+                        s = s.replace(/<.*?>/g, ''); // 去除尖括号标签 e.g. <break>
+                        return s.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '').toLowerCase();
+                    };
+                    const origNorm = normalizeText(task.aiScript);
+                    
+                    const newNorm = normalizeText(res.display_text);
+                    task.aiTextDiffWarning = (origNorm !== newNorm);
+                    
+                    const ttsNorm = normalizeText(res.tts_text);
+                    task.aiTtsDiffWarning = (origNorm !== ttsNorm);
+                    
+                    if (task.aiTextDiffWarning || task.aiTtsDiffWarning) {
+                        console.warn(`[AI文案] 警告！任务 ${res.idx} 存在字符篡改`);
+                    }
+                    // -------------------------------------------------------------------------
+                    
+                    count++;
+                } else {
+                    console.warn(`[AI文案] 找不到 idx=${res.idx} 对应的任务 (tasks.length=${tasks.length})`);
+                }
+            }
+        } else {
+            console.warn('[AI文案] data.results 不是数组!', data);
+        }
+        _renderBatchTable();
+        
+        if (count === 0 && payload.length > 0) {
+            alert(`⚠️ AI 处理完成但未能解析出结果\n\n发送了 ${payload.length} 条原文案，但模型返回的内容无法正确解析为 TTS 文案。\n\n可能原因：\n1. 模型输出格式异常（未按 [编号] 格式返回）\n2. API 返回了空内容\n\n请打开开发者工具 (Ctrl+Shift+I) 查看控制台日志，搜索 "[AI文案]" 获取详细信息。`);
+            showToast(`⚠️ AI处理完成但解析结果为 0 条 (期望 ${payload.length} 条)`, 'error');
+        } else {
+            showToast(`✅ AI文案处理完成 (共 ${count}/${payload.length} 行)`, 'success');
+        }
+        return true;
+    } catch (e) {
+        showToast('AI处理报错: ' + e.message, 'error');
+        return false;
+    }
+}
+
+function _applyAiPresetBatch() {
+    const STORAGE_KEY = 'rbt_task_presets';
+    let presets = {};
+    try { presets = JSON.parse(localStorage.getItem(STORAGE_KEY) || localStorage.getItem('rbt_ai_presets') || '{}'); } catch(e) {}
+
+    // 动态获取可用的预设列表
+    const subtitlePresets = typeof _getSubtitlePresetList === 'function' ? _getSubtitlePresetList() : [];
+    const cardTemplates = typeof _getOverlayGroupPresetList === 'function' ? _getOverlayGroupPresetList() : [];
+
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:99999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(3px);';
+    const dialog = document.createElement('div');
+    dialog.style.cssText = 'background:#1a1a2e;border:1px solid #444;border-radius:12px;padding:24px;min-width:420px;max-width:520px;color:#eee;font-size:13px;box-shadow:0 12px 40px rgba(0,0,0,0.8);';
+
+    const presetNames = Object.keys(presets);
+    const optionsHtml = presetNames.map(n => `<option value="${_escHtml(n)}">${_escHtml(n)}</option>`).join('');
+
+    const stplOptionsHtml = subtitlePresets.map(n => `<option value="${_escHtml(n)}">${_escHtml(n)}</option>`).join('');
+    const ctplOptionsHtml = cardTemplates.map(t => `<option value="${_escHtml(t.name)}">${_escHtml(t.name)} (${t.count}层)</option>`).join('');
+
+    dialog.innerHTML = `
+        <h3 style="margin:0 0 16px;font-size:16px;color:#a78bfa;">📝 任务预设管理</h3>
+        <div style="margin-bottom:12px;">
+            <label style="font-size:12px;color:#aaa;">选择已保存的任务完整预设</label>
+            <select id="_preset-sel" style="width:100%;padding:8px;background:#222;color:#fff;border:1px solid #555;border-radius:6px;margin-top:4px;font-size:13px;">
+                <option value="">-- 选择组合预设 --</option>
+                ${optionsHtml}
+            </select>
+        </div>
+        <div style="border-top:1px solid #333;padding-top:12px;margin-bottom:12px;">
+            <label style="font-size:12px;color:#aaa;">或单独配置各项参数组合</label>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px;">
+                <div><label style="font-size:11px;color:#888;">Voice ID</label><input id="_p-voice" style="width:100%;padding:5px;background:#222;color:#fff;border:1px solid #444;border-radius:4px;font-size:11px;" placeholder="如 pNInz6obpgDQGcFmaJcg"></div>
+                <div><label style="font-size:11px;color:#888;">字幕模板</label><select id="_p-tpl" style="width:100%;padding:5px;background:#222;color:#fff;border:1px solid #444;border-radius:4px;font-size:11px;"><option value="">无</option>${stplOptionsHtml}</select></div>
+                <div><label style="font-size:11px;color:#888;">覆层预设</label><select id="_p-overlay" style="width:100%;padding:5px;background:#222;color:#fff;border:1px solid #444;border-radius:4px;font-size:11px;"><option value="">无</option>${ctplOptionsHtml}</select></div>
+                <div><label style="font-size:11px;color:#888;">背景缩放 %</label><input id="_p-bgscale" type="number" value="100" min="50" max="300" style="width:100%;padding:5px;background:#222;color:#fff;border:1px solid #444;border-radius:4px;font-size:11px;"></div>
+                <div><label style="font-size:11px;color:#888;">背景变速 %</label><input id="_p-bgdurscale" type="number" value="100" min="10" max="500" style="width:100%;padding:5px;background:#222;color:#fff;border:1px solid #444;border-radius:4px;font-size:11px;"></div>
+                <div><label style="font-size:11px;color:#888;">音频变速 %</label><input id="_p-audioscale" type="number" value="100" min="10" max="500" style="width:100%;padding:5px;background:#222;color:#fff;border:1px solid #444;border-radius:4px;font-size:11px;"></div>
+            </div>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:8px;">
+            <input id="_p-save-name" style="flex:1;padding:6px;background:#222;color:#fff;border:1px solid #444;border-radius:4px;font-size:12px;" placeholder="预设名称（可保存）">
+            <button id="_p-save-btn" style="padding:6px 12px;background:#3b82f6;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;">💾 保存</button>
+            ${presetNames.length > 0 ? '<button id="_p-del-btn" style="padding:6px 10px;background:#ef4444;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;">🗑</button>' : ''}
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;border-top:1px solid #333;padding-top:12px;">
+            <button id="_p-cancel" style="padding:8px 20px;background:#333;color:#aaa;border:1px solid #555;border-radius:6px;cursor:pointer;">取消</button>
+            <button id="_p-apply" style="padding:8px 20px;background:linear-gradient(135deg,#a855f7,#6366f1);color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;">✅ 应用到选中行</button>
+        </div>
+    `;
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+
+    const sel = dialog.querySelector('#_preset-sel');
+    const fillFields = (p) => {
+        dialog.querySelector('#_p-voice').value = p.voiceId || '';
+        dialog.querySelector('#_p-tpl').value = p.tpl || '';
+        dialog.querySelector('#_p-overlay').value = p.overlayTpl || '';
+        dialog.querySelector('#_p-bgscale').value = p.bgScale || 100;
+        dialog.querySelector('#_p-bgdurscale').value = p.bgDurScale || 100;
+        dialog.querySelector('#_p-audioscale').value = p.audioDurScale || 100;
+    };
+    sel.addEventListener('change', () => {
+        const p = presets[sel.value];
+        if (p) fillFields(p);
+    });
+
+    dialog.querySelector('#_p-save-btn').addEventListener('click', () => {
+        const name = dialog.querySelector('#_p-save-name').value.trim();
+        if (!name) { alert('请输入预设名称'); return; }
+        presets[name] = _readPresetFields(dialog);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(presets));
+        showToast(`预设「${name}」已保存`, 'success');
+    });
+
+    dialog.querySelector('#_p-del-btn')?.addEventListener('click', () => {
+        const name = sel.value;
+        if (!name) { alert('请先选择要删除的预设'); return; }
+        if (!confirm(`确定删除预设「${name}」？`)) return;
+        delete presets[name];
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(presets));
+        sel.querySelector(`option[value="${name}"]`)?.remove();
+        showToast(`预设「${name}」已删除`, 'info');
+    });
+
+    dialog.querySelector('#_p-cancel').addEventListener('click', () => overlay.remove());
+
+    dialog.querySelector('#_p-apply').addEventListener('click', () => {
+        const preset = _readPresetFields(dialog);
+        const indices = _getSelectedIndices();
+        const tasks = window._reelsState.tasks;
+        const targetIdxs = indices.length > 0 ? indices : tasks.map((_, i) => i);
+
+        for (const idx of targetIdxs) {
+            const task = tasks[idx];
+            if (preset.voiceId) task.ttsVoiceId = preset.voiceId;
+            if (preset.tpl) task._subtitlePreset = preset.tpl;
+            if (preset.overlayTpl) {
+                task._overlayPresetName = preset.overlayTpl;
+                _applyOverlayGroupPresetToTask(task, preset.overlayTpl);
+            }
+            if (preset.bgScale !== undefined && preset.bgScale !== 100) task.bgScale = preset.bgScale;
+            if (preset.bgDurScale !== undefined && preset.bgDurScale !== 100) task.bgDurScale = preset.bgDurScale;
+            if (preset.audioDurScale !== undefined && preset.audioDurScale !== 100) task.audioDurScale = preset.audioDurScale;
+        }
+        overlay.remove();
+        _renderBatchTable();
+        showToast(`预设已应用到 ${targetIdxs.length} 行`, 'success');
+    });
+}
+
+function _readPresetFields(dialog) {
+    return {
+        voiceId: dialog.querySelector('#_p-voice').value.trim(),
+        tpl: dialog.querySelector('#_p-tpl').value.trim(),
+        overlayTpl: dialog.querySelector('#_p-overlay').value.trim(),
+        bgScale: parseInt(dialog.querySelector('#_p-bgscale').value) || 100,
+        bgDurScale: parseInt(dialog.querySelector('#_p-bgdurscale').value) || 100,
+        audioDurScale: parseInt(dialog.querySelector('#_p-audioscale').value) || 100,
+    };
+}
+
+async function _openAISettingsModal() {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:99999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(5px);';
+    const dialog = document.createElement('div');
+    dialog.style.cssText = 'background:#1a1a2e;border:1px solid #444;border-radius:12px;padding:24px;width:600px;max-width:90vw;color:#eee;font-size:13px;box-shadow:0 12px 40px rgba(0,0,0,0.8);';
+
+    dialog.innerHTML = `
+        <h3 style="margin:0 0 16px;font-size:16px;color:#a78bfa;">⚙️ AI 设置 (Gemini)</h3>
+        <p style="font-size:12px;color:#aaa;margin-bottom:16px;">配置用于 <b>文案改写流水线</b> 的 Gemini API Keys。支持轮询。</p>
+        
+        <div style="margin-bottom:12px;">
+            <label style="display:block;font-size:12px;color:#ccc;margin-bottom:6px;">API Keys (每行一个)</label>
+            <textarea id="_ai-keys" rows="4" style="width:100%;box-sizing:border-box;padding:8px;background:#222;color:#fff;border:1px solid #555;border-radius:6px;font-size:12px;font-family:monospace;resize:vertical;" placeholder="AIzaSy..."></textarea>
+        </div>
+        
+        <div style="margin-bottom:16px;">
+            <label style="display:block;font-size:12px;color:#ccc;margin-bottom:6px;">自定义 Prompt (系统指令)</label>
+            <textarea id="_ai-prompt" rows="6" style="width:100%;box-sizing:border-box;padding:8px;background:#222;color:#fff;border:1px solid #555;border-radius:6px;font-size:12px;resize:vertical;" placeholder="不填则使用系统默认提示词...\n可以通过改变这个提示词让 AI 写出更符合您要求的短文本。"></textarea>
+        </div>
+        
+        <div style="margin-bottom:16px;">
+            <label style="display:block;font-size:12px;color:#ccc;margin-bottom:6px;">字幕断行模式</label>
+            <div style="display:block;gap:8px;">
+                <label style="display:flex;align-items:center;font-size:12px;color:#eee;cursor:pointer;margin-bottom:6px;">
+                    <input type="radio" name="_ai-lb-mode" value="ai" checked style="margin-right:6px;"> 
+                    【AI 智能断行】: 完全由 AI 根据 Prompt 语义逻辑自动折行 (使用提示词中要求输出的 ||| 的断句结果)
+                </label>
+                <label style="display:flex;align-items:center;font-size:12px;color:#eee;cursor:pointer;">
+                    <input type="radio" name="_ai-lb-mode" value="script" style="margin-right:6px;"> 
+                    【脚本自动断行】: 忽略大模型的排版，使用 VideoKit 工具的 "智能分段 / 格式转换" 脚本强制拆分
+                </label>
+                <div id="_ai-lb-script-settings" style="margin-top:8px;margin-left:24px;display:none;align-items:center;gap:8px;">
+                    <span style="color:#aaa;font-size:12px;">每行最大字符数:</span>
+                    <input type="number" id="_ai-lb-max-chars" value="16" min="5" max="50" style="width:50px;background:#222;border:1px solid #555;color:#fff;border-radius:4px;padding:2px 4px;font-size:12px;text-align:center;">
+                    <span style="color:#888;font-size:11px;">(中文字符上限，推荐 12-18)</span>
+                </div>
+            </div>
+        </div>
+
+        <div style="display:flex;gap:8px;justify-content:flex-end;border-top:1px solid #333;padding-top:12px;">
+            <button id="_ai-cancel" style="padding:8px 20px;background:#333;color:#aaa;border:1px solid #555;border-radius:6px;cursor:pointer;">取消</button>
+            <button id="_ai-save" style="padding:8px 20px;background:linear-gradient(135deg,#a855f7,#6366f1);color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;">💾 保存设置</button>
+        </div>
+    `;
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    dialog.querySelector('#_ai-cancel').addEventListener('click', () => overlay.remove());
+
+    try {
+        const resp = await apiFetch('settings/gemini-keys', { method: 'GET' });
+        const data = await resp.json();
+        if (data) {
+            dialog.querySelector('#_ai-keys').value = (data.keys || []).join('\\n');
+            if (data.prompt) dialog.querySelector('#_ai-prompt').value = data.prompt;
+            if (data.lineBreakMode === 'script') {
+                dialog.querySelector('input[name="_ai-lb-mode"][value="script"]').checked = true;
+                dialog.querySelector('#_ai-lb-script-settings').style.display = 'flex';
+            } else {
+                dialog.querySelector('input[name="_ai-lb-mode"][value="ai"]').checked = true;
+            }
+            if (data.lbMaxChars) dialog.querySelector('#_ai-lb-max-chars').value = data.lbMaxChars;
+        }
+    } catch (e) {
+        console.warn('获取 Gemini 设置失败', e);
+    }
+
+    const lbModeRadios = dialog.querySelectorAll('input[name="_ai-lb-mode"]');
+    const scriptSettings = dialog.querySelector('#_ai-lb-script-settings');
+    lbModeRadios.forEach(radio => radio.addEventListener('change', () => {
+        scriptSettings.style.display = radio.value === 'script' ? 'flex' : 'none';
+    }));
+
+    dialog.querySelector('#_ai-save').addEventListener('click', async () => {
+        const keyLines = dialog.querySelector('#_ai-keys').value.split('\\n').map(s => s.trim()).filter(s => s);
+        const promptRaw = dialog.querySelector('#_ai-prompt').value; // let it be empty if space only
+        const lbMode = dialog.querySelector('input[name="_ai-lb-mode"]:checked')?.value || 'ai';
+        const payload = {
+            keys: keyLines,
+            prompt: promptRaw || null,
+            lineBreakMode: lbMode,
+            lbMaxChars: parseInt(dialog.querySelector('#_ai-lb-max-chars').value) || 16
+        };
+        try {
+            dialog.querySelector('#_ai-save').textContent = '保存中...';
+            const res = await apiFetch('settings/gemini-keys', { method: 'POST', body: JSON.stringify(payload) });
+            if (res.ok) {
+                showToast('✅ AI设置保存成功', 'success');
+                overlay.remove();
+            } else {
+                throw new Error('保存失败');
+            }
+        } catch (e) {
+            alert('保存失败: ' + e.message);
+            dialog.querySelector('#_ai-save').textContent = '💾 保存设置';
+        }
+    });
+}
 
 const _BG_EXTS = new Set(['mp4', 'mov', 'mkv', 'avi', 'wmv', 'flv', 'webm', 'jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp']);
 const _AUDIO_EXTS = new Set(['mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg', 'wma']);
@@ -3126,13 +7182,18 @@ function _updateHookPreview() {
     }
     
     previewContainer.style.display = 'block';
-    const fileUrl = 'file://' + filePath;
+    const fileUrl = (window.electronAPI && window.electronAPI.toFileUrl)
+        ? window.electronAPI.toFileUrl(filePath)
+        : 'file://' + filePath;
     const ext = filePath.split('.').pop().toLowerCase();
     
     if (['mp4', 'webm', 'ogg', 'mov', 'mkv'].includes(ext)) {
         imgPreview.style.display = 'none';
         videoPreview.style.display = 'block';
-        if (videoPreview.src !== fileUrl) {
+        // Use decodeURIComponent for comparison to handle encoded paths
+        const currentSrc = videoPreview.src || '';
+        const isSameSrc = currentSrc === fileUrl || decodeURIComponent(currentSrc) === decodeURIComponent(fileUrl);
+        if (!isSameSrc) {
             videoPreview.src = fileUrl;
             videoPreview.onloadedmetadata = () => {
                 const startTime = parseFloat(startInput?.value) || 0;
@@ -3151,11 +7212,90 @@ function _updateHookPreview() {
     }
 }
 
+function _openCoverModal(idx) {
+    const container = _batchTableState.container;
+    if (!container) return;
+    const coverModal = container.querySelector('#rbt-cover-modal');
+    if (!coverModal) return;
+
+    coverModal.dataset.editIdx = String(idx);
+
+    const enabledCb = container.querySelector('#rbt-cover-enabled');
+    const separateExportCb = container.querySelector('#rbt-cover-export-separate');
+    const bgPathInput = container.querySelector('#rbt-cover-bg-path');
+    const durationInput = container.querySelector('#rbt-cover-duration');
+    const previewContainer = container.querySelector('#rbt-cover-preview-container');
+    const previewImg = container.querySelector('#rbt-cover-preview-img');
+    const hintText = container.querySelector('#rbt-cover-preview-hint');
+
+    // Default clear
+    if (enabledCb) enabledCb.checked = false;
+    if (separateExportCb) separateExportCb.checked = true; // default on
+    if (bgPathInput) bgPathInput.value = '';
+    if (durationInput) durationInput.value = '0';
+    if (previewContainer) previewContainer.style.display = 'flex';
+    if (previewImg) { previewImg.src = ''; previewImg.style.display = 'none'; }
+    if (hintText) hintText.style.display = 'block';
+
+    let targetTask = null;
+    if (idx >= 0) {
+        targetTask = window._reelsState.tasks[idx];
+    }
+
+    if (targetTask && targetTask.cover) {
+        if (enabledCb) enabledCb.checked = !!targetTask.cover.enabled;
+        if (separateExportCb) separateExportCb.checked = targetTask.cover.exportSeparate !== false;
+        if (durationInput) durationInput.value = targetTask.cover.duration || '0';
+        if (bgPathInput && targetTask.cover.bgPath) {
+            bgPathInput.value = targetTask.cover.bgPath;
+            if (previewImg && hintText) {
+                const filePath = targetTask.cover.bgPath;
+                const url = window.electronAPI && window.electronAPI.toFileUrl ? window.electronAPI.toFileUrl(filePath) : `file://${filePath}`;
+                previewImg.src = url;
+                previewImg.style.display = 'block';
+                hintText.style.display = 'none';
+            }
+        }
+    }
+
+    const overlaySel = container.querySelector('#rbt-cover-overlay-sel');
+    if (overlaySel) {
+        let currentVal = overlaySel.value;
+        overlaySel.innerHTML = '<option value="">-- 使用独立卡片配置 --</option>';
+        if (window.ReelsOverlay) {
+            let presets = {};
+            try { presets = JSON.parse(localStorage.getItem('reels_overlay_group_presets') || '{}'); } catch(e) {}
+            for (const key of Object.keys(presets)) {
+                const option = document.createElement('option');
+                option.value = key; option.textContent = key;
+                overlaySel.appendChild(option);
+            }
+        }
+        if (targetTask && targetTask.cover && targetTask.cover.overlayTpl) currentVal = targetTask.cover.overlayTpl;
+        overlaySel.value = currentVal || '';
+    }
+
+    const presetSel = container.querySelector('#rbt-cover-preset-sel');
+    if (presetSel) {
+        let savedPresets = {};
+        try { savedPresets = JSON.parse(localStorage.getItem('videokit_cover_presets') || '{}'); } catch(e){}
+        presetSel.innerHTML = '<option value="">---预设---</option>';
+        for (const key of Object.keys(savedPresets)) {
+            const option = document.createElement('option');
+            option.value = key; option.textContent = key;
+            presetSel.appendChild(option);
+        }
+        presetSel.value = '';
+    }
+
+    coverModal.style.display = 'flex';
+}
+
 /**
  * 显示批量分配模式对话框
  */
 function _showBatchModeDialog(fileCount, field) {
-    const fieldLabel = { bg: '背景素材', audio: '音频', srt: '字幕', txt: 'TXT' }[field] || field;
+    const fieldLabel = { bg: '背景素材', audio: '音频', srt: '字幕', txt: 'TXT', hook: 'Hook', pip: '图像覆层' }[field] || field;
     return new Promise((resolve) => {
         const overlay = document.createElement('div');
         overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99999;display:flex;align-items:center;justify-content:center;';
@@ -3218,6 +7358,13 @@ function _assignFileToTask(task, file, field) {
     } else if (field === 'txt') {
         task.txtPath = filePath;
         _readTxtFileToTask(task, file);
+    } else if (field === 'pip') {
+        task.pipPath = filePath;
+    } else if (field === 'contentvideo') {
+        task.contentVideoPath = filePath;
+        if (task.contentVideoScale == null) task.contentVideoScale = 100;
+        if (task.contentVideoX == null) task.contentVideoX = 'center';
+        if (task.contentVideoY == null) task.contentVideoY = 'center';
     }
 }
 
@@ -3234,6 +7381,7 @@ function _createEmptyTask() {
         segments: [],
         videoPath: null, srcUrl: null,
         overlays: [],
+        ttsText: '', ttsVoiceId: '', pipPath: '', status: '',
     };
 }
 
@@ -3268,6 +7416,8 @@ async function _batchAssignFiles(files, field) {
                 else if (field === 'audio') occupied = !!tk.audioPath;
                 else if (field === 'srt') occupied = !!tk.srtPath;
                 else if (field === 'txt') occupied = !!tk.txtPath;
+                else if (field === 'pip') occupied = !!tk.pipPath;
+                else if (field === 'contentvideo') occupied = !!tk.contentVideoPath;
                 if (!occupied) break;
                 taskIdx++;
             }
@@ -3422,6 +7572,10 @@ function _pickSingleFile(idx, field) {
         fileInput.accept = '.srt';
     } else if (field === 'txt') {
         fileInput.accept = '.txt';
+    } else if (field === 'pip') {
+        fileInput.accept = 'image/*,video/*';
+    } else if (field === 'contentvideo') {
+        fileInput.accept = '.mp4,.mov,.mkv,.avi,.wmv,.flv,.webm';
     }
 
     _batchTableState._pendingSingle = { idx, field };
@@ -3452,6 +7606,13 @@ function _assignSingleFile(idx, field, file) {
     } else if (field === 'txt') {
         task.txtPath = filePath;
         _readTxtFileToTask(task, file);
+    } else if (field === 'pip') {
+        task.pipPath = filePath;
+    } else if (field === 'contentvideo') {
+        task.contentVideoPath = filePath;
+        if (task.contentVideoScale == null) task.contentVideoScale = 100;
+        if (task.contentVideoX == null) task.contentVideoX = 'center';
+        if (task.contentVideoY == null) task.contentVideoY = 'center';
     }
 
     _renderBatchTable();
@@ -3539,8 +7700,9 @@ function _readTxtFileToTask(task, file) {
  * 智能断行 (批量表格内用)
  * 英文 ~5 词/行，中文 ~16 字/行，已有换行保留
  */
-function _rbtSmartLineBreak(text) {
+function _rbtSmartLineBreak(text, customMaxChars) {
     if (!text || typeof text !== 'string') return text;
+    const defaultMaxChars = customMaxChars || 16;
     // 按行处理，保留已有换行
     const lines = text.split('\n');
     const result = [];
@@ -3552,7 +7714,7 @@ function _rbtSmartLineBreak(text) {
         const isCJK = cjkCount / trimmed.length > 0.3;
 
         if (isCJK) {
-            const maxChars = 16;
+            const maxChars = defaultMaxChars;
             let pos = 0;
             while (pos < trimmed.length) {
                 let end = Math.min(pos + maxChars, trimmed.length);
@@ -3590,9 +7752,24 @@ async function _batchAlignAllTasks() {
     const alignSource = document.getElementById('rbt-align-source')?.value || 'audio';
     const forceRealign = document.getElementById('rbt-force-realign')?.checked || false;
 
-    // 筛选需要对齐的任务: 有字幕文本 + 有音频源 + (未对齐 或 强制)
+    const textSourceCol = document.getElementById('rbt-align-txt-col')?.value || 'txtContent';
+
+    const getSourceText = (t) => {
+        if (textSourceCol === 'ttsText') return t.ttsText || '';
+        if (textSourceCol === 'txtContent') return t.txtContent || '';
+        if (textSourceCol === 'overlay_title') return (t.overlays && t.overlays[0]) ? t.overlays[0].title_text || '' : '';
+        if (textSourceCol === 'overlay_body') return (t.overlays && t.overlays[0]) ? t.overlays[0].body_text || '' : '';
+        if (textSourceCol === 'scroll_body') {
+            const sov = (t.overlays || []).find(o => o && o.type === 'scroll');
+            return sov ? sov.content || '' : '';
+        }
+        return '';
+    };
+
+    // 筛选需要对齐的任务: 选定的文本列有内容 + 有音频源 + (未对齐 或 强制)
     const tasksToAlign = state.tasks.filter(t => {
-        if (!t.txtContent || !t.txtContent.trim()) return false;
+        const text = getSourceText(t);
+        if (!text || !text.trim()) return false;
         if (t.aligned && !forceRealign) return false;
         const hasAudio = alignSource === 'video'
             ? (t.bgPath || t.videoPath)
@@ -3601,9 +7778,16 @@ async function _batchAlignAllTasks() {
     });
 
     if (tasksToAlign.length === 0) {
-        alert('没有需要对齐的任务。\n请确认：\n1. 字幕文本列有文案\n2. 有音频/视频文件\n3. 尚未对齐');
+        alert('没有需要对齐的任务。\n请确认：\n1. 人声字幕列有文案\n2. 有音频/视频文件\n3. 尚未对齐');
         return;
     }
+
+    let lbMaxChars = 16;
+    try {
+        const settingsResp = await apiFetch('settings/gemini-keys');
+        const settingsData = await settingsResp.json();
+        if (settingsData && settingsData.lbMaxChars) lbMaxChars = settingsData.lbMaxChars;
+    } catch(e) {}
 
     const progressEl = document.getElementById('rbt-align-progress');
     const alignBtn = document.getElementById('rbt-align-all-btn');
@@ -3627,7 +7811,7 @@ async function _batchAlignAllTasks() {
             if (!audioPath) throw new Error('没有音频文件');
 
             // 自动断行文案
-            task.txtContent = _rbtSmartLineBreak(task.txtContent);
+            const sourceText = _rbtSmartLineBreak(getSourceText(task), lbMaxChars);
 
             // 调用对齐API（使用 apiFetch + API_BASE）
             const audioDir = audioPath.replace(/[\\/][^\\/]+$/, '');
@@ -3636,7 +7820,7 @@ async function _batchAlignAllTasks() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     audio_path: audioPath,
-                    source_text: task.txtContent,
+                    source_text: sourceText,
                     language: language,
                     audio_cut_length: 5.0,
                     output_dir: audioDir,
@@ -3709,6 +7893,13 @@ function _updateBatchSelectCount() {
     const count = _batchTableState.selectedRows.size;
     if (el) el.textContent = count > 0 ? `已选 ${count} 行` : '';
     if (exportBtn) exportBtn.style.display = count > 0 ? '' : 'none';
+    
+    const tasks = window._reelsState?.tasks || [];
+    const allSelected = tasks.length > 0 && count === tasks.length;
+    const sa = container.querySelector('#rbt-select-all');
+    const ha = container.querySelector('#rbt-header-select-all');
+    if (sa) sa.checked = allSelected;
+    if (ha) ha.checked = allSelected;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -3719,6 +7910,38 @@ const _MAT_BG_EXTS = new Set(['mp4', 'mov', 'mkv', 'avi', 'wmv', 'flv', 'webm', 
 const _MAT_AUDIO_EXTS = new Set(['mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg', 'wma']);
 const _MAT_SRT_EXTS = new Set(['srt']);
 const _MAT_TXT_EXTS = new Set(['txt']);
+
+function _shuffleArray(arr) {
+    const out = [...arr];
+    for (let i = out.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [out[i], out[j]] = [out[j], out[i]];
+    }
+    return out;
+}
+
+function _randomUniqueFirstAssign(targetTasks, poolPaths, applyFn) {
+    if (!Array.isArray(targetTasks) || targetTasks.length === 0) return 0;
+    const uniquePool = Array.from(new Set((poolPaths || []).filter(Boolean)));
+    if (uniquePool.length === 0) return 0;
+
+    // 先使用不重复随机序列；不够时再重复（每轮重洗）
+    let deck = _shuffleArray(uniquePool);
+    let cursor = 0;
+    let filled = 0;
+    for (const task of targetTasks) {
+        if (!task) continue;
+        if (cursor >= deck.length) {
+            deck = _shuffleArray(uniquePool);
+            cursor = 0;
+        }
+        const path = deck[cursor++];
+        if (!path) continue;
+        applyFn(task, path);
+        filled++;
+    }
+    return filled;
+}
 
 async function _refreshMaterialFolder() {
     const tab = _getActiveTab();
@@ -3770,10 +7993,11 @@ async function _refreshMaterialFolder() {
             if (audioBase) existingMap.set(audioBase, i);
         });
 
-        let newCount = 0, updateCount = 0;
+        let newCount = 0, updateCount = 0, randomFillCount = 0;
 
         // Match by baseName: group files
         const groups = new Map(); // baseName → { bg, audio, srt, txt }
+        const matchedBgPaths = new Set();
         const allFiles = [
             ...classified.bg.map(f => ({ ...f, type: 'bg' })),
             ...classified.audio.map(f => ({ ...f, type: 'audio' })),
@@ -3790,6 +8014,7 @@ async function _refreshMaterialFolder() {
         for (const [base, group] of groups) {
             let taskIdx = existingMap.get(base);
             let task;
+            if (group.bg && group.bg.path) matchedBgPaths.add(group.bg.path);
 
             if (taskIdx != null) {
                 task = tasks[taskIdx];
@@ -3812,13 +8037,33 @@ async function _refreshMaterialFolder() {
                 // Create new task
                 task = _createEmptyTask();
                 task.baseName = base;
-                if (group.bg) { task.bgPath = group.bg.path; task.videoPath = group.bg.path; }
+                if (group.bg) {
+                    task.bgPath = group.bg.path;
+                    task.videoPath = group.bg.path;
+                }
                 if (group.audio) { task.audioPath = group.audio.path; }
                 if (group.srt) { task.srtPath = group.srt.path; }
                 task._justRefreshed = true;
                 tasks.push(task);
                 newCount++;
             }
+        }
+
+        // 随机补齐背景：
+        // 1) 优先使用“未参与同名匹配”的背景素材
+        // 2) 素材不足时允许重复随机分配
+        const unmatchedTasks = tasks.filter(t => !(t.bgPath || t.videoPath));
+        if (unmatchedTasks.length > 0 && classified.bg.length > 0) {
+            const bgAllPaths = classified.bg.map(f => f.path).filter(Boolean);
+            const bgUnmatchedFirst = bgAllPaths.filter(p => !matchedBgPaths.has(p));
+            const primaryPool = bgUnmatchedFirst.length > 0 ? bgUnmatchedFirst : bgAllPaths;
+
+            randomFillCount = _randomUniqueFirstAssign(unmatchedTasks, primaryPool, (task, bgPath) => {
+                task.bgPath = bgPath;
+                task.videoPath = bgPath;
+                task.bgSrcUrl = '';
+                task._justRefreshed = true;
+            });
         }
 
         tab.lastRefreshTime = Date.now();
@@ -3834,6 +8079,7 @@ async function _refreshMaterialFolder() {
         const summary = [];
         if (newCount > 0) summary.push(`🆕 新增 ${newCount} 行`);
         if (updateCount > 0) summary.push(`🔄 更新 ${updateCount} 行`);
+        if (randomFillCount > 0) summary.push(`🎲 随机补齐背景 ${randomFillCount} 行（未匹配优先）`);
         if (summary.length === 0) summary.push('✅ 没有新变化');
         alert(`刷新完成\n${summary.join('\n')}\n\n文件夹: ${tab.materialDir}\n共 ${files.length} 个文件`);
 
@@ -3880,25 +8126,83 @@ function _injectBatchTableCSS() {
     const style = document.createElement('style');
     style.textContent = `
         .rbt-panel {
+            position:relative;
             display:flex; flex-direction:column; width:95vw; max-width:1600px; height:90vh;
-            background:#0d0d2b; border:1px solid #1a1a4a; border-radius:16px;
+            background:#0d0d1e; border:1px solid #1a1a3a; border-radius:12px;
             box-shadow:0 30px 80px rgba(0,0,0,0.7); margin:auto; overflow:hidden;
+            resize: both; min-height: 400px; min-width: 800px;
+        }
+        .rbt-body-row {
+            display:flex; flex:1; overflow:hidden; min-height:0;
+        }
+        .rbt-main-col {
+            flex:1; display:flex; flex-direction:column; overflow:hidden; min-width:0;
+        }
+        /* ═══ Media Pool Sidebar ═══ */
+        .rbt-media-sidebar {
+            width:240px; min-width:180px; max-width:500px;
+            background:#12121e; border-right:none;
+            display:flex; flex-direction:column; overflow:hidden;
+            position:relative;
+        }
+        .rbt-ms-resize-handle {
+            position:absolute; top:0; right:0; width:5px; height:100%;
+            cursor:col-resize; background:transparent; z-index:10;
+            border-right:1px solid #2a2a3a;
+            transition: background 0.15s;
+        }
+        .rbt-ms-resize-handle:hover, .rbt-ms-resize-handle.active {
+            background:rgba(124,92,255,0.4); border-right-color:#7c5cff;
+        }
+        .rbt-ms-header {
+            display:flex; align-items:center; justify-content:space-between;
+            padding:8px 10px; border-bottom:1px solid #2a2a3a; background:#0e0e1a;
+        }
+        .rbt-ms-actions {
+            display:flex; gap:4px; padding:8px 8px 4px 8px; flex-wrap:wrap;
+        }
+        .rbt-ms-btn {
+            font-size:10px !important; padding:2px 6px !important; flex:1; text-align:center;
+        }
+        .rbt-ms-filters {
+            padding:4px 8px; border-bottom:1px solid #1a1a2a;
+        }
+        .rbt-ms-filter {
+            padding:5px 8px; font-size:11px; color:#888; cursor:pointer; border-radius:4px;
+            transition: background 0.15s;
+        }
+        .rbt-ms-filter:hover { background:#1e1e30; color:#ccc; }
+        .rbt-ms-filter.active { background:#2a2a3e; color:#fff; font-weight:bold; }
+        .rbt-ms-section {
+            font-size:9px; color:#444; font-weight:bold; padding:6px 8px 2px 8px; text-transform:uppercase;
+        }
+        .rbt-ms-bulk { padding:8px; border-bottom:1px solid #1a1a2a; }
+        .rbt-ms-pool {
+            flex:1; overflow-y:auto; padding:8px;
+        }
+        .rbt-ms-footer { padding:8px; border-top:1px solid #1a1a2a; }
+        .rbt-ms-linked-dir {
+            padding:8px; border-bottom:1px solid #1a1a2a; background:rgba(0,0,0,0.15);
         }
         .rbt-header {
-            display:flex; justify-content:space-between; align-items:flex-start;
-            padding:16px 24px; border-bottom:1px solid #1a1a4a; background:#12123a;
-            gap:12px;
+            display:flex; justify-content:space-between; align-items:center;
+            padding:0 12px; height:36px; min-height:36px; max-height:36px;
+            border-bottom:1px solid #1a1a3a; background:#101028;
+            gap:8px; flex-shrink:0;
         }
-        .rbt-header h2 { margin:0; font-size:18px; color:#00D4FF; white-space:nowrap; flex-shrink:0; }
-        .rbt-actions { display:none; /* overwritten by inline styles now */ }
+        .rbt-header h2 { margin:0; font-size:18px; color:var(--accent); white-space:nowrap; flex-shrink:0; }
+        .rbt-actions { display:none; }
         .rbt-btn {
-            padding:3px 8px; border-radius:4px; border:1px solid #333; background:#222;
+            padding:0 10px; height:26px; line-height:26px;
+            border-radius:4px; border:1px solid #333; background:#1e1e38;
             color:#ccc; font-size:11px; cursor:pointer; transition:all .15s;
+            white-space:nowrap; box-sizing:border-box;
+            display:inline-flex; justify-content:center; align-items:center; text-align:center;
         }
-        .rbt-btn:hover { background:#333; color:#fff; }
-        .rbt-btn-accent { background:#00D4FF; color:#000; border-color:#00D4FF; font-weight:bold; }
+        .rbt-btn:hover { background:#2a2a48; color:#fff; }
+        .rbt-btn-accent { background:var(--accent); color:#000; border-color:var(--accent); font-weight:bold; }
         .rbt-btn-accent:hover { background:#00BBDD; }
-        .rbt-btn-primary { background:#00D4FF; color:#000; border:none; font-weight:bold; padding:8px 24px; font-size:14px; }
+        .rbt-btn-primary { background:var(--accent); color:#000; border:none; font-weight:bold; padding:0 24px; height:26px; line-height:26px; font-size:14px; }
         .rbt-btn-primary:hover { background:#00BBDD; }
         .rbt-btn-danger { border-color:#f44; color:#f44; }
         .rbt-btn-danger:hover { background:#f44; color:#fff; }
@@ -3916,48 +8220,182 @@ function _injectBatchTableCSS() {
         }
         .rbt-table thead { position:sticky; top:0; z-index:2; }
         .rbt-table th {
-            padding:10px 8px; background:#1a1a4a; color:#aaa; font-weight:600;
-            text-align:left; border-bottom:2px solid #2a2a6a; white-space:nowrap;
+            padding:6px 10px; height:34px; background:#181836; color:#c0c8dd; font-weight:600;
+            text-align:left; white-space:nowrap; font-size:11px;
+            border-bottom:2px solid #3a3a6a;
+            border-right:1px solid #2e2e58;
+            box-shadow:inset -1px 0 0 rgba(255,255,255,0.03);
+            transition: background 0.2s;
+        }
+        /* 列分组专属主题色（顶部颜色条 + 极光背景色） */
+        .rbt-table th.rbt-grp-video { background:#151c36; box-shadow: inset 0 3px 0 #3b82f6, inset -1px 0 0 rgba(255,255,255,0.03); }
+        .rbt-table th.rbt-grp-audio { background:#1a1636; box-shadow: inset 0 3px 0 #8b5cf6, inset -1px 0 0 rgba(255,255,255,0.03); }
+        .rbt-table th.rbt-grp-sub   { background:#101e38; box-shadow: inset 0 3px 0 #0ea5e9, inset -1px 0 0 rgba(255,255,255,0.03); }
+        .rbt-table th.rbt-grp-media { background:#10212e; box-shadow: inset 0 3px 0 #10b981, inset -1px 0 0 rgba(255,255,255,0.03); }
+        .rbt-table th.rbt-grp-ovl   { background:#221d28; box-shadow: inset 0 3px 0 #f59e0b, inset -1px 0 0 rgba(255,255,255,0.03); }
+        .rbt-table th.rbt-grp-scr   { background:#24162e; box-shadow: inset 0 3px 0 #f43f5e, inset -1px 0 0 rgba(255,255,255,0.03); }
+        .rbt-table th:last-child { border-right:none; }
+        .rbt-th-wrap {
+            display:flex; align-items:center; gap:4px; min-width:0;
+        }
+        .rbt-th-wrap > span {
+            overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1;
+        }
+        .rbt-th-paste {
+            flex:0 0 auto;
+            width:20px; height:18px; line-height:16px;
+            border-radius:4px; border:1px solid #2a5a3a;
+            background:#1a2f24; color:#6fc88a;
+            font-size:10px; cursor:pointer;
+            padding:0; transition:all .15s;
+            opacity:0; pointer-events:none;
+        }
+        .rbt-th-paste:hover {
+            border-color:#4ade80; color:#fff; background:#2a5a3a;
+            transform:scale(1.1);
+        }
+        .rbt-th-folder {
+            flex:0 0 auto;
+            width:20px; height:18px; line-height:16px;
+            border-radius:4px; border:1px solid #5a4a2a;
+            background:#2f2a1a; color:#d4a54a;
+            font-size:10px; cursor:pointer;
+            padding:0; transition:all .15s;
+            opacity:0; pointer-events:none;
+        }
+        .rbt-th-folder:hover {
+            border-color:#f0c050; color:#fff; background:#5a4a2a;
+            transform:scale(1.1);
+        }
+        .rbt-th-clear {
+            flex:0 0 auto;
+            width:18px; height:18px; line-height:16px;
+            border-radius:4px; border:1px solid #384078;
+            background:#1a1f44; color:#b8c6ff;
+            font-size:10px; font-weight:700; cursor:pointer;
+            padding:0; transition:all .15s;
+            opacity:0; pointer-events:none;
+        }
+        .rbt-th-clear:hover {
+            border-color:#ff6b6b; color:#fff; background:#5a1f2a;
+        }
+        .rbt-table th:hover .rbt-th-paste,
+        .rbt-table th:hover .rbt-th-folder,
+        .rbt-table th:hover .rbt-th-clear {
+            opacity: 1; pointer-events: auto;
         }
         .rbt-table td {
-            padding:6px 8px; border-bottom:1px solid #1a1a3a; vertical-align:top;
+            padding:3px 6px; vertical-align:middle;
+            border-bottom:1px solid #1c1c3a;
+            border-right:1px solid #1a1a38;
         }
-        .rbt-row:hover { background:rgba(0,212,255,0.05); }
+        .rbt-table td:last-child { border-right:none; }
+        .rbt-row { transition: background 0.1s; }
+        .rbt-row:nth-child(even) { background:rgba(255,255,255,0.018); }
+        .rbt-row:hover { background:rgba(0,212,255,0.06); }
         .rbt-row-selected { background:rgba(0,212,255,0.1) !important; }
-        .rbt-col-num { width:40px; text-align:center; color:#666; font-weight:bold; }
-        .rbt-col-hook { width:140px; }
-        .rbt-col-bg { width:140px; }
-        .rbt-col-audio { width:120px; }
-        .rbt-col-srt { width:120px; }
-        .rbt-col-txtcontent { min-width:180px; max-width:280px; }
-        .rbt-col-bgm { width:140px; }
-        .rbt-col-title { width:200px; }
-        .rbt-col-body { min-width:250px; }
-        .rbt-col-footer { min-width:180px; }
-        .rbt-col-scroll-title { width:200px; }
-        .rbt-col-scroll-body { min-width:250px; }
+        .rbt-col-num { width:36px; text-align:center; color:#556; font-weight:bold; font-size:11px; }
+
+        /* 统一缩放设置列宽 (Scale Settings): 70px */
+        .rbt-col-bgscale, .rbt-col-bgdurscale, .rbt-col-audiodurscale { width:70px; text-align:center; }
+
+        /* 统一选择文件列宽 (File Selectors): 140px */
+        .rbt-col-hook, .rbt-col-bg, .rbt-col-audio, .rbt-col-srt, .rbt-col-bgm, .rbt-col-pip { width:140px; }
+
+        /* 统一输入文本列宽 (Text Inputs): 200px */
+        .rbt-col-ai_script, .rbt-col-tts_text, .rbt-col-txtcontent, .rbt-col-title, .rbt-col-body, .rbt-col-footer, .rbt-col-scroll-title, .rbt-col-scroll-body { min-width:200px; width:200px; }
+
+        /* 其他杂项列宽 */
+        .rbt-col-tts_voice { width:100px; }
         .rbt-col-dur { width:70px; text-align:center; }
         .rbt-col-tpl { width:120px; }
         .rbt-col-act { width:70px; white-space:nowrap; }
         .rbt-file-name {
-            display:block; padding:4px 6px; background:#12122a; border:1px dashed #2a2a4a;
-            border-radius:4px; color:#8888cc; font-size:11px; min-height:28px;
+            display:block; padding:3px 6px; background:#101020; border:1px solid #1e1e3a;
+            border-radius:3px; color:#8888cc; font-size:11px; min-height:24px; line-height:18px;
             overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:default;
+            transition: all 0.2s;
         }
-        .rbt-placeholder { color:#444; font-style:italic; }
+        /* 方案A2: 极其透明的文字 + 小图标 */
+        .rbt-file-name:has(.rbt-placeholder) {
+            background: rgba(255,255,255,0.015);
+            border-color: transparent;
+            text-align: center;
+            position: relative; /* 必须加relative才能让伪元素绝对居中 */
+        }
+        
+        /* 默认状态单独居中显示的完美 + 号 */
+        .rbt-file-name:has(.rbt-placeholder)::after {
+            content: '+';
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #666;
+            font-size: 15px;
+            font-weight: 300;
+            pointer-events: none;
+            transition: opacity 0.2s;
+        }
+
+        .rbt-file-name:has(.rbt-placeholder) .rbt-placeholder {
+            opacity: 0; /* 文本彻底隐形，但仍撑起布局宽度 */
+            transition: opacity 0.2s;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+        }
+        /* 当文字出现时，也给文字前面补一个 + 号，保证排版平滑 */
+        .rbt-file-name:has(.rbt-placeholder) .rbt-placeholder::before {
+            content: '+';
+            color: inherit;
+            font-size: 13px;
+        }
+        
+        /* 悬浮状态：绝对居中的十字消失，文本底色现身 */
+        .rbt-row:hover .rbt-file-name:has(.rbt-placeholder)::after,
+        .rbt-file-name:has(.rbt-placeholder):hover::after {
+            opacity: 0;
+        }
+        .rbt-row:hover .rbt-file-name:has(.rbt-placeholder) .rbt-placeholder,
+        .rbt-file-name:has(.rbt-placeholder):hover .rbt-placeholder {
+            opacity: 1;
+            color: #889;
+        }
+        
+        .rbt-row:hover .rbt-file-name:has(.rbt-placeholder) {
+            border-color: transparent;
+        }
+        .rbt-file-name:has(.rbt-placeholder):hover {
+            background: rgba(255,255,255,0.05);
+            border-color: #445;
+            border-style: dashed;
+        }
+        .rbt-placeholder { color:#888; font-style:italic; }
         .rbt-textarea {
-            width:100%; padding:4px 6px; background:#12122a; border:1px solid #2a2a4a;
-            border-radius:4px; color:#ddd; font-size:12px; resize:vertical; min-height:40px;
-            font-family:inherit;
+            width:100%; padding:4px 6px; background:transparent; border:1px solid transparent;
+            border-radius:3px; color:#ddd; font-size:12px; resize:none; min-height:28px;
+            font-family:inherit; line-height:1.4; transition:all .2s;
         }
-        .rbt-textarea:focus { border-color:#00D4FF; outline:none; }
+        .rbt-textarea:hover {
+            background: rgba(255,255,255,0.03); 
+            border-color: rgba(255,255,255,0.1);
+        }
+        .rbt-textarea:focus { 
+            background: #0e0e1c;
+            border-color:#4a9eff; 
+            outline:none; 
+            box-shadow:0 0 0 1px rgba(74,158,255,0.3); 
+        }
         .rbt-select {
-            width:100%; padding:4px; background:#12122a; border:1px solid #2a2a4a;
-            border-radius:4px; color:#ddd; font-size:11px;
+            width:100%; padding:0 4px; height:24px; background:#0e0e1c; border:1px solid #1e1e3a;
+            border-radius:3px; color:#ddd; font-size:11px;
         }
         .rbt-row-btn {
-            padding:2px 6px; background:none; border:1px solid transparent;
-            cursor:pointer; font-size:14px; border-radius:4px;
+            padding:2px 5px; background:none; border:1px solid transparent;
+            cursor:pointer; font-size:13px; border-radius:3px;
         }
         .rbt-row-btn:hover { background:rgba(255,255,255,0.1); }
         .rbt-field-clear {
@@ -3965,65 +8403,70 @@ function _injectBatchTableCSS() {
             font-size:11px; padding:1px 4px; border-radius:3px; line-height:1;
             flex-shrink:0; opacity:0.6; transition:all 0.15s;
         }
-        .rbt-field-clear:hover { color:#ff6b6b; opacity:1; background:rgba(255,107,107,0.15); }
+        .rbt-field-clear:hover { color:var(--error); opacity:1; background:rgba(255,107,107,0.15); }
         .rbt-footer {
             display:flex; justify-content:space-between; align-items:center;
-            padding:12px 24px; border-top:1px solid #1a1a4a; background:#12123a;
+            padding:0 16px; height:36px; min-height:36px;
+            border-top:1px solid #1a1a3a; background:#101028;
         }
         #rbt-count { color:#888; font-size:13px; }
         .rbt-droppable.rbt-drag-over {
-            border-color:#00D4FF !important; background:rgba(0,212,255,0.1) !important;
+            border-color:var(--accent) !important; background:rgba(0,212,255,0.1) !important;
         }
         .rbt-hidden-input { display:none !important; }
         .rbt-sep {
-            display:inline-block; width:1px; height:20px; background:#333; margin:0 4px;
+            display:inline-block; width:1px; height:16px; background:#333; margin:0 4px;
+            flex-shrink:0;
         }
         .rbt-group-label {
             font-size:10px; color:#888; font-weight:600; white-space:nowrap;
             border-bottom:1px solid #555; padding-bottom:1px; margin-right:2px;
         }
         .rbt-file-name { cursor:pointer !important; }
-        .rbt-file-name:hover { border-color:#00D4FF !important; color:#00D4FF !important; }
+        .rbt-file-name:hover { border-color:var(--accent) !important; color:var(--accent) !important; }
         .rbt-footer-hint { font-size:11px; color:#555; }
 
         /* ══ Tab bar ══ */
         .rbt-tabbar {
-            display:flex; align-items:stretch; background:#08081a; border-bottom:2px solid #1a1a4a;
-            padding:0 8px; min-height:36px; overflow-x:auto; flex-shrink:0;
+            display:flex; align-items:stretch; background:#0a0a1e; border-bottom:1px solid #1a1a3a;
+            padding:0 12px; height:36px; min-height:36px; max-height:36px;
+            overflow-x:auto; flex-shrink:0;
         }
         .rbt-tabs-scroll {
             display:flex; align-items:stretch; gap:2px; flex:1; min-width:0;
         }
         .rbt-tab {
-            display:flex; align-items:center; gap:6px; padding:6px 16px; cursor:pointer;
+            display:flex; align-items:center; gap:6px; padding:0 14px; cursor:pointer;
             font-size:12px; color:#888; border:1px solid transparent; border-bottom:none;
-            border-radius:8px 8px 0 0; transition:all .15s; position:relative; white-space:nowrap;
-            background:transparent; user-select:none;
+            border-radius:6px 6px 0 0; transition:all .15s; position:relative; white-space:nowrap;
+            background:transparent; user-select:none; height:35px;
         }
         .rbt-tab:hover { color:#ccc; background:rgba(255,255,255,0.05); }
         .rbt-tab-active {
-            color:#00D4FF !important; background:#12123a !important;
-            border-color:#1a1a4a #1a1a4a transparent; font-weight:600;
+            color:var(--accent) !important; background:#101028 !important;
+            border-color:#1a1a3a #1a1a3a transparent; font-weight:600;
         }
         .rbt-tab-active::after {
-            content:''; position:absolute; bottom:-2px; left:0; right:0; height:2px; background:#00D4FF;
+            content:''; position:absolute; bottom:-1px; left:0; right:0; height:2px; background:var(--accent);
         }
         .rbt-tab-close {
             font-size:14px; line-height:1; opacity:0.4; transition:all .15s; padding:0 2px;
         }
-        .rbt-tab-close:hover { opacity:1; color:#ff6b6b; }
+        .rbt-tab-close:hover { opacity:1; color:var(--error); }
         .rbt-tab-add {
-            color:#555; font-size:16px; font-weight:700; padding:6px 12px;
+            color:#555; font-size:16px; font-weight:700; padding:0 12px;
         }
-        .rbt-tab-add:hover { color:#00D4FF; }
+        .rbt-tab-add:hover { color:var(--accent); }
 
         /* ══ Material folder bar ══ */
         .rbt-material-bar {
-            display:flex; align-items:center; gap:8px; padding:6px 16px;
-            background:#0a0a22; border-bottom:1px solid #1a1a3a; flex-shrink:0;
+            display:flex; align-items:center; gap:8px; padding:0 12px;
+            height:36px; min-height:36px; max-height:36px;
+            background:#0e0e24; border-bottom:1px solid #1a1a3a; flex-shrink:0;
         }
         .rbt-mat-path {
-            font-size:12px; color:#a0a0d0; background:#12122a; padding:3px 10px;
+            font-size:11px; color:#8b8b8b; background:#141420; padding:0 10px;
+            height:26px; line-height:26px;
             border-radius:4px; border:1px solid #2a2a4a; max-width:300px;
             overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
         }
@@ -4041,11 +8484,133 @@ function _injectBatchTableCSS() {
 
         /* ══ Batch actions bar ══ */
         .rbt-batch-actions-bar {
-            display:flex; align-items:center; gap:8px; padding:6px 16px;
-            background:#0e0e28; border-bottom:1px solid #1a1a3a; flex-shrink:0;
+            display:flex; align-items:center; gap:8px; padding:8px 12px;
+            min-height:44px; height:auto;
+            background:transparent;
+            border-bottom:none; flex-shrink:0;
+            flex-wrap:wrap;
         }
         .rbt-batch-label {
             display:flex; align-items:center; gap:4px; font-size:11px; color:#aaa; cursor:pointer;
+        }
+        .rbt-batch-label input[type="checkbox"] {
+            width:16px; height:16px; margin:0;
+            accent-color:#7f8fff;
+        }
+        .rbt-batch-group {
+            display:flex; align-items:center; gap:6px;
+            padding:5px 8px;
+            background:rgba(18, 21, 54, 0.9);
+            border:1px solid rgba(88, 101, 188, 0.45);
+            border-radius:10px;
+            box-shadow:inset 0 0 0 1px rgba(255,255,255,0.025);
+            flex-shrink:0;
+        }
+        .rbt-batch-group-plain {
+            background:rgba(18, 21, 54, 0.6);
+            border:1px solid rgba(88, 101, 188, 0.3);
+            box-shadow:inset 0 0 0 1px rgba(255,255,255,0.02);
+            padding:5px 8px;
+            gap:6px;
+        }
+        .rbt-batch-group-plain .rbt-mini-label {
+            color:#c1c8e8;
+        }
+        .rbt-batch-group-emphasis {
+            background:linear-gradient(180deg, rgba(70, 64, 180, 0.18) 0%, rgba(36, 36, 92, 0.78) 100%);
+            border-color:rgba(129, 140, 248, 0.55);
+            box-shadow:0 0 0 1px rgba(129,140,248,0.18), inset 0 0 0 1px rgba(255,255,255,0.03);
+        }
+        .rbt-mini-label {
+            font-size:11px; color:#c9d4ff; font-weight:600; letter-spacing:.2px; white-space:nowrap;
+        }
+        .rbt-mini-label-emphasis {
+            color:#d6ccff;
+            font-weight:700;
+        }
+        .rbt-batch-actions-bar .rbt-btn,
+        .rbt-batch-actions-bar .rbt-select {
+            height:26px;
+            line-height:26px;
+            border-radius:4px;
+            font-size:11px;
+            padding:0 10px;
+            border:1px solid #333;
+            background:#1e1e38;
+            color:#ccc;
+        }
+        .rbt-batch-actions-bar .rbt-btn:hover,
+        .rbt-batch-actions-bar .rbt-select:hover {
+            background:#2a2a48;
+            color:#fff;
+        }
+        .rbt-batch-actions-bar .rbt-btn:active {
+            transform:translateY(1px);
+        }
+        .rbt-batch-actions-bar .rbt-select {
+            line-height:normal;
+        }
+        .rbt-btn-hero {
+            font-weight:700;
+            color:#f5f7ff;
+            border-color:#7f8fff !important;
+            background:linear-gradient(135deg, #4f46e5 0%, #4338ca 55%, #3730a3 100%) !important;
+            box-shadow:0 10px 20px rgba(67,56,202,0.28), inset 0 0 0 1px rgba(255,255,255,0.16);
+        }
+        .rbt-btn-hero:hover {
+            border-color:#9aa6ff !important;
+            background:linear-gradient(135deg, #5f57f0 0%, #4d44dd 55%, #3f39b3 100%) !important;
+            box-shadow:0 12px 24px rgba(79,70,229,0.36), inset 0 0 0 1px rgba(255,255,255,0.2);
+        }
+        .rbt-select-trigger {
+            cursor:pointer;
+            display:inline-flex;
+            align-items:center;
+            justify-content:space-between;
+            user-select:none;
+            gap:8px;
+        }
+        .rbt-select-trigger-label {
+            overflow:hidden;
+            text-overflow:ellipsis;
+            white-space:nowrap;
+        }
+        .rbt-select-caret {
+            font-size:10px;
+            opacity:0.85;
+        }
+        .rbt-batch-summary {
+            font-size:12px;
+            color:var(--accent);
+            margin-left:auto;
+            font-weight:600;
+        }
+        .rbt-scale-pack {
+            display:flex; align-items:center; gap:4px;
+            font-size:11px; white-space:nowrap; font-weight:600;
+            padding:0 2px;
+            color:#c9d4ff;
+        }
+        .rbt-scale-bg { color:#cfd8ff; }
+        .rbt-scale-bgdur { color:#cfd8ff; }
+        .rbt-scale-audiodur { color:#cfd8ff; }
+        .rbt-scale-pack input {
+            width:48px; height:26px;
+            font-size:11px; font-weight:600; color:#ddd;
+            padding:0 4px; text-align:center;
+            background:#0e0e1c;
+            border:1px solid #1e1e3a;
+            border-radius:4px;
+            outline:none;
+            box-sizing:border-box;
+        }
+        .rbt-scale-pack input:hover {
+            border-color:#333;
+            background:#121228;
+        }
+        .rbt-scale-pack input:focus {
+            border-color:var(--accent);
+            box-shadow:0 0 0 1px rgba(0,212,255,0.2);
         }
 
         /* ══ Row refresh animation ══ */
@@ -4064,14 +8629,52 @@ function _injectBatchTableCSS() {
             cursor:grab; color:#555; font-size:14px; user-select:none;
             display:inline-block; padding:4px 2px; line-height:1; transition:color .15s;
         }
-        .rbt-drag-handle:hover { color:#00D4FF; }
+        .rbt-drag-handle:hover { color:var(--accent); }
         .rbt-drag-handle:active { cursor:grabbing; }
         .rbt-row.rbt-dragging {
             opacity:0.4; background:rgba(0,212,255,0.05) !important;
         }
         .rbt-row.rbt-drag-over-row {
-            border-top:2px solid #00D4FF !important;
+            border-top:2px solid var(--accent) !important;
             background:rgba(0,212,255,0.08) !important;
+        }
+
+        /* 解决控件拥挤：隐藏冗余滑块，悬浮显示 */
+        .rbt-clutter-free-scale {
+            position: relative;
+            width: 100%;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .rbt-clutter-free-scale > .rbt-scale-display {
+            font-size: 11px;
+            color: #888;
+            pointer-events: none;
+            transition: opacity 0.15s;
+        }
+        .rbt-clutter-free-scale > .rbt-scale-controls {
+            position: absolute;
+            inset: -2px 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 2px;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.15s;
+            z-index: 5;
+        }
+        td:hover .rbt-clutter-free-scale > .rbt-scale-display,
+        .rbt-clutter-free-scale:focus-within > .rbt-scale-display {
+            opacity: 0;
+        }
+        td:hover .rbt-clutter-free-scale > .rbt-scale-controls,
+        .rbt-clutter-free-scale:focus-within > .rbt-scale-controls {
+            opacity: 1;
+            pointer-events: auto;
         }
     `;
     document.head.appendChild(style);
@@ -4097,7 +8700,7 @@ function _serializeTasks(tasks) {
     });
 }
 
-/** 自动保存到 localStorage (含所有标签页) */
+/** 自动保存到 localStorage (含所有标签页，如果配置了工程路径则自动写入硬盘) */
 function _batchAutoSave() {
     try {
         // Sync current tasks to active tab first
@@ -4107,6 +8710,8 @@ function _batchAutoSave() {
             version: '2.0',
             activeTabId: _batchTableState.activeTabId,
             nextTabId: _batchTableState.nextTabId,
+            projectDir: _batchTableState.projectDir || '',
+            projectName: _batchTableState.projectName || 'UntitledProject.json',
             tabs: _batchTableState.tabs.map(tab => ({
                 id: tab.id,
                 name: tab.name,
@@ -4115,7 +8720,18 @@ function _batchAutoSave() {
                 tasks: _serializeTasks(tab.tasks),
             })),
         };
-        localStorage.setItem(BATCH_CONFIG_KEY, JSON.stringify(data));
+        const jsonStr = JSON.stringify(data);
+        localStorage.setItem(BATCH_CONFIG_KEY, jsonStr);
+
+        // 如果设置了工程目录与文件名，同时写入物理硬盘 (Electron环境)
+        if (_batchTableState.projectDir && _batchTableState.projectName && window.electronAPI && window.electronAPI.writeFileText) {
+            // 需要自己拼路径，也可以借助 path.join，但简单拼凑即可，处理一下末尾斜杠
+            const dir = _batchTableState.projectDir.replace(/[/\\]$/, '');
+            const sep = dir.includes('\\') ? '\\' : '/';
+            const fullPath = dir + sep + _batchTableState.projectName;
+            window.electronAPI.writeFileText(fullPath, JSON.stringify(data, null, 2));
+        }
+
     } catch (e) {
         console.warn('[BatchTable] Auto-save failed:', e.message);
     }
@@ -4130,6 +8746,8 @@ function _batchAutoRestore() {
 
         if (data.version === '2.0' && data.tabs && data.tabs.length > 0) {
             // v2: multi-tab format
+            _batchTableState.projectDir = data.projectDir || '';
+            _batchTableState.projectName = data.projectName || 'UntitledProject.json';
             _batchTableState.tabs = data.tabs.map(t => ({
                 id: t.id,
                 name: t.name,
@@ -4161,6 +8779,162 @@ function _batchAutoRestore() {
         console.warn('[BatchTable] Auto-restore failed:', e.message);
     }
 }
+
+/** 显示工程管理器 */
+async function _showProjectManager() {
+    let popup = document.getElementById('rbt-project-mgr-popup');
+    if (popup) { popup.remove(); return; }
+
+    const overlay = document.createElement('div');
+    overlay.id = 'rbt-project-mgr-popup';
+    overlay.style.cssText = `
+        position:fixed; top:0; left:0; width:100vw; height:100vh;
+        background:rgba(0,0,0,0.75); z-index:100000;
+        display:flex; justify-content:center; align-items:center;
+    `;
+
+    // Fetch projects
+    let projects = [];
+    let loadError = null;
+    if (_batchTableState.projectDir && window.electronAPI && window.electronAPI.scanDirectory) {
+        try {
+            const files = await window.electronAPI.scanDirectory(_batchTableState.projectDir);
+            // filter *.json
+            projects = files.filter(f => f.toLowerCase().endsWith('.json')).map(f => {
+                const sep = f.includes('\\') ? '\\' : '/';
+                const parts = f.split(sep);
+                return { path: f, filename: parts[parts.length - 1] };
+            });
+            // sort by filename or basic length
+            projects.sort((a,b) => a.filename.localeCompare(b.filename));
+        } catch (e) {
+            loadError = e.message;
+        }
+    }
+
+    const currentName = _batchTableState.projectName || 'UntitledProject.json';
+    const projListHtml = projects.length > 0 ? projects.map(p => {
+        const isCurrent = p.filename === currentName;
+        return `
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 12px; background:${isCurrent ? 'rgba(0,212,255,0.1)' : 'rgba(255,255,255,0.02)'}; border:1px solid ${isCurrent ? 'var(--accent)' : '#333'}; border-radius:6px; margin-bottom:6px;">
+                <span style="font-size:13px; color:${isCurrent ? '#fff' : '#ccc'};">${_escHtml(p.filename)}${isCurrent ? ' <span style="color:var(--accent);font-size:10px;">(当前)</span>' : ''}</span>
+                <div>
+                    ${!isCurrent ? `<button class="rbt-btn" style="padding:2px 8px; font-size:11px;" onclick="window._extLoadProject('${_escHtml(p.path)}')">📂 加载</button>` : ''}
+                </div>
+            </div>
+        `;
+    }).join('') : `<div style="color:#666; font-size:13px; text-align:center; padding:20px;">没有找到任何 .json 工程文件</div>`;
+
+    overlay.innerHTML = `
+        <div style="background:#141420; border:1px solid #2a2a4a; border-radius:10px; width:460px; max-height:85vh; display:flex; flex-direction:column; box-shadow:0 10px 40px rgba(0,0,0,0.8);">
+            <div style="padding:12px 16px; border-bottom:1px solid #2a2a4a; display:flex; justify-content:space-between; align-items:center;">
+                <h3 style="margin:0; font-size:16px; font-weight:600; color:#eee;">📦 工程管理</h3>
+                <span class="rbt-close-btn" style="cursor:pointer; color:#888; font-size:18px;">&times;</span>
+            </div>
+            <div style="padding:16px; overflow-y:auto; flex:1;">
+                
+                <div style="margin-bottom:16px;">
+                    <label style="display:block; font-size:11px; color:#aaa; margin-bottom:4px;">默认工程保存目录 (实时自动写入磁盘)</label>
+                    <div style="display:flex; gap:8px;">
+                        <input type="text" id="rbt-mgr-dir-input" value="${_escHtml(_batchTableState.projectDir || '')}" class="rbt-input" style="flex:1;" readonly placeholder="未设置目录，仅在浏览器缓存">
+                        <button class="rbt-btn" id="rbt-mgr-pick-dir-btn">浏览...</button>
+                    </div>
+                </div>
+
+                <div style="margin-bottom:20px; padding-top:16px; border-top:1px dashed #333;">
+                    <label style="display:block; font-size:11px; color:#aaa; margin-bottom:4px;">新建 / 重命名工程</label>
+                    <div style="display:flex; gap:8px;">
+                        <input type="text" id="rbt-mgr-name-input" value="${_escHtml(currentName)}" class="rbt-input" style="flex:1;" placeholder="例如: 项目一.json">
+                        <button class="rbt-btn" id="rbt-mgr-new-btn">应用为新工程</button>
+                    </div>
+                    <div style="font-size:10px; color:#777; margin-top:4px;">注意：应用后当前界面数据将关联到这个新文件名，并在目录内自动保存。</div>
+                </div>
+
+                <div>
+                    <div style="font-size:12px; color:#ccc; margin-bottom:8px; border-bottom:1px solid #333; padding-bottom:4px;">当前目录下的工程 (${projects.length}) :</div>
+                    ${loadError ? `<div style="color:var(--rbt-red); font-size:12px; padding:10px;">读取目录报错: ${_escHtml(loadError)}</div>` : projListHtml}
+                </div>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(overlay);
+
+    overlay.querySelector('.rbt-close-btn').addEventListener('click', () => overlay.remove());
+
+    overlay.querySelector('#rbt-mgr-pick-dir-btn').addEventListener('click', async () => {
+        if (!window.electronAPI || !window.electronAPI.selectDirectory) {
+            alert('环境不支持选择目录 (需Electron)');
+            return;
+        }
+        const dir = await window.electronAPI.selectDirectory();
+        if (dir) {
+            _batchTableState.projectDir = dir;
+            // Immediate save
+            _batchAutoSave();
+            overlay.remove();
+            _showProjectManager(); // reload UI
+        }
+    });
+
+    overlay.querySelector('#rbt-mgr-new-btn').addEventListener('click', () => {
+        let nname = overlay.querySelector('#rbt-mgr-name-input').value.trim();
+        if (!nname) return;
+        if (!nname.toLowerCase().endsWith('.json')) nname += '.json';
+        if (_batchTableState.projectName !== nname) {
+            _batchTableState.projectName = nname;
+            _batchAutoSave(); // trigger auto save instantly
+            _renderBatchTable(); // refresh UI header
+            overlay.remove();
+            _showProjectManager();
+        }
+    });
+}
+
+// 全局辅助用于点击加载工程 (只能挂在 window 上因为是在 innerHTML 里生成的 onclick)
+window._extLoadProject = async (pathStr) => {
+    if (!window.electronAPI || !window.electronAPI.readFileText) return;
+    const content = window.electronAPI.readFileText(pathStr);
+    if (!content) {
+        alert('无法读取或文件为空!');
+        return;
+    }
+    try {
+        const file = new File([content], _batchTableState.projectName || 'project.json', { type: 'application/json' });
+        
+        // 我们利用现成的导入逻辑，稍微魔改下跳过 input.click
+        // 因为现成的 _batchImportConfig 需要传入 file (FileReader)，它会确认。
+        const data = JSON.parse(content);
+        if (data.version === '2.0' && data.tabs) {
+            if (!confirm(`将从硬盘加载 [${pathStr}]\n这将替换当前界面的所有任务数据！\n确定加载？`)) return;
+            _batchTableState.tabs = data.tabs.map(t => ({
+                id: t.id,
+                name: t.name,
+                materialDir: t.materialDir || '',
+                lastRefreshTime: t.lastRefreshTime || null,
+                tasks: t.tasks || [],
+            }));
+            const parts = pathStr.split(/[/\\]/);
+            _batchTableState.projectName = parts[parts.length - 1]; // update current name
+            _batchTableState.activeTabId = data.activeTabId || _batchTableState.tabs[0].id;
+            _batchTableState.nextTabId = data.nextTabId || _batchTableState.tabs.length + 1;
+            const activeTab = _getActiveTab();
+            _loadTabTasks(activeTab);
+            _renderBatchTable();
+            _batchAutoSave(); // instantly resync localStorage
+
+            const popup = document.getElementById('rbt-project-mgr-popup');
+            if (popup) popup.remove();
+            
+            const total = _batchTableState.tabs.reduce((s, t) => s + (t.tasks || []).length, 0);
+            alert(`✅ 已成功加载工程！`);
+        } else {
+            alert('文件格式不正确或版本过旧(仅支持v2.0多标签工程)');
+        }
+    } catch (e) {
+        alert('加载工程解析失败: ' + e.message);
+    }
+};
 
 /** 导出所有标签页为 JSON 工程文件 */
 function _batchExportConfig() {
@@ -4251,8 +9025,22 @@ function _batchImportConfig(file) {
 // 13. Auto-initialize
 // ═══════════════════════════════════════════════════════
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
     _batchAutoRestore();
+
+    // 如果未设置工程路径，默认使用操作系统的“下载”文件夹
+    if (!_batchTableState.projectDir && window.electronAPI && window.electronAPI.getDownloadsPath) {
+        try {
+            const dlPath = await window.electronAPI.getDownloadsPath();
+            if (dlPath) {
+                _batchTableState.projectDir = dlPath;
+                _batchAutoSave(); // 保存初始配置以固化路径
+            }
+        } catch (err) {
+            console.warn('Failed to set default project dir to downloads:', err);
+        }
+    }
+
     _initBatchTable();
 
     // 每30秒自动保存一次（安全网）
@@ -4270,5 +9058,857 @@ window.addEventListener('beforeunload', () => {
     }
 });
 
+// ═══════════════════════════════════════════════════════
+// ✂️ Trim Modal — 裁切区间编辑弹窗
+// ═══════════════════════════════════════════════════════
+
+function _showTrimModal(idx) {
+    const state = window._reelsState;
+    const task = state.tasks[idx];
+    if (!task) return;
+
+    // Remove existing
+    const existing = document.getElementById('rbt-trim-modal');
+    if (existing) existing.remove();
+
+    const trimStart = task.contentVideoTrimStart != null ? task.contentVideoTrimStart : '';
+    const trimEnd = task.contentVideoTrimEnd != null ? task.contentVideoTrimEnd : '';
+    const cvPath = task.contentVideoPath || task.bgPath || '';
+    const cvName = cvPath ? cvPath.split('/').pop().split('\\').pop() : '(未选择视频)';
+
+    const overlay = document.createElement('div');
+    overlay.id = 'rbt-trim-modal';
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:100000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.7);backdrop-filter:blur(4px);';
+
+    overlay.innerHTML = `
+    <div style="background:#1a1a2e;border:1px solid #333;border-radius:14px;padding:24px;min-width:400px;max-width:520px;box-shadow:0 20px 60px rgba(0,0,0,0.8);">
+        <div style="font-size:15px;font-weight:700;color:#eee;margin-bottom:16px;display:flex;align-items:center;gap:8px;">
+            ✂️ 片段裁切设置
+            <span style="font-size:11px;color:#666;font-weight:400;margin-left:auto;">#${idx + 1}</span>
+        </div>
+        <div style="font-size:11px;color:#888;margin-bottom:16px;padding:8px;background:#141420;border-radius:6px;word-break:break-all;">
+            🎬 ${_escHtml(cvName)}
+        </div>
+
+        <div style="display:flex;gap:12px;margin-bottom:16px;">
+            <div style="flex:1;">
+                <label style="font-size:11px;color:#888;display:block;margin-bottom:4px;">入点 (秒)</label>
+                <input type="number" id="rbt-trim-start" value="${trimStart}" min="0" step="0.1"
+                    placeholder="留空=从头"
+                    style="width:100%;padding:8px 10px;background:#141420;border:1px solid #333;border-radius:6px;color:#eee;font-size:14px;font-family:monospace;">
+            </div>
+            <div style="flex:1;">
+                <label style="font-size:11px;color:#888;display:block;margin-bottom:4px;">出点 (秒)</label>
+                <input type="number" id="rbt-trim-end" value="${trimEnd}" min="0" step="0.1"
+                    placeholder="留空=到结尾"
+                    style="width:100%;padding:8px 10px;background:#141420;border:1px solid #333;border-radius:6px;color:#eee;font-size:14px;font-family:monospace;">
+            </div>
+        </div>
+
+        <div style="font-size:11px;color:#666;margin-bottom:16px;line-height:1.5;">
+            💡 支持秒数 (如 5.2) 或时码格式 (01:30.5)。留空表示不裁切该端点。
+        </div>
+
+        <div style="display:flex;gap:8px;justify-content:flex-end;">
+            <button id="rbt-trim-clear" style="padding:8px 16px;border-radius:6px;border:1px solid #555;background:transparent;color:#f87171;cursor:pointer;font-size:12px;">
+                🗑 清除裁切
+            </button>
+            <button id="rbt-trim-cancel" style="padding:8px 16px;border-radius:6px;border:1px solid #555;background:transparent;color:#aaa;cursor:pointer;font-size:12px;">
+                取消
+            </button>
+            <button id="rbt-trim-save" style="padding:8px 20px;border-radius:6px;border:none;background:#4c9eff;color:#000;cursor:pointer;font-size:12px;font-weight:600;">
+                ✅ 保存
+            </button>
+        </div>
+    </div>`;
+
+    document.body.appendChild(overlay);
+
+    // Parse time string (supports seconds and MM:SS.s format)
+    const parseTime = (str) => {
+        if (!str || str.trim() === '') return null;
+        str = str.trim();
+        // MM:SS.sss
+        const parts = str.split(':');
+        if (parts.length === 2) {
+            return parseFloat(parts[0]) * 60 + parseFloat(parts[1]);
+        }
+        // HH:MM:SS
+        if (parts.length === 3) {
+            return parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2]);
+        }
+        return parseFloat(str);
+    };
+
+    overlay.querySelector('#rbt-trim-save').addEventListener('click', () => {
+        const s = parseTime(overlay.querySelector('#rbt-trim-start').value);
+        const e = parseTime(overlay.querySelector('#rbt-trim-end').value);
+        task.contentVideoTrimStart = (s != null && !isNaN(s)) ? s : null;
+        task.contentVideoTrimEnd = (e != null && !isNaN(e)) ? e : null;
+        overlay.remove();
+        _renderBatchTable();
+    });
+
+    overlay.querySelector('#rbt-trim-clear').addEventListener('click', () => {
+        task.contentVideoTrimStart = null;
+        task.contentVideoTrimEnd = null;
+        overlay.remove();
+        _renderBatchTable();
+    });
+
+    overlay.querySelector('#rbt-trim-cancel').addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+    // Auto focus
+    setTimeout(() => overlay.querySelector('#rbt-trim-start')?.focus(), 100);
+}
+
+// ═══════════════════════════════════════════════════════
+// ✂️ Clip A/B Paste Modal — 剪辑文案双版本粘贴
+// ═══════════════════════════════════════════════════════
+
+function _showClipAbPasteModal() {
+    const existing = document.getElementById('rbt-clip-ab-modal');
+    if (existing) existing.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'rbt-clip-ab-modal';
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:100000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.7);backdrop-filter:blur(4px);';
+
+    const presetBgA = localStorage.getItem('rbt_clip_bg_preset_a') || '';
+    const presetBgB = localStorage.getItem('rbt_clip_bg_preset_b') || '';
+    const presetCvMode = localStorage.getItem('rbt_clip_cv_mode') || 'single';
+    const presetCvPath = localStorage.getItem('rbt_clip_cv_preset') || '';
+
+    overlay.innerHTML = `
+    <div style="background:#1a1a2e;border:1px solid #333;border-radius:14px;padding:28px;width:950px;max-height:85vh;box-shadow:0 20px 60px rgba(0,0,0,0.8);display:flex;flex-direction:column;">
+        <div style="font-size:16px;font-weight:700;color:#eee;margin-bottom:4px;">✂️ 批量 A/B 混剪模式：智能任务提取</div>
+        <div style="font-size:11px;color:#888;margin-bottom:12px;line-height:1.6;">
+            每行格式 (Tab分隔)：<code style="background:#222;padding:2px 6px;border-radius:3px;color:#b8a0ff;">片段名  A标题  A正文  B标题  B正文</code><br>
+            • 每个片段素材将自动衍生分配 <strong style="color:#4c9eff">2段任务</strong> (即 A版 + B版)。只需在此贴入双版文案，点击生成即可预览。
+        </div>
+
+        <!-- 全局设定区 -->
+        <div style="display:flex;gap:12px;margin-bottom:12px;background:#13131c;padding:12px;border-radius:8px;border:1px solid #2a2a3a;">
+            <div style="flex:1;">
+                <label style="font-size:11px;color:#888;display:block;margin-bottom:4px;">🎨 A版固定背景 (<span style="color:#a78bfa;cursor:pointer;" title="双击打开文件选择器">双击</span> 或拖拽 选文件)</label>
+                <input type="text" id="rbt-clip-bg-a" value="${presetBgA}" placeholder="A版统一背景图片/视频 (可留空)"
+                    style="width:100%;padding:6px 10px;background:#141420;border:1px solid #333;border-radius:6px;color:#eee;font-size:12px;">
+            </div>
+            <div style="flex:1;">
+                <label style="font-size:11px;color:#888;display:block;margin-bottom:4px;">🎨 B版固定背景 (<span style="color:#4c9eff;cursor:pointer;" title="双击打开文件选择器">双击</span> 或拖拽 选文件)</label>
+                <input type="text" id="rbt-clip-bg-b" value="${presetBgB}" placeholder="B版统一背景图片/视频 (可留空)"
+                    style="width:100%;padding:6px 10px;background:#141420;border:1px solid #333;border-radius:6px;color:#eee;font-size:12px;">
+            </div>
+        </div>
+
+        <div style="background:#13131c;padding:12px;border-radius:8px;border:1px dashed #444;margin-bottom:16px;">
+            <div style="display:flex;align-items:center;margin-bottom:6px;gap:16px;">
+                 <label style="font-size:11px;color:#ccc;font-weight:600;">📹 视频覆层素材 (内容素材) 及 裁切/缩放设置：</label>
+                 <label style="font-size:11px;color:#aaa;cursor:pointer;display:flex;align-items:center;gap:4px;">
+                     <input type="radio" name="clip_cv_mode" value="single" ${presetCvMode==='single'?'checked':''} style="accent-color:var(--accent);">
+                     单视频使用同一素材 (名称列若填入 '00:10-00:20' 则自动应用为裁切入出点)
+                 </label>
+                 <label style="font-size:11px;color:#aaa;cursor:pointer;display:flex;align-items:center;gap:4px;">
+                     <input type="radio" name="clip_cv_mode" value="multi" ${presetCvMode==='multi'?'checked':''} style="accent-color:var(--accent);">
+                     多视频素材夹 (每行按顺序指派)
+                 </label>
+            </div>
+            <div style="display:flex;gap:12px;align-items:center;">
+                <input type="text" id="rbt-clip-cv-path" value="${presetCvPath}" placeholder="请选择单视频文件 或 包含多个视频的文件夹..."
+                    style="flex:1;padding:6px 10px;background:#141420;border:1px solid #333;border-radius:6px;color:#eee;font-size:12px;">
+                <button id="rbt-clip-cv-btn" style="padding:4px 12px;border-radius:6px;border:1px solid #555;background:transparent;color:#bbb;cursor:pointer;font-size:11px;white-space:nowrap;">📁 浏览</button>
+                <div style="width:1px;height:14px;background:#444;margin:0 4px;"></div>
+                <label style="font-size:11px;color:#bbb;white-space:nowrap;">缩放比例</label>
+                <input type="number" id="rbt-clip-cv-scale" value="100" min="10" max="500"
+                    style="width:50px;padding:4px;background:#141420;border:1px solid #333;border-radius:4px;color:#eee;font-size:11px;text-align:center;">
+                <label style="font-size:11px;color:#bbb;">%</label>
+            </div>
+        </div>
+
+        <div style="display:flex;gap:16px;flex:1;min-height:300px;margin-bottom:16px;">
+            <div style="flex:1;display:flex;flex-direction:column;width:35%;">
+                <label style="font-size:11px;color:#888;display:block;margin-bottom:4px;">📋 1. 将文案全选并复制到此处</label>
+                <textarea id="rbt-clip-ab-area" style="flex:1;width:100%;background:#141420;border:1px solid #333;border-radius:8px;color:#ddd;font-size:12px;padding:12px;font-family:monospace;resize:none;white-space:pre;"
+                    placeholder="名称	A标题	A正文	B标题	B正文\nclip_01	震惊！	这个方法太绝了	Did you know	This trick is amazing\nclip_02	必看！	三分钟学会	Watch this	3 min guide"></textarea>
+            </div>
+            <div style="flex:1;display:flex;flex-direction:column;width:65%;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                    <label style="font-size:11px;color:#888;">👁️ 2. 右侧表格即时预览最终效果</label>
+                    <label style="display:flex;align-items:center;gap:4px;font-size:10px;color:#aaa;cursor:pointer;">
+                        <input type="checkbox" id="rbt-clip-ab-footer" style="accent-color:var(--accent);">
+                        我包含结尾数据(第5/6列)
+                    </label>
+                </div>
+                <div id="rbt-clip-ab-preview" style="flex:1;background:#0d0d16;border:1px dashed #444;border-radius:8px;padding:8px;overflow-y:auto;font-size:11px;line-height:1.5;">
+                    <div style="color:#666;text-align:center;padding:20px;">等待输入... 右侧将实时模拟生成A/B任务</div>
+                </div>
+            </div>
+        </div>
+
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px;">
+            <button id="rbt-clip-ab-cancel" style="padding:8px 16px;border-radius:6px;border:1px solid #555;background:transparent;color:#aaa;cursor:pointer;font-size:12px;">取消</button>
+            <button id="rbt-clip-ab-import" style="padding:8px 30px;border-radius:6px;border:none;background:#7c5cff;color:#fff;cursor:pointer;font-size:13px;font-weight:600;">📥 预览无误，立即生成到任务区</button>
+        </div>
+    </div>`;
+
+    document.body.appendChild(overlay);
+
+    function _renderAbPreview() {
+        const raw = overlay.querySelector('#rbt-clip-ab-area').value.trim();
+        const hasFooter = overlay.querySelector('#rbt-clip-ab-footer').checked;
+        const previewEl = overlay.querySelector('#rbt-clip-ab-preview');
+        
+        if (!raw) {
+            previewEl.innerHTML = '<div style="color:#666;text-align:center;padding:20px;">等待输入... 右侧将实时模拟生成A/B任务</div>';
+            return;
+        }
+
+        const lines = raw.split('\n').filter(l => l.trim());
+        let html = '<table style="width:100%;border-collapse:collapse;color:#ccc;table-layout:fixed;border-radius:4px;overflow:hidden;box-shadow:0 0 0 1px #333;">';
+        html += '<tr style="background:#222;position:sticky;top:0;"><th style="padding:4px 6px;border-bottom:1px solid #444;width:35px;">版本</th><th style="padding:4px 6px;border-bottom:1px solid #444;width:60px;">名称</th><th style="padding:4px 6px;border-bottom:1px solid #444;text-align:left;">覆层文案内容</th></tr>';
+        
+        let validCount = 0;
+        for (let i = 0; i < Math.min(lines.length, 30); i++) {
+            const cols = lines[i].split('\t');
+            if (cols.length < 3) continue;
+            validCount++;
+            
+            const name = (cols[0] || '').trim();
+            let aTitle = (cols[1] || '').trim(), aBody = (cols[2] || '').trim(), aFooter = hasFooter ? (cols[5] || '').trim() : '';
+            let bTitle = (cols[3] || '').trim(), bBody = (cols[4] || '').trim(), bFooter = hasFooter ? (cols[6] || '').trim() : '';
+            
+            aTitle = aTitle ? `<strong style="color:#ccc;">${aTitle}</strong>` : '';
+            aBody = aBody ? `<span style="color:#aaa;">${aBody}</span>` : '';
+            aFooter = aFooter ? `<span style="color:#888;">${aFooter}</span>` : '';
+            
+            bTitle = bTitle ? `<strong style="color:#ccc;">${bTitle}</strong>` : '';
+            bBody = bBody ? `<span style="color:#aaa;">${bBody}</span>` : '';
+            bFooter = bFooter ? `<span style="color:#888;">${bFooter}</span>` : '';
+            
+            html += `<tr style="background:#1a1a24;"><td style="padding:4px 6px;border-bottom:1px solid #2a2a3a;color:#a78bfa;font-weight:bold;text-align:center;">A版</td><td style="padding:4px 6px;border-bottom:1px solid #2a2a3a;word-break:break-all;color:#ccc;">${name}_A</td><td style="padding:4px 6px;border-bottom:1px solid #2a2a3a;word-break:break-word;">${[aTitle, aBody, aFooter].filter(Boolean).join(' <span style="color:#555">|</span> ')}</td></tr>`;
+            
+            if (bTitle || bBody || bFooter) {
+                html += `<tr style="background:#141a24;"><td style="padding:4px 6px;border-bottom:1px solid #2a2a3a;color:#4c9eff;font-weight:bold;text-align:center;">B版</td><td style="padding:4px 6px;border-bottom:1px solid #2a2a3a;word-break:break-all;color:#ccc;">${name}_B</td><td style="padding:4px 6px;border-bottom:1px solid #2a2a3a;word-break:break-word;">${[bTitle, bBody, bFooter].filter(Boolean).join(' <span style="color:#555">|</span> ')}</td></tr>`;
+            }
+        }
+        html += '</table>';
+        if (lines.length > 30) {
+            html += `<div style="text-align:center;padding:8px;color:#888;font-size:11px;">(已解析 ${lines.length} 行源数据，仅展示前 30 行预览)</div>`;
+        }
+        previewEl.innerHTML = html;
+    }
+
+    overlay.querySelector('#rbt-clip-ab-area').addEventListener('input', _renderAbPreview);
+    overlay.querySelector('#rbt-clip-ab-footer').addEventListener('change', _renderAbPreview);
+
+    function setupFileSelectPath(id) {
+        const input = overlay.querySelector('#' + id);
+        
+        const triggerNativeDialog = async () => {
+            if (window.require) {
+                try {
+                    const { dialog, getCurrentWindow } = window.require('@electron/remote');
+                    const result = await dialog.showOpenDialog(getCurrentWindow(), {
+                        title: '选择背景素材 (图片/视频 或 图片序列文件夹)',
+                        properties: ['openFile', 'openDirectory']
+                    });
+                    if (!result.canceled && result.filePaths && result.filePaths.length > 0) {
+                        input.value = result.filePaths[0];
+                        return true;
+                    }
+                    return result.canceled;
+                } catch (e) {
+                    console.warn('Native dialog failed, falling back', e);
+                }
+            }
+            return false;
+        };
+
+        const triggerFallback = () => {
+            const fileInput = document.createElement('input');
+            fileInput.type = 'file';
+            fileInput.accept = '.mp4,.mov,.mkv,.png,.jpg,.jpeg';
+            fileInput.addEventListener('change', (e) => {
+                if (e.target.files.length) {
+                    input.value = e.target.files[0].path || e.target.files[0].name;
+                }
+            });
+            fileInput.click();
+        };
+
+        input.addEventListener('dblclick', async () => {
+            const handled = await triggerNativeDialog();
+            if (handled === false) {
+                triggerFallback();
+            }
+        });
+
+        input.addEventListener('dragover', e => e.preventDefault());
+        input.addEventListener('drop', e => {
+            e.preventDefault();
+            if (e.dataTransfer.files.length) {
+                input.value = e.dataTransfer.files[0].path || e.dataTransfer.files[0].name;
+            }
+        });
+    }
+    setupFileSelectPath('rbt-clip-bg-a');
+    setupFileSelectPath('rbt-clip-bg-b');
+    
+    const cvInput = overlay.querySelector('#rbt-clip-cv-path');
+    const cvModeRadios = overlay.querySelectorAll('input[name="clip_cv_mode"]');
+    
+    function updateCvBtnLabel() {
+        const isMulti = document.querySelector('input[name="clip_cv_mode"]:checked').value === 'multi';
+        overlay.querySelector('#rbt-clip-cv-btn').textContent = isMulti ? '📁 选择文件夹' : '🎬 选择视频文件';
+    }
+    cvModeRadios.forEach(r => r.addEventListener('change', updateCvBtnLabel));
+    updateCvBtnLabel();
+
+    overlay.querySelector('#rbt-clip-cv-btn').addEventListener('click', async () => {
+        const isMulti = document.querySelector('input[name="clip_cv_mode"]:checked').value === 'multi';
+        
+        let handled = false;
+        if (window.require) {
+            try {
+                const { dialog, getCurrentWindow } = window.require('@electron/remote');
+                const result = await dialog.showOpenDialog(getCurrentWindow(), {
+                    title: isMulti ? '选择需要批量映射的视频所在的文件夹' : '选择包含在每一个视频内容表层的唯一主文件(或图片序列文件夹)',
+                    properties: isMulti ? ['openDirectory'] : ['openFile', 'openDirectory']
+                });
+                if (!result.canceled && result.filePaths && result.filePaths.length > 0) {
+                    cvInput.value = result.filePaths[0];
+                    handled = true;
+                } else if (result.canceled) {
+                    handled = true;
+                }
+            } catch (e) {
+                console.warn('Native dialog failed for cv btn, falling back', e);
+            }
+        }
+
+        if (!handled) {
+            const fileInput = document.createElement('input');
+            fileInput.type = 'file';
+            // standard <input type="file"> fallback requires webkitdirectory to pick a folder.
+            // Since we want both in Single mode, we can't do both cleanly in raw HTML. We let desktop app handle it naturally via showOpenDialog.
+            if (isMulti) {
+                fileInput.webkitdirectory = true;
+                fileInput.directory = true;
+            } else {
+                fileInput.accept = '.mp4,.mov,.mkv,.avi,.webm,.png,.jpg,.jpeg';
+            }
+            fileInput.addEventListener('change', (e) => {
+                if (e.target.files.length) {
+                    const file = e.target.files[0];
+                    let localPath = file.path;
+                    if (!localPath && window.electronAPI && window.electronAPI.getFilePath) {
+                        localPath = window.electronAPI.getFilePath(file);
+                    }
+                    if (isMulti && localPath) {
+                        const path = window.require ? window.require('path') : null;
+                        cvInput.value = path ? path.dirname(localPath) : localPath;
+                    } else {
+                        cvInput.value = localPath || file.name;
+                    }
+                }
+            });
+            fileInput.click();
+        }
+    });
+
+    cvInput.addEventListener('dblclick', () => {
+        overlay.querySelector('#rbt-clip-cv-btn').click();
+    });
+    cvInput.addEventListener('dragover', e => e.preventDefault());
+    cvInput.addEventListener('drop', e => {
+        e.preventDefault();
+        if (e.dataTransfer.files.length) {
+            const file = e.dataTransfer.files[0];
+            let localPath = file.path;
+            if (!localPath && window.electronAPI && window.electronAPI.getFilePath) {
+                localPath = window.electronAPI.getFilePath(file);
+            }
+            cvInput.value = localPath || file.name;
+        }
+    });
+
+    overlay.querySelector('#rbt-clip-ab-cancel').addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+    overlay.querySelector('#rbt-clip-ab-import').addEventListener('click', () => {
+        const raw = overlay.querySelector('#rbt-clip-ab-area').value.trim();
+        if (!raw) {
+            if (typeof showToast === 'function') showToast('请粘贴文案数据', 'error');
+            return;
+        }
+
+        const bgA = overlay.querySelector('#rbt-clip-bg-a').value.trim();
+        const bgB = overlay.querySelector('#rbt-clip-bg-b').value.trim();
+        const cvMode = document.querySelector('input[name="clip_cv_mode"]:checked').value;
+        const cvPath = overlay.querySelector('#rbt-clip-cv-path').value.trim();
+        const cvScale = parseInt(overlay.querySelector('#rbt-clip-cv-scale').value, 10) || 100;
+        
+        localStorage.setItem('rbt_clip_bg_preset_a', bgA);
+        localStorage.setItem('rbt_clip_bg_preset_b', bgB);
+        localStorage.setItem('rbt_clip_cv_mode', cvMode);
+        localStorage.setItem('rbt_clip_cv_preset', cvPath);
+
+        const hasFooter = overlay.querySelector('#rbt-clip-ab-footer').checked;
+        const state = window._reelsState;
+        
+        // 解析多视频文件夹逻辑
+        let cvFiles = [];
+        if (cvMode === 'multi' && cvPath && window.require) {
+            try {
+                const fs = window.require('fs');
+                const path = window.require('path');
+                if (fs.existsSync(cvPath) && fs.statSync(cvPath).isDirectory()) {
+                    cvFiles = fs.readdirSync(cvPath).filter(f => !f.startsWith('.') && /\.(mp4|mov|mkv|wmv|avi|webm)$/i.test(f)).sort();
+                    cvFiles = cvFiles.map(f => path.join(cvPath, f));
+                }
+            } catch (e) {
+                console.warn('Failed to read folder for multi-video mode', e);
+            }
+        }
+
+        const lines = raw.split('\n').filter(l => l.trim());
+        let created = 0;
+
+        // Clear trailing totally empty tasks so they are overwritten implicitly
+        while (state.tasks.length > 0) {
+            const last = state.tasks[state.tasks.length - 1];
+            if (!last.videoPath && !last.audioPath && (!last.overlays || last.overlays.length === 0)) {
+                state.tasks.pop();
+            } else {
+                break;
+            }
+        }
+        
+        // 时间解析 Helper
+        function _parseTimeStr(str) {
+            if (typeof window.parseBatchCutTime === 'function') return window.parseBatchCutTime(str);
+            // 简单的回退解析 hh:mm:ss.ff
+            const p = String(str).split(':');
+            if (p.length === 3) return parseFloat(p[0])*3600 + parseFloat(p[1])*60 + parseFloat(p[2]);
+            if (p.length === 2) return parseFloat(p[0])*60 + parseFloat(p[1]);
+            return parseFloat(p[0]) || null;
+        }
+
+        let validRowIndex = 0;
+        for (const line of lines) {
+            const cols = line.split('\t');
+            if (cols.length < 3) continue;
+
+            const rawName = (cols[0] || '').trim();
+            // 尝试从名称中提取入出点裁切信息
+            let trimStart = null, trimEnd = null;
+            let displayBaseName = rawName;
+            
+            const timeMatch = rawName.match(/^(.+?)\s*[—\-~～]+\s*(.+)$/);
+            if (timeMatch) {
+                const ps1 = _parseTimeStr(timeMatch[1].trim());
+                const ps2 = _parseTimeStr(timeMatch[2].trim());
+                if (ps1 !== null && ps2 !== null) {
+                    trimStart = ps1;
+                    trimEnd = ps2;
+                    // 如果名字全都是时间，就不改；否则可以保留原始信息
+                }
+            }
+
+            const aTitle = (cols[1] || '').trim();
+            const aBody = (cols[2] || '').trim();
+            const bTitle = (cols[3] || '').trim();
+            const bBody = (cols[4] || '').trim();
+            const aFooter = hasFooter ? (cols[5] || '').trim() : '';
+            const bFooter = hasFooter ? (cols[6] || '').trim() : '';
+
+            // 获取相应的 Content Video 路径
+            let assignCvPath = '';
+            if (cvMode === 'single') {
+                assignCvPath = cvPath;
+            } else if (cvMode === 'multi' && cvFiles.length > 0) {
+                assignCvPath = cvFiles[validRowIndex % cvFiles.length];
+            }
+
+            // ── A ──
+            const taskA = typeof _createEmptyTask === 'function' ? _createEmptyTask() : {};
+            taskA.baseName = displayBaseName ? `${displayBaseName}_A` : `clip_${created + 1}_A`;
+            taskA.fileName = taskA.baseName + '.mp4';
+            taskA._version = 'A';
+            if (bgA) { taskA.bgPath = bgA; taskA.videoPath = bgA; }
+            if (assignCvPath) {
+                taskA.contentVideoPath = assignCvPath;
+                taskA.contentVideoScale = cvScale;
+                if (trimStart !== null) taskA.contentVideoTrimStart = trimStart;
+                if (trimEnd !== null) taskA.contentVideoTrimEnd = trimEnd;
+            }
+            
+            if (aTitle || aBody || aFooter) {
+                if (window.ReelsOverlay && window.ReelsOverlay.createTextCardOverlay) {
+                    taskA.overlays = [ window.ReelsOverlay.createTextCardOverlay({title_text: aTitle, body_text: aBody, footer_text: aFooter, start: 0, end: 9999}) ];
+                } else {
+                    taskA.overlays = [{ type: 'textcard', id: 'tc_' + Date.now() + '_a', title_text: aTitle, body_text: aBody, footer_text: aFooter, x: 85, y: 310, w: 910, h: 1300, start: 0, end: 9999 }];
+                }
+            }
+            state.tasks.push(taskA);
+            created++;
+
+            // ── B ──
+            if (bTitle || bBody || bFooter) {
+                const taskB = typeof _createEmptyTask === 'function' ? _createEmptyTask() : {};
+                taskB.baseName = displayBaseName ? `${displayBaseName}_B` : `clip_${created + 1}_B`;
+                taskB.fileName = taskB.baseName + '.mp4';
+                taskB._version = 'B';
+                if (bgB) { taskB.bgPath = bgB; taskB.videoPath = bgB; }
+                if (assignCvPath) {
+                    taskB.contentVideoPath = assignCvPath;
+                    taskB.contentVideoScale = cvScale;
+                    if (trimStart !== null) taskB.contentVideoTrimStart = trimStart;
+                    if (trimEnd !== null) taskB.contentVideoTrimEnd = trimEnd;
+                }
+                
+                if (window.ReelsOverlay && window.ReelsOverlay.createTextCardOverlay) {
+                    taskB.overlays = [ window.ReelsOverlay.createTextCardOverlay({title_text: bTitle, body_text: bBody, footer_text: bFooter, start: 0, end: 9999}) ];
+                } else {
+                    taskB.overlays = [{ type: 'textcard', id: 'tc_' + Date.now() + '_b', title_text: bTitle, body_text: bBody, footer_text: bFooter, x: 85, y: 310, w: 910, h: 1300, start: 0, end: 9999 }];
+                }
+                state.tasks.push(taskB);
+                created++;
+            }
+            
+            validRowIndex++;
+        }
+
+        overlay.remove();
+        _renderBatchTable();
+        
+        setTimeout(() => {
+            const scroller = document.querySelector('#rbt-tbody-wrapper') || document.querySelector('.rbt-table-container');
+            if (scroller) scroller.scrollTop = scroller.scrollHeight;
+        }, 100);
+
+        if (typeof showToast === 'function') showToast(`✂️ 已生成 ${created} 行任务 (${validRowIndex} 个场景 × A/B 版本)`, 'success');
+    });
+
+    // Auto focus
+    setTimeout(() => overlay.querySelector('#rbt-clip-ab-area')?.focus(), 100);
+}
+
 // Expose
 window.reelsToggleBatchTable = reelsToggleBatchTable;
+
+// ═══════════════════════════════════════════════════════
+// Media Pool Sidebar — Event Binding (inline sidebar)
+// ═══════════════════════════════════════════════════════
+
+window._mediaPool = window._mediaPool || { items: [] };
+
+function _bindMediaSidebarEvents(container) {
+    const sidebar = container.querySelector('#rbt-media-sidebar');
+    if (!sidebar) return; // sidebar not open
+
+    // ── Active filter state ──
+    let _activeFilter = 'all';
+
+    // Hidden file inputs — NOT used anymore in Electron, kept as web fallback
+    const hiddenFileInput = document.createElement('input');
+    hiddenFileInput.type = 'file';
+    hiddenFileInput.multiple = true;
+    hiddenFileInput.style.display = 'none';
+
+    const hiddenFolderInput = document.createElement('input');
+    hiddenFolderInput.type = 'file';
+    hiddenFolderInput.webkitdirectory = true;
+    hiddenFolderInput.multiple = true;
+    hiddenFolderInput.style.display = 'none';
+
+    sidebar.appendChild(hiddenFileInput);
+    sidebar.appendChild(hiddenFolderInput);
+
+    const _renderPoolItems = () => {
+        const poolEl = sidebar.querySelector('#rbt-ms-pool');
+        if (!poolEl) return;
+        const allItems = window._mediaPool.items || [];
+        const items = _activeFilter === 'all' ? allItems : allItems.filter(it => {
+            switch (_activeFilter) {
+                case 'bg': return it.isVideo || it.isImage;
+                case 'overlay': return it.isVideo || it.isImage || it.type === 'seq';
+                case 'hook': return it.isVideo;
+                case 'universal': return it.isVideo || it.isImage;
+                case 'voice': return it.isAudio;
+                case 'bgm': return it.isAudio;
+                case 'text': return it.ext === 'srt' || it.ext === 'txt';
+                default: return true;
+            }
+        });
+        if (allItems.length === 0) {
+            poolEl.innerHTML = '<div style="color:#555; font-size:12px; text-align:center; padding:20px 8px;">📥 拖拽文件到此处<br>或点击上方按钮导入</div>';
+        } else if (items.length === 0) {
+            poolEl.innerHTML = '<div style="color:#555; font-size:12px; text-align:center; padding:20px 8px;">当前分类下无素材</div>';
+        } else {
+            poolEl.innerHTML = items.map((it) => {
+                const realIdx = allItems.indexOf(it);
+                const urlObj = window.electronAPI && window.electronAPI.toFileUrl ? window.electronAPI.toFileUrl(it.path) : `file://${it.path}`;
+                const thumbHtml = it.isImage 
+                    ? `<img class="rbt-thumb-previewable" src="${_escHtml(urlObj)}" style="width:20px;height:20px;object-fit:cover;border-radius:2px;">` 
+                    : it.isVideo 
+                        ? `<video class="rbt-thumb-previewable" src="${_escHtml(urlObj)}#t=1" style="width:20px;height:20px;object-fit:cover;border-radius:2px;background:#000;"></video>` 
+                        : (it.type === 'seq' ? '🎞️' : it.isAudio ? '🎙' : '📄');
+                        
+                return `
+                <div class="rbt-ms-item" data-idx="${realIdx}" draggable="true" style="display:flex; align-items:center; gap:6px; padding:4px 6px; border-radius:4px; background:#1a1a2e; margin-bottom:3px; font-size:11px; color:#ccc; cursor:grab; transition: background 0.2s;" title="${_escHtml(it.path || it.name)}">
+                    <span style="flex-shrink:0;">${thumbHtml}</span>
+                    <span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; pointer-events:none;">${_escHtml(it.name)}</span>
+                    <span style="flex-shrink:0; font-size:9px; color:#666; pointer-events:none;">${it.role || ''}</span>
+                    <button class="rbt-ms-remove" data-idx="${realIdx}" style="background:none; border:none; color:#666; cursor:pointer; font-size:10px; padding:0 2px;">✕</button>
+                </div>`;
+            }).join('');
+        }
+        const countEl = sidebar.querySelector('.rbt-ms-count');
+        if (countEl) countEl.textContent = `(${allItems.length})`;
+    };
+
+    const _classifyFile = (name) => {
+        const ext = (name || '').split('.').pop().toLowerCase();
+        const videoExts = new Set(['mp4','mov','mkv','avi','wmv','flv','webm']);
+        const imageExts = new Set(['jpg','jpeg','png','webp','bmp','tiff']);
+        const audioExts = new Set(['mp3','wav','m4a','aac','flac','ogg','wma']);
+        return {
+            isVideo: videoExts.has(ext),
+            isImage: imageExts.has(ext),
+            isAudio: audioExts.has(ext),
+            ext
+        };
+    };
+
+    const _addFilesByPath = (filePaths) => {
+        if (!filePaths || filePaths.length === 0) return;
+        const pathMod = window.require ? window.require('path') : null;
+        for (const fp of filePaths) {
+            const name = pathMod ? pathMod.basename(fp) : fp.split(/[\\/]/).pop();
+            const cls = _classifyFile(name);
+            window._mediaPool.items.push({ name, path: fp, size: 0, file: null, type: 'file', role: '', ...cls });
+        }
+        _renderPoolItems();
+        if (typeof showToast === 'function') showToast(`📥 已导入 ${filePaths.length} 个文件到素材池`, 'success');
+        console.log(`[MediaPool] Ingested ${filePaths.length} files (abs path), pool size: ${window._mediaPool.items.length}`);
+    };
+
+    const handleFiles = (files) => {
+        if (!files || files.length === 0) return;
+        _addFilesByPath(Array.from(files).map(f => {
+            const p = (typeof getFileNativePath === 'function') ? getFileNativePath(f) : (f.path || f.name);
+            return p;
+        }).filter(p => Boolean(p)));
+    };
+
+    hiddenFileInput.onchange = (e) => { handleFiles(Array.from(e.target.files)); e.target.value = ''; };
+    hiddenFolderInput.onchange = (e) => { handleFiles(Array.from(e.target.files)); e.target.value = ''; };
+
+    // ━━━ Import Files — native Electron dialog ━━━
+    sidebar.querySelector('#rbt-ms-import-files')?.addEventListener('click', async () => {
+        if (window.require) {
+            try {
+                const { dialog, getCurrentWindow } = window.require('@electron/remote');
+                const result = await dialog.showOpenDialog(getCurrentWindow(), {
+                    title: '选择素材文件',
+                    properties: ['openFile', 'multiSelections'],
+                    filters: [{ name: '媒体文件', extensions: ['mp4','mov','mkv','avi','wmv','flv','webm','jpg','jpeg','png','webp','bmp','tiff','mp3','wav','m4a','aac','flac','ogg','wma','srt','txt'] }]
+                });
+                if (!result.canceled && result.filePaths?.length > 0) _addFilesByPath(result.filePaths);
+                return;
+            } catch (e) { console.warn('[MediaPool] native dialog failed', e); }
+        }
+        hiddenFileInput.click();
+    });
+
+    // ━━━ Import Folder — native Electron dialog, flatten contents ━━━
+    sidebar.querySelector('#rbt-ms-import-folder')?.addEventListener('click', async () => {
+        if (window.require) {
+            try {
+                const { dialog, getCurrentWindow } = window.require('@electron/remote');
+                const result = await dialog.showOpenDialog(getCurrentWindow(), {
+                    title: '选择素材文件夹（拆散其中所有文件）',
+                    properties: ['openDirectory']
+                });
+                if (!result.canceled && result.filePaths?.length > 0) {
+                    const dirPath = result.filePaths[0];
+                    const fs = window.require('fs');
+                    const pathMod = window.require('path');
+                    const allPaths = fs.readdirSync(dirPath)
+                        .filter(f => !f.startsWith('.'))
+                        .map(f => pathMod.join(dirPath, f))
+                        .filter(fp => { try { return fs.statSync(fp).isFile(); } catch { return false; } });
+                    if (allPaths.length > 0) _addFilesByPath(allPaths);
+                    else if (typeof showToast === 'function') showToast('该文件夹中没有找到文件', 'warning');
+                }
+                return;
+            } catch (e) { console.warn('[MediaPool] native folder dialog failed', e); }
+        }
+        hiddenFolderInput.click();
+    });
+
+    // ━━━ Sequence frame directory ━━━
+    sidebar.querySelector('#rbt-ms-import-seq')?.addEventListener('click', async () => {
+        if (window.require) {
+            try {
+                const { dialog, getCurrentWindow } = window.require('@electron/remote');
+                const result = await dialog.showOpenDialog(getCurrentWindow(), {
+                    title: '选择图片序列帧文件夹',
+                    properties: ['openDirectory']
+                });
+                if (!result.canceled && result.filePaths?.length > 0) {
+                    const dirPath = result.filePaths[0];
+                    const dirName = dirPath.split(/[\\/]/).pop() || dirPath;
+                    window._mediaPool.items.push({
+                        name: dirName, path: dirPath, size: 0, file: null,
+                        type: 'seq', role: '', isVideo: false, isImage: false, isAudio: false, ext: 'seq'
+                    });
+                    _renderPoolItems();
+                    if (typeof showToast === 'function') showToast(`🎞️ 序列帧目录已入池: ${dirName}`, 'success');
+                }
+                return;
+            } catch (e) { console.warn('[MediaPool] native seq dialog failed', e); }
+        }
+        if (typeof showToast === 'function') showToast('需在桌面应用中使用序列帧导入', 'warning');
+    });
+
+    // ━━━ Clear pool ━━━
+    sidebar.querySelector('#rbt-ms-clear')?.addEventListener('click', () => {
+        if (confirm('确定清空素材池？')) {
+            window._mediaPool.items = [];
+            _renderPoolItems();
+        }
+    });
+
+    // ━━━ Apply Role button ━━━
+    sidebar.querySelector('#rbt-ms-apply-bulk')?.addEventListener('click', () => {
+        const roleSelect = sidebar.querySelector('#rbt-ms-bulk-role');
+        const role = roleSelect ? roleSelect.value : '';
+        if (!role) { if (typeof showToast === 'function') showToast('请先选择一个角色', 'warning'); return; }
+        const allItems = window._mediaPool.items || [];
+        const items = _activeFilter === 'all' ? allItems : allItems.filter(it => {
+            switch (_activeFilter) {
+                case 'bg': return it.isVideo || it.isImage;
+                case 'overlay': return it.isVideo || it.isImage || it.type === 'seq';
+                case 'hook': return it.isVideo;
+                case 'voice': return it.isAudio;
+                case 'bgm': return it.isAudio;
+                case 'text': return it.ext === 'srt' || it.ext === 'txt';
+                default: return true;
+            }
+        });
+        if (items.length === 0) { if (typeof showToast === 'function') showToast('素材池为空（或当前分类下无素材）', 'warning'); return; }
+        const tasks = window._reelsState?.tasks || [];
+        if (tasks.length === 0) { if (typeof showToast === 'function') showToast('请先创建任务（行）', 'warning'); return; }
+        let applied = 0;
+        for (let i = 0; i < Math.min(items.length, tasks.length); i++) {
+            const item = items[i], task = tasks[i];
+            switch (role) {
+                case 'bg': task.bgPath = item.path; task.videoPath = item.path; task.bgSrcUrl = ''; applied++; break;
+                case 'overlay': task.contentVideoPath = item.path; applied++; break;
+                case 'hook': if (!task.hook) task.hook = {}; task.hook.enabled = true; task.hook.path = item.path; applied++; break;
+                case 'universal': task.bgPath = item.path; task.videoPath = item.path; applied++; break;
+                case 'voice': task.audioPath = item.path; applied++; break;
+                case 'bgm': task.bgmPath = item.path; applied++; break;
+            }
+            item.role = role;
+        }
+        if (applied > 0) {
+            _renderBatchTable();
+            const roleLabels = { bg: '背景', overlay: '视频覆层', hook: '钩子', universal: '通用', voice: '人声', bgm: '配乐' };
+            if (typeof showToast === 'function') showToast(`✅ 已将 ${applied} 个素材按「${roleLabels[role] || role}」角色依次分配到前 ${applied} 行`, 'success');
+        }
+    });
+
+    // Drag & Drop on the pool area
+    const poolArea = sidebar.querySelector('#rbt-ms-pool');
+    if (poolArea) {
+        // Event delegation for drag events and remove clicks
+        poolArea.addEventListener('click', (e) => {
+            const btn = e.target.closest('.rbt-ms-remove');
+            if (btn) {
+                e.stopPropagation();
+                const idx = parseInt(btn.dataset.idx);
+                window._mediaPool.items.splice(idx, 1);
+                _renderPoolItems();
+            }
+        });
+        poolArea.addEventListener('dragstart', (e) => {
+            const item = e.target.closest('.rbt-ms-item');
+            if (item) {
+                e.dataTransfer.setData('application/x-media-pool-idx', item.dataset.idx);
+                e.dataTransfer.effectAllowed = 'copy';
+                item.style.opacity = '0.5';
+            }
+        });
+        poolArea.addEventListener('dragend', (e) => {
+            const item = e.target.closest('.rbt-ms-item');
+            if (item) item.style.opacity = '1';
+        });
+
+        // Drop handling for pool area
+        poolArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            e.dataTransfer.dropEffect = 'copy';
+            poolArea.style.background = 'rgba(124,92,255,0.1)';
+            poolArea.style.boxShadow = 'inset 0 0 0 2px rgba(124,92,255,0.4)';
+        });
+        poolArea.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            poolArea.style.background = '';
+            poolArea.style.boxShadow = '';
+        });
+        poolArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            poolArea.style.background = '';
+            poolArea.style.boxShadow = '';
+            const files = Array.from(e.dataTransfer.files || []);
+            if (files.length > 0) {
+                handleFiles(files);
+            }
+        });
+    }
+
+    // Filter clicks
+    sidebar.querySelectorAll('.rbt-ms-filter').forEach(el => {
+        el.addEventListener('click', () => {
+            sidebar.querySelectorAll('.rbt-ms-filter').forEach(f => f.classList.remove('active'));
+            el.classList.add('active');
+            _activeFilter = el.dataset.filter || 'all';
+            _renderPoolItems();
+        });
+    });
+    // Resize handle
+    const resizeHandle = sidebar.querySelector('#rbt-ms-resize');
+    if (resizeHandle) {
+        let startX = 0, startW = 0;
+        const onMouseMove = (e) => {
+            const newW = Math.min(500, Math.max(180, startW + (e.clientX - startX)));
+            sidebar.style.width = newW + 'px';
+        };
+        const onMouseUp = () => {
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+            resizeHandle.classList.remove('active');
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+        };
+        resizeHandle.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            startX = e.clientX;
+            startW = sidebar.offsetWidth;
+            resizeHandle.classList.add('active');
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+        });
+    }
+
+    // Render existing items on open
+    _renderPoolItems();
+}
