@@ -393,7 +393,10 @@ class ReelsOverlayPanel {
                 <div id="rop-textcard-props" class="rop-group" style="display:none;">
                     <div class="rop-section-title" style="margin:0; font-size:13px; font-weight:bold; color:var(--text-color); margin-bottom:8px; border-bottom: 1px solid var(--border-color); padding-bottom: 4px;">文字设置</div>
                     <div class="rop-group-title" style="margin-top:8px;">标题</div>
-                    <textarea id="rop-title-text" class="rop-textarea" rows="2" placeholder="标题文字"></textarea>
+                    <div style="display:flex;gap:6px;align-items:flex-start;">
+                        <textarea id="rop-title-text" class="rop-textarea" rows="2" placeholder="标题文字" style="flex:1;"></textarea>
+                        <button class="rop-richtext-btn" data-section="title" title="逐字样式编辑" style="padding:4px 8px;border:1px solid var(--border-color,#555);background:var(--bg-secondary,#2a2a3e);color:var(--accent-primary,#7b8bef);border-radius:6px;cursor:pointer;font-size:12px;white-space:nowrap;">✎ 富文本</button>
+                    </div>
                     <div class="rop-grid">
                         <label>字体</label>
                         <select id="rop-title-font" class="rop-select rop-defaultable" data-default="Crimson Pro">
@@ -459,7 +462,10 @@ class ReelsOverlayPanel {
                         <div class="rop-slider-combo"><input type="range" id="rop-title-bg-pad-bottom" class="rop-range rop-defaultable" data-default="0" min="0" max="100" value="0"><input type="number" class="rop-num-readout" data-link="rop-title-bg-pad-bottom" min="0" max="200" value="0"><button class="rop-reset-btn" data-target="rop-title-bg-pad-bottom" title="恢复默认(自动)">↺</button></div>
                     </div>
                     <div class="rop-group-title" style="margin-top:8px;">正文</div>
-                    <textarea id="rop-body-text" class="rop-textarea" rows="4" placeholder="正文文字"></textarea>
+                    <div style="display:flex;gap:6px;align-items:flex-start;">
+                        <textarea id="rop-body-text" class="rop-textarea" rows="4" placeholder="正文文字" style="flex:1;"></textarea>
+                        <button class="rop-richtext-btn" data-section="body" title="逐字样式编辑" style="padding:4px 8px;border:1px solid var(--border-color,#555);background:var(--bg-secondary,#2a2a3e);color:var(--accent-primary,#7b8bef);border-radius:6px;cursor:pointer;font-size:12px;white-space:nowrap;">✎ 富文本</button>
+                    </div>
                     <div class="rop-grid">
                         <label>字体</label>
                         <select id="rop-body-font" class="rop-select rop-defaultable" data-default="Arial">
@@ -524,7 +530,10 @@ class ReelsOverlayPanel {
                         <div class="rop-slider-combo"><input type="range" id="rop-body-bg-pad-bottom" class="rop-range rop-defaultable" data-default="0" min="0" max="100" value="0"><input type="number" class="rop-num-readout" data-link="rop-body-bg-pad-bottom" min="0" max="200" value="0"><button class="rop-reset-btn" data-target="rop-body-bg-pad-bottom" title="恢复默认(自动)">↺</button></div>
                     </div>
                     <div class="rop-group-title" style="margin-top:8px;">结尾</div>
-                    <textarea id="rop-footer-text" class="rop-textarea" rows="2" placeholder="结尾文字（可选）"></textarea>
+                    <div style="display:flex;gap:6px;align-items:flex-start;">
+                        <textarea id="rop-footer-text" class="rop-textarea" rows="2" placeholder="结尾文字（可选）" style="flex:1;"></textarea>
+                        <button class="rop-richtext-btn" data-section="footer" title="逐字样式编辑" style="padding:4px 8px;border:1px solid var(--border-color,#555);background:var(--bg-secondary,#2a2a3e);color:var(--accent-primary,#7b8bef);border-radius:6px;cursor:pointer;font-size:12px;white-space:nowrap;">✎ 富文本</button>
+                    </div>
                     <div class="rop-grid">
                         <label>字体</label>
                         <select id="rop-footer-font" class="rop-select rop-defaultable" data-default="Arial">
@@ -751,6 +760,15 @@ class ReelsOverlayPanel {
         this.container.querySelector('#rop-group-preset-import')?.addEventListener('click', () => this._importOverlayGroupPresets());
         this.container.querySelector('#rop-group-preset-export')?.addEventListener('click', () => this._exportOverlayGroupPresets());
         this._refreshOverlayGroupPresetSelect();
+
+        // ── 富文本编辑按钮 (覆层 textcard) ──
+        this.container.querySelectorAll('.rop-richtext-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const section = btn.getAttribute('data-section'); // title | body | footer
+                if (!this._selectedOv || this._selectedOv.type !== 'textcard') return;
+                this._openOverlayRichTextEditor(section);
+            });
+        });
 
         // Reset to default buttons
         this.container.querySelectorAll('.rop-reset-transform-btn').forEach(btn => {
@@ -2615,6 +2633,73 @@ class ReelsOverlayPanel {
             select.appendChild(opt);
         }
         if (current && templates[current]) select.value = current;
+    }
+
+    /**
+     * 打开覆层 textcard 区段的富文本编辑器
+     * @param {'title'|'body'|'footer'} section
+     */
+    _openOverlayRichTextEditor(section) {
+        const ov = this._selectedOv;
+        if (!ov || ov.type !== 'textcard') return;
+        if (typeof ReelsRichTextEditor === 'undefined') {
+            console.warn('[OverlayPanel] ReelsRichTextEditor not loaded');
+            return;
+        }
+
+        // 关闭已有编辑器
+        if (this._ovRtEditor) {
+            this._ovRtEditor.close(false);
+            this._ovRtEditor = null;
+        }
+
+        const textKey = `${section}_text`;
+        const rangesKey = `${section}_styled_ranges`;
+        const text = ov[textKey] || '';
+        const ranges = ov[rangesKey] || [];
+
+        // 获取该区段的基础样式
+        const baseStyle = {
+            fontsize: ov[`${section}_fontsize`] || 60,
+            color: ov[`${section}_color`] || '#000000',
+            bold: ov[`${section}_bold`] || false,
+        };
+
+        // 弹出位置：在按钮旁边
+        const btn = this.container.querySelector(`.rop-richtext-btn[data-section="${section}"]`);
+        const btnRect = btn ? btn.getBoundingClientRect() : { x: 300, y: 300, w: 80, h: 28 };
+
+        const rtEditor = new ReelsRichTextEditor();
+        this._ovRtEditor = rtEditor;
+
+        rtEditor.onSave = (newText, newRanges) => {
+            ov[textKey] = newText;
+            ov[rangesKey] = (newRanges && newRanges.length > 0) ? newRanges : null;
+            // 同步面板文本框
+            this._val(`rop-${section}-text`, newText);
+            // 刷新预览
+            if (this.videoCanvas) this.videoCanvas.render();
+            this._ovRtEditor = null;
+        };
+
+        rtEditor.onChange = (newText, newRanges) => {
+            ov[textKey] = newText;
+            ov[rangesKey] = (newRanges && newRanges.length > 0) ? newRanges : null;
+            if (this.videoCanvas) this.videoCanvas.render();
+        };
+
+        rtEditor.onCancel = () => {
+            this._ovRtEditor = null;
+        };
+
+        const sectionLabels = { title: '标题', body: '正文', footer: '结尾' };
+        rtEditor.open({
+            title: `✎ 编辑${sectionLabels[section] || section}富文本`,
+            text,
+            styled_ranges: ranges,
+            baseStyle,
+            rect: { x: btnRect.x, y: btnRect.y, w: btnRect.width || 80, h: btnRect.height || 28 },
+        });
     }
 
     _extractCardStyle(ov) {
