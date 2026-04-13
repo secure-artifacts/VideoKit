@@ -281,9 +281,14 @@ app.whenReady().then(async () => {
     });
 
     // IPC: WYSIWYG 逐帧渲染导出（与 Canvas 预览 100% 一致）
-    const { handleWysiwygIPC } = require('./services/ffmpeg-rawvideo');
+    const { handleWysiwygIPC, parallelExport } = require('./services/ffmpeg-rawvideo');
     ipcMain.handle('reels-compose-wysiwyg', async (event, action, data) => {
         return handleWysiwygIPC(action, data);
+    });
+
+    // IPC: 并行影子窗口导出（V3 多切片渲染）
+    ipcMain.handle('parallel-wysiwyg-export', async (event, opts) => {
+        return parallelExport(opts, mainWindow);
     });
 
     // IPC: 视频首尾拼接 (Hook -> Main)
@@ -418,19 +423,11 @@ app.whenReady().then(async () => {
         }
     });
 
-    // IPC: 扫描本地字体目录
+    // IPC: 扫描本地字体目录 + 系统字体
     ipcMain.handle('scan-fonts', async () => {
         try {
-            const fontsDir = app.isPackaged
-                ? path.join(process.resourcesPath, 'assets', 'fonts')
-                : path.join(__dirname, '..', 'assets', 'fonts');
-
-            if (!fs.existsSync(fontsDir)) {
-                log(`[Fonts] directory not found: ${fontsDir}`);
-                return [];
-            }
-
-            const fontExts = new Set(['.ttf', '.otf', '.woff', '.woff2']);
+            const os = require('os');
+            const fontExts = new Set(['.ttf', '.otf', '.woff', '.woff2', '.ttc', '.dfont']);
 
             function inferWeightAndStyle(fileName) {
                 const base = path.parse(fileName).name.toLowerCase();
@@ -465,45 +462,103 @@ app.whenReady().then(async () => {
             }
 
             function cleanFamilyNameFromFile(fileName) {
-                const raw = path.parse(fileName).name.replace(/[_-]+/g, ' ');
+                let raw = path.parse(fileName).name;
+                // Split CamelCase: "AppleSDGothicNeo" → "Apple SD Gothic Neo"
+                raw = raw.replace(/([a-z])([A-Z])/g, '$1 $2')
+                         .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2');
+                raw = raw.replace(/[_-]+/g, ' ');
+                // Remove weight/style tokens
                 const cleaned = raw
                     .replace(/\b(italic|oblique|regular|normal|book|medium|semibold|semi bold|demibold|demi bold|bold|extrabold|extra bold|ultrabold|ultra bold|black|extrablack|extra black|ultrablack|ultra black|heavy|light|extralight|extra light|ultralight|ultra light|thin|hairline|variablefont|wght|wdth|opsz)\b/gi, '')
+                    // Remove macOS suffixes like "HB" (Harfbuzz variants)
+                    .replace(/\bHB\b$/i, '')
                     .replace(/\s{2,}/g, ' ')
                     .trim();
                 return cleaned || raw.trim();
             }
 
-            const fontList = [];
-            const items = fs.readdirSync(fontsDir, { withFileTypes: true });
-            for (const item of items) {
-                if (item.isDirectory()) {
-                    const familyName = item.name.replace(/_/g, ' ');
-                    const dirPath = path.join(fontsDir, item.name);
-                    const files = fs.readdirSync(dirPath);
-
-                    for (const fontFile of files) {
-                        const ext = path.extname(fontFile).toLowerCase();
-                        if (!fontExts.has(ext)) continue;
-                        const meta = inferWeightAndStyle(fontFile);
-                        fontList.push({
-                            family: familyName,
-                            path: path.join(dirPath, fontFile),
-                            weight: meta.weight,
-                            style: meta.style,
-                        });
+            // ── 扫描单个目录 ──
+            function scanDir(dirPath, isSystemFont = false) {
+                const results = [];
+                if (!dirPath || !fs.existsSync(dirPath)) return results;
+                try {
+                    const items = fs.readdirSync(dirPath, { withFileTypes: true });
+                    for (const item of items) {
+                        if (item.name.startsWith('.')) continue;
+                        const fullPath = path.join(dirPath, item.name);
+                        if (item.isDirectory()) {
+                            const familyName = item.name.replace(/_/g, ' ');
+                            try {
+                                const files = fs.readdirSync(fullPath);
+                                for (const fontFile of files) {
+                                    const ext = path.extname(fontFile).toLowerCase();
+                                    if (!fontExts.has(ext)) continue;
+                                    const meta = inferWeightAndStyle(fontFile);
+                                    results.push({
+                                        family: familyName,
+                                        path: path.join(fullPath, fontFile),
+                                        weight: meta.weight,
+                                        style: meta.style,
+                                        system: isSystemFont,
+                                    });
+                                }
+                            } catch { /* skip unreadable dirs */ }
+                        } else if (item.isFile() && fontExts.has(path.extname(item.name).toLowerCase())) {
+                            const familyName = cleanFamilyNameFromFile(item.name).replace(/_/g, ' ');
+                            const meta = inferWeightAndStyle(item.name);
+                            results.push({
+                                family: familyName,
+                                path: fullPath,
+                                weight: meta.weight,
+                                style: meta.style,
+                                system: isSystemFont,
+                            });
+                        }
                     }
-                } else if (item.isFile() && fontExts.has(path.extname(item.name).toLowerCase())) {
-                    const familyName = cleanFamilyNameFromFile(item.name).replace(/_/g, ' ');
-                    const meta = inferWeightAndStyle(item.name);
-                    fontList.push({
-                        family: familyName,
-                        path: path.join(fontsDir, item.name),
-                        weight: meta.weight,
-                        style: meta.style,
-                    });
+                } catch (err) {
+                    log(`[Fonts] Error scanning ${dirPath}: ${err.message}`);
                 }
+                return results;
             }
-            log(`[Fonts] scanned ${fontList.length} fonts from ${fontsDir}`);
+
+            const fontList = [];
+
+            // ── 1. 项目内置字体 (assets/fonts) ──
+            const fontsDir = app.isPackaged
+                ? path.join(process.resourcesPath, 'assets', 'fonts')
+                : path.join(__dirname, '..', 'assets', 'fonts');
+            fontList.push(...scanDir(fontsDir, false));
+
+            // ── 2. 系统字体目录 ──
+            const systemDirs = [];
+            if (process.platform === 'darwin') {
+                // macOS
+                systemDirs.push('/Library/Fonts');
+                systemDirs.push(path.join(os.homedir(), 'Library', 'Fonts'));
+                // /System/Library/Fonts 包含Apple系统字体（可能受SIP保护但可读）
+                systemDirs.push('/System/Library/Fonts');
+                systemDirs.push('/System/Library/Fonts/Supplemental');
+            } else if (process.platform === 'win32') {
+                // Windows
+                const winFonts = path.join(process.env.WINDIR || 'C:\\Windows', 'Fonts');
+                systemDirs.push(winFonts);
+                // 用户字体目录 (Windows 10+)
+                const userFonts = path.join(os.homedir(), 'AppData', 'Local', 'Microsoft', 'Windows', 'Fonts');
+                systemDirs.push(userFonts);
+            } else {
+                // Linux
+                systemDirs.push('/usr/share/fonts');
+                systemDirs.push('/usr/local/share/fonts');
+                systemDirs.push(path.join(os.homedir(), '.fonts'));
+                systemDirs.push(path.join(os.homedir(), '.local', 'share', 'fonts'));
+            }
+
+            for (const dir of systemDirs) {
+                fontList.push(...scanDir(dir, true));
+            }
+
+            // ── 去重（同 family 只保留一个条目用于注册，但保留所有 weight/style 变体）──
+            log(`[Fonts] scanned ${fontList.length} font files (${systemDirs.length} system dirs + assets)`);
             return fontList;
         } catch (err) {
             log(`[Fonts] scanning error: ${err.message}`);

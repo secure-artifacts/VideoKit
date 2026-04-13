@@ -401,17 +401,12 @@ function _initReelsModule() {
     if (tlContainer && typeof ReelsTimelineEditor !== 'undefined') {
         _reelsState.timelineEditor = new ReelsTimelineEditor(tlContainer);
         _reelsState.timelineEditor.onSeek = (t) => {
-            const video = document.getElementById('reels-preview-video');
-            const audio = document.getElementById('reels-preview-audio');
-            const task = _getSelectedTask();
-            if (task && task.audioPath && audio && audio.duration) {
-                audio.currentTime = Math.max(0, Math.min(t, audio.duration));
+            const duration = _getPreviewDuration();
+            if (duration > 0) {
+                const percent = (t / duration) * 100;
+                // 利用已有的 _onSeek 去一并同步音频、视频、倒计时与主轴时钟，避免断层
+                _onSeek({ target: { value: percent } });
             }
-            if (video && video.duration) {
-                video.currentTime = (task && task.audioPath) ? (t % video.duration) : Math.max(0, Math.min(t, video.duration));
-            }
-            _reelsState.timelineEditor.setPlayhead(t);
-            _updatePreviewTimeUI(t, _getPreviewDuration());
         };
         _reelsState.timelineEditor.onClipSelect = (ti, ci, clip) => {
             console.log('[Timeline] Selected clip', ti, ci, clip);
@@ -1382,8 +1377,8 @@ function _readStyleFromUI() {
         opacity_bg: num('reels-box-opacity', 150),
         box_radius: num('reels-box-radius', 8),
         box_blur: num('reels-box-blur', 0),
-        box_padding_x: 12,
-        box_padding_y: 8,
+        box_padding_x: num('reels-box-pad-x', 12),
+        box_padding_y: num('reels-box-pad-y', 8),
 
         // Box gradient
         bg_gradient_enabled: chk('reels-bg-gradient'),
@@ -1523,6 +1518,10 @@ function _writeStyleToUI(style) {
     set('reels-box-color', style.color_bg || '#000000');
     set('reels-box-opacity', style.opacity_bg || 150);
     set('reels-box-radius', style.box_radius || 8);
+    set('reels-box-pad-x', style.box_padding_x ?? 12);
+    set('reels-box-pad-y', style.box_padding_y ?? 8);
+    { const el = document.getElementById('reels-box-pad-x-range'); if (el) el.value = style.box_padding_x ?? 12; }
+    { const el = document.getElementById('reels-box-pad-y-range'); if (el) el.value = style.box_padding_y ?? 8; }
     set('reels-box-blur', style.box_blur || 0);
     setChk('reels-bg-gradient', style.bg_gradient_enabled);
     set('reels-bg-gradient-type', style.bg_gradient_type || 'linear_h');
@@ -1607,6 +1606,44 @@ function reelsUpdatePreview() {
 
     const _selectedTask = _getSelectedTask();
     const _bgScalePct = _selectedTask ? (_selectedTask.bgScale || 100) : 100;
+
+    // ── 检查并更新极速贴合提示 ──
+    const fastAlphaCb = document.getElementById('reels-fast-alpha-mode');
+    const fastAlphaStatusEl = document.getElementById('fast-alpha-status-text');
+    if (fastAlphaCb && fastAlphaStatusEl && _selectedTask) {
+        if (!fastAlphaCb.checked) {
+            fastAlphaStatusEl.style.display = 'none';
+        } else {
+            const bgPath = _reelsState.bgPath || (_selectedTask.bgClipPool && _selectedTask.bgClipPool[0]) || '';
+            const isBgVideo = bgPath && !_isImageFile(bgPath);
+            const loopFade = (document.getElementById('reels-loop-fade') || {}).checked !== false;
+            
+            const isMultiClip = _selectedTask.bgClipPool && _selectedTask.bgClipPool.length > 0;
+            const isCrossfadeVideo = isBgVideo && loopFade;
+            
+            if (isMultiClip) {
+                fastAlphaStatusEl.style.display = 'inline-block';
+                fastAlphaStatusEl.style.color = '#faad14';
+                fastAlphaStatusEl.style.background = '#fffbe6';
+                fastAlphaStatusEl.style.border = '1px solid #ffe58f';
+                fastAlphaStatusEl.textContent = '当前自动回退常规模式 (多片段转场)';
+            } else if (isCrossfadeVideo) {
+                fastAlphaStatusEl.style.display = 'inline-block';
+                fastAlphaStatusEl.style.color = '#faad14';
+                fastAlphaStatusEl.style.background = '#fffbe6';
+                fastAlphaStatusEl.style.border = '1px solid #ffe58f';
+                fastAlphaStatusEl.textContent = '当前自动回退常规模式 (循环首尾过滤)';
+            } else if (bgPath) {
+                fastAlphaStatusEl.style.display = 'inline-block';
+                fastAlphaStatusEl.style.color = '#52c41a';
+                fastAlphaStatusEl.style.background = '#f6ffed';
+                fastAlphaStatusEl.style.border = '1px solid #b7eb8f';
+                fastAlphaStatusEl.textContent = '✓ 支持提速';
+            } else {
+                fastAlphaStatusEl.style.display = 'none';
+            }
+        }
+    }
 
     // ── Phase calculations ──
     const inCoverEditMode = !!_reelsState._coverEditMode;
@@ -2181,6 +2218,77 @@ function _toPlayablePath(filePath, srcUrl = null) {
     return filePath.startsWith('/') ? `file://${filePath}` : filePath;
 }
 
+/**
+ * 将 file:// URL 或编码路径还原为本地文件系统路径。
+ * 与 _toPlayablePath 互为逆操作。
+ */
+function _normalizeLocalMediaPath(p) {
+    if (!p) return '';
+    let s = String(p);
+    // 去掉 file:// 前缀
+    if (s.startsWith('file:///')) s = s.slice(7);
+    else if (s.startsWith('file://')) s = s.slice(7);
+    // URI decode（处理中文路径等）
+    try { s = decodeURIComponent(s); } catch (_) {}
+    return s;
+}
+
+/**
+ * 判断文件路径是否为图片（通过扩展名）。
+ */
+function _isImageFile(filePath) {
+    const ext = (filePath || '').split('.').pop().toLowerCase();
+    return ['jpg', 'jpeg', 'png', 'webp', 'bmp', 'gif'].includes(ext);
+}
+
+/**
+ * 解析任务的 Hook（前置视频）路径。
+ * 优先级: task.hookFile → task.hook.path → 全局前置路径。
+ * 若 task.hookFile === '__NONE__' 则显式禁用。
+ */
+function _resolveTaskHookPath(task, globalIntroPath) {
+    if (!task) return globalIntroPath || '';
+    // 显式禁用 hook
+    if (task.hookFile === '__NONE__') return '';
+    // 任务级 hook 优先
+    if (task.hookFile) return task.hookFile;
+    if (task.hook && task.hook.path) return task.hook.path;
+    // 回退到全局前置路径
+    return globalIntroPath || '';
+}
+
+function _getPreviewCurrentTime() {
+    const task = _getSelectedTask();
+    const hookDur = _reelsState.hookDuration || 0;
+    const coverDur = (task && task.cover && task.cover.enabled) ? (parseFloat(task.cover.duration) || 0.01) : 0;
+    const offsetDur = hookDur + coverDur;
+
+    // When mock clock is running (Cover/Hook phases, or no-media mode), use it as primary
+    if (_reelsState.mockPlaying) {
+        const elapsed = Math.max(0, (performance.now() / 1000) - (_reelsState.mockStartTime || 0));
+        if (_isPreviewLoopEnabled()) {
+            const dur = _getPreviewDuration();
+            if (dur > 0) return elapsed % dur;
+        }
+        return elapsed;
+    }
+
+    // Master media actively playing (main content phase after Cover+Hook)
+    const master = _getPreviewMasterElement();
+    if (master && !master.paused) {
+        let t = master.currentTime || 0;
+        if (master.id === 'reels-preview-contentvideo') {
+            const trimStart = parseFloat(task.contentVideoTrimStart) || 0;
+            t = Math.max(0, t - trimStart);
+        }
+        const aDurScale = (task && task.audioDurScale) ? (task.audioDurScale / 100) : 1;
+        return (t * aDurScale) + offsetDur;
+    }
+
+    // Paused state (initial, after seek, after user pause): use saved position
+    return _reelsState.mockPausedTime || 0;
+}
+
 function _getPreviewMasterElement() {
     const task = _getSelectedTask();
     if (!task) return null;
@@ -2189,9 +2297,9 @@ function _getPreviewMasterElement() {
     const video = document.getElementById('reels-preview-video');
     const isVideo = task.bgPath && !_isImagePath(task.bgPath);
     if (isVideo && video && video.src && video.readyState >= 1) return video;
-    // 覆层视频作为时钟源（当没有单独配音和背景视频时）
+    // 内容视频作为时钟源（当没有单独配音和背景视频时）
     const cvVideo = document.getElementById('reels-preview-contentvideo');
-    if (task.contentVideoPath && cvVideo && cvVideo.src && cvVideo.readyState >= 1 && !cvVideo.muted) return cvVideo;
+    if (task.contentVideoPath && cvVideo && cvVideo.src && cvVideo.readyState >= 1) return cvVideo;
     const bgm = _reelsState._bgmAudioEl;
     if (task.bgmPath && bgm && bgm.src && bgm.readyState >= 1) return bgm;
     return null;
@@ -2314,7 +2422,10 @@ function _getPreviewDuration() {
         let maxOverlayEnd = 0;
         if (_reelsState.overlayProxy && _reelsState.overlayProxy.overlayMgr) {
             for (const ov of (_reelsState.overlayProxy.overlayMgr.overlays || [])) {
-                if (parseFloat(ov.end || 0) > maxOverlayEnd) maxOverlayEnd = parseFloat(ov.end || 0);
+                const ovEnd = parseFloat(ov.end || 0);
+                // 跳过 9999（全程标记），它不代表实际时长
+                if (ovEnd >= 9999) continue;
+                if (ovEnd > maxOverlayEnd) maxOverlayEnd = ovEnd;
             }
         }
         const demoWords = ((document.getElementById('reels-preview-text') || {}).value || '').split(/\s+/).filter(Boolean);
@@ -2368,19 +2479,12 @@ function _applyPreviewAudioMix() {
         }
     }
 
-    // ── 覆层视频 (Content Video) 音频 ──
-    // 当没有单独的语音配音(audioPath)时，使用覆层视频的音频轨道
-    if (contentVideoEl) {
-        const hasContentVideo = !!(task && task.contentVideoPath && contentVideoEl.src && contentVideoEl.readyState >= 1);
-        if (hasContentVideo && !hasVoice) {
-            // 覆层视频有音频且没有单独的配音 → 播放覆层音频
-            contentVideoEl.muted = false;
-            contentVideoEl.volume = cfg.voiceGain > 0 ? cfg.voiceGain : 1.0;
-        } else {
-            // 有单独配音或没有覆层 → 静音覆层视频
-            contentVideoEl.muted = true;
-            contentVideoEl.volume = 0;
-        }
+    // ── 覆层视频 (Content Video) 音量 ──
+    if (contentVideoEl && task) {
+        const cvVolRaw = task.contentVideoVolume != null ? task.contentVideoVolume : 100;
+        const cvVol = Math.max(0, Math.min(2.0, cvVolRaw / 100)); // 可以最大 200%
+        contentVideoEl.volume = Math.min(1.0, cvVol); // 浏览器预览最大只能 1.0
+        contentVideoEl.muted = cvVol <= 0.001;
     }
 
     // ── BGM 音量 ──
@@ -2745,8 +2849,15 @@ function _syncBackgroundVideoToMaster() {
 
 function _updatePreviewTimeUI(currentTime, duration) {
     const seekBar = document.getElementById('reels-preview-seek');
+    if (seekBar && !window._hasBoundSeekbarEvents) {
+        window._hasBoundSeekbarEvents = true;
+        seekBar.addEventListener('pointerdown', () => window._isScrubbingSeekbar = true);
+        window.addEventListener('pointerup', () => window._isScrubbingSeekbar = false);
+    }
     const timeLabel = document.getElementById('reels-preview-time');
-    if (seekBar && duration > 0) seekBar.value = Math.max(0, Math.min(100, (currentTime / duration) * 100));
+    if (seekBar && duration > 0 && !window._isScrubbingSeekbar) {
+        seekBar.value = Math.max(0, Math.min(100, (currentTime / duration) * 100));
+    }
     if (timeLabel) {
         const fmt = (s) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
         timeLabel.textContent = `${fmt(currentTime || 0)}/${fmt(duration || 0)}`;
@@ -3472,6 +3583,25 @@ function _renderTaskList() {
             }
         }
 
+        const isMultiClip = task.bgClipPool && task.bgClipPool.length > 0;
+        const isCrossfadeVideo = (task.bgPath && !_isImageFile(task.bgPath)) && (document.getElementById('reels-loop-fade') || {}).checked !== false;
+        const bgValid = task.bgPath || (task.bgClipPool && task.bgClipPool[0]);
+        const canAlpha = bgValid && !isMultiClip && (!task.bgMode || task.bgMode === 'single') && !isCrossfadeVideo;
+        const fastAlphaEnabled = (document.getElementById('reels-fast-alpha-mode') || {}).checked !== false;
+
+        let alphaIcon = '';
+        if (fastAlphaEnabled) {
+            if (bgValid && !isMultiClip && (!task.bgMode || task.bgMode === 'single')) {
+                if (!isCrossfadeVideo) {
+                    alphaIcon = `<span title="此任务完美兼容极速贴合 (Fast Alpha) ⚡" style="font-size:10px; opacity:0.9;">⚡</span>`;
+                } else {
+                    alphaIcon = `<span title="已开启首尾渐变。系统将智能判定：若无需循环底图，将自动恢复极速模式 ⚡" style="font-size:10px; opacity:0.8;">🐢/⚡</span>`;
+                }
+            } else {
+                alphaIcon = `<span title="由于多片段拼接或复杂底板转场，强制回退常规渲染 🐢" style="font-size:10px; filter:grayscale(1); opacity:0.4;">🐢</span>`;
+            }
+        }
+
         return `
             <div class="reels-task-item ${selected ? 'reels-task-selected' : ''}"
                  onclick="reelsSelectTask(${i})"
@@ -3482,6 +3612,7 @@ function _renderTaskList() {
                         border-left: 3px solid ${selected ? '#4c9eff' : 'transparent'};
                         ${selected ? 'box-shadow: inset 0 0 0 1px rgba(0,212,255,0.3);' : ''}">
                 <span style="font-size:12px; font-weight:${selected ? '600' : '400'}; color:${selected ? '#fff' : 'var(--text-primary)'}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:60px; max-width:120px;">${shortName}</span>
+                ${alphaIcon}
                 ${ovPreview}
                 <span style="font-size:10px; white-space:nowrap; opacity:0.8; margin-left:auto;">${statusText}</span>
                 <button class="btn" style="padding:1px 4px; font-size:10px; opacity:0.5; border:none; background:transparent; color:var(--text-secondary);" onclick="event.stopPropagation(); reelsRemoveTask(${i})" title="删除">✕</button>
@@ -3657,8 +3788,8 @@ function reelsSelectTask(idx) {
     // 与导出一致：task.hookFile 优先，回退到全局前置路径
     const hookVideo = document.getElementById('reels-preview-hook-video');
     const globalIntroPath = (document.getElementById('reels-intro-path') || {}).value || '';
-    // Hook 文件解析链：task.hookFile → task.hook.path → 全局前置路径
-    let effectiveHookFile = task.hookFile || (task.hook && task.hook.enabled && task.hook.path) || globalIntroPath || '';
+    // Hook 文件解析链：task.hookFile → task.hook.path → 全局前置路径（可显式禁用）
+    let effectiveHookFile = _resolveTaskHookPath(task, globalIntroPath);
     // 验证文件存在（防止残留路径导致假 hook 阶段）
     if (effectiveHookFile && window.require) {
         try {
@@ -3712,21 +3843,22 @@ function reelsSelectTask(idx) {
     _reelsState.previewContentImage = null; // reset
     if (cvVideo) {
         if (task.contentVideoPath) {
+            const cvRawPath = _normalizeLocalMediaPath(task.contentVideoPath);
             let isDir = false;
             if (window.require) {
                 const fs = window.require('fs');
-                if (fs.existsSync(task.contentVideoPath) && fs.statSync(task.contentVideoPath).isDirectory()) {
+                if (fs.existsSync(cvRawPath) && fs.statSync(cvRawPath).isDirectory()) {
                     isDir = true;
-                    if (_reelsState.cvSequence.path !== task.contentVideoPath) {
-                        _reelsState.cvSequence.path = task.contentVideoPath;
-                        _reelsState.cvSequence.files = fs.readdirSync(task.contentVideoPath)
+                    if (_reelsState.cvSequence.path !== cvRawPath) {
+                        _reelsState.cvSequence.path = cvRawPath;
+                        _reelsState.cvSequence.files = fs.readdirSync(cvRawPath)
                             .filter(f => !f.startsWith('.') && /\.(png|jpg|jpeg|webp)$/i.test(f)).sort();
                         _reelsState.cvSequence.loadedImages = {};
-                        
+
                         const path = window.require('path');
                         for (const f of _reelsState.cvSequence.files) {
                             const img = new Image();
-                            img.src = _toPlayablePath(path.join(task.contentVideoPath, f), null);
+                            img.src = _toPlayablePath(path.join(cvRawPath, f), null);
                             _reelsState.cvSequence.loadedImages[f] = img;
                         }
                     }
@@ -3736,26 +3868,35 @@ function reelsSelectTask(idx) {
             }
 
             if (!isDir) {
-                if (_isImagePath(task.contentVideoPath)) {
+                if (_isImagePath(cvRawPath)) {
                     const img = new Image();
                     img.onload = () => { _reelsState.previewContentImage = img; };
-                    img.src = _toPlayablePath(task.contentVideoPath, null);
+                    img.src = _toPlayablePath(cvRawPath, null);
                     cvVideo.pause();
                     cvVideo.removeAttribute('src');
                 } else {
-                    const cvPath = _toPlayablePath(task.contentVideoPath, null);
+                    const cvPath = _toPlayablePath(cvRawPath || task.contentVideoPath, null);
                     if (cvVideo.src !== cvPath) {
                         cvVideo.pause();
                         cvVideo.src = cvPath;
                         cvVideo.load();
-                        try { cvVideo.currentTime = parseFloat(task.contentVideoTrimStart) || 0; } catch (e) { }
                     }
+                    const trimStart = parseFloat(task.contentVideoTrimStart) || 0;
+                    try {
+                        if (Math.abs((cvVideo.currentTime || 0) - trimStart) > 0.2) {
+                            cvVideo.currentTime = trimStart;
+                        }
+                    } catch (e) { }
                 }
             }
         } else {
             cvVideo.pause();
             cvVideo.removeAttribute('src');
         }
+        // 设置覆层视频音量（预览+导出）
+        const cvVol = task.contentVideoVolume != null ? task.contentVideoVolume : 100;
+        cvVideo.volume = Math.min(1.0, cvVol / 100);
+        cvVideo.muted = cvVol === 0;
     }
 
     // ── 加载 Cover 素材 ──
@@ -3944,7 +4085,7 @@ function reelsTogglePlay() {
             }
             // 覆层视频作为 master 时也要启动播放
             const cvEl = document.getElementById('reels-preview-contentvideo');
-            if (cvEl && cvEl.src && !cvEl.muted && cvEl.paused) {
+            if (cvEl && cvEl.src && cvEl.paused) {
                 cvEl.play().catch(() => { });
             }
         }
@@ -4017,7 +4158,7 @@ function _syncHookPhaseTransition() {
 
         // 覆层视频作为 master 时也要启动播放
         const cvEl = document.getElementById('reels-preview-contentvideo');
-        if (cvEl && cvEl.src && !cvEl.muted && cvEl.paused) {
+        if (cvEl && cvEl.src && cvEl.paused) {
             cvEl.currentTime = 0;
             cvEl.play().catch(() => { });
         }
@@ -4056,11 +4197,9 @@ function _onSeek(e) {
     const seekInCoverPhase = coverDur > 0 && target < coverDur;
     const seekInHookPhase = hookDur > 0 && target >= coverDur && target < (coverDur + hookDur);
 
-    // Hook/Cover 阶段由 mock 时钟驱动，必须始终更新 mock 时间
-    if (!master || seekInHookPhase || seekInCoverPhase) {
-        _reelsState.mockPausedTime = target;
-        _reelsState.mockStartTime = (performance.now() / 1000) - target;
-    }
+    // 必须始终更新 mock 时间，以保证在暂停状态下拖动时，时钟立即同步更新
+    _reelsState.mockPausedTime = target;
+    _reelsState.mockStartTime = (performance.now() / 1000) - target;
 
     // ── Hook video seek ──
     if (hookVideo && hookVideo.src && hookDur > 0) {
@@ -4480,7 +4619,10 @@ function reelsCancelExport() {
         const statusEl = document.getElementById('reels-export-status');
         if (statusEl) statusEl.textContent = '⚠️ 已取消';
         const exportBtn = document.getElementById('reels-export-btn');
-        if (exportBtn) exportBtn.disabled = false;
+        if (exportBtn) {
+            exportBtn.disabled = false;
+            exportBtn.innerHTML = '🚀 开始导出';
+        }
     }
 }
 
@@ -4531,7 +4673,9 @@ async function _exportSaveCoverPng(task, outputDirTrimmed, baseName) {
         if (task.cover.overlays && task.cover.overlays.length > 0 && window.ReelsOverlay) {
             for (const ov of task.cover.overlays) {
                 if (ov.disabled) continue;
+                ov._exporting = true;
                 ReelsOverlay.drawOverlay(ctx, ov, 0, 1080, 1920);
+                ov._exporting = false;
             }
         }
 
@@ -4626,8 +4770,16 @@ async function reelsStartExport() {
         const hasBg = !!bgPath || hasMultiClip;
         const hasVoice = !!t.audioPath;
         // 有覆层（文字卡片 或 滚动字幕）则不强制要求字幕
-        const ov = (t.overlays && t.overlays.length > 0) ? t.overlays[0] : null;
-        const hasOverlay = ov && (ov.title_text || ov.body_text || ov.content || ov.scroll_title);
+        const hasOverlay = Array.isArray(t.overlays) && t.overlays.some(ov =>
+            ov && (
+                String(ov.title_text || '').trim() ||
+                String(ov.body_text || '').trim() ||
+                String(ov.footer_text || '').trim() ||
+                String(ov.content || '').trim() ||
+                String(ov.scroll_title || '').trim() ||
+                String(ov.scroll_body || '').trim()
+            )
+        );
 
         if (workMode === 'voiced_bg') {
             // 带声视频模式：需要背景 + (字幕 或 文字卡片)
@@ -4700,6 +4852,11 @@ async function reelsStartExport() {
     let customDuration = parseFloat((document.getElementById('reels-custom-duration') || {}).value || '0');
     if (!Number.isFinite(customDuration) || customDuration < 0) customDuration = 0;
 
+    const exportFormat = (document.getElementById('reels-export-format') || {}).value || 'mp4';
+    const doFcpxml = exportFormat === 'fcpxml' || exportFormat === 'fcpxml-compound';
+    const fcpxmlCompound = exportFormat === 'fcpxml-compound';
+    const fcpxmlBatchTasks = [];
+
     _reelsState.isExporting = true;
     const progressBar = document.getElementById('reels-export-progress');
     const statusEl = document.getElementById('reels-export-status');
@@ -4712,10 +4869,14 @@ async function reelsStartExport() {
     _reelsUpdateExportProgressUI(0, tasks.length);
 
     if (progressBar) progressBar.classList.remove('hidden');
-    if (exportBtn) exportBtn.disabled = true;
-
+    if (exportBtn) {
+        exportBtn.disabled = true;
+        exportBtn.innerHTML = '⏳ 导出中...';
+    }
     const useGPU = document.getElementById('reels-use-gpu');
     const gpuEnabled = useGPU ? useGPU.checked : false;
+    const useMemoryDecoder = document.getElementById('reels-use-memory-decoder');
+    const memoryDecoderEnabled = useMemoryDecoder ? useMemoryDecoder.checked : false;
     const introPath = (document.getElementById('reels-intro-path') || {}).value || '';
     let failCount = 0;
     let okCount = 0;
@@ -4732,12 +4893,18 @@ async function reelsStartExport() {
     const subFolderName = `${dateStr}_${timeStr}_批量Reels`;
     const outputDirTrimmed = `${outputDirBase}${outputJoinSep}${subFolderName}`;
 
-    for (let i = 0; i < tasks.length; i++) {
-        if (!_reelsState.isExporting) {
-            canceled = true;
-            break;
-        }
-        const task = tasks[i];
+    const concurrencyInput = document.getElementById('reels-export-concurrency');
+    const concurrency = concurrencyInput ? Math.max(1, parseInt(concurrencyInput.value) || 1) : 1;
+
+    let currentIndex = 0;
+    const processNext = async () => {
+        while (currentIndex < tasks.length) {
+            if (!_reelsState.isExporting) {
+                canceled = true;
+                break;
+            }
+            const i = currentIndex++;
+            const task = tasks[i];
         const taskStyle = _resolveSubtitleStyleForTask(task);
         if (statusEl) statusEl.textContent = `导出中 ${i + 1}/${tasks.length}: ${task.fileName}`;
 
@@ -4823,6 +4990,10 @@ async function reelsStartExport() {
             const exportFormat = (document.getElementById('reels-export-format') || {}).value || 'mp4';
             const doPng = exportFormat === 'png-layers' || exportFormat === 'mp4+png';
             const doMp4 = exportFormat === 'mp4' || exportFormat === 'mp4+png';
+            const doFcpxml = exportFormat === 'fcpxml' || exportFormat === 'fcpxml-compound';
+            
+            const subtitleToggle = document.getElementById('reels-subtitle-toggle');
+            const showSubtitle = !subtitleToggle || subtitleToggle.checked;
 
             // ── 封面静帧单独输出 ──
             if (task.cover && task.cover.enabled !== false && task.cover.exportSeparate !== false) {
@@ -4841,9 +5012,6 @@ async function reelsStartExport() {
                 offCanvas.width = 1080;
                 offCanvas.height = 1920;
 
-                const subtitleToggle = document.getElementById('reels-subtitle-toggle');
-                const showSubtitle = !subtitleToggle || subtitleToggle.checked;
-
                 const layeredResult = await window.reelsLayeredExport({
                     canvas: offCanvas,
                     style: taskStyle,
@@ -4860,6 +5028,7 @@ async function reelsStartExport() {
                     contentVideoScale: task.contentVideoScale || 100,
                     contentVideoX: task.contentVideoX || 'center',
                     contentVideoY: task.contentVideoY || 'center',
+                    contentVideoVolume: (task.contentVideoVolume != null ? task.contentVideoVolume : 100) / 100,
                     voicePath: voiceSource || null,
                     outputDir: outputDirTrimmed,
                     taskName: baseName,
@@ -4879,6 +5048,12 @@ async function reelsStartExport() {
                     isCancelled: () => !_reelsState.isExporting,
                     onProgress: (pct) => {
                         if (statusEl) statusEl.textContent = `分层导出 ${i + 1}/${tasks.length}: ${task.fileName} (${pct}%)`;
+                        const progressInner = document.getElementById('reels-export-progress-inner');
+                        const progressText = document.getElementById('reels-export-progress-text');
+                        const blended = ((i + pct / 100) / tasks.length) * 100;
+                        const blendedPct = Math.round(blended);
+                        if (progressInner) progressInner.style.width = `${blendedPct}%`;
+                        if (progressText) progressText.textContent = `${blendedPct}% (${i}/${tasks.length})`;
                     },
                     onLog: (msg) => console.log(`[Layered] ${task.fileName}: ${msg}`),
                 });
@@ -4887,7 +5062,92 @@ async function reelsStartExport() {
                     break;
                 }
                 finalOutputPath = layeredResult?.layersDir || outputDirTrimmed;
+            }
 
+            // ═══ FCPXML 导出收集 ═══
+            if (doFcpxml) {
+                // ── 渲染覆层为透明 PNG ──
+                let overlayPngPath = null;
+                const taskOverlays = task.overlays || [];
+                if (taskOverlays.length > 0 && taskOverlays.some(o => !o.disabled)) {
+                    try {
+                        const offCanvas = document.createElement('canvas');
+                        offCanvas.width = 1080;
+                        offCanvas.height = 1920;
+                        const offCtx = offCanvas.getContext('2d');
+                        // 清空为全透明
+                        offCtx.clearRect(0, 0, 1080, 1920);
+                        // 绘制每个覆层（使用 ReelsOverlay 全局模块）
+                        if (window.ReelsOverlay && typeof window.ReelsOverlay.drawOverlay === 'function') {
+                            for (const ov of taskOverlays) {
+                                if (ov.disabled) continue;
+                                ov._exporting = true;  // 跳过参考线/辅助线
+                                window.ReelsOverlay.drawOverlay(offCtx, ov, 0, 1080, 1920);
+                                delete ov._exporting;
+                            }
+                        }
+                        // 导出为 PNG（带透明通道）
+                        const pngDataUrl = offCanvas.toDataURL('image/png');
+                        const pngBase64 = pngDataUrl.replace(/^data:image\/png;base64,/, '');
+                        // Base64 → ArrayBuffer for savePngFrame IPC
+                        const binaryStr = atob(pngBase64);
+                        const pngBytes = new Uint8Array(binaryStr.length);
+                        for (let b = 0; b < binaryStr.length; b++) pngBytes[b] = binaryStr.charCodeAt(b);
+
+                        const pngFileName = `${baseName}_overlay.png`;
+                        const pngPath = `${outputDirTrimmed}/${pngFileName}`;
+                        // 确保输出目录存在
+                        if (window.electronAPI && window.electronAPI.ensureDirectory) {
+                            await window.electronAPI.ensureDirectory(outputDirTrimmed);
+                        }
+                        if (window.electronAPI && window.electronAPI.savePngFrame) {
+                            const saveResult = await window.electronAPI.savePngFrame({
+                                outputPath: pngPath,
+                                rawRGBA: pngBytes.buffer,
+                                width: 1080,
+                                height: 1920,
+                                isPng: true  // 直接写入 PNG 数据，不做 RGBA→PNG 转换
+                            });
+                            if (saveResult && saveResult.ok) {
+                                overlayPngPath = pngPath;
+                                console.log(`[FCPXML] 覆层 PNG 已导出: ${pngPath}`);
+                            } else {
+                                console.warn('[FCPXML] 覆层 PNG 保存失败:', saveResult?.error);
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('[FCPXML] 渲染覆层 PNG 失败:', e);
+                    }
+                }
+
+                fcpxmlBatchTasks.push({
+                    task,
+                    style: taskStyle,
+                    segments: showSubtitle ? (task.segments || []) : [],
+                    overlays: task.overlays || [],
+                    overlayPngPath: overlayPngPath,  // 透明 PNG 路径
+                    videoPath: task.videoPath || null, // 主视频
+                    backgroundPath: bgPath,            // 背景视频
+                    contentVideoPath: task.contentVideoPath || null, // 额外的内容层视频
+                    contentVideoTrimStart: task.contentVideoTrimStart != null ? task.contentVideoTrimStart : null,
+                    contentVideoTrimEnd: task.contentVideoTrimEnd != null ? task.contentVideoTrimEnd : null,
+                    voicePath: voiceSource || null,
+                    bgmPath: task.bgmPath || '',
+                    customDuration: task.customDuration || customDuration || 0,
+                    taskName: baseName
+                });
+                okCount += 1;
+                // 更新进度并进入下一个
+                _reelsUpdateExportProgressUI(okCount + failCount, tasks.length);
+                const pct = 100;
+                if (statusEl) statusEl.textContent = `FCPXML整理数据 ${i + 1}/${tasks.length}: ${task.fileName}`;
+                const progressInner = document.getElementById('reels-export-progress-inner');
+                const progressText = document.getElementById('reels-export-progress-text');
+                const blended = ((i + pct / 100) / tasks.length) * 100;
+                const blendedPct = Math.round(blended);
+                if (progressInner) progressInner.style.width = `${blendedPct}%`;
+                if (progressText) progressText.textContent = `${blendedPct}% (${i}/${tasks.length})`;
+                continue;
             }
 
             // ═══ MP4 视频导出（WYSIWYG）═══
@@ -4898,15 +5158,116 @@ async function reelsStartExport() {
                 offCanvas.width = 1080;
                 offCanvas.height = 1920;
 
-                const subtitleToggle = document.getElementById('reels-subtitle-toggle');
-                const showSubtitle = !subtitleToggle || subtitleToggle.checked;
+                // ═══ V3 并行影子窗口检测 ═══
+                const cpuCores = navigator.hardwareConcurrency || 4;
+                const parallelConcurrency = Math.min(3, Math.max(1, Math.floor(cpuCores / 2)));
+                let estimatedDuration = 0;
+                try {
+                    if ((task.audioPath || voiceSource) && window.electronAPI.getMediaDuration) {
+                        estimatedDuration = await window.electronAPI.getMediaDuration(task.audioPath || voiceSource);
+                    }
+                    if (!estimatedDuration && bgPath) {
+                        estimatedDuration = await window.electronAPI.getMediaDuration(bgPath);
+                    }
+                } catch(_) {}
+                const estimatedFrames = Math.ceil((estimatedDuration || 0) * 30);
+                const hasVideoOverlays = Array.isArray(task.overlays) && task.overlays.some(ov => ov && ov.type === 'video' && !ov.disabled);
+                let contentVideoIsDirSequence = false;
+                const cvPathForCheck = _normalizeLocalMediaPath(task.contentVideoPath || '');
+                if (cvPathForCheck && window.require) {
+                    try {
+                        const fs = window.require('fs');
+                        contentVideoIsDirSequence = fs.existsSync(cvPathForCheck) && fs.statSync(cvPathForCheck).isDirectory();
+                    } catch (_) { }
+                }
+                // NOTE: Parallel shadow-render export is currently unstable for some素材组合
+                // (背景出现抖帧/重复帧/闪烁). Keep it off by default until renderer timing is fixed.
+                const parallelExportEnabled = false;
+                const shouldParallel = parallelExportEnabled
+                    && memoryDecoderEnabled
+                    && parallelConcurrency >= 2
+                    && estimatedDuration > 0
+                    && !(task.bgClipPool && task.bgClipPool.length > 0)
+                    && !hasVideoOverlays
+                    && !contentVideoIsDirSequence
+                    && window.electronAPI.parallelWysiwygExport;
 
+                let wysiwygDone = false;
+                if (shouldParallel) {
+                    console.log(`[V3] 启动并行渲染: ${parallelConcurrency} 路, ${estimatedDuration.toFixed(1)}s, ${estimatedFrames} 帧`);
+                    if (statusEl) statusEl.textContent = `🚀并行导出 ${i + 1}/${tasks.length}: ${task.fileName} (启动中...)`;
+                    const unsubProgress = window.electronAPI.onParallelProgress((data) => {
+                        if (statusEl) statusEl.textContent = `🚀并行导出 ${i + 1}/${tasks.length}: ${task.fileName} (${data.pct || 0}%)`;
+                    });
+                    try {
+                        const parallelResult = await window.electronAPI.parallelWysiwygExport({
+                            params: {
+                                style: taskStyle,
+                                segments: showSubtitle ? (task.segments || []) : [],
+                                overlays: task.overlays || [],
+                                backgroundPath: bgPath,
+                                bgMode: task.bgMode || 'single',
+                                bgScale: task.bgScale || 100,
+                                contentVideoPath: task.contentVideoPath || null,
+                                contentVideoTrimStart: task.contentVideoTrimStart,
+                                contentVideoTrimEnd: task.contentVideoTrimEnd,
+                                contentVideoScale: task.contentVideoScale || 100,
+                                contentVideoX: task.contentVideoX || 'center',
+                                contentVideoY: task.contentVideoY || 'center',
+                                contentVideoVolume: (task.contentVideoVolume != null ? task.contentVideoVolume : 100) / 100,
+                                voicePath: voiceSource || null,
+                                targetWidth: 1080, targetHeight: 1920, fps: 30,
+                                voiceVolume: (workMode === 'voiced_bg' && !task.audioPath) ? bgVolume / 100 : voiceVolume / 100,
+                                bgVolume: bgVolume / 100,
+                                loopFade, loopFadeDur,
+                                bgmPath: task.bgmPath || '',
+                                bgmVolume: (task.bgmVolume != null ? task.bgmVolume : 10) / 100,
+                                bgDurScale: task.bgDurScale || 100,
+                                audioDurScale: task.audioDurScale || 100,
+                                reverbEnabled: _getReverbConfig().enabled,
+                                reverbPreset: _getReverbConfig().preset,
+                                reverbMix: _getReverbConfig().mix,
+                                stereoWidth: _getReverbConfig().stereoWidth,
+                                audioFxTarget: _getReverbConfig().audioFxTarget,
+                                bgHasAudio: bgPath && !_isImageFile(bgPath) && !(voiceSource && voiceSource === bgPath),
+                                qualityPreset, crf,
+                            },
+                            outputPath,
+                            concurrency: parallelConcurrency,
+                            totalFrames: estimatedFrames,
+                            duration: estimatedDuration,
+                        });
+                        unsubProgress();
+                        if (!parallelResult || parallelResult.error) throw new Error(parallelResult?.error || '并行导出失败');
+                        console.log(`[V3] 并行导出成功: ${parallelResult.output_path}`);
+                        wysiwygDone = true;
+                    } catch (parallelErr) {
+                        unsubProgress();
+                        console.warn(`[V3] 并行导出失败，回退单线程: ${parallelErr.message}`);
+                    }
+                } else if (memoryDecoderEnabled && (hasVideoOverlays || contentVideoIsDirSequence || !parallelExportEnabled)) {
+                    console.log(`[V3] 跳过并行导出，回退单线程稳定渲染: enabled=${parallelExportEnabled}, overlayVideo=${hasVideoOverlays}, contentDirSeq=${contentVideoIsDirSequence}`);
+                }
+
+                // ═══ Fast Alpha Overlay 检测 ═══
+                const fastAlphaCb = document.getElementById('reels-fast-alpha-mode');
+                const fastAlphaEnabled = fastAlphaCb ? fastAlphaCb.checked : false;
+                const isBgVideo = bgPath && !_isImageFile(bgPath);
+                const canUseAlpha = fastAlphaEnabled 
+                    && bgPath 
+                    && !(task.bgClipPool && task.bgClipPool.length > 0)
+                    && (!task.bgMode || task.bgMode === 'single')
+                    && !(isBgVideo && loopFade); // 如果是视频且开启了首尾过渡转场，回退稳定模式
+
+                // ═══ V2 单线程 WYSIWYG 导出（兜底 / 常规路径）═══
+                if (!wysiwygDone) {
                 const wysiwygResult = await window.reelsWysiwygExport({
                     canvas: offCanvas,
                     style: taskStyle,
                     segments: showSubtitle ? (task.segments || []) : [],
                     overlays: task.overlays || [],
                     backgroundPath: bgPath,
+                    alphaOverlayBgPath: canUseAlpha ? bgPath : null,
                     bgMode: task.bgMode || 'single',
                     bgClipPool: task.bgClipPool || [],
                     bgTransition: task.bgTransition || 'crossfade',
@@ -4917,6 +5278,7 @@ async function reelsStartExport() {
                     contentVideoScale: task.contentVideoScale || 100,
                     contentVideoX: task.contentVideoX || 'center',
                     contentVideoY: task.contentVideoY || 'center',
+                    contentVideoVolume: (task.contentVideoVolume != null ? task.contentVideoVolume : 100) / 100,
                     voicePath: voiceSource || null,
                     outputPath,
                     targetWidth: 1080,
@@ -4938,12 +5300,19 @@ async function reelsStartExport() {
                     reverbMix: _getReverbConfig().mix,
                     stereoWidth: _getReverbConfig().stereoWidth,
                     audioFxTarget: _getReverbConfig().audioFxTarget,
+                    useMemoryDecoder: memoryDecoderEnabled,
                     useGPU: gpuEnabled,
                     crf,
                     qualityPreset,
                     isCancelled: () => !_reelsState.isExporting,
                     onProgress: (pct) => {
                         if (statusEl) statusEl.textContent = `导出中 ${i + 1}/${tasks.length}: ${task.fileName} (${pct}%)`;
+                        const progressInner = document.getElementById('reels-export-progress-inner');
+                        const progressText = document.getElementById('reels-export-progress-text');
+                        const blended = ((i + pct / 100) / tasks.length) * 100;
+                        const blendedPct = Math.round(blended);
+                        if (progressInner) progressInner.style.width = `${blendedPct}%`;
+                        if (progressText) progressText.textContent = `${blendedPct}% (${i}/${tasks.length})`;
                     },
                     onLog: (msg) => console.log(`[WYSIWYG] ${task.fileName}: ${msg}`),
                 });
@@ -4951,6 +5320,7 @@ async function reelsStartExport() {
                     canceled = true;
                     break;
                 }
+                } // end if (!wysiwygDone)
             } else if (hasVoiceAudio && voiceSource) {
                 // ── 回退: ASS 字幕方式导出（需要配音）──
                 const aDurScale = task.audioDurScale || 100;
@@ -5004,8 +5374,8 @@ async function reelsStartExport() {
             }
 
         // 拼接前置片段 (Hook -> Main) — 仅 MP4 模式
-            const finalHookPath = task.hookFile || introPath || '';
-            let currentOutputToConcat = outputPath;
+            const finalHookPath = _resolveTaskHookPath(task, introPath);
+            let currentOutputToConcat = doMp4 ? outputPath : finalOutputPath;
 
             if (doMp4 && finalHookPath && window.electronAPI && window.electronAPI.concatVideo) {
                 const concatOutput = outputPath.replace('.mp4', '_final_tmp.mp4');
@@ -5051,6 +5421,23 @@ async function reelsStartExport() {
             }
 
             finalOutputPath = currentOutputToConcat;
+
+            // ── 清理中间产物：只保留最终拼接视频 ──
+            if (finalOutputPath !== outputPath) {
+                // outputPath 是拼接前的中间文件（如 _subtitled.mp4），删除它
+                try {
+                    await window.electronAPI.apiCall('file/delete', { path: outputPath });
+                    console.log('[Reels] 清理中间文件:', outputPath);
+                } catch (e) { console.warn('[Reels] 清理中间文件失败(可忽略):', e.message); }
+                // 也清理可能残留的 _final_tmp.mp4
+                const tmpFile = outputPath.replace('.mp4', '_final_tmp.mp4');
+                if (tmpFile !== finalOutputPath) {
+                    try {
+                        await window.electronAPI.apiCall('file/delete', { path: tmpFile });
+                    } catch (e) { /* 可能不存在，忽略 */ }
+                }
+            }
+
             okCount += 1;
             _reelsState.lastExportOutputPath = finalOutputPath;
             _reelsUpdateLastOutputUI(finalOutputPath);
@@ -5062,7 +5449,37 @@ async function reelsStartExport() {
             if (statusEl) statusEl.textContent = `❌ 导出失败: ${task.fileName} - ${errMsg}`;
             _reelsUpdateLastErrorUI(`${task.fileName}: ${errMsg}`);
         }
-        _reelsUpdateExportProgressUI(i + 1, tasks.length);
+        _reelsUpdateExportProgressUI(okCount + failCount, tasks.length);
+    }
+    };
+
+    const workers = [];
+    for (let w = 0; w < concurrency; w++) {
+        workers.push(processNext());
+    }
+    await Promise.all(workers);
+
+    // ── 统一输出单轴 FCPXML ──
+    if (doFcpxml && fcpxmlBatchTasks.length > 0 && !canceled && typeof window.reelsBatchFcpxmlExport === 'function') {
+        const batchName = `BatchTimeline_${dateStr}_${timeStr}`;
+        try {
+            if (statusEl) statusEl.textContent = '🚀 正在合并 FCPXML 时间线...';
+            const res = await window.reelsBatchFcpxmlExport({
+                tasks: fcpxmlBatchTasks,
+                outputDir: outputDirTrimmed,
+                taskName: batchName,
+                fps: 30,
+                compoundMode: fcpxmlCompound,
+                onLog: (msg) => console.log(`[FCPXML Bulk] ${msg}`)
+            });
+            _reelsState.lastExportOutputPath = res.outputPath;
+        } catch (err) {
+            failCount += fcpxmlBatchTasks.length;
+            okCount = 0;
+            const errMsg = err && err.message ? err.message : String(err);
+            failDetails.push(`FCPXML时间线生成失败: ${errMsg}`);
+            console.error('[FCPXML] 批量生成时间线失败:', err);
+        }
     }
 
     const doneCount = okCount + failCount;
@@ -5088,7 +5505,10 @@ async function reelsStartExport() {
             try { await window.electronAPI.apiCall('file/open-folder', { path: outputDirTrimmed }); } catch (e) { }
         }
     }
-    if (exportBtn) exportBtn.disabled = false;
+    if (exportBtn) {
+        exportBtn.disabled = false;
+        exportBtn.innerHTML = '🚀 开始导出';
+    }
     _reelsState.isExporting = false;
 }
 
@@ -5188,6 +5608,7 @@ function reelsSaveProject() {
         voiceVolume: parseFloat((document.getElementById('reels-voice-volume') || {}).value || '100') || 100,
         bgVolume: parseFloat((document.getElementById('reels-bg-volume') || {}).value || '5') || 5,
         useGPU: (document.getElementById('reels-use-gpu') || {}).checked || false,
+        useMemoryDecoder: (document.getElementById('reels-use-memory-decoder') || {}).checked || false,
         previewLoop: (document.getElementById('reels-preview-loop') || {}).checked !== false,
         loopFade: (document.getElementById('reels-loop-fade') || {}).checked !== false,
         loopFadeDuration: parseFloat((document.getElementById('reels-loop-fade-dur') || {}).value || '1') || 1,
@@ -5233,6 +5654,7 @@ async function reelsLoadProject() {
         if (opts.voiceVolume !== undefined && opts.voiceVolume !== null) setVal('reels-voice-volume', String(opts.voiceVolume));
         if (opts.bgVolume !== undefined && opts.bgVolume !== null) setVal('reels-bg-volume', String(opts.bgVolume));
         setCheck('reels-use-gpu', opts.useGPU);
+        setCheck('reels-use-memory-decoder', opts.useMemoryDecoder === true);
         setCheck('reels-preview-loop', opts.previewLoop !== false);
         setCheck('reels-loop-fade', opts.loopFade !== false);
         if (opts.loopFadeDuration !== undefined && opts.loopFadeDuration !== null) {

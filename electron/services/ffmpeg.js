@@ -50,7 +50,8 @@ function runCommand(cmd, args, options = {}) {
             if (code === 0 || options.allowNonZero) {
                 resolve({ stdout, stderr, code });
             } else {
-                reject(new Error(`${cmd} 退出码 ${code}: ${stderr.slice(0, 500)}`));
+                console.error(`[FFmpeg] 退出码 ${code} [${cmd}]:\n${stderr}`);
+                reject(new Error(`${cmd} 退出码 ${code}: ${stderr.slice(0, 3000)}`));
             }
         });
         proc.on('error', (err) => {
@@ -1476,20 +1477,42 @@ async function concatVideo(opts) {
     }
 
     const normArgs = [
-        '-y'
+        '-y',
+        '-i', introPath,
+        '-f', 'lavfi', '-i', 'anullsrc=cl=stereo:r=48000',
     ];
-    
-    // Add trimming if specified
-    if (opts.trimStart != null && opts.trimStart > 0) {
-        normArgs.push('-ss', String(opts.trimStart));
-    }
-    if (opts.trimEnd != null && opts.trimEnd > 0) {
-        normArgs.push('-to', String(opts.trimEnd));
+
+    // Add trimming AFTER -i (post-input seek — safe with filter_complex in FFmpeg 8.0)
+    // Using -ss after input for precise frame-accurate seek
+    const trimStart = (opts.trimStart != null && opts.trimStart > 0) ? parseFloat(opts.trimStart) : 0;
+    const trimEnd   = (opts.trimEnd   != null && opts.trimEnd   > 0) ? parseFloat(opts.trimEnd)   : null;
+    const trimFilterParts = [];
+    if (trimStart > 0 || trimEnd != null) {
+        // Build atrim/trim via filter_complex instead of input flags to avoid FFmpeg 8.0 EINVAL
+        const vTrimEnd = trimEnd != null ? `:end=${trimEnd}` : '';
+        const aTrimEnd = trimEnd != null ? `:end=${trimEnd}` : '';
+        // Prepend trim to existing filterComplex video chain
+        // Replace the first [0:v] reference with a trim-then-setpts chain
+        filterComplex = filterComplex.replace(
+            '[0:v]setpts=',
+            `[0:v]trim=start=${trimStart}${vTrimEnd},setpts=PTS-STARTPTS,setpts=`
+        );
+        if (hookHasAudio) {
+            // Also trim audio — insert atrim before the existing [0:a] chain
+            filterComplex = filterComplex.replace(
+                '[0:a]atempo',
+                `[0:a]atrim=start=${trimStart}${aTrimEnd},asetpts=PTS-STARTPTS,atempo`
+            ).replace(
+                '[0:a]anull',
+                `[0:a]atrim=start=${trimStart}${aTrimEnd},asetpts=PTS-STARTPTS,anull`
+            ).replace(
+                '[0:a]aformat',
+                `[0:a]atrim=start=${trimStart}${aTrimEnd},asetpts=PTS-STARTPTS,aformat`
+            );
+        }
     }
 
     normArgs.push(
-        '-i', introPath,
-        '-f', 'lavfi', '-i', 'anullsrc=cl=stereo:r=48000',
         '-filter_complex', filterComplex,
         '-map', '[vout]',
         '-map', '[aout]',
@@ -1500,12 +1523,33 @@ async function concatVideo(opts) {
     );
 
     console.log('[ConcatVideo] 预处理 Hook 参数:', normArgs.join(' '));
-    await runCommand('ffmpeg', normArgs, { timeout: 300000 });
+    try {
+        await runCommand('ffmpeg', normArgs, { timeout: 300000 });
+    } catch (e) {
+        console.error('[ConcatVideo] Hook 预处理失败:', e.message);
+        throw e;
+    }
 
     const hookDur = await getDuration(hookNormPath);
     console.log(`[ConcatVideo] Hook 预处理完成 (时长: ${hookDur}s)`);
 
+    // 探测正片是否有音频流（无音频时需要补静音轨）
+    let mainHasAudio = false;
+    try {
+        const { stdout: mainAudioOut } = await execFileAsync(ffprobe, [
+            '-v', 'error', '-select_streams', 'a',
+            '-show_entries', 'stream=codec_type',
+            '-of', 'csv=p=0', mainPath
+        ]);
+        mainHasAudio = mainAudioOut.trim().length > 0;
+    } catch (e) { }
+    console.log(`[ConcatVideo] mainHasAudio=${mainHasAudio}`);
+
     const concatArgs = ['-y', '-i', hookNormPath, '-i', mainPath];
+    // 如果正片没有音频，补一个静音轨（索引2）
+    if (!mainHasAudio) {
+        concatArgs.push('-f', 'lavfi', '-i', 'anullsrc=cl=stereo:r=48000');
+    }
     const finalTransDur = parseFloat(transDuration) || 0;
 
     // Map UI anim engine preset to standard xfade transition names
@@ -1519,15 +1563,20 @@ async function concatVideo(opts) {
     };
     const xfadeName = FFMPEG_XFADE_MAP[transition] || transition;
 
+    // 构建音频引用：正片有音频用 [1:a]，否则用补的 [2:a]
+    const mainAudioRef = mainHasAudio ? '[1:a]' : '[2:a]';
+
     if (transition === 'none' || finalTransDur <= 0 || hookDur <= finalTransDur) {
+        // 硬切拼接 — 也需要统一帧率避免 concat 问题
         concatArgs.push(
-            '-filter_complex', '[0:v][0:a][1:v][1:a]concat=n=2:v=1:a=1[v][a]',
+            '-filter_complex', `[0:v]fps=${fps},settb=AVTB[v0];[1:v]fps=${fps},settb=AVTB[v1];[v0][0:a][v1]${mainAudioRef}concat=n=2:v=1:a=1[v][a]`,
             '-map', '[v]', '-map', '[a]'
         );
     } else {
         const offset = Math.max(0.1, hookDur - finalTransDur).toFixed(3);
+        // xfade 要求两个输入 timebase 完全一致 — 用 fps+settb 统一
         concatArgs.push(
-            '-filter_complex', `[0:v][1:v]xfade=transition=${xfadeName}:duration=${finalTransDur}:offset=${offset}[v];[0:a][1:a]acrossfade=d=${finalTransDur}[a]`,
+            '-filter_complex', `[0:v]fps=${fps},settb=AVTB[v0];[1:v]fps=${fps},settb=AVTB[v1];[v0][v1]xfade=transition=${xfadeName}:duration=${finalTransDur}:offset=${offset}[v];[0:a]${mainAudioRef}acrossfade=d=${finalTransDur}[a]`,
             '-map', '[v]', '-map', '[a]'
         );
     }

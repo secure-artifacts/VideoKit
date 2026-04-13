@@ -114,7 +114,7 @@
                   </button>
                   <input type="hidden" id="language" value="英语">
                   <div id="subtitle-lang-dropdown" style="display:none;position:absolute;top:100%;left:0;z-index:9999;background:var(--bg-secondary);border:1px solid var(--border-color, #333);border-radius:8px;width:260px;max-height:360px;box-shadow:0 8px 24px rgba(0,0,0,0.5);overflow:hidden;margin-top:4px;">
-                    <input id="subtitle-lang-search" type="text" placeholder="🔍 搜索语言 (中文/English/代码)..." style="width:100%;box-sizing:border-box;padding:8px 12px;border:none;border-bottom:1px solid var(--border-color, #333);background:#141414;color:var(--text-primary, #ddd);font-size:13px;outline:none;">
+                    <input id="subtitle-lang-search" type="text" placeholder="🔍 搜索语言 (中文/English/代码)..." style="width:100%;box-sizing:border-box;padding:8px 12px;border:none;border-bottom:1px solid var(--border-color);background:var(--bg-input);color:var(--text-primary);font-size:13px;outline:none;">
                     <div id="subtitle-lang-list" style="max-height:300px;overflow-y:auto;"></div>
                   </div>
                 </div>
@@ -2416,7 +2416,7 @@
             <div class="form-section" id="batch-dl-log-section" style="display: none;">
               <h3 class="section-title">下载日志</h3>
               <div id="batch-dl-log"
-                style="max-height: 200px; overflow-y: auto; background: #0d1117; color: #c9d1d9; border-radius: 8px; padding: 12px; font-family: 'Courier New', monospace; font-size: 11px; line-height: 1.6; white-space: pre-wrap; word-break: break-all;">
+                style="max-height: 200px; overflow-y: auto; background: var(--bg-input); color: var(--text-primary); border-radius: 8px; padding: 12px; font-family: 'Courier New', monospace; font-size: 11px; line-height: 1.6; white-space: pre-wrap; word-break: break-all;">
               </div>
             </div>
           </div>
@@ -2425,7 +2425,7 @@
       </section>
 
       <!-- ==================== 批量Reels面板 ==================== -->
-      <section id="batch-reels-panel" class="panel" style="height: 100%; margin: 0; overflow:hidden;">
+      <section id="batch-reels-panel" class="panel" style="height: 100%; margin: 0; overflow:auto;">
         <div class="panel-content"
           style="display: flex; flex-direction: column; height: 100%; width: 100%; max-width: 100%; padding: 0; overflow:hidden;">
 
@@ -2582,13 +2582,13 @@
                   <p class="hint" style="margin:0;font-size:11px;">添加背景素材+配音+SRT，或拖拽/导入文件夹</p>
                 </div>
               </div>
-              <div class="reels-resize-handle" data-left="reels-col-tasks" data-right="reels-col-subtitle"></div>
+              <div class="reels-resize-handle reels-resize-handle-1" data-left="reels-col-tasks" data-right="reels-col-preview"></div>
 
               <!-- 左栏：Inspector (Tab 切换: 字幕/覆层/水印) -->
               <div id="reels-col-subtitle" class="reels-column" style="width:320px; min-width:200px; overflow:hidden; padding:0; display:flex; flex-direction:column;">
 
                 <!-- Inspector Tab 栏 -->
-                <div class="inspector-tabs" style="display:flex; gap:0; flex-shrink:0; background:#111; border-bottom:1px solid var(--border-color);">
+                <div class="inspector-tabs" style="display:flex; gap:0; flex-shrink:0; background:var(--bg-titlebar); border-bottom:1px solid var(--border-color);">
                   <button class="inspector-tab active" data-tab="subtitle" onclick="reelsInspectorSwitch('subtitle',this)" style="flex:1; padding:8px 0; border:none; background:transparent; color:var(--text-secondary); font-size:11px; font-weight:600; cursor:pointer; border-bottom:2px solid var(--accent);">T 字幕</button>
                   <button class="inspector-tab" data-tab="overlay" onclick="reelsInspectorSwitch('overlay',this)" style="flex:1; padding:8px 0; border:none; background:transparent; color:var(--text-secondary); font-size:11px; font-weight:600; cursor:pointer; border-bottom:2px solid transparent;">🖼️ 覆层</button>
                   <button class="inspector-tab" data-tab="watermark" onclick="reelsInspectorSwitch('watermark',this)" style="flex:1; padding:8px 0; border:none; background:transparent; color:var(--text-secondary); font-size:11px; font-weight:600; cursor:pointer; border-bottom:2px solid transparent;">🔒 水印</button>
@@ -2734,7 +2734,7 @@
                             style="width: 36px; height: 28px; border: none; cursor: pointer;"
                             onchange="reelsUpdatePreview()">
                           <label style="margin:0; margin-left:4px;">模糊:</label>
-                          <input type="range" id="reels-shadow-blur" min="0" max="20" value="4" style="flex:1; min-width:60px;"
+                          <input type="range" id="reels-shadow-blur" min="0" max="80" value="4" style="flex:1; min-width:60px;"
                             oninput="reelsUpdatePreview()">
                           <span id="reels-shadow-blur-label" style="font-size: 11px; width: 24px;">4</span>
                         </div>
@@ -2850,6 +2850,18 @@
                       <input type="range" id="reels-box-blur-range" min="0" max="40" value="0" style="width: 50px;" oninput="document.getElementById('reels-box-blur').value=this.value; reelsUpdatePreview()">
                       <input type="number" id="reels-box-blur" class="input input-small" value="0" min="0" max="40"
                         style="width: 45px;" oninput="document.getElementById('reels-box-blur-range').value=this.value; reelsUpdatePreview()">
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 4px;">
+                      <label>内距X:</label>
+                      <input type="range" id="reels-box-pad-x-range" min="0" max="60" value="12" style="width: 50px;" oninput="document.getElementById('reels-box-pad-x').value=this.value; reelsUpdatePreview()">
+                      <input type="number" id="reels-box-pad-x" class="input input-small" value="12" min="0" max="60"
+                        style="width: 45px;" oninput="document.getElementById('reels-box-pad-x-range').value=this.value; reelsUpdatePreview()">
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 4px;">
+                      <label>内距Y:</label>
+                      <input type="range" id="reels-box-pad-y-range" min="0" max="60" value="8" style="width: 50px;" oninput="document.getElementById('reels-box-pad-y').value=this.value; reelsUpdatePreview()">
+                      <input type="number" id="reels-box-pad-y" class="input input-small" value="8" min="0" max="60"
+                        style="width: 45px;" oninput="document.getElementById('reels-box-pad-y-range').value=this.value; reelsUpdatePreview()">
                     </div>
                   </div>
 
@@ -3283,7 +3295,7 @@
                 </div>
 
               </div><!-- /reels-col-subtitle -->
-              <div class="reels-resize-handle" data-left="reels-col-subtitle" data-right="reels-col-preview"></div>
+              <div class="reels-resize-handle reels-resize-handle-2" data-left="reels-col-preview" data-right="reels-col-subtitle"></div>
 
               <!-- 中栏：实时预览 -->
               <div id="reels-col-preview"
@@ -3314,7 +3326,7 @@
                     </div>
                     <!-- 预览视口 -->
                     <div id="reels-preview-viewport"
-                      style="position: relative; flex:1; width:100%; background: #111; overflow: hidden; cursor: grab; box-shadow: inset 0 0 16px rgba(0,0,0,0.8);">
+                      style="position: relative; flex:1; width:100%; background: var(--bg-titlebar); overflow: hidden; cursor: grab; box-shadow: inset 0 0 16px rgba(0,0,0,0.8);">
                       <div id="reels-preview-transform"
                         style="position: absolute; transform-origin: 0 0; will-change: transform;">
                         <div id="reels-preview-container"
@@ -3323,7 +3335,7 @@
                             style="width: 100%; height: 100%; object-fit: contain; display: none;"></video>
                           <video id="reels-preview-hook-video" preload="auto" muted
                             style="display: none;"></video>
-                          <video id="reels-preview-contentvideo" preload="auto" muted
+                          <video id="reels-preview-contentvideo" preload="auto"
                             style="position: absolute; object-fit: contain; display: none; pointer-events: none; z-index: 10;"></video>
                           <audio id="reels-preview-audio" style="display:none;"></audio>
                           <canvas id="reels-preview-canvas"
@@ -3337,7 +3349,7 @@
                     </div>
                     <!-- 底部控制栏 -->
                     <div
-                      style="display:flex; align-items:center; gap:8px; padding: 6px 8px; background: #1e1e1e; border-top: 1px solid #333;">
+                      style="display:flex; align-items:center; gap:8px; padding: 6px 8px; background: var(--bg-secondary); border-top: 1px solid var(--border-color);">
                       <button id="reels-preview-play" class="btn"
                         style="padding:0; width:24px; height:24px; font-size:12px; background:transparent; border:none; display:flex; align-items:center; justify-content:center; cursor:pointer;"
                         onclick="reelsTogglePlay()">▶️</button>
@@ -3346,13 +3358,13 @@
                       <input type="range" id="reels-preview-seek" min="0" max="100" value="0"
                         style="flex:1; height: 3px; cursor: pointer; accent-color: var(--accent-color);">
                       <label
-                        style="display:flex;align-items:center;gap:3px;font-size:11px;color:#aaa;cursor:pointer;white-space:nowrap;margin-left:4px;"
+                        style="display:flex;align-items:center;gap:3px;font-size:11px;color:var(--text-secondary);cursor:pointer;white-space:nowrap;margin-left:4px;"
                         title="显示/隐藏字幕">
                         <input type="checkbox" id="reels-subtitle-toggle" checked
                           style="accent-color:var(--accent-color);"> 字幕
                       </label>
                       <label
-                        style="display:flex;align-items:center;gap:3px;font-size:11px;color:#aaa;cursor:pointer;white-space:nowrap;margin-left:2px;"
+                        style="display:flex;align-items:center;gap:3px;font-size:11px;color:var(--text-secondary);cursor:pointer;white-space:nowrap;margin-left:2px;"
                         title="循环播放预览（关闭后仅播放一次）">
                         <input type="checkbox" id="reels-preview-loop" checked onchange="reelsOnPreviewLoopModeChange()"
                           style="accent-color:var(--accent-color);"> 循环
@@ -3443,6 +3455,8 @@
                 </label>
                 <span style="width:1px;height:16px;background:var(--border-color);margin:0 2px;display:inline-block;"></span>
                 <label style="display:flex;align-items:center;gap:3px;" title="使用独立显卡进行视频编码硬件加速"><input type="checkbox" id="reels-use-gpu" checked>⚡GPU <span id="reels-gpu-name" style="font-size:10px; color:#aaa; font-style:italic; margin-left: -2px;">(检测中...)</span></label>
+                <span style="width:1px;height:16px;background:var(--border-color);margin:0 4px;display:inline-block;"></span>
+                <label style="display:flex;align-items:center;gap:3px;" title="纯显存直读，0硬盘写入，提速极快（遇到不兼容格式时自动回退）"><input type="checkbox" id="reels-use-memory-decoder" checked>🚀极速内存渲染</label>
               </div>
 
               <!-- ── 行2: 音量控制 ── -->
@@ -3498,7 +3512,11 @@
               <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:center; font-size:12px; padding:6px 0 2px;">
                 <span style="font-size:10px; color:var(--text-muted); min-width:24px;">✨</span>
                 <label style="display:flex;align-items:center;gap:4px;white-space:nowrap;">
-                  <input type="checkbox" id="reels-loop-fade" checked>循环透明过渡
+                  <input type="checkbox" id="reels-loop-fade" checked onchange="_renderTaskList()">循环透明过渡
+                </label>
+                <label style="display:flex;align-items:center;gap:4px;white-space:nowrap;margin-left:8px;" title="跳过底图解码，使用FFmpeg原生覆盖（极速提升）">
+                  <input type="checkbox" id="reels-fast-alpha-mode" checked onchange="_renderTaskList()">极速贴合模式
+                  <span id="fast-alpha-status-text" style="font-size:10px; padding:2px 4px; border-radius:3px; margin-left:4px; pointer-events:none;"></span>
                 </label>
                 <label style="display:flex;align-items:center;gap:6px;white-space:nowrap;">
                   过渡时长:
@@ -3519,11 +3537,17 @@
                 <!-- 导出按钮推到右端 -->
                 <span style="flex:1;"></span>
                 <label style="display:flex;align-items:center;gap:4px;font-size:11px;white-space:nowrap;">
+                  并发数:
+                  <input type="number" id="reels-export-concurrency" class="input input-small" min="1" max="64" value="1" style="width:44px;font-size:11px;">
+                </label>
+                <label style="display:flex;align-items:center;gap:4px;font-size:11px;white-space:nowrap;">
                   格式:
                   <select id="reels-export-format" class="select select-small" style="width:140px;font-size:11px;padding:2px 4px;">
                     <option value="mp4">🎬 MP4 视频</option>
                     <option value="png-layers">🗂️ PNG分层序列</option>
                     <option value="mp4+png">🎬+🗂️ MP4+PNG 双格式</option>
+                    <option value="fcpxml">🎞️ FCPXML 时间线</option>
+                    <option value="fcpxml-compound">🎞️ FCPXML 复合片段</option>
                   </select>
                 </label>
                 <button id="reels-export-btn" class="btn btn-primary" style="font-size:12px;padding:6px 18px;white-space:nowrap;"
@@ -3562,14 +3586,53 @@
       <section id="settings-panel" class="panel">
         <div class="panel-content">
           <div class="form-section">
-            <h3 class="section-title">🎙️ ElevenLabs API Keys</h3>
-            <p class="hint">用于 TTS 语音合成，每行一个 API Key（支持自动轮询 & 额度用尽自动切换）</p>
-            <textarea id="settings-elevenlabs-keys" class="textarea" rows="4" placeholder="一行一个 ElevenLabs API Key"></textarea>
-            <div style="display:flex; gap:8px; align-items:center; margin-top:12px;">
-              <button class="btn btn-primary" onclick="saveSettingsElevenLabsKeys()">💾 保存 ElevenLabs Keys</button>
-              <span id="settings-elevenlabs-key-count" style="font-size:12px;color:var(--text-secondary);"></span>
+            <h3 class="section-title">🎙️ ElevenLabs 配置</h3>
+            <p class="hint">用于 TTS 语音合成，支持 API Key 和网页登录两种模式</p>
+
+            <!-- 模式切换 -->
+            <div style="display: flex; align-items: center; gap: 20px; margin: 12px 0;">
+              <label style="cursor: pointer; display: flex; align-items: center; gap: 6px; color: var(--text-primary); font-size: 13px;">
+                <input type="radio" name="settings-el-auth-mode" value="apikey" id="settings-mode-apikey" checked onchange="settingsToggleELMode()">
+                <span>🔑 API Key 模式 (多账号池)</span>
+              </label>
+              <label style="cursor: pointer; display: flex; align-items: center; gap: 6px; color: var(--text-primary); font-size: 13px;">
+                <input type="radio" name="settings-el-auth-mode" value="web" id="settings-mode-web" onchange="settingsToggleELMode()">
+                <span>🌐 网页账号登录 (免配置)</span>
+              </label>
             </div>
-            <a href="#" onclick="window.electronAPI && window.electronAPI.openExternal('https://elevenlabs.io/app/settings/api-keys')" style="display:inline-block;margin-top:8px;color:#4a9eff; text-decoration:underline; font-size:12px;">🌍 去 ElevenLabs 官网获取 API Key</a>
+
+            <!-- API Key 面板 -->
+            <div id="settings-el-apikey-panel">
+              <textarea id="settings-elevenlabs-keys" class="textarea" rows="4" placeholder="一行一个 ElevenLabs API Key"></textarea>
+              <div style="display:flex; gap:8px; align-items:center; margin-top:12px;">
+                <button class="btn btn-primary" onclick="saveSettingsElevenLabsKeys()">💾 保存 ElevenLabs Keys</button>
+                <span id="settings-elevenlabs-key-count" style="font-size:12px;color:var(--text-secondary);"></span>
+              </div>
+              <a href="#" onclick="window.electronAPI && window.electronAPI.openExternal('https://elevenlabs.io/app/settings/api-keys')" style="display:inline-block;margin-top:8px;color:#4a9eff; text-decoration:underline; font-size:12px;">🌍 去 ElevenLabs 官网获取 API Key</a>
+            </div>
+
+            <!-- 网页登录面板 -->
+            <div id="settings-el-web-panel" style="display: none; background: rgba(0,0,0,0.2); padding: 14px; border-radius: 8px; margin-top: 12px;">
+              <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+                <label style="font-size: 12px; color: var(--text-secondary); min-width: 50px;">方式一:</label>
+                <button class="btn btn-secondary" onclick="openElevenLabsWebLogin()" style="font-size: 12px; padding: 4px 12px;">🌐 App内弹窗登录</button>
+                <button class="btn btn-secondary" onclick="clearElevenLabsWebLogin()" style="font-size: 12px; padding: 4px 12px; color: #ff6b6b;">🗑 清除凭证</button>
+                <span id="settings-web-login-status" style="font-size: 11px; padding: 3px 8px; border-radius: 4px; background: rgba(255,255,255,0.1); color: #aaa;">检查中...</span>
+              </div>
+              <p class="hint" style="margin-bottom: 14px;">在 App 内弹出登录窗口，自动拦截 Token。⚠️ Google 快捷登录可能被拦截，请改用<strong>方式二</strong>。</p>
+              <div style="border-top: 1px solid rgba(255,255,255,0.1); padding-top: 12px;">
+                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                  <label style="font-size: 12px; color: var(--text-secondary); min-width: 50px;">方式二:</label>
+                  <button class="btn btn-secondary" onclick="window.electronAPI && window.electronAPI.openExternal('https://elevenlabs.io/app/speech-synthesis')" style="font-size: 12px; padding: 4px 12px;">🌍 用我的浏览器打开</button>
+                  <button class="btn btn-secondary" onclick="navigator.clipboard.writeText('https://elevenlabs.io/app/speech-synthesis').then(()=>showToast('链接已复制','success'))" style="font-size: 12px; padding: 4px 12px;">📋 复制链接</button>
+                </div>
+                <p class="hint" style="margin-bottom: 8px;">在您的浏览器中登录 ElevenLabs → F12 → Network → 复制 Authorization 值粘贴到下方。</p>
+                <div style="display: flex; flex-direction: column; gap: 6px;">
+                  <textarea id="settings-manual-token" class="textarea" rows="2" placeholder="粘贴 Authorization 值，例如: Bearer eyJhbGciOiJ..." style="font-size: 11px; font-family: monospace;"></textarea>
+                  <button class="btn btn-secondary" onclick="settingsSaveManualToken()" style="align-self: flex-start; font-size: 12px; padding: 4px 12px;">💾 保存 Token</button>
+                </div>
+              </div>
+            </div>
           </div>
 
             <!-- 模式选择提醒（设置页） -->
@@ -3617,6 +3680,60 @@
             </div>
             <textarea id="replace-rules" class="textarea" rows="4" placeholder="(Hello:你好)(World:世界)"></textarea>
             <button class="btn btn-primary" onclick="saveReplaceRules()" style="margin-top: 12px;">保存替换规则</button>
+          </div>
+
+          <div class="form-section">
+            <h3 class="section-title">🎨 主题颜色</h3>
+            <p class="hint">选择预设主题或自定义配色方案。切换即时生效，设置自动保存。</p>
+            <div id="theme-cards" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(135px, 1fr)); gap: 10px; margin: 12px 0;"></div>
+            <!-- 自定义主题 -->
+            <div style="margin-top: 14px; padding: 12px; background: var(--bg-card); border-radius: 8px; border: 1px solid var(--border-color);">
+              <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 10px;">
+                <span style="font-size: 13px; font-weight: 600; color: var(--text-primary);">🎯 自定义主题</span>
+                <span style="font-size: 11px; color: var(--text-secondary);">选一个主色调，自动生成完整配色</span>
+              </div>
+              <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary);">
+                  主色调:
+                  <input type="color" id="theme-custom-accent" value="#4c9eff" style="width: 36px; height: 28px; border: none; cursor: pointer;" onchange="applyCustomThemeFromAccent(this.value)">
+                </label>
+                <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary);">
+                  底色:
+                  <select id="theme-custom-base" class="select" style="width: 100px; font-size: 11px; padding: 3px 6px;" onchange="applyCustomThemeFromAccent(document.getElementById('theme-custom-accent').value)">
+                    <option value="dark">暗色底</option>
+                    <option value="light">亮色底</option>
+                  </select>
+                </label>
+                <button class="btn btn-secondary" style="font-size: 11px; padding: 3px 10px;" onclick="applyTheme('dark')">↺ 恢复默认</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-section">
+            <h3 class="section-title">🖥️ 界面缩放</h3>
+            <p class="hint">调整全局界面大小，适配不同屏幕和视力需求。缩放不影响视频输出画质。</p>
+            <div style="display: flex; align-items: center; gap: 12px; margin: 12px 0;">
+              <span style="font-size: 12px; color: var(--text-secondary); min-width: 28px;">Aa</span>
+              <input type="range" id="settings-ui-scale" min="70" max="160" step="5" value="100"
+                style="flex: 1; accent-color: var(--accent-color); height: 6px;"
+                oninput="applyUIScale(this.value)">
+              <span style="font-size: 16px; color: var(--text-secondary); min-width: 28px;">Aa</span>
+              <span id="settings-ui-scale-label" style="font-size: 14px; font-weight: 600; color: var(--text-primary); min-width: 42px; text-align: center;">100%</span>
+            </div>
+            <div style="display: flex; gap: 6px; flex-wrap: wrap; align-items: center;">
+              <button class="btn btn-secondary" style="font-size: 11px; padding: 3px 10px;" onclick="applyUIScale(80)">80% 紧凑</button>
+              <button class="btn btn-secondary" style="font-size: 11px; padding: 3px 10px;" onclick="applyUIScale(90)">90%</button>
+              <button class="btn btn-secondary" style="font-size: 11px; padding: 3px 10px;" onclick="applyUIScale(100)">100% 默认</button>
+              <button class="btn btn-secondary" style="font-size: 11px; padding: 3px 10px;" onclick="applyUIScale(110)">110%</button>
+              <button class="btn btn-secondary" style="font-size: 11px; padding: 3px 10px;" onclick="applyUIScale(120)">120%</button>
+              <button class="btn btn-secondary" style="font-size: 11px; padding: 3px 10px;" onclick="applyUIScale(130)">130% 宽松</button>
+              <button class="btn btn-secondary" style="font-size: 11px; padding: 3px 10px;" onclick="applyUIScale(150)">150% 大字</button>
+              <span style="flex: 1;"></span>
+              <button class="btn btn-secondary" style="font-size: 11px; padding: 3px 10px; color: #ff8a8a;" onclick="applyUIScale(100)">↺ 恢复默认</button>
+            </div>
+            <div style="margin-top: 10px; padding: 8px 12px; background: rgba(74,158,255,0.08); border: 1px solid rgba(74,158,255,0.2); border-radius: 6px; font-size: 11px; line-height: 1.6; color: var(--text-secondary);">
+              💡 <strong>快捷键</strong>：按 <kbd style="background:var(--bg-hover-strong);padding:1px 6px;border-radius:3px;">Ctrl/⌘</kbd> + <kbd style="background:var(--bg-hover-strong);padding:1px 6px;border-radius:3px;">+</kbd> 放大，<kbd style="background:var(--bg-hover-strong);padding:1px 6px;border-radius:3px;">Ctrl/⌘</kbd> + <kbd style="background:var(--bg-hover-strong);padding:1px 6px;border-radius:3px;">-</kbd> 缩小，<kbd style="background:var(--bg-hover-strong);padding:1px 6px;border-radius:3px;">Ctrl/⌘</kbd> + <kbd style="background:var(--bg-hover-strong);padding:1px 6px;border-radius:3px;">0</kbd> 重置
+            </div>
           </div>
 
           <div class="form-section">
@@ -4241,6 +4358,7 @@ THE HOLY	This is no coincidence...</div>
   <script src="reels-subtitle-processor.js"></script>
   <script src="reels-wysiwyg-export.js"></script>
   <script src="reels-layered-export.js"></script>
+  <script src="reels-fcpxml-export.js"></script>
   <script src="reels-export-engine.js"></script>
   <script src="reels-timeline.js"></script>
   <script src="reels-font-manager.js"></script>

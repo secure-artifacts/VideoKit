@@ -413,7 +413,8 @@ async function routeAPI(endpoint, data) {
                 data.fps || 30,
                 data.resolution || '1920x1080',
                 fcpxmlPath,
-                data.subtitle_style || null
+                data.subtitle_style || null,
+                data.compound_mode || false
             );
         }
 
@@ -945,6 +946,15 @@ async function routeAPI(endpoint, data) {
                 fs.renameSync(source, target);
             }
             return { message: copyMode ? '复制成功' : '重命名成功', target };
+        }
+
+        case 'file/delete': {
+            const filePath = data.path;
+            if (!filePath) throw new Error('缺少文件路径');
+            if (fs.existsSync(filePath)) {
+                fs.unlinkSync(filePath);
+            }
+            return { message: '删除成功', path: filePath };
         }
 
         default:

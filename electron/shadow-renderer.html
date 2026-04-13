@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html>
+<head><title>Shadow Renderer</title></head>
+<body>
+<canvas id="c" style="display:none"></canvas>
+<script>
+/**
+ * shadow-renderer.html — 影子窗口并行渲染器
+ *
+ * 运行在隐藏的 BrowserWindow (nodeIntegration: true) 中。
+ * 接收一个帧范围切片，独立渲染并写入自己的 FFmpeg 编码会话。
+ * 与 audio-renderer.html 使用完全相同的隐藏窗口架构模式。
+ */
+
+const { ipcRenderer } = require('electron');
+const fs = require('fs');
+const path = require('path');
+
+// ═══ 基础工具函数 ═══
+
+function _canvasToRawRGBA(canvas) {
+    const ctx = canvas.getContext('2d');
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    return imageData.data.buffer.slice(0);
+}
+
+function _loadImage(src) {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error('图片加载失败: ' + src));
+        img.src = src;
+    });
+}
+
+function _createVideoNode(src) {
+    return new Promise((resolve, reject) => {
+        const v = document.createElement('video');
+        v.muted = true;
+        v.playsInline = true;
+        v.crossOrigin = 'anonymous';
+        v.preload = 'auto';
+        v.oncanplaythrough = () => {
+            v.currentTime = 0;
+            const onSeeked = () => { v.removeEventListener('seeked', onSeeked); resolve(v); };
+            v.addEventListener('seeked', onSeeked);
+            setTimeout(() => resolve(v), 300);
+        };
+        v.onerror = (e) => reject(new Error('HTML5 Video Load Failed: ' + src));
+        v.src = src.startsWith('file://') ? src : `file://${src}`;
+    });
+}
+
+function _seekVideoNode(video, time) {
+    return new Promise((resolve) => {
+        if (Math.abs(video.currentTime - time) < 0.02) return resolve(true);
+        let isDone = false;
+        const handler = () => { if (!isDone) { isDone = true; resolve(true); } };
+        video.addEventListener('seeked', handler, { once: true });
+        video.currentTime = time;
+        setTimeout(handler, 500);
+    });
+}
+
+function _isImageFile(filePath) {
+    const ext = (filePath || '').split('.').pop().toLowerCase();
+    return ['jpg', 'jpeg', 'png', 'webp', 'bmp', 'gif'].includes(ext);
+}
+
+// ═══ 动态加载渲染器脚本 ═══
+
+function loadScript(filePath) {
+    return new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = `file://${filePath}`;
+        script.onload = () => resolve();
+        script.onerror = () => {
+            console.warn(`[Shadow] 脚本加载失败: ${filePath}, 尝试直接 eval...`);
+            // Fallback: read and eval
+            try {
+                const code = fs.readFileSync(filePath, 'utf-8');
+                (new Function(code))();
+                resolve();
+            } catch (e) {
+                reject(new Error(`脚本加载/执行失败: ${filePath}: ${e.message}`));
+            }
+        };
+        document.body.appendChild(script);
+    });
+}
+
+// ═══ 主渲染逻辑 ═══
+
+ipcRenderer.on('render-chunk', async (event, config) => {
+    const {
+        chunkId,
+        scriptPaths,        // { canvasRenderer, overlay, animEngine }
+        startFrame,          // 起始帧号（含）
+        endFrame,            // 结束帧号（不含）
+        fps,
+        targetWidth,
+        targetHeight,
+        backgroundPath,
+        bgScale,
+        loopFade,
+        loopFadeDur,
+        style,
+        segments,
+        overlays,
+        contentVideoPath,
+        contentVideoTrimStart,
+        contentVideoTrimEnd,
+        contentVideoScale,
+        contentVideoX,
+        contentVideoY,
+        // FFmpeg session params (纯视频，无音频)
+        sessionParams,
+    } = config;
+
+    const totalChunkFrames = endFrame - startFrame;
+    const log = (msg) => console.log(`[Shadow#${chunkId}] ${msg}`);
+
+    try {
+        log(`开始渲染: 帧 ${startFrame}-${endFrame} (${totalChunkFrames} 帧)`);
+
+        // 1. 加载渲染器脚本
+        log('加载渲染脚本...');
+        const scripts = [
+            scriptPaths.animEngine,
+            scriptPaths.canvasRenderer,
+            scriptPaths.overlay,
+        ].filter(Boolean);
+
+        for (const sp of scripts) {
+            if (fs.existsSync(sp)) {
+                await loadScript(sp);
+                log(`  ✓ ${path.basename(sp)}`);
+            } else {
+                log(`  ✗ 文件不存在: ${sp}`);
+            }
+        }
+
+        // 2. 初始化 Canvas
+        const canvas = document.getElementById('c');
+        canvas.width = targetWidth;
+        canvas.height = targetHeight;
+        const ctx = canvas.getContext('2d');
+
+        // 3. 创建渲染器实例
+        let renderer = null;
+        if (typeof window.ReelsCanvasRenderer === 'function') {
+            renderer = new window.ReelsCanvasRenderer(canvas);
+            log('字幕渲染器就绪');
+        } else {
+            log('⚠️ ReelsCanvasRenderer 未加载，字幕将不会渲染');
+        }
+
+        // 4. 内存视频节点
+        let bgMemoryNode = null;
+        let bgMemoryNodeFade = null;
+        let bgMemoryRawDur = 0;
+
+        if (backgroundPath && !_isImageFile(backgroundPath)) {
+            try {
+                bgMemoryNode = await _createVideoNode(backgroundPath);
+                bgMemoryRawDur = bgMemoryNode.duration;
+                if (!Number.isFinite(bgMemoryRawDur) || bgMemoryRawDur <= 0.1) {
+                    throw new Error('视频时长无效');
+                }
+                if (loopFade && bgMemoryRawDur > 1.0) {
+                    bgMemoryNodeFade = await _createVideoNode(backgroundPath);
+                }
+                log(`视频内存节点就绪: ${bgMemoryRawDur.toFixed(2)}s`);
+            } catch (e) {
+                log(`⚠️ 内存视频加载失败: ${e.message}`);
+                bgMemoryNode = null;
+            }
+        }
+
+        // 静态图片背景
+        let staticBgImg = null;
+        if (!bgMemoryNode && backgroundPath && _isImageFile(backgroundPath)) {
+            try {
+                staticBgImg = await _loadImage(backgroundPath.startsWith('file://') ? backgroundPath : `file://${backgroundPath}`);
+                log('静态图片背景就绪');
+            } catch (e) {
+                log(`⚠️ 背景图片加载失败: ${e.message}`);
+            }
+        }
+
+        // 5. 内容视频节点
+        let cvMemoryNode = null;
+        let cvMemoryRawDur = 0;
+        if (contentVideoPath && !_isImageFile(contentVideoPath)) {
+            try {
+                cvMemoryNode = await _createVideoNode(contentVideoPath);
+                cvMemoryRawDur = cvMemoryNode.duration;
+                const trimS = parseFloat(contentVideoTrimStart) || 0;
+                log(`内容视频节点就绪: ${cvMemoryRawDur.toFixed(2)}s`);
+            } catch (e) {
+                log(`⚠️ 内容视频加载失败: ${e.message}`);
+            }
+        }
+
+        // 6. 启动 FFmpeg 编码会话（纯视频，无音频）
+        log('启动 FFmpeg 编码会话...');
+        const sessionId = await ipcRenderer.invoke('reels-compose-wysiwyg', 'start', sessionParams);
+        if (!sessionId) throw new Error('FFmpeg 启动失败');
+        log(`FFmpeg 会话: ${sessionId}`);
+
+        // 背景绘制辅助
+        const _drawBgSrc = (src, tw, th, scale) => {
+            const _userScale = (scale || 100) / 100;
+            const srcW = src.videoWidth || src.naturalWidth || tw;
+            const srcH = src.videoHeight || src.naturalHeight || th;
+            const coverScale = Math.max(tw / srcW, th / srcH) * _userScale;
+            const drawW = srcW * coverScale;
+            const drawH = srcH * coverScale;
+            const drawX = (tw - drawW) / 2;
+            const drawY = (th - drawH) / 2;
+            ctx.drawImage(src, drawX, drawY, drawW, drawH);
+        };
+
+        // 蒙版
+        const hasMask = !!style.global_mask_enabled;
+        const maskColor = style.global_mask_color || '#000000';
+        const maskOpacity = style.global_mask_opacity ?? 0.5;
+        const duration = endFrame / fps; // 全局时长（用于 overlay 等计算）
+
+        // 7. 主渲染循环
+        const t0 = Date.now();
+        for (let frameIdx = startFrame; frameIdx < endFrame; frameIdx++) {
+            const t = frameIdx / fps;
+
+            // ── 背景 ──
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, targetWidth, targetHeight);
+
+            if (bgMemoryNode) {
+                let t_bg = t % bgMemoryRawDur;
+                await _seekVideoNode(bgMemoryNode, t_bg);
+                _drawBgSrc(bgMemoryNode, targetWidth, targetHeight, bgScale);
+
+                // LoopFade
+                if (bgMemoryNodeFade) {
+                    const fadeDur = Math.min(loopFadeDur || 1.0, bgMemoryRawDur * 0.4);
+                    if (t_bg >= bgMemoryRawDur - fadeDur) {
+                        const fadeRatio = (t_bg - (bgMemoryRawDur - fadeDur)) / fadeDur;
+                        const t_bg2 = t_bg - (bgMemoryRawDur - fadeDur);
+                        await _seekVideoNode(bgMemoryNodeFade, t_bg2);
+                        ctx.save();
+                        ctx.globalAlpha = Math.max(0, Math.min(1, fadeRatio));
+                        _drawBgSrc(bgMemoryNodeFade, targetWidth, targetHeight, bgScale);
+                        ctx.restore();
+                    }
+                }
+            } else if (staticBgImg) {
+                _drawBgSrc(staticBgImg, targetWidth, targetHeight, bgScale);
+            }
+
+            // ── 内容视频 ──
+            if (cvMemoryNode && cvMemoryRawDur > 0) {
+                const trimS = parseFloat(contentVideoTrimStart) || 0;
+                let t_cv = (t % cvMemoryRawDur) + trimS;
+                if (t_cv >= cvMemoryRawDur) t_cv = t_cv % cvMemoryRawDur;
+                await _seekVideoNode(cvMemoryNode, t_cv);
+
+                const imgW = cvMemoryNode.videoWidth || targetWidth;
+                const imgH = cvMemoryNode.videoHeight || targetHeight;
+                const cScale = (contentVideoScale || 100) / 100;
+                const baseScale = targetWidth / imgW;
+                const finalScale = baseScale * cScale;
+                const drawW = imgW * finalScale;
+                const drawH = imgH * finalScale;
+                let drawX = (targetWidth - drawW) / 2;
+                let drawY = (targetHeight - drawH) / 2;
+                if (contentVideoX && contentVideoX !== 'center') {
+                    const relX = parseFloat(contentVideoX);
+                    if (!isNaN(relX)) Math.abs(relX) <= 1 ? drawX += targetWidth * relX : drawX += relX;
+                }
+                if (contentVideoY && contentVideoY !== 'center') {
+                    const relY = parseFloat(contentVideoY);
+                    if (!isNaN(relY)) Math.abs(relY) <= 1 ? drawY += targetHeight * relY : drawY += relY;
+                }
+                ctx.drawImage(cvMemoryNode, drawX, drawY, drawW, drawH);
+            }
+
+            // ── 全局蒙版 ──
+            if (hasMask) {
+                ctx.save();
+                ctx.globalAlpha = maskOpacity;
+                ctx.fillStyle = maskColor;
+                ctx.fillRect(0, 0, targetWidth, targetHeight);
+                ctx.restore();
+            }
+
+            // ── 覆盖层 ──
+            if (overlays && overlays.length > 0 && window.ReelsOverlay) {
+                for (const ov of overlays) {
+                    if (ov.disabled) continue;
+                    const ovStart = parseFloat(ov.start || 0);
+                    const ovEnd = parseFloat(ov.end || 9999);
+                    if (t >= ovStart && (ov.type === 'scroll' || t <= ovEnd)) {
+                        ov._selected = false;
+                        ov._exporting = true;
+                        ov._exportDuration = duration;
+                        window.ReelsOverlay.drawOverlay(ctx, ov, t, targetWidth, targetHeight);
+                        ov._exporting = false;
+                    }
+                }
+            }
+
+            // ── 字幕 ──
+            if (renderer && segments && segments.length > 0) {
+                const activeSeg = segments.find(seg => t >= (seg.start || 0) && t <= (seg.end || 0));
+                if (activeSeg) {
+                    renderer.renderSubtitle(style, activeSeg, t, targetWidth, targetHeight);
+                }
+            }
+
+            // ── Canvas → RGBA → FFmpeg ──
+            const rawBuf = _canvasToRawRGBA(canvas);
+            const frameResult = await ipcRenderer.invoke('reels-compose-wysiwyg', 'frame', {
+                sessionId,
+                raw: rawBuf,
+            });
+            const frameOk = frameResult === true || (frameResult && frameResult.ok);
+            if (!frameOk) {
+                const errMsg = (frameResult && frameResult.error) || '未知编码错误';
+                throw new Error(`FFmpeg 写入帧失败 (frame ${frameIdx}): ${errMsg}`);
+            }
+
+            // ── 进度报告 ──
+            const localIdx = frameIdx - startFrame;
+            if (localIdx % Math.max(1, Math.floor(fps / 2)) === 0) {
+                const pct = Math.round((localIdx / totalChunkFrames) * 100);
+                const elapsed = (Date.now() - t0) / 1000;
+                const fpsActual = (localIdx + 1) / Math.max(0.1, elapsed);
+                ipcRenderer.send('chunk-progress', { chunkId, pct, fpsActual });
+            }
+        }
+
+        // 8. 完成编码（纯视频，不混合音频）
+        log('完成编码...');
+        const finishResult = await ipcRenderer.invoke('reels-compose-wysiwyg', 'finish-video-only', { sessionId });
+        if (!finishResult || finishResult.error) {
+            throw new Error(finishResult?.error || 'FFmpeg finish 失败');
+        }
+
+        log(`渲染完成: ${finishResult.videoPath}`);
+        ipcRenderer.send('chunk-result', {
+            chunkId,
+            success: true,
+            videoPath: finishResult.videoPath,
+        });
+
+    } catch (err) {
+        log(`渲染失败: ${err.message}`);
+        console.error(err);
+        ipcRenderer.send('chunk-result', {
+            chunkId,
+            success: false,
+            error: err.message,
+        });
+    }
+});
+
+// 通知主进程已就绪
+ipcRenderer.send('shadow-renderer-ready');
+</script>
+</body>
+</html>

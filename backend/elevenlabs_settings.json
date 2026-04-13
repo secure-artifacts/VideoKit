@@ -51,28 +51,28 @@
     },
     {
       "key": "sk_534bddf7db500ea4990804731afd58669041f6e6a7aedaed",
+      "enabled": false,
+      "auto_disabled": true,
+      "auto_disabled_reason": "remaining<200"
+    },
+    {
+      "key": "sk_b68eaabec16f1f5225a17f6b9762bf05c0efa17eb8ff3bfe",
       "enabled": true,
       "auto_disabled": false,
       "auto_disabled_reason": ""
     },
     {
-      "key": "sk_b68eaabec16f1f5225a17f6b9762bf05c0efa17eb8ff3bfe",
-      "enabled": false,
-      "auto_disabled": true,
-      "auto_disabled_reason": "remaining<200"
-    },
-    {
       "key": "sk_8a5d73854fc79ddbfa922afa121051c08a214b829127afda",
-      "enabled": false,
-      "auto_disabled": true,
-      "auto_disabled_reason": "remaining<200"
+      "enabled": true,
+      "auto_disabled": false,
+      "auto_disabled_reason": ""
     },
     {
       "key": "sk_63c056ad834057cc54e538889e41ebd67f500b89f4a796dd",
       "enabled": true
     }
   ],
-  "use_web_token": true,
+  "use_web_token": false,
   "web_token": {
     "authorization": "Bearer eyJhbGciOiJSUzI1NiIsImtpZCI6IjVlODJhZmI0ZWY2OWI3NjM4MzA2OWFjNmI1N2U3ZTY1MjAzYmZlOTYiLCJ0eXAiOiJKV1QifQ.eyJuYW1lIjoiSGJzYiBTaGgiLCJwaWN0dXJlIjoiaHR0cHM6Ly9saDMuZ29vZ2xldXNlcmNvbnRlbnQuY29tL2EvQUNnOG9jTGhhbUlpTmlIQXFpNHNRblF6WWZCdkxPMUJNLUxxcHJDTzlQUFZnempiPXM5Ni1jIiwid29ya3NwYWNlX2lkIjoiN2JlNTUzMTEzMGY4NGJhMzgxYzc2ODU4MWM3NmE1ZjAiLCJ3b3Jrc3BhY2VfdXNlcl9pZCI6ImQ1WUdMcW5QWXJkUlpNVjc3WEU0Y2NtOWdlMjIiLCJpc3MiOiJodHRwczovL3NlY3VyZXRva2VuLmdvb2dsZS5jb20veGktbGFicyIsImF1ZCI6InhpLWxhYnMiLCJhdXRoX3RpbWUiOjE3NzU3MTU3NjcsInVzZXJfaWQiOiJkNVlHTHFuUFlyZFJaTVY3N1hFNGNjbTlnZTIyIiwic3ViIjoiZDVZR0xxblBZcmRSWk1WNzdYRTRjY205Z2UyMiIsImlhdCI6MTc3NTcxNTc2NywiZXhwIjoxNzc1NzE5MzY3LCJlbWFpbCI6InNoaGhic2IyNUBnbWFpbC5jb20iLCJlbWFpbF92ZXJpZmllZCI6dHJ1ZSwiZmlyZWJhc2UiOnsiaWRlbnRpdGllcyI6eyJnb29nbGUuY29tIjpbIjEwODMzMTM2NjQwNzUwNjkwMDA2NyJdLCJlbWFpbCI6WyJzaGhoYnNiMjVAZ21haWwuY29tIl19LCJzaWduX2luX3Byb3ZpZGVyIjoiZ29vZ2xlLmNvbSJ9fQ.x28LxPl32ffE7kapJxJ09adAZgAVXues9iLrUIYlFAJpaatz-jJZDDadfLHwubXXZDM4zQpPnIPDbwQRNYTBcVTdIgHeJnDgi_fxikUbJA98Rb4KvlHBljsdQb9KfpSloXE5BlusOXJb1ZSoP6w9ZVSSNyUKY6hEivhSYqNeqRJaGZkoVTvzbIi45ZpHvz4qGs1UeICtvmbQF2nSrIgmUOIE85A-UvmdDAdLNprvXYXXvoMzQ_em3sNJsTZCm8vUMElDF797-EncZpQUqLVkLUI-MTmW_647rAXyvM0Xpge2FIPwV3jqbG1VNkwPYArz9-pNfuCfKN2J0oMtcrGUOw"
   },

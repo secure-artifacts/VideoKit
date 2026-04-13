@@ -77,12 +77,12 @@ class ReelsOverlayPanel {
                 <div id="rop-fixed-text-group" class="rop-group" style="display:none;">
                     <div style="display:flex;align-items:center;gap:8px;">
                         <input type="checkbox" id="rop-fixed-text" style="width:16px;height:16px;cursor:pointer;">
-                        <label for="rop-fixed-text" style="font-size:12px;color:#ccc;cursor:pointer;">固定文案 <span style="color:#888;font-size:11px;">— 勾选后文案随预设保存/加载</span></label>
+                        <label for="rop-fixed-text" style="font-size:12px;color:var(--text-secondary);cursor:pointer;">固定文案 <span style="color:var(--text-muted);font-size:11px;">— 勾选后文案随预设保存/加载</span></label>
                     </div>
                 </div>
 
                 <!-- 文字卡片专属：卡片模板与重置 (在全局最上面) -->
-                <div id="rop-textcard-template-props" class="rop-group" style="display:none; padding-bottom: 12px; margin-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.05);">
+                <div id="rop-textcard-template-props" class="rop-group" style="display:none; padding-bottom: 12px; margin-bottom: 8px; border-bottom: 1px solid var(--border-color);">
                     <div class="rop-group-title" style="margin:0;">卡片模板</div>
                     <div style="display:flex;gap:4px;margin-top:4px;">
                         <select id="rop-card-tpl-select" class="rop-select" style="flex:1;">
@@ -119,20 +119,20 @@ class ReelsOverlayPanel {
                         <label id="rop-opacity-label">不透明</label>
                         <div id="rop-opacity-wrap" style="display:flex;align-items:center;gap:6px;">
                             <input type="range" id="rop-opacity" class="rop-range" min="0" max="100" value="100" style="flex:1;">
-                            <span id="rop-opacity-val" style="min-width:36px;text-align:right;font-size:12px;color:#aaa;">100%</span>
+                            <span id="rop-opacity-val" style="min-width:36px;text-align:right;font-size:12px;color:var(--text-muted);">100%</span>
                         </div>
                         <label id="rop-scale-label" style="display:none;">缩放%</label>
                         <div id="rop-scale-wrap" style="display:none;align-items:center;gap:6px;">
                             <input type="range" id="rop-scale" class="rop-range" min="10" max="1000" value="100" style="flex:1;">
-                            <span id="rop-scale-val" style="min-width:44px;text-align:right;font-size:12px;color:#aaa;">100%</span>
+                            <span id="rop-scale-val" style="min-width:44px;text-align:right;font-size:12px;color:var(--text-muted);">100%</span>
                         </div>
                         <div id="rop-time-in-transform" style="display:contents;">
                         <label>开始(s)</label><input type="number" id="rop-start" class="rop-input" step="0.1" min="0">
                         <label>结束(s)</label><input type="number" id="rop-end" class="rop-input" step="0.1" min="0">
                         </div>
-                        <div style="grid-column: span 2; font-size:11px; color:#a3e86c; margin-top:6px; margin-bottom:2px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 4px; display:flex; justify-content:space-between; align-items:center;">
+                        <div style="grid-column: span 2; font-size:11px; color:var(--accent); margin-top:6px; margin-bottom:2px; border-bottom: 1px solid var(--border-color); padding-bottom: 4px; display:flex; justify-content:space-between; align-items:center;">
                             全程(A→B)平滑过渡
-                            <label style="display:flex;align-items:center;gap:4px;font-weight:normal;color:#fff;cursor:pointer;">
+                            <label style="display:flex;align-items:center;gap:4px;font-weight:normal;color:var(--text-primary);cursor:pointer;">
                                 <input type="checkbox" id="rop-anim-dest-enabled"> 启用
                             </label>
                         </div>
@@ -141,17 +141,17 @@ class ReelsOverlayPanel {
                         <label>终点缩放%</label>
                         <div style="display:flex;align-items:center;gap:6px;">
                             <input type="range" id="rop-anim-end-scale" class="rop-range" min="10" max="1000" value="100" style="flex:1;">
-                            <span id="rop-anim-end-scale-val" style="min-width:36px;text-align:right;font-size:12px;color:#aaa;">100%</span>
+                            <span id="rop-anim-end-scale-val" style="min-width:36px;text-align:right;font-size:12px;color:var(--text-muted);">100%</span>
                         </div>
                     </div>
                 </div>
 
                 <!-- 文字卡片布局/自动缩放（textcard覆层独有，靠近变换/动画） -->
                 <div id="rop-textcard-layout-props" class="rop-group" style="display:none;">
-                    <div class="rop-section-title" style="margin:0; font-size:13px; font-weight:bold; color:var(--text-color); margin-bottom:8px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 4px;">蒙版与布局</div>
+                    <div class="rop-section-title" style="margin:0; font-size:13px; font-weight:bold; color:var(--text-color); margin-bottom:8px; border-bottom: 1px solid var(--border-color); padding-bottom: 4px;">蒙版与布局</div>
                     <div class="rop-group-title" style="display:flex; align-items:center; gap:6px; margin-top:8px; margin-bottom:4px;">
                         <span>蒙版设置</span>
-                        <label style="display:flex; align-items:center; gap:4px; font-size:11px; color:#b7c6dd; font-weight:normal; text-transform:none; letter-spacing:0; cursor:pointer; margin-left:auto;">
+                        <label style="display:flex; align-items:center; gap:4px; font-size:11px; color:var(--text-secondary); font-weight:normal; text-transform:none; letter-spacing:0; cursor:pointer; margin-left:auto;">
                             <input type="checkbox" id="rop-card-enabled" class="rop-defaultable" data-default="true">
                             启用
                         </label>
@@ -198,12 +198,12 @@ class ReelsOverlayPanel {
                     </div>
                     <div class="rop-group-title" style="display:flex; align-items:center; gap:6px; margin-top:8px; margin-bottom:4px;">
                         <span>自动缩放设置</span>
-                        <label style="display:flex; align-items:center; gap:4px; font-size:11px; color:#b7c6dd; font-weight:normal; text-transform:none; letter-spacing:0; cursor:pointer; margin-left:auto;">
+                        <label style="display:flex; align-items:center; gap:4px; font-size:11px; color:var(--text-secondary); font-weight:normal; text-transform:none; letter-spacing:0; cursor:pointer; margin-left:auto;">
                             <input type="checkbox" id="rop-auto-shrink" class="rop-defaultable" data-default="false">
                             启用
                         </label>
                     </div>
-                    <div style="font-size:11px;color:#8fa3bf;margin:2px 0 6px 0;line-height:1.5;">
+                    <div style="font-size:11px;color:var(--text-secondary);margin:2px 0 6px 0;line-height:1.5;">
                         规则：开启“自动适配”后，按“最大高度/最小字号”自动缩字；关闭后，蒙版高度按手动值生效。
                     </div>
                     <div class="rop-grid">
@@ -217,7 +217,7 @@ class ReelsOverlayPanel {
                 </div>
 
                 <div id="rop-textcard-debug-props" class="rop-group" style="display:none;">
-                    <div class="rop-group-title rop-section-title" style="margin:0; font-size:13px; font-weight:bold; color:var(--text-color); margin-bottom:8px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 4px;">排版模式与辅助线</div>
+                    <div class="rop-group-title rop-section-title" style="margin:0; font-size:13px; font-weight:bold; color:var(--text-color); margin-bottom:8px; border-bottom: 1px solid var(--border-color); padding-bottom: 4px;">排版模式与辅助线</div>
                     <div class="rop-grid">
                         <label>排版模式</label>
                         <select id="rop-layout-mode" class="rop-select rop-defaultable" data-default="flow">
@@ -287,7 +287,7 @@ class ReelsOverlayPanel {
                         <label>固定标题</label>
                         <div style="display:flex;align-items:center;gap:6px;">
                             <input type="checkbox" id="rop-scroll-title-fixed" checked>
-                            <span style="font-size:11px;color:#888;">标题不参与滚动</span>
+                            <span style="font-size:11px;color:var(--text-muted);">标题不参与滚动</span>
                         </div>
                         <label>标题字号</label><input type="number" id="rop-scroll-title-fontsize" class="rop-input" min="8" max="300" value="56">
                         <label>标题颜色</label><input type="color" id="rop-scroll-title-color" class="rop-color" value="#ffffff">
@@ -353,12 +353,12 @@ class ReelsOverlayPanel {
                         <label>自动停止</label>
                         <div style="display:flex;align-items:center;gap:6px;">
                             <input type="checkbox" id="rop-scroll-auto-stop">
-                            <span style="font-size:11px;color:#888;">文字全显示后停止滚动</span>
+                            <span style="font-size:11px;color:var(--text-muted);">文字全显示后停止滚动</span>
                         </div>
                         <label>字号自适应</label>
                         <div style="display:flex;align-items:center;gap:6px;">
                             <input type="checkbox" id="rop-scroll-auto-fit">
-                            <span style="font-size:11px;color:#888;">自动缩小确保全部显示</span>
+                            <span style="font-size:11px;color:var(--text-muted);">自动缩小确保全部显示</span>
                         </div>
                         <label>最小字号</label><input type="number" id="rop-scroll-min-fontsize" class="rop-input" min="8" max="200" value="16">
                     </div>
@@ -384,14 +384,14 @@ class ReelsOverlayPanel {
                         <label>全屏蒙版</label>
                         <div style="display:flex;align-items:center;gap:6px;">
                             <input type="checkbox" id="rop-scroll-bg-fullscreen">
-                            <span style="font-size:11px;color:#888;">背景铺满整个画面</span>
+                            <span style="font-size:11px;color:var(--text-muted);">背景铺满整个画面</span>
                         </div>
                     </div>
                 </div>
 
                 <!-- 文字卡片属性 (textcard覆层独有) -->
                 <div id="rop-textcard-props" class="rop-group" style="display:none;">
-                    <div class="rop-section-title" style="margin:0; font-size:13px; font-weight:bold; color:var(--text-color); margin-bottom:8px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 4px;">文字设置</div>
+                    <div class="rop-section-title" style="margin:0; font-size:13px; font-weight:bold; color:var(--text-color); margin-bottom:8px; border-bottom: 1px solid var(--border-color); padding-bottom: 4px;">文字设置</div>
                     <div class="rop-group-title" style="margin-top:8px;">标题</div>
                     <textarea id="rop-title-text" class="rop-textarea" rows="2" placeholder="标题文字"></textarea>
                     <div class="rop-grid">
@@ -430,7 +430,7 @@ class ReelsOverlayPanel {
                         <div class="rop-slider-combo rop-offset-input"><input type="range" id="rop-title-offset-x" class="rop-range rop-defaultable" data-default="0" min="-1080" max="1080" value="0"><input type="number" class="rop-num-readout" data-link="rop-title-offset-x" min="-1080" max="1080" value="0"><button class="rop-reset-btn" data-target="rop-title-offset-x" title="恢复默认(0)">↺</button></div>
                         <label class="rop-offset-label">位置Y</label>
                         <div class="rop-slider-combo rop-offset-input"><input type="range" id="rop-title-offset-y" class="rop-range rop-defaultable" data-default="0" min="-1920" max="1920" value="0"><input type="number" class="rop-num-readout" data-link="rop-title-offset-y" min="-1920" max="1920" value="0"><button class="rop-reset-btn" data-target="rop-title-offset-y" title="恢复默认(0)">↺</button></div>
-                        <div style="grid-column: span 2; font-size:11px; color:#e8b839; margin-top:6px; margin-bottom:2px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 4px;">独立特效 & 背景</div>
+                        <div style="grid-column: span 2; font-size:11px; color:var(--accent); margin-top:6px; margin-bottom:2px; border-bottom: 1px solid var(--border-color); padding-bottom: 4px;">独立特效 & 背景</div>
                         <label>描边颜色</label><input type="color" id="rop-title-stroke-color" class="rop-color rop-defaultable" data-default="#000000" value="#000000">
                         <label>描边宽度</label>
                         <div class="rop-slider-combo"><input type="range" id="rop-title-stroke-width" class="rop-range rop-defaultable" data-default="0" min="0" max="20" value="0"><input type="number" class="rop-num-readout" data-link="rop-title-stroke-width" min="0" max="20" value="0"><button class="rop-reset-btn" data-target="rop-title-stroke-width" title="恢复默认">↺</button></div>
@@ -495,7 +495,7 @@ class ReelsOverlayPanel {
                         <div class="rop-slider-combo rop-offset-input"><input type="range" id="rop-body-offset-x" class="rop-range rop-defaultable" data-default="0" min="-1080" max="1080" value="0"><input type="number" class="rop-num-readout" data-link="rop-body-offset-x" min="-1080" max="1080" value="0"><button class="rop-reset-btn" data-target="rop-body-offset-x" title="恢复默认(0)">↺</button></div>
                         <label class="rop-offset-label">位置Y</label>
                         <div class="rop-slider-combo rop-offset-input"><input type="range" id="rop-body-offset-y" class="rop-range rop-defaultable" data-default="0" min="-1920" max="1920" value="0"><input type="number" class="rop-num-readout" data-link="rop-body-offset-y" min="-1920" max="1920" value="0"><button class="rop-reset-btn" data-target="rop-body-offset-y" title="恢复默认(0)">↺</button></div>
-                        <div style="grid-column: span 2; font-size:11px; color:#6ec6ff; margin-top:6px; margin-bottom:2px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 4px;">独立特效 & 背景</div>
+                        <div style="grid-column: span 2; font-size:11px; color:var(--accent); margin-top:6px; margin-bottom:2px; border-bottom: 1px solid var(--border-color); padding-bottom: 4px;">独立特效 & 背景</div>
                         <label>描边颜色</label><input type="color" id="rop-body-stroke-color" class="rop-color rop-defaultable" data-default="#000000" value="#000000">
                         <label>描边宽度</label>
                         <div class="rop-slider-combo"><input type="range" id="rop-body-stroke-width" class="rop-range rop-defaultable" data-default="0" min="0" max="20" value="0"><input type="number" class="rop-num-readout" data-link="rop-body-stroke-width" min="0" max="20" value="0"><button class="rop-reset-btn" data-target="rop-body-stroke-width" title="恢复默认">↺</button></div>
@@ -560,7 +560,7 @@ class ReelsOverlayPanel {
                         <div class="rop-slider-combo rop-offset-input"><input type="range" id="rop-footer-offset-x" class="rop-range rop-defaultable" data-default="0" min="-1080" max="1080" value="0"><input type="number" class="rop-num-readout" data-link="rop-footer-offset-x" min="-1080" max="1080" value="0"><button class="rop-reset-btn" data-target="rop-footer-offset-x" title="恢复默认(0)">↺</button></div>
                         <label class="rop-offset-label">位置Y</label>
                         <div class="rop-slider-combo rop-offset-input"><input type="range" id="rop-footer-offset-y" class="rop-range rop-defaultable" data-default="0" min="-1920" max="1920" value="0"><input type="number" class="rop-num-readout" data-link="rop-footer-offset-y" min="-1920" max="1920" value="0"><button class="rop-reset-btn" data-target="rop-footer-offset-y" title="恢复默认(0)">↺</button></div>
-                        <div style="grid-column: span 2; font-size:11px; color:#a3e86c; margin-top:6px; margin-bottom:2px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 4px;">独立特效 & 背景</div>
+                        <div style="grid-column: span 2; font-size:11px; color:var(--accent); margin-top:6px; margin-bottom:2px; border-bottom: 1px solid var(--border-color); padding-bottom: 4px;">独立特效 & 背景</div>
                         <label>描边颜色</label><input type="color" id="rop-footer-stroke-color" class="rop-color rop-defaultable" data-default="#000000" value="#000000">
                         <label>描边宽度</label>
                         <div class="rop-slider-combo"><input type="range" id="rop-footer-stroke-width" class="rop-range rop-defaultable" data-default="0" min="0" max="20" value="0"><input type="number" class="rop-num-readout" data-link="rop-footer-stroke-width" min="0" max="20" value="0"><button class="rop-reset-btn" data-target="rop-footer-stroke-width" title="恢复默认">↺</button></div>
@@ -1723,7 +1723,7 @@ class ReelsOverlayPanel {
             
             const ov = ReelsOverlay.createImageOverlay({
                 content: url, x: 390, y: 810, w: 300, h: 300,
-                start: 0, end: 5,
+                start: 0, end: 9999,  // 9999 = 全程（跟随最终输出长度）
             });
             if (isVideo) ov.type = 'video';
             if (file.name) ov.name = file.name;
@@ -1856,7 +1856,7 @@ class ReelsOverlayPanel {
         this.container.querySelector('#rop-fixed-text-group').style.display = hasText ? 'block' : 'none';
 
         // Image overlays: show scale, hide W/H. Others: show W/H, hide scale.
-        const isImg = ov.type === 'image';
+        const isImg = ov.type === 'image' || ov.type === 'video';
         const isTextCard = ov.type === 'textcard';
         // Only show template group if TextCard
         const templateGroup = this.container.querySelector('#rop-textcard-template-props');
@@ -1885,8 +1885,8 @@ class ReelsOverlayPanel {
         this.container.querySelector('#rop-w').style.display = (isImg || isTextCard) ? 'none' : '';
         this.container.querySelector('#rop-wh-label-h').style.display = (isImg || isTextCard) ? 'none' : '';
         this.container.querySelector('#rop-h').style.display = (isImg || isTextCard) ? 'none' : '';
-        this.container.querySelector('#rop-scale-label').style.display = isImg ? '' : 'none';
-        this.container.querySelector('#rop-scale-wrap').style.display = isImg ? '' : 'none';
+        this.container.querySelector('#rop-scale-label').style.display = (ov.type === 'image' || ov.type === 'video') ? '' : 'none';
+        this.container.querySelector('#rop-scale-wrap').style.display = (ov.type === 'image' || ov.type === 'video') ? '' : 'none';
 
         // Dynamic labels for scroll overlay (x/y/w/h = clip region)
         const isScroll = ov.type === 'scroll';
@@ -2298,7 +2298,20 @@ class ReelsOverlayPanel {
         ov.rotation = this._get('rop-rotation');
         ov.opacity = Math.round(this._get('rop-opacity') / 100 * 255);
         ov.start = _ropRound(this._get('rop-start'));
-        ov.end = _ropRound(this._get('rop-end'));
+        // 保留 9999（全程）：如果面板显示的值等于视频时长，说明用户没改，保持 9999
+        const panelEnd = _ropRound(this._get('rop-end'));
+        if (ov.end >= 9999) {
+            // 检查用户是否手动修改了结束时间
+            const mediaEl = document.getElementById('reels-preview-video') || document.querySelector('#reels-preview video');
+            const videoDur = (mediaEl && mediaEl.duration && isFinite(mediaEl.duration)) ? _ropRound(mediaEl.duration) : 9999;
+            if (panelEnd === videoDur || panelEnd >= 9999) {
+                // 用户没改，保持 9999（全程）
+            } else {
+                ov.end = panelEnd;  // 用户手动改了
+            }
+        } else {
+            ov.end = panelEnd;
+        }
         
         ov.anim_dest_enabled = !!this._get('rop-anim-dest-enabled');
         ov.anim_end_x = parseFloat(this._get('rop-anim-end-x'));
@@ -2607,18 +2620,32 @@ class ReelsOverlayPanel {
     _extractCardStyle(ov) {
         // Extract only card-related style from overlay (not position/text content)
         const keys = [
-            'w',
-            'card_color', 'card_opacity',
+            'w', 'h',
+            'card_enabled', 'card_color', 'card_opacity',
             'radius_tl', 'radius_tr', 'radius_bl', 'radius_br',
+            // 标题样式
             'title_font_family', 'title_fontsize', 'title_font_weight', 'title_bold', 'title_italic',
-            'title_color', 'title_align', 'title_uppercase', 'title_line_spacing', 'title_letter_spacing',
+            'title_color', 'title_align', 'title_valign', 'title_uppercase',
+            'title_line_spacing', 'title_letter_spacing',
+            'title_offset_x', 'title_offset_y',
+            'title_override_w', 'title_override_h', 'title_auto_shrink',
+            // 正文样式
             'body_font_family', 'body_fontsize', 'body_font_weight', 'body_bold', 'body_italic',
-            'body_color', 'body_align', 'body_line_spacing', 'body_letter_spacing',
+            'body_color', 'body_align', 'body_valign',
+            'body_line_spacing', 'body_letter_spacing',
+            'body_offset_x', 'body_offset_y',
+            'body_override_w', 'body_override_h', 'body_auto_shrink',
+            // 结尾样式
             'footer_font_family', 'footer_fontsize', 'footer_font_weight', 'footer_bold', 'footer_italic',
-            'footer_color', 'footer_align', 'footer_line_spacing', 'footer_letter_spacing',
-            'auto_fit', 'auto_center_v',
+            'footer_color', 'footer_align', 'footer_valign',
+            'footer_line_spacing', 'footer_letter_spacing',
+            'footer_offset_x', 'footer_offset_y',
+            'footer_override_w', 'footer_override_h', 'footer_auto_shrink',
+            // 布局
+            'auto_fit', 'auto_center_v', 'layout_mode',
             'padding_top', 'padding_bottom', 'padding_left', 'padding_right',
             'title_body_gap', 'body_footer_gap',
+            'offset_x', 'offset_y',
             'max_height', 'auto_shrink', 'title_max_lines', 'min_fontsize', 'fullscreen_mask',
             // 独立区段背景
             'title_bg_enabled', 'title_bg_mode', 'title_bg_color', 'title_bg_opacity', 'title_bg_radius', 'title_bg_pad_h', 'title_bg_pad_top', 'title_bg_pad_bottom',
@@ -2629,6 +2656,8 @@ class ReelsOverlayPanel {
             'title_stroke_color', 'title_stroke_width', 'title_shadow_color', 'title_shadow_blur', 'title_shadow_x', 'title_shadow_y',
             'body_stroke_color', 'body_stroke_width', 'body_shadow_color', 'body_shadow_blur', 'body_shadow_x', 'body_shadow_y',
             'footer_stroke_color', 'footer_stroke_width', 'footer_shadow_color', 'footer_shadow_blur', 'footer_shadow_x', 'footer_shadow_y',
+            // 动画
+            'anim_in_type', 'anim_out_type', 'anim_in_duration', 'anim_out_duration',
         ];
         const result = {};
         for (const k of keys) {

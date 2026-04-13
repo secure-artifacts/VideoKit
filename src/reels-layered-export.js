@@ -22,7 +22,7 @@
  * Canvas → Raw RGBA ArrayBuffer
  */
 function _layeredCanvasToRGBA(canvas) {
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     return imageData.data.buffer.slice(0);
 }
@@ -58,6 +58,23 @@ function _layeredLoadImage(src) {
         img.onerror = () => reject(new Error(`图片加载失败: ${src}`));
         img.src = src;
     });
+}
+
+function _normalizeLocalPath(filePath) {
+    if (!filePath || typeof filePath !== 'string') return '';
+    if (!/^file:\/\//i.test(filePath)) return filePath;
+    try {
+        const u = new URL(filePath);
+        let p = decodeURIComponent(u.pathname || '');
+        if (/^\/[A-Za-z]:\//.test(p)) p = p.slice(1);
+        return p || filePath;
+    } catch (_) {
+        try {
+            return decodeURIComponent(filePath.replace(/^file:\/\//i, ''));
+        } catch (_) {
+            return filePath.replace(/^file:\/\//i, '');
+        }
+    }
 }
 
 function _isLayeredImageFile(filePath) {
@@ -131,7 +148,7 @@ async function reelsLayeredExport(params) {
 
     canvas.width = targetWidth;
     canvas.height = targetHeight;
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
     const renderer = new ReelsCanvasRenderer(canvas);
 
     // ── 获取时长 ──
@@ -216,7 +233,7 @@ async function reelsLayeredExport(params) {
         log(`预处理 ${videoOverlays.length} 个视频/动图覆层...`);
         for (const ov of videoOverlays) {
             if (!ov.content) continue;
-            const opath = ov.content.startsWith('file://') ? ov.content.substring(7) : ov.content;
+            const opath = _normalizeLocalPath(ov.content);
             const oPrep = await window.electronAPI.reelsComposeWysiwyg('prepare-overlay', {
                 overlayPath: opath,
                 fps,
@@ -233,7 +250,7 @@ async function reelsLayeredExport(params) {
     let cvFrameCount = 0;
     if (contentVideoPath) {
         log(`预处理内容视频源...`);
-        const cvPathRaw = contentVideoPath.startsWith('file://') ? contentVideoPath.substring(7) : contentVideoPath;
+        const cvPathRaw = _normalizeLocalPath(contentVideoPath);
         const cvPrep = await window.electronAPI.reelsComposeWysiwyg('prepare-overlay', {
             overlayPath: cvPathRaw,
             fps,
@@ -266,7 +283,7 @@ async function reelsLayeredExport(params) {
     const subtitleCanvas = document.createElement('canvas');
     subtitleCanvas.width = targetWidth;
     subtitleCanvas.height = targetHeight;
-    const subtitleCtx = subtitleCanvas.getContext('2d');
+    const subtitleCtx = subtitleCanvas.getContext('2d', { willReadFrequently: true });
     const subtitleRenderer = new ReelsCanvasRenderer(subtitleCanvas);
 
     try {
@@ -281,14 +298,19 @@ async function reelsLayeredExport(params) {
             // ── 加载背景帧 ──
             const bgFrameIdx = Math.min(frameIdx, totalBgFrames - 1);
             if (bgFrameIdx !== currentBgIdx) {
-                const framePath = `${framesDir}/frame_${String(bgFrameIdx + 1).padStart(6, '0')}.png`;
+                const padRef = String(bgFrameIdx + 1).padStart(6, '0');
                 try {
-                    currentBgImg = await _layeredLoadImage(`file://${framePath}`);
+                    currentBgImg = await _layeredLoadImage(`file://${framesDir}/frame_${padRef}.jpg`);
                     currentBgIdx = bgFrameIdx;
                 } catch (e) {
-                    if (!currentBgImg) {
-                        ctx.fillStyle = '#000000';
-                        ctx.fillRect(0, 0, targetWidth, targetHeight);
+                    try {
+                        currentBgImg = await _layeredLoadImage(`file://${framesDir}/frame_${padRef}.png`);
+                        currentBgIdx = bgFrameIdx;
+                    } catch (e2) {
+                        if (!currentBgImg) {
+                            ctx.fillStyle = '#000000';
+                            ctx.fillRect(0, 0, targetWidth, targetHeight);
+                        }
                     }
                 }
             }

@@ -319,7 +319,7 @@ function SrtsToFcpxml(sourceSrt, transSrts, savePath, seamlessFcpxml) {
  * 批量剪辑片段 → FCPXML 时间线
  * 每个片段生成 asset-clip + 动态字幕 title 叠加
  */
-function segmentsToFcpxml(videoPath, segments, videoDuration, fps, resolution, savePath, subtitleStyle) {
+function segmentsToFcpxml(videoPath, segments, videoDuration, fps, resolution, savePath, subtitleStyle, compoundMode = false) {
     fps = fps || 30;
     const [width, height] = (resolution || '1080x1920').split('x').map(Number);
 
@@ -363,12 +363,18 @@ function segmentsToFcpxml(videoPath, segments, videoDuration, fps, resolution, s
     // 计算总时间线长度
     let totalDuration = 0;
     for (const seg of segments) {
-        if (seg.videoPath && seg.videoDuration) {
-            // 多视频模式：整段视频
+        const hasTrim = (seg.start > 0) || (seg.end != null && seg.end > 0);
+        if (hasTrim) {
+            // 有显式裁剪点：用裁剪范围
+            const s = seg.start || 0;
+            const e = seg.end || (seg.videoDuration || videoDuration);
+            totalDuration += e - s;
+        } else if (seg.videoPath && seg.videoDuration) {
+            // 多视频模式无裁剪：整段视频
             totalDuration += seg.videoDuration;
         } else {
             const segEnd = seg.end != null ? seg.end : videoDuration;
-            totalDuration += segEnd - seg.start;
+            totalDuration += segEnd - (seg.start || 0);
         }
     }
     const totalDurStr = secToFrac(videoDuration || totalDuration);
@@ -389,8 +395,83 @@ function segmentsToFcpxml(videoPath, segments, videoDuration, fps, resolution, s
         const assetDurStr = (seg.videoPath && seg.videoDuration) ? secToFrac(seg.videoDuration) : totalDurStr;
         xml += `\t\t<asset name="${xmlEscape(clipName)}" src="${xmlEscape(assetSrc)}" start="0/${Math.round(fps)}s" duration="${assetDurStr}" hasVideo="1" hasAudio="1" format="r0" id="r${i + 1}"/>\n`;
     }
-    // 文字生成器 effect
+    // PNG 覆层 assets (r200+)
+    for (let i = 0; i < segments.length; i++) {
+        const seg = segments[i];
+        if (seg.overlayPngPath) {
+            const pngSrc = 'file://' + seg.overlayPngPath;
+            xml += `\t\t<asset name="overlay_${i + 1}" src="${xmlEscape(pngSrc)}" start="0/${Math.round(fps)}s" duration="0/${Math.round(fps)}s" hasVideo="1" hasAudio="0" format="r0" id="r${200 + i}"/>\n`;
+        }
+    }
+    // 注册背景视频 assets (r300+)
+    for (let i = 0; i < segments.length; i++) {
+        const seg = segments[i];
+        if (seg.bgPath) {
+            const bgSrc = 'file://' + seg.bgPath;
+            const bgDurStr = seg.bgDuration > 0 ? secToFrac(seg.bgDuration) : secToFrac(10);
+            xml += `\t\t<asset name="bg_${i + 1}" src="${xmlEscape(bgSrc)}" start="0/${Math.round(fps)}s" duration="${bgDurStr}" hasVideo="1" hasAudio="1" format="r0" id="r${300 + i}"/>\n`;
+        }
+    }
+    // Effects
     xml += `\t\t<effect name="Basic Title" uid=".../Titles.localized/Build In:Out.localized/Basic Title.localized/Basic Title.moti" id="r100"/>\n`;
+    xml += `\t\t<effect name="Cross Dissolve" uid=".../Transitions.localized/Dissolve.localized/Cross Dissolve.localized/Cross Dissolve.motr" id="r101"/>\n`;
+
+    // ═══ 复合片段模式: 每个 segment → compound clip (<media>) ═══
+    if (compoundMode) {
+        // 在 resources 中为每个 segment 生成 <media> (compound clip)
+        for (let i = 0; i < segments.length; i++) {
+            const seg = segments[i];
+            const hasExplicitTrim = (seg.start > 0) || (seg.end != null && seg.end > 0);
+            const segStart = hasExplicitTrim ? (seg.start || 0) : ((seg.videoPath && seg.videoDuration) ? 0 : (seg.start || 0));
+            const segEnd = hasExplicitTrim ? (seg.end || (seg.videoDuration || videoDuration)) : ((seg.videoPath && seg.videoDuration) ? seg.videoDuration : (seg.end != null ? seg.end : videoDuration));
+            const segDuration = segEnd - segStart;
+            const clipName = seg.name || `片段${i + 1}`;
+            const durationStr = secToFrac(segDuration);
+            const startStr = secToFrac(segStart);
+
+            xml += `\t\t<media name="${xmlEscape(clipName)}" uid="compound_${i}" id="r${500 + i}">\n`;
+            xml += `\t\t\t<sequence format="r0" duration="${durationStr}" tcStart="0/${Math.round(fps)}s" tcFormat="NDF">\n`;
+            xml += '\t\t\t\t<spine>\n';
+
+            // 多轨道: bg spine + content lane 1 + overlay lane 2
+            if (seg.bgPath && seg.bgDuration > 0) {
+                const bgDur = seg.bgDuration;
+                const fadeDur = Math.min(seg.loopFadeDur || 1.0, bgDur * 0.3);
+                const fadeDurStr = secToFrac(fadeDur);
+                const loopCount = Math.ceil(segDuration / bgDur);
+                let bgOff = 0;
+                for (let loop = 0; loop < loopCount; loop++) {
+                    const clipDur = Math.min(bgDur, segDuration - (bgDur * loop));
+                    if (clipDur <= 0) break;
+                    if (loop > 0) {
+                        xml += `\t\t\t\t\t<transition name="Cross Dissolve" offset="${secToFrac(bgOff - fadeDur)}" duration="${fadeDurStr}">\n`;
+                        xml += `\t\t\t\t\t\t<filter-video ref="r101" name="Cross Dissolve"/>\n`;
+                        xml += `\t\t\t\t\t</transition>\n`;
+                    }
+                    xml += `\t\t\t\t\t<asset-clip name="bg_${loop + 1}" ref="r${300 + i}" offset="${secToFrac(bgOff)}" start="0/${Math.round(fps)}s" duration="${secToFrac(clipDur)}" format="r0" tcFormat="NDF">\n`;
+                    if (loop === 0) {
+                        xml += `\t\t\t\t\t\t<asset-clip name="${xmlEscape(clipName)}" ref="r${i + 1}" lane="1" offset="0/${Math.round(fps)}s" start="${startStr}" duration="${durationStr}" format="r0" tcFormat="NDF"/>\n`;
+                        if (seg.overlayPngPath) {
+                            xml += `\t\t\t\t\t\t<asset-clip name="overlay" ref="r${200 + i}" lane="2" offset="0/${Math.round(fps)}s" duration="${durationStr}" format="r0" tcFormat="NDF"/>\n`;
+                        }
+                    }
+                    xml += `\t\t\t\t\t</asset-clip>\n`;
+                    bgOff += clipDur;
+                }
+            } else {
+                // 无独立背景: 内容视频为 spine + overlay lane 1
+                xml += `\t\t\t\t\t<asset-clip name="${xmlEscape(clipName)}" ref="r${i + 1}" offset="0/${Math.round(fps)}s" start="${startStr}" duration="${durationStr}" format="r0" tcFormat="NDF">\n`;
+                if (seg.overlayPngPath) {
+                    xml += `\t\t\t\t\t\t<asset-clip name="overlay" ref="r${200 + i}" lane="1" offset="${startStr}" duration="${durationStr}" format="r0" tcFormat="NDF"/>\n`;
+                }
+                xml += `\t\t\t\t\t</asset-clip>\n`;
+            }
+
+            xml += '\t\t\t\t</spine>\n';
+            xml += '\t\t\t</sequence>\n';
+            xml += '\t\t</media>\n';
+        }
+    }
 
     xml += '\t</resources>\n';
     xml += '\t<library>\n';
@@ -399,13 +480,29 @@ function segmentsToFcpxml(videoPath, segments, videoDuration, fps, resolution, s
     xml += `\t\t\t\t<sequence tcFormat="NDF" tcStart="0/${Math.round(fps)}s" duration="${timelineDurStr}" format="r0">\n`;
     xml += '\t\t\t\t\t<spine>\n';
 
-    // 每个片段 → asset-clip + 动态字幕覆盖
+    // ═══ 主 spine 生成 ═══
+    if (compoundMode) {
+        // 复合片段模式: spine 中只放 ref-clip 引用
+        let timelineOffset = 0;
+        for (let i = 0; i < segments.length; i++) {
+            const seg = segments[i];
+            const hasExplicitTrim = (seg.start > 0) || (seg.end != null && seg.end > 0);
+            const segStart = hasExplicitTrim ? (seg.start || 0) : ((seg.videoPath && seg.videoDuration) ? 0 : (seg.start || 0));
+            const segEnd = hasExplicitTrim ? (seg.end || (seg.videoDuration || videoDuration)) : ((seg.videoPath && seg.videoDuration) ? seg.videoDuration : (seg.end != null ? seg.end : videoDuration));
+            const segDuration = segEnd - segStart;
+            const clipName = seg.name || `片段${i + 1}`;
+
+            xml += `\t\t\t\t\t\t<ref-clip name="${xmlEscape(clipName)}" ref="r${500 + i}" offset="${secToFrac(timelineOffset)}" duration="${secToFrac(segDuration)}" srcEnable="all"/>\n`;
+            timelineOffset += segDuration;
+        }
+    } else {
+    // 平铺模式: 每个片段 → 多轨道结构
     let timelineOffset = 0;
     for (let i = 0; i < segments.length; i++) {
         const seg = segments[i];
-        // 多视频模式：start=0, duration=整段视频长度
-        const segStart = (seg.videoPath && seg.videoDuration) ? 0 : seg.start;
-        const segEnd = (seg.videoPath && seg.videoDuration) ? seg.videoDuration : (seg.end != null ? seg.end : videoDuration);
+        const hasExplicitTrim = (seg.start > 0) || (seg.end != null && seg.end > 0);
+        const segStart = hasExplicitTrim ? (seg.start || 0) : ((seg.videoPath && seg.videoDuration) ? 0 : (seg.start || 0));
+        const segEnd = hasExplicitTrim ? (seg.end || (seg.videoDuration || videoDuration)) : ((seg.videoPath && seg.videoDuration) ? seg.videoDuration : (seg.end != null ? seg.end : videoDuration));
         const segDuration = segEnd - segStart;
 
         const clipName = seg.name || `片段${i + 1}`;
@@ -414,37 +511,88 @@ function segmentsToFcpxml(videoPath, segments, videoDuration, fps, resolution, s
         const startStr = secToFrac(segStart);
         const durationStr = secToFrac(segDuration);
 
-        xml += `\t\t\t\t\t\t<asset-clip name="${xmlEscape(clipName)}" ref="r${i + 1}" offset="${offsetStr}" start="${startStr}" duration="${durationStr}" format="r0" tcFormat="NDF">\n`;
+        // ═══ 多轨道模式: 背景 (spine V1) + 内容 (lane 1) + 覆层 (lane 2) ═══
+        if (seg.bgPath && seg.bgDuration > 0) {
+            const bgDur = seg.bgDuration;
+            const fadeDur = Math.min(seg.loopFadeDur || 1.0, bgDur * 0.3);
+            const fadeDurStr = secToFrac(fadeDur);
 
-        // 如果指定了片段颜色，写入 <note> 标签（达芬奇导入时可见为备注）
-        if (seg.clipColor) {
-            xml += `\t\t\t\t\t\t\t<note>[ClipColor:${xmlEscape(seg.clipColor)}] ${xmlEscape(clipName)}</note>\n`;
+            const loopCount = Math.ceil(segDuration / bgDur);
+            let bgOffset = timelineOffset;
+
+            for (let loop = 0; loop < loopCount; loop++) {
+                const clipDur = Math.min(bgDur, segDuration - (bgDur * loop));
+                if (clipDur <= 0) break;
+
+                if (loop > 0) {
+                    xml += `\t\t\t\t\t\t<transition name="Cross Dissolve" offset="${secToFrac(bgOffset - fadeDur)}" duration="${fadeDurStr}">\n`;
+                    xml += `\t\t\t\t\t\t\t<filter-video ref="r101" name="Cross Dissolve"/>\n`;
+                    xml += `\t\t\t\t\t\t</transition>\n`;
+                }
+
+                xml += `\t\t\t\t\t\t<asset-clip name="bg_${clipName}_${loop + 1}" ref="r${300 + i}" offset="${secToFrac(bgOffset)}" start="0/${Math.round(fps)}s" duration="${secToFrac(clipDur)}" format="r0" tcFormat="NDF">\n`;
+
+                if (loop === 0) {
+                    xml += `\t\t\t\t\t\t\t<asset-clip name="${xmlEscape(clipName)}" ref="r${i + 1}" lane="1" offset="0/${Math.round(fps)}s" start="${startStr}" duration="${durationStr}" format="r0" tcFormat="NDF"/>\n`;
+                    if (seg.overlayPngPath) {
+                        xml += `\t\t\t\t\t\t\t<asset-clip name="overlay_${xmlEscape(clipName)}" ref="r${200 + i}" lane="2" offset="0/${Math.round(fps)}s" duration="${durationStr}" format="r0" tcFormat="NDF"/>\n`;
+                    }
+                }
+
+                xml += `\t\t\t\t\t\t</asset-clip>\n`;
+                bgOffset += clipDur;
+            }
+
+        } else {
+            xml += `\t\t\t\t\t\t<asset-clip name="${xmlEscape(clipName)}" ref="r${i + 1}" offset="${offsetStr}" start="${startStr}" duration="${durationStr}" format="r0" tcFormat="NDF">\n`;
+
+            if (seg.clipColor) {
+                xml += `\t\t\t\t\t\t\t<note>[ClipColor:${xmlEscape(seg.clipColor)}] ${xmlEscape(clipName)}</note>\n`;
+            }
+
+            if (seg.overlayPngPath) {
+                xml += `\t\t\t\t\t\t\t<asset-clip name="overlay_${xmlEscape(clipName)}" ref="r${200 + i}" lane="1" offset="${startStr}" duration="${durationStr}" format="r0" tcFormat="NDF"/>\n`;
+            } else {
+            for (let ci = 0; ci < subtitles.length; ci++) {
+                const subEntry = subtitles[ci];
+                const isObj = subEntry && typeof subEntry === 'object';
+                const text = isObj ? (subEntry.text || '').trim() : (subEntry || '').trim();
+                if (!text) continue;
+
+                const col = columns[ci] || columns[0] || defaultCol;
+                const lane = subtitles.length - ci;
+                const styleId = `ts_${i}_${ci}`;
+                const posX = isObj && subEntry.posX != null ? subEntry.posX : col.posX;
+                const posY = isObj && subEntry.posY != null ? subEntry.posY : col.posY;
+                const subFont = isObj && subEntry.font ? subEntry.font : (col.font || 'Playfair Display');
+                const subFontSize = isObj && subEntry.fontSize ? subEntry.fontSize : col.fontSize;
+                const subBold = isObj && subEntry.bold != null ? (subEntry.bold ? '1' : '0') : col.bold;
+                let subFontColor = col.color;
+                if (isObj && subEntry.fontColor) {
+                    const hex = subEntry.fontColor.replace('#', '');
+                    if (hex.length >= 6) {
+                        subFontColor = `${parseInt(hex.substring(0, 2), 16) / 255} ${parseInt(hex.substring(2, 4), 16) / 255} ${parseInt(hex.substring(4, 6), 16) / 255} 1`;
+                    }
+                }
+
+                xml += `\t\t\t\t\t\t\t<title name="${xmlEscape(text.slice(0, 40))}" lane="${lane}" offset="${startStr}" ref="r100" duration="${durationStr}" start="3600/1s">\n`;
+                xml += `\t\t\t\t\t\t\t\t<param name="Position" key="9999/999166631/999166633/2/100/101" value="${posX} ${posY}"/>\n`;
+                xml += `\t\t\t\t\t\t\t\t<text>\n`;
+                xml += `\t\t\t\t\t\t\t\t\t<text-style ref="${styleId}">${xmlEscape(text)}</text-style>\n`;
+                xml += `\t\t\t\t\t\t\t\t</text>\n`;
+                xml += `\t\t\t\t\t\t\t\t<text-style-def id="${styleId}">\n`;
+                xml += `\t\t\t\t\t\t\t\t\t<text-style font="${xmlEscape(subFont)}" fontFace="SemiBold" fontSize="${subFontSize}" fontColor="${subFontColor}" bold="${subBold}" tracking="${col.tracking || '0'}" lineSpacing="${col.lineSpacing || '0'}" alignment="center" verticalAlignment="top"/>\n`;
+                xml += `\t\t\t\t\t\t\t\t</text-style-def>\n`;
+                xml += `\t\t\t\t\t\t\t</title>\n`;
+            }
+            } // end Basic Title fallback
+
+            xml += `\t\t\t\t\t\t</asset-clip>\n`;
         }
-
-        // 动态生成每个字幕列的 title 元素
-        for (let ci = 0; ci < columns.length; ci++) {
-            const text = (subtitles[ci] || '').trim();
-            if (!text) continue;
-
-            const col = columns[ci];
-            const lane = columns.length - ci;
-            const styleId = `ts_${i}_${ci}`;
-
-            xml += `\t\t\t\t\t\t\t<title name="${xmlEscape(text.slice(0, 40))}" lane="${lane}" offset="${startStr}" ref="r100" duration="${durationStr}" start="3600/1s">\n`;
-            xml += `\t\t\t\t\t\t\t\t<param name="Position" key="9999/999166631/999166633/2/100/101" value="${col.posX} ${col.posY}"/>\n`;
-            xml += `\t\t\t\t\t\t\t\t<text>\n`;
-            xml += `\t\t\t\t\t\t\t\t\t<text-style ref="${styleId}">${xmlEscape(text)}</text-style>\n`;
-            xml += `\t\t\t\t\t\t\t\t</text>\n`;
-            xml += `\t\t\t\t\t\t\t\t<text-style-def id="${styleId}">\n`;
-            xml += `\t\t\t\t\t\t\t\t\t<text-style font="${col.font || 'Playfair Display'}" fontFace="${col.fontFace || 'SemiBold'}" fontSize="${col.fontSize}" fontColor="${col.color}" bold="${col.bold}" tracking="${col.tracking}" lineSpacing="${col.lineSpacing || '0'}" alignment="center" verticalAlignment="top"/>\n`;
-            xml += `\t\t\t\t\t\t\t\t</text-style-def>\n`;
-            xml += `\t\t\t\t\t\t\t</title>\n`;
-        }
-
-        xml += `\t\t\t\t\t\t</asset-clip>\n`;
 
         timelineOffset += segDuration;
     }
+    } // end flat mode
 
     // 闭合标签
     xml += '\t\t\t\t\t</spine>\n';

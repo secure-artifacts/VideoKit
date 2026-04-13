@@ -433,14 +433,21 @@ function _renderBatchTable() {
                     <button class="rbt-btn rbt-ms-btn" id="rbt-ms-import-seq" title="整个目录作为一个序列帧素材">🎞️ 序列帧</button>
                 </div>
                 <div class="rbt-ms-linked-dir">
-                    <div style="font-size:10px; color:#555; font-weight:bold; margin-bottom:4px;">🔗 绑定文件夹</div>
+                    <div style="font-size:10px; color:var(--text-muted); font-weight:bold; margin-bottom:4px;">🔗 绑定文件夹</div>
                     <div style="display:flex; gap:4px; align-items:center;">
-                        <span id="rbt-ms-dir-path" style="flex:1; font-size:10px; color:#888; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${_escHtml(matDir)}">${matDirShort || '<i style="color:#555">未绑定</i>'}</span>
+                        <span id="rbt-ms-dir-path" style="flex:1; font-size:10px; color:var(--text-secondary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${_escHtml(matDir)}">${matDirShort || '<i style="color:var(--text-muted)">未绑定</i>'}</span>
                         <button class="rbt-btn" id="rbt-ms-select-dir" style="padding:1px 6px; font-size:9px;">📂</button>
                         <button class="rbt-btn" id="rbt-ms-refresh-dir" style="padding:1px 6px; font-size:9px; background:#1a3a2a; border-color:#2a5a3a; color:#8f8;" ${!matDir ? 'disabled' : ''}>🔄</button>
                     </div>
-                    ${lastRefresh ? `<div style="font-size:9px; color:#555; margin-top:2px;">上次: ${lastRefresh}</div>` : ''}
+                    ${lastRefresh ? `<div style="font-size:9px; color:var(--text-muted); margin-top:2px;">上次: ${lastRefresh}</div>` : ''}
                 </div>
+                <div class="rbt-ms-collapsible-header" id="rbt-ms-toggle-filters" title="点击折叠/展开分类">
+                    <span class="rbt-ms-toggle-icon" id="rbt-ms-toggle-icon">▾</span>
+                    <span style="font-size:10px;font-weight:bold;color:var(--text-secondary);">分类 & 角色</span>
+                    <span style="flex:1;"></span>
+                    <span style="font-size:9px;color:var(--text-muted);">点击折叠</span>
+                </div>
+                <div class="rbt-ms-collapsible-body" id="rbt-ms-filters-body">
                 <div class="rbt-ms-filters" id="rbt-ms-filter-list">
                     <div class="rbt-ms-filter active" data-filter="all">📁 全部 <span class="rbt-ms-count">(0)</span></div>
                     <div class="rbt-ms-section">[ 视觉 ]</div>
@@ -466,8 +473,9 @@ function _renderBatchTable() {
                     </select>
                     <button class="rbt-btn" id="rbt-ms-apply-bulk" style="width:100%; margin-top:4px; font-size:11px;">应用角色</button>
                 </div>
+                </div>
                 <div class="rbt-ms-pool" id="rbt-ms-pool">
-                    <div style="color:#555; font-size:12px; text-align:center; padding:20px 8px;">
+                    <div style="color:var(--text-muted); font-size:12px; text-align:center; padding:20px 8px;">
                         📥 拖拽文件到此处<br>或点击上方按钮导入
                     </div>
                 </div>
@@ -480,10 +488,10 @@ function _renderBatchTable() {
             <!-- ═══ RIGHT: Main Task Content ═══ -->
             <div class="rbt-main-col">
 
-            <div style="display:flex; align-items:center; padding:4px 12px; border-bottom:1px solid #1a1a3a; background:#101028; gap:8px;">
-                <button id="rbt-toggle-actions-btn" style="background:#222; border:1px solid #333; color:#ccc; padding:2px 8px; border-radius:4px; font-size:11px; cursor:pointer;" title="隐藏/显示操作面板">${_batchTableState.actionsCollapsed ? '🔽 展开操作面板' : '🔼 收起操作面板'}</button>
+            <div class="rbt-header" style="display:flex; align-items:center; padding:4px 12px; gap:8px; height:auto; min-height:auto; max-height:none; flex-direction:row;">
+                <button id="rbt-toggle-actions-btn" class="rbt-btn" style="padding:2px 8px;font-size:11px;" title="隐藏/显示操作面板">${_batchTableState.actionsCollapsed ? '🔽 展开操作面板' : '🔼 收起操作面板'}</button>
                 <span style="flex:1;"></span>
-                ${!_batchTableState.mediaPoolOpen && matDir ? `<span style="font-size:10px; color:#666;">📁 ${_escHtml(matDirShort)}</span>` : ''}
+                ${!_batchTableState.mediaPoolOpen && matDir ? `<span style="font-size:10px; color:var(--text-muted);">📁 ${_escHtml(matDirShort)}</span>` : ''}
             </div>
 
             <div class="rbt-header" style="height:auto; max-height:none; padding:8px 12px; flex-direction:column; gap:6px; align-items:stretch;">
@@ -491,7 +499,7 @@ function _renderBatchTable() {
                 
                     <!-- === 1. 基础系统与工程管理 === -->
                     <div class="rbt-actions" style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:6px; margin-bottom:6px;">
-                        <span style="font-size:11px;color:#aaa;font-weight:bold;margin-right:4px;">工程管理:</span>
+                        <span style="font-size:11px;color:var(--text-secondary);font-weight:bold;margin-right:4px;">工程管理:</span>
                         <button class="rbt-btn" id="rbt-add-row-btn" style="padding:2px 8px;font-size:11px;background:rgba(40,80,40,0.6);border:1px solid rgba(80,180,80,0.3);color:#a0e0b0;">添加行</button>
                         <button class="rbt-btn" id="rbt-clear-btn" style="padding:2px 8px;font-size:11px;background:rgba(120,40,40,0.6);border:1px solid rgba(220,80,80,0.3);color:#f48484;" title="清空全部">清空</button>
                         <span style="color:rgba(255,255,255,0.2);margin:0 2px;">|</span>
@@ -505,7 +513,7 @@ function _renderBatchTable() {
 
                     <!-- === 2. 核心数据调度与录入 === -->
                     <div class="rbt-actions" style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:6px; margin-bottom:6px;">
-                        <span style="font-size:11px;color:#aaa;font-weight:bold;margin-right:4px;">数据录入:</span>
+                        <span style="font-size:11px;color:var(--text-secondary);font-weight:bold;margin-right:4px;">数据录入:</span>
                         <button id="rbt-open-media-pool-btn" class="rbt-btn" style="background:${_batchTableState.mediaPoolOpen ? 'rgba(50,70,160,0.6)' : 'rgba(40,60,120,0.6)'}; color:#9bb0ff; border:1px solid rgba(80,120,220,0.3); font-size:11px; padding:2px 8px;">${_batchTableState.mediaPoolOpen ? '收起素材池' : '打开素材池'}</button>
                         <button class="rbt-btn" id="rbt-cycle-fill-btn" style="background:rgba(255,255,255,0.05); color:#ccc; border:1px solid rgba(255,255,255,0.1); padding:2px 8px; font-size:11px;" title="打开素材循环填充面板">素材使用设置</button>
                         <span style="color:rgba(255,255,255,0.2);margin:0 2px;">|</span>
@@ -517,7 +525,7 @@ function _renderBatchTable() {
 
                     <!-- === 4. 批量参数修剪 (Scaling) === -->
                     <div class="rbt-actions" style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:6px; margin-bottom:6px;">
-                        <span style="font-size:11px;color:#aaa;font-weight:bold;margin-right:4px;">整体参数缩放:</span>
+                        <span style="font-size:11px;color:var(--text-secondary);font-weight:bold;margin-right:4px;">整体参数缩放:</span>
                         <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#ccc;" title="批量设置选中行的背景图片缩放">BG
                             <input type="number" id="rbt-batch-bgscale" min="50" max="300" value="100" step="5" style="width:45px;background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);color:#ccc;padding:2px;font-size:11px;text-align:center;"> %
                         </label>
@@ -531,8 +539,8 @@ function _renderBatchTable() {
                     </div>
 
                     <!-- === 5. AI与配音网络引擎 (AI & Voices) === -->
-                    <div class="rbt-actions" style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:6px; margin-bottom:6px;">
-                        <span style="font-size:11px;color:#aaa;font-weight:bold;margin-right:4px;">人声流水线:</span>
+                    <div class="rbt-actions" style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; border-bottom:none; padding-bottom:6px; margin-bottom:6px;">
+                        <span style="font-size:11px;color:var(--text-secondary);font-weight:bold;margin-right:4px;">人声流水线:</span>
                         <span style="font-size:11px;color:#888;">AI模型:</span>
                         <select id="rbt-tts-model" class="rbt-select" style="width:145px;height:24px;font-size:11px;padding:0 4px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);color:#ccc;">
                             <option value="eleven_v3">v3 (情感标签)</option>
@@ -554,8 +562,8 @@ function _renderBatchTable() {
                     </div>
 
                     <!-- === 6. 字幕对齐后处理 (Alignment) === -->
-                    <div class="rbt-actions" style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:6px; margin-bottom:6px;">
-                        <span style="font-size:11px;color:#aaa;font-weight:bold;margin-right:4px;">对齐设定:</span>
+                    <div class="rbt-actions" style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; border-bottom:none; padding-bottom:6px; margin-bottom:6px;">
+                        <span style="font-size:11px;color:var(--text-secondary);font-weight:bold;margin-right:4px;">对齐设定:</span>
                         <select id="rbt-align-source" class="rbt-select" style="width:auto;height:24px;font-size:11px;padding:0 4px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);color:#ccc;">
                             <option value="audio">用人声对齐</option>
                             <option value="video">视频对齐</option>
@@ -568,7 +576,7 @@ function _renderBatchTable() {
                         </select>
                         <div style="position:relative;display:flex;align-items:center;">
                             <button class="rbt-btn" id="rbt-lang-picker-btn" style="padding:2px 8px;font-size:11px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);color:#ccc;width:95px;display:flex;justify-content:space-between;align-items:center;height:24px;">英语 ▾</button>
-                            <div id="rbt-lang-dropdown" style="display:none;position:absolute;top:100%;left:0;margin-top:4px;width:180px;background:#101028;border:1px solid rgba(255,255,255,0.15);border-radius:4px;z-index:9999;box-shadow:0 8px 32px rgba(0,0,0,0.8);">
+                            <div id="rbt-lang-dropdown" style="display:none;position:absolute;top:100%;left:0;margin-top:4px;width:180px;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:4px;z-index:9999;box-shadow:0 8px 32px rgba(0,0,0,0.8);">
                                 <div style="padding:4px;border-bottom:1px solid rgba(255,255,255,0.05);background:rgba(0,0,0,0.2);">
                                     <input type="text" id="rbt-lang-search" placeholder="搜索语种..." style="width:100%;background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);color:#fff;padding:2px 6px;font-size:11px;border-radius:2px;box-sizing:border-box;">
                                 </div>
@@ -581,7 +589,7 @@ function _renderBatchTable() {
                     </div>
 
                     <!-- === 7. 终极任务执行台 (Execution Block) === -->
-                    <div class="rbt-actions" style="display:flex; gap:8px; align-items:center; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:6px; margin-bottom:6px;">
+                    <div class="rbt-actions" style="display:flex; gap:8px; align-items:center; border-bottom:none; padding-bottom:6px; margin-bottom:6px;">
                         <span style="font-size:11px; color:#aaa; font-weight:bold; margin-right:4px;">执行动作:</span>
                         <select id="rbt-unified-execute-mode" class="rbt-select" style="width:auto; height:24px; font-size:11px; background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.1); border-radius:4px; padding:0 8px; color:#ccc; cursor:pointer; outline:none;">
                             <option value="rbt-ai-auto-all-btn">一键: 执行AI大全家桶 (改写+配音合成+对齐生成)</option>
@@ -594,7 +602,7 @@ function _renderBatchTable() {
 
                     <!-- === 8. 批量模板配置 (Select/Preset/Templates) === -->
                     <div class="rbt-actions" id="rbt-batch-bar" style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:0; padding-bottom:0; border-bottom:none;">
-                        <span style="font-size:11px;color:#aaa;font-weight:bold;margin-right:4px;">批量预设:</span>
+                        <span style="font-size:11px;color:var(--text-secondary);font-weight:bold;margin-right:4px;">批量预设:</span>
                         <label style="display:flex;align-items:center;font-size:11px;color:#ccc;cursor:pointer;gap:4px;"><input type="checkbox" id="rbt-select-all" style="margin:0;transform:scale(0.8);"> 全选</label>
                         <button class="rbt-btn" id="rbt-invert-select" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;">反选</button>
                         <button class="rbt-btn" id="rbt-deselect-all" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;">取消</button>
@@ -654,10 +662,11 @@ function _renderBatchTable() {
                             <th class="rbt-col-bgdurscale rbt-grp-video">背景时长</th>
 
                             <!-- 🎬 视频覆层 (Cyan) -->
-                            <th class="rbt-col-contentvideo rbt-grp-cv"><div class="rbt-th-wrap"><span>视频覆层</span><button class="rbt-th-folder" data-folder-col="contentvideo" title="选择文件夹批量分配">📁</button><button class="rbt-th-clear" data-clear-col="contentvideo" title="清空该列">清</button></div></th>
+                            <th class="rbt-col-contentvideo rbt-grp-cv"><div class="rbt-th-wrap"><span>内容视频</span><button class="rbt-th-folder" data-folder-col="contentvideo" title="选择文件夹批量分配">📁</button><button class="rbt-th-clear" data-clear-col="contentvideo" title="清空该列">清</button></div></th>
                             <th class="rbt-col-cvtrim rbt-grp-cv">✂️ 裁切</th>
                             <th class="rbt-col-cvscale rbt-grp-cv">视频缩放</th>
                             <th class="rbt-col-cvpos rbt-grp-cv">视频位置</th>
+                            <th class="rbt-col-cvvol rbt-grp-cv">🔊 覆层音量</th>
 
                             <th class="rbt-col-bgm rbt-grp-video"><div class="rbt-th-wrap"><span>配乐</span><button class="rbt-th-folder" data-folder-col="bgm" title="选择文件夹批量分配">📁</button><button class="rbt-th-clear" data-clear-col="bgm" title="清空该列">清</button></div></th>
 
@@ -1115,7 +1124,7 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
                     }
                     return `<div style="display:flex;align-items:center;gap:2px;">
                         <div style="flex:1;min-width:0;overflow:hidden;">${cvContent}</div>
-                        ${cvPath ? `<button class="rbt-field-clear" data-idx="${idx}" data-field="contentvideo" title="清除视频覆层">✕</button>` : ''}
+                        ${cvPath ? `<button class="rbt-field-clear" data-idx="${idx}" data-field="contentvideo" title="清除内容视频">✕</button>` : ''}
                     </div>`;
                 })()}
             </td>
@@ -1157,6 +1166,20 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
                         <input type="text" class="rbt-cvpos-y" data-idx="${idx}" value="${task.contentVideoY || 'center'}"
                                style="width:50px;font-size:10px;padding:1px 3px;background:#181818;color:#ccc;border:1px solid #333;border-radius:3px;text-align:center;"
                                placeholder="center" title="center = 垂直居中, 或输入像素值">
+                    </div>
+                </div>
+            </td>
+            <td class="rbt-col-cvvol">
+                <div class="rbt-clutter-free-scale">
+                    <div class="rbt-scale-display">🔊 ${task.contentVideoVolume != null ? task.contentVideoVolume : 100}%</div>
+                    <div class="rbt-scale-controls">
+                        <div style="display:flex;align-items:center;gap:2px;">
+                            <input type="number" class="rbt-cvvol-input" data-idx="${idx}" min="0" max="200" step="5"
+                                   value="${task.contentVideoVolume != null ? task.contentVideoVolume : 100}" style="width:42px;text-align:center;font-size:10px;padding:1px 2px;background:#181818;color:#ccc;border:1px solid #333;border-radius:3px;">
+                            <span style="font-size:10px;color:#666;">%</span>
+                        </div>
+                        <input type="range" class="rbt-cvvol-slider" data-idx="${idx}" min="0" max="200" value="${task.contentVideoVolume != null ? task.contentVideoVolume : 100}"
+                               style="width:60px;height:12px;accent-color:#00bcd4;" title="内容视频音量 (0=静音, 100=原始, 200=加倍)">
                     </div>
                 </div>
             </td>
@@ -1527,6 +1550,9 @@ function _bindBatchTableEvents() {
                 task.hookSpeed = hookSpeed;
                 task.hookTransition = hookTrans;
                 task.hookTransDuration = hookTransDur;
+                if (!task.hook) task.hook = {};
+                task.hook.enabled = !!hookFile;
+                task.hook.path = hookFile || '';
             };
 
             if (idx >= 0) {
@@ -1861,6 +1887,26 @@ function _bindBatchTableEvents() {
         _batchTableState.mediaPoolOpen = false;
         _renderBatchTable();
     });
+
+    // Collapsible filters toggle
+    const _msToggle = container.querySelector('#rbt-ms-toggle-filters');
+    const _msBody = container.querySelector('#rbt-ms-filters-body');
+    const _msIcon = container.querySelector('#rbt-ms-toggle-icon');
+    if (_msToggle && _msBody) {
+        // Restore collapsed state
+        const _msCollapsed = localStorage.getItem('rbt_ms_filters_collapsed') === '1';
+        if (_msCollapsed) {
+            _msBody.classList.add('collapsed');
+            if (_msIcon) _msIcon.textContent = '▸';
+        }
+        _msToggle.addEventListener('click', () => {
+            const nowCollapsed = !_msBody.classList.contains('collapsed');
+            _msBody.classList.toggle('collapsed', nowCollapsed);
+            if (_msIcon) _msIcon.textContent = nowCollapsed ? '▸' : '▾';
+            localStorage.setItem('rbt_ms_filters_collapsed', nowCollapsed ? '1' : '0');
+        });
+    }
+
     // Media sidebar import buttons
     _bindMediaSidebarEvents(container);
 
@@ -2014,7 +2060,7 @@ function _bindBatchTableEvents() {
                 try {
                     const data = JSON.parse(ev.target.result);
                     // data 应该是 { presetName: { overlays: [...] }, ... } 格式
-                    const key = 'reels_overlay_preset_templates';
+                    const key = 'reels_overlay_group_presets';
                     let existing = {};
                     try { existing = JSON.parse(localStorage.getItem(key) || '{}'); } catch (ex) {}
                     let added = 0, skipped = 0;
@@ -2238,6 +2284,33 @@ function _bindBatchTableEvents() {
                 if (sibling) sibling.value = val;
                 const display = row.querySelector('.rbt-col-cvscale .rbt-scale-display');
                 if (display) display.textContent = val + '%';
+            }
+        }
+    });
+
+    // 内容视频音量: input + slider
+    container.addEventListener('input', (e) => {
+        if (e.target.classList.contains('rbt-cvvol-input') || e.target.classList.contains('rbt-cvvol-slider')) {
+            const idx = parseInt(e.target.dataset.idx);
+            const task = window._reelsState.tasks[idx];
+            if (!task) return;
+            const val = parseInt(e.target.value) || 0;
+            task.contentVideoVolume = val;
+            // Sync input <-> slider
+            const row = e.target.closest('tr');
+            if (row) {
+                const sibling = row.querySelector(e.target.classList.contains('rbt-cvvol-input') ? '.rbt-cvvol-slider' : '.rbt-cvvol-input');
+                if (sibling) sibling.value = val;
+                const display = row.querySelector('.rbt-col-cvvol .rbt-scale-display');
+                if (display) display.textContent = '🔊 ' + val + '%';
+            }
+            // 实时同步预览音量
+            if (window._reelsState && window._reelsState.selectedIdx === idx) {
+                const cvVideo = document.getElementById('reels-preview-contentvideo');
+                if (cvVideo) {
+                    cvVideo.volume = Math.min(1.0, val / 100);
+                    cvVideo.muted = val === 0;
+                }
             }
         }
     });
@@ -2542,7 +2615,12 @@ function _bindBatchTableEvents() {
             if (item && task) {
                 if (targetField === 'contentvideo') { task.contentVideoPath = item.path; }
                 else if (targetField === 'bg') { task.bgPath = item.path; task.videoPath = item.path; }
-                else if (targetField === 'hook') { if (!task.hook) task.hook = {}; task.hook.enabled = true; task.hook.path = item.path; }
+                else if (targetField === 'hook') {
+                    if (!task.hook) task.hook = {};
+                    task.hook.enabled = true;
+                    task.hook.path = item.path;
+                    task.hookFile = item.path;
+                }
                 else if (targetField === 'audio') { task.audioPath = item.path; }
                 else if (targetField === 'srt') { task.srtPath = item.path; }
                 else if (targetField === 'cover_media') { if (!task.cover) task.cover = {}; task.cover.enabled = true; task.cover.bgPath = item.path; }
@@ -2575,7 +2653,11 @@ function _bindBatchTableEvents() {
                 const idx = parseInt(row.dataset.idx);
                 const task = window._reelsState.tasks[idx];
                 if (task) {
-                    const filePath = files[0].path || files[0].name;
+                    let filePath = files[0].path;
+                    if (!filePath && window.electronAPI && window.electronAPI.getFilePath) {
+                        try { filePath = window.electronAPI.getFilePath(files[0]); } catch (_) {}
+                    }
+                    filePath = filePath || files[0].name;
                     if (!task.cover) task.cover = {};
                     task.cover.enabled = true;
                     task.cover.bgPath = filePath;
@@ -2664,6 +2746,9 @@ function _bindBatchTableEvents() {
                 task.hookSpeed = 1;
                 task.hookTransition = 'none';
                 task.hookTransDuration = 0.5;
+                if (!task.hook) task.hook = {};
+                task.hook.enabled = false;
+                task.hook.path = '';
                 break;
             case 'bg':
                 task.bgPath = '';
@@ -3099,6 +3184,24 @@ function _bindBatchTableEvents() {
     // Per-row events (delegated)
     const tbody = container.querySelector('#rbt-tbody');
     if (tbody) {
+        // Windows 兼容：点击缩放显示值切换控件可见性（无 hover 时的替代方案）
+        tbody.addEventListener('click', (e) => {
+            if (e.target.classList.contains('rbt-scale-display')) {
+                const td = e.target.closest('td');
+                if (td) {
+                    // 移除其他 active
+                    document.querySelectorAll('td.rbt-scale-active').forEach(el => {
+                        if (el !== td) el.classList.remove('rbt-scale-active');
+                    });
+                    td.classList.toggle('rbt-scale-active');
+                    // 聚焦第一个输入框
+                    const firstInput = td.querySelector('input[type="number"], input[type="range"]');
+                    if (firstInput && td.classList.contains('rbt-scale-active')) {
+                        setTimeout(() => firstInput.focus(), 50);
+                    }
+                }
+            }
+        });
         // 音量滑块实时更新标签
         tbody.addEventListener('input', (e) => {
             if (e.target.classList.contains('rbt-bgm-vol')) {
@@ -3346,6 +3449,9 @@ function _bindBatchTableEvents() {
                         task.hookSpeed = 1; 
                         task.hookTransition = 'none'; 
                         task.hookTransDuration = 0.5;
+                        if (!task.hook) task.hook = {};
+                        task.hook.enabled = false;
+                        task.hook.path = '';
                         break;
                     case 'bg': task.bgPath = ''; task.videoPath = ''; task.bgSrcUrl = ''; task.bgMode = 'single'; task.bgClipPool = []; task.bgTransition = 'crossfade'; task.bgTransDur = 0.5; break;
                     case 'contentvideo': task.contentVideoPath = ''; task.contentVideoTrimStart = null; task.contentVideoTrimEnd = null; task.contentVideoScale = 100; task.contentVideoX = 'center'; task.contentVideoY = 'center'; break;
@@ -4647,16 +4753,17 @@ const _RBT_COLUMNS = [
     { key: 'bg', label: '🖼 背景素材', default: true },
     { key: 'bgscale', label: '🔍 背景缩放', default: true },
     { key: 'bgdurscale', label: '⏱️ 背景延展', default: true },
-    { key: 'contentvideo', label: '🎬 视频覆层', default: false },
-    { key: 'cvtrim', label: '✂️ 裁切区间', default: false },
-    { key: 'cvscale', label: '🔍 视频缩放', default: false },
-    { key: 'cvpos', label: '📐 视频位置', default: false },
+    { key: 'contentvideo', label: '🎬 视频覆层', default: true },
+    { key: 'cvtrim', label: '✂️ 裁切区间', default: true },
+    { key: 'cvscale', label: '🔍 视频缩放', default: true },
+    { key: 'cvpos', label: '📐 视频位置', default: true },
+    { key: 'cvvol', label: '🔊 覆层音量', default: true },
     { key: 'pip', label: '🖼️ 图片覆层', default: true },
-    { key: 'tts_text', label: '🤖 TTS文案', default: false },
-    { key: 'tts_voice', label: '🗣 TTS音色', default: false },
+    { key: 'tts_text', label: '🤖 TTS文案', default: true },
+    { key: 'tts_voice', label: '🗣 TTS音色', default: true },
     { key: 'audio', label: '🎙 人声配音', default: true },
     { key: 'audiodurscale', label: '⏱️ 音频缩放', default: true },
-    { key: 'ai_script', label: '🧠 AI 原文案', default: false },
+    { key: 'ai_script', label: '🧠 AI 原文案', default: true },
     { key: 'bgm', label: '🎵 全局配乐', default: true },
     { key: 'srt', label: '📝 SRT字幕', default: true },
     { key: 'txtcontent', label: '📃 人声字幕', default: true },
@@ -4676,6 +4783,13 @@ function _getColVisStorageKey() {
 
 function _getColVisibility() {
     const key = _getColVisStorageKey();
+    // 一次性迁移：将旧存储的列设置重置为全显示（版本号升级触发）
+    const RESET_VERSION = 'v2-all-visible';
+    const resetKey = key + '-reset-version';
+    if (localStorage.getItem(resetKey) !== RESET_VERSION) {
+        localStorage.removeItem(key);
+        localStorage.setItem(resetKey, RESET_VERSION);
+    }
     const saved = localStorage.getItem(key);
     // 始终以 _RBT_COLUMNS 的 default 为基准，合并已保存的设置
     const vis = {};
@@ -4685,15 +4799,6 @@ function _getColVisibility() {
             const parsed = JSON.parse(saved);
             for (const col of _RBT_COLUMNS) {
                 if (col.key in parsed) vis[col.key] = parsed[col.key];
-            }
-            // 一次性迁移：旧版本中缩放列默认隐藏，新版本默认显示
-            const migKey = key + '-scale-migrated';
-            if (!localStorage.getItem(migKey)) {
-                vis['bgscale'] = true;
-                vis['bgdurscale'] = true;
-                vis['audiodurscale'] = true;
-                localStorage.setItem(migKey, '1');
-                _saveColVisibility(vis);
             }
         } catch (e) { }
     }
@@ -4945,7 +5050,7 @@ function _showColumnSettingsPopup(anchor) {
         {
             name: '🎬 完整模式',
             desc: '显示所有列',
-            cols: ['hook','bg','bgscale','bgdurscale','contentvideo','cvtrim','cvscale','cvpos','pip','tts_text','tts_voice','audio','audiodurscale','ai_script','bgm','srt','txtcontent','title','body','footer','scroll-title','scroll-body','dur','tpl']
+            cols: ['hook','bg','bgscale','bgdurscale','contentvideo','cvtrim','cvscale','cvpos','cvvol','pip','tts_text','tts_voice','audio','audiodurscale','ai_script','bgm','srt','txtcontent','title','body','footer','scroll-title','scroll-body','dur','tpl']
         },
         {
             name: '📝 动态字幕',
@@ -4965,14 +5070,14 @@ function _showColumnSettingsPopup(anchor) {
         {
             name: '✂️ 剪辑+覆层合成',
             desc: '背景+内容视频(裁切)+覆层文案 A/B双版',
-            cols: ['bg','bgscale','contentvideo','cvtrim','cvscale','cvpos','bgm','title','body','footer','dur','tpl']
+            cols: ['bg','bgscale','contentvideo','cvtrim','cvscale','cvpos','cvvol','bgm','title','body','footer','dur','tpl']
         }
     ];
 
     // ── 列分类 ──
     const colGroups = [
         { label: '素材 & 背景', keys: ['hook','bg','bgscale','bgdurscale','pip'] },
-        { label: '🎬 视频覆层', keys: ['contentvideo','cvtrim','cvscale','cvpos'] },
+        { label: '🎬 视频覆层', keys: ['contentvideo','cvtrim','cvscale','cvpos','cvvol'] },
         { label: 'AI 配音与文案', keys: ['ai_script','tts_text','tts_voice'] },
         { label: '音频', keys: ['audio','audiodurscale','bgm'] },
         { label: '字幕 & 文本', keys: ['srt','txtcontent'] },
@@ -5019,12 +5124,45 @@ function _showColumnSettingsPopup(anchor) {
     }
     html += '</div>';
 
+    // ── custom presets ──
+    const CUSTOM_PRESET_KEY = 'rbt-col-custom-presets';
+    const _loadCustomPresets = () => { try { return JSON.parse(localStorage.getItem(CUSTOM_PRESET_KEY) || '{}'); } catch(e) { return {}; } };
+    const _saveCustomPresets = (p) => localStorage.setItem(CUSTOM_PRESET_KEY, JSON.stringify(p));
+
+    const customPresets = _loadCustomPresets();
+    const customNames = Object.keys(customPresets);
+    html += '<div style="margin-top:10px;padding-top:10px;border-top:1px solid #2a2a4a;">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">';
+    html += '<div style="font-size:10px;color:#888;font-weight:600;text-transform:uppercase;">我的预设</div>';
+    html += '<button id="rbt-col-save-preset" style="font-size:10px;padding:2px 8px;border-radius:4px;border:1px solid #4a9eff;background:transparent;color:#4a9eff;cursor:pointer;" title="保存当前列配置为自定义预设">💾 保存当前</button>';
+    html += '</div>';
+    if (customNames.length > 0) {
+        html += '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;">';
+        for (const name of customNames) {
+            html += `<div style="display:inline-flex;align-items:center;gap:2px;background:#1e1e38;border:1px solid #333;border-radius:4px;padding:1px 2px 1px 8px;">
+                <button class="rbt-col-custom-btn" data-custom-name="${_escHtml(name)}" style="border:none;background:transparent;color:#ccc;font-size:11px;cursor:pointer;padding:2px 4px;" title="加载预设">${_escHtml(name)}</button>
+                <button class="rbt-col-custom-del" data-custom-name="${_escHtml(name)}" style="border:none;background:transparent;color:#f87171;font-size:10px;cursor:pointer;padding:2px 4px;line-height:1;" title="删除">✕</button>
+            </div>`;
+        }
+        html += '</div>';
+    } else {
+        html += '<div style="font-size:10px;color:#555;margin-bottom:6px;padding:4px 0;">暂无自定义预设</div>';
+    }
+    html += '</div>';
+
     // ── Footer buttons ──
-    html += `<div style="margin-top:10px;padding-top:10px;border-top:1px solid #2a2a4a;display:flex;gap:8px;justify-content:flex-end;">
-        <button id="rbt-col-vis-all" style="font-size:11px;padding:4px 10px;border-radius:4px;border:1px solid #555;background:transparent;color:#aaa;cursor:pointer;">全选</button>
-        <button id="rbt-col-vis-none" style="font-size:11px;padding:4px 10px;border-radius:4px;border:1px solid #555;background:transparent;color:#aaa;cursor:pointer;">全不选</button>
-        <button id="rbt-col-vis-reset" style="font-size:11px;padding:4px 10px;border-radius:4px;border:1px solid #555;background:transparent;color:#aaa;cursor:pointer;">恢复默认</button>
-        <button id="rbt-col-vis-close" style="font-size:11px;padding:4px 10px;border-radius:4px;border:none;background:var(--accent);color:#000;cursor:pointer;font-weight:600;">完成</button>
+    html += `<div style="margin-top:10px;padding-top:10px;border-top:1px solid #2a2a4a;display:flex;gap:8px;justify-content:space-between;align-items:center;">
+        <div style="display:flex;gap:4px;">
+            <button id="rbt-col-export" style="font-size:10px;padding:3px 8px;border-radius:4px;border:1px solid #555;background:transparent;color:#8af;cursor:pointer;" title="导出列配置为 JSON 文件">📤 导出</button>
+            <button id="rbt-col-import" style="font-size:10px;padding:3px 8px;border-radius:4px;border:1px solid #555;background:transparent;color:#8af;cursor:pointer;" title="从 JSON 文件导入列配置">📥 导入</button>
+            <input type="file" id="rbt-col-import-input" accept=".json" style="display:none;">
+        </div>
+        <div style="display:flex;gap:6px;">
+            <button id="rbt-col-vis-all" style="font-size:11px;padding:4px 10px;border-radius:4px;border:1px solid #555;background:transparent;color:#aaa;cursor:pointer;">全选</button>
+            <button id="rbt-col-vis-none" style="font-size:11px;padding:4px 10px;border-radius:4px;border:1px solid #555;background:transparent;color:#aaa;cursor:pointer;">全不选</button>
+            <button id="rbt-col-vis-reset" style="font-size:11px;padding:4px 10px;border-radius:4px;border:1px solid #555;background:transparent;color:#aaa;cursor:pointer;">恢复默认</button>
+            <button id="rbt-col-vis-close" style="font-size:11px;padding:4px 10px;border-radius:4px;border:none;background:var(--accent);color:#000;cursor:pointer;font-weight:600;">完成</button>
+        </div>
     </div>`;
     popup.innerHTML = html;
     document.body.appendChild(popup);
@@ -5085,6 +5223,101 @@ function _showColumnSettingsPopup(anchor) {
     // Event: close
     popup.querySelector('#rbt-col-vis-close').addEventListener('click', () => {
         popup.remove();
+    });
+
+    // ── 自定义预设事件 ──
+    // 保存当前配置
+    popup.querySelector('#rbt-col-save-preset')?.addEventListener('click', () => {
+        const name = prompt('请输入预设名称:');
+        if (!name || !name.trim()) return;
+        const cp = _loadCustomPresets();
+        const enabledCols = _RBT_COLUMNS.filter(c => vis[c.key]).map(c => c.key);
+        cp[name.trim()] = enabledCols;
+        _saveCustomPresets(cp);
+        popup.remove();
+        _showColumnSettingsPopup(document.querySelector('[data-action="col-settings"]') || document.body);
+        if (typeof showToast === 'function') showToast(`✅ 预设 "${name.trim()}" 已保存`, 'success');
+    });
+
+    // 加载自定义预设
+    popup.querySelectorAll('.rbt-col-custom-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const cp = _loadCustomPresets();
+            const cols = cp[btn.dataset.customName];
+            if (!cols) return;
+            for (const col of _RBT_COLUMNS) vis[col.key] = false;
+            for (const k of cols) vis[k] = true;
+            _saveColVisibility(vis);
+            _applyColVisibility();
+            _syncCheckboxes();
+        });
+    });
+
+    // 删除自定义预设
+    popup.querySelectorAll('.rbt-col-custom-del').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const name = btn.dataset.customName;
+            if (!confirm(`确定删除预设 "${name}"？`)) return;
+            const cp = _loadCustomPresets();
+            delete cp[name];
+            _saveCustomPresets(cp);
+            popup.remove();
+            _showColumnSettingsPopup(document.querySelector('[data-action="col-settings"]') || document.body);
+        });
+    });
+
+    // ── JSON 导出/导入 ──
+    popup.querySelector('#rbt-col-export')?.addEventListener('click', () => {
+        const exportData = {
+            version: 1,
+            type: 'rbt-col-visibility',
+            columns: { ...vis },
+            customPresets: _loadCustomPresets(),
+            exportedAt: new Date().toISOString(),
+        };
+        const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `列显示预设_${new Date().toISOString().slice(0,10)}.json`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        if (typeof showToast === 'function') showToast('📤 列配置已导出', 'success');
+    });
+
+    const importInput = popup.querySelector('#rbt-col-import-input');
+    popup.querySelector('#rbt-col-import')?.addEventListener('click', () => importInput?.click());
+    importInput?.addEventListener('change', (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            try {
+                const data = JSON.parse(ev.target.result);
+                if (data.type !== 'rbt-col-visibility') throw new Error('格式不匹配');
+                // 导入列配置
+                if (data.columns) {
+                    for (const col of _RBT_COLUMNS) {
+                        if (col.key in data.columns) vis[col.key] = data.columns[col.key];
+                    }
+                    _saveColVisibility(vis);
+                    _applyColVisibility();
+                }
+                // 导入自定义预设（合并）
+                if (data.customPresets) {
+                    const existing = _loadCustomPresets();
+                    Object.assign(existing, data.customPresets);
+                    _saveCustomPresets(existing);
+                }
+                popup.remove();
+                _showColumnSettingsPopup(document.querySelector('[data-action="col-settings"]') || document.body);
+                if (typeof showToast === 'function') showToast('📥 列配置已导入', 'success');
+            } catch (err) {
+                alert('导入失败: ' + err.message);
+            }
+        };
+        reader.readAsText(file);
+        e.target.value = '';
     });
 
     // Click outside to close
@@ -6024,7 +6257,7 @@ async function _batchPasteAiScript() {
     }
 
     const newRows = lines.slice(dataIdx);
-    if (newRows.length > 0 && mode !== 'fill' && confirm(`还有 ${newRows.length} 条数据尚未匹配分配任务。是否自动创建 ${newRows.length} 行新任务并填充？`)) {
+    if (newRows.length > 0 && confirm(`还有 ${newRows.length} 条数据尚未匹配到任务行。是否自动创建 ${newRows.length} 行新任务并填充？`)) {
         for (const str of newRows) {
             const taskName = `card_${String(state.tasks.length + 1).padStart(3, '0')}`;
             state.tasks.push({
@@ -7150,7 +7383,8 @@ function _openHookModal(idx) {
     }
 
     if (targetTask) {
-        if (pathInput) pathInput.value = targetTask.hookFile || '';
+        const resolvedHookPath = targetTask.hookFile || ((targetTask.hook && targetTask.hook.enabled !== false) ? (targetTask.hook.path || '') : '');
+        if (pathInput) pathInput.value = resolvedHookPath;
         if (startInput) startInput.value = targetTask.hookTrimStart != null ? targetTask.hookTrimStart : '';
         if (endInput) endInput.value = targetTask.hookTrimEnd != null ? targetTask.hookTrimEnd : '';
         if (speedInput) speedInput.value = targetTask.hookSpeed || '1';
@@ -8184,6 +8418,26 @@ function _injectBatchTableCSS() {
         .rbt-ms-linked-dir {
             padding:8px; border-bottom:1px solid #1a1a2a; background:rgba(0,0,0,0.15);
         }
+        .rbt-ms-collapsible-header {
+            display:flex; align-items:center; gap:6px; padding:6px 10px;
+            cursor:pointer; user-select:none;
+            border-bottom:1px solid var(--border-color, #1a1a2a);
+            background:var(--bg-hover, rgba(255,255,255,0.03));
+            transition: background 0.15s;
+        }
+        .rbt-ms-collapsible-header:hover {
+            background:var(--bg-hover-strong, rgba(255,255,255,0.06));
+        }
+        .rbt-ms-toggle-icon {
+            font-size:10px; color:var(--text-muted); transition:transform 0.2s;
+            width:12px; display:inline-flex; justify-content:center;
+        }
+        .rbt-ms-collapsible-body {
+            overflow:hidden; transition: max-height 0.25s ease;
+        }
+        .rbt-ms-collapsible-body.collapsed {
+            max-height:0 !important; overflow:hidden; border-bottom:none;
+        }
         .rbt-header {
             display:flex; justify-content:space-between; align-items:center;
             padding:0 12px; height:36px; min-height:36px; max-height:36px;
@@ -8668,14 +8922,80 @@ function _injectBatchTableCSS() {
             z-index: 5;
         }
         td:hover .rbt-clutter-free-scale > .rbt-scale-display,
-        .rbt-clutter-free-scale:focus-within > .rbt-scale-display {
+        .rbt-clutter-free-scale:focus-within > .rbt-scale-display,
+        td.rbt-scale-active .rbt-clutter-free-scale > .rbt-scale-display {
             opacity: 0;
         }
         td:hover .rbt-clutter-free-scale > .rbt-scale-controls,
-        .rbt-clutter-free-scale:focus-within > .rbt-scale-controls {
+        .rbt-clutter-free-scale:focus-within > .rbt-scale-controls,
+        td.rbt-scale-active .rbt-clutter-free-scale > .rbt-scale-controls {
             opacity: 1;
             pointer-events: auto;
         }
+        /* ═══ 主题兼容层 — 仅在亮色模式下覆盖默认暗黑样式 ═══ */
+        body.theme-light .rbt-panel { background:var(--bg-primary) !important; border-color:var(--border-color) !important; }
+        body.theme-light .rbt-header, body.theme-light .rbt-footer { background:var(--bg-titlebar) !important; border-color:var(--border-color) !important; }
+        body.theme-light .rbt-tabbar { background:var(--bg-titlebar) !important; border-color:var(--border-color) !important; }
+        body.theme-light .rbt-tab-active { background:var(--bg-secondary) !important; border-color:var(--border-color) !important; }
+        body.theme-light .rbt-material-bar { background:var(--bg-titlebar) !important; border-color:var(--border-color) !important; }
+        body.theme-light .rbt-media-sidebar { background:var(--bg-secondary) !important; }
+        body.theme-light .rbt-ms-header { background:var(--bg-titlebar) !important; border-color:var(--border-color) !important; }
+        body.theme-light .rbt-ms-resize-handle { border-color:var(--border-color) !important; }
+        body.theme-light .rbt-ms-filters { border-color:var(--border-color) !important; }
+        body.theme-light .rbt-ms-bulk, body.theme-light .rbt-ms-footer, body.theme-light .rbt-ms-linked-dir { border-color:var(--border-color) !important; }
+        body.theme-light .rbt-table th { background:var(--bg-secondary) !important; color:var(--text-primary) !important; border-color:var(--border-color) !important; }
+        body.theme-light .rbt-table td { border-color:var(--border-color) !important; }
+        body.theme-light .rbt-file-name { background:var(--bg-input) !important; border-color:var(--border-color) !important; }
+        body.theme-light .rbt-textarea { color:var(--text-primary) !important; }
+        body.theme-light .rbt-textarea:focus { background:var(--bg-input) !important; }
+        body.theme-light .rbt-select { background:var(--bg-input) !important; border-color:var(--border-color) !important; color:var(--text-primary) !important; }
+        body.theme-light .rbt-scale-pack input { background:var(--bg-input) !important; border-color:var(--border-color) !important; color:var(--text-primary) !important; }
+        body.theme-light .rbt-btn { border-color:var(--border-color) !important; }
+        body.theme-light .rbt-mat-path { background:var(--bg-input) !important; border-color:var(--border-color) !important; color:var(--text-secondary) !important; }
+        body.theme-light .rbt-batch-actions-bar .rbt-btn, body.theme-light .rbt-batch-actions-bar .rbt-select { border-color:var(--border-color) !important; color:var(--text-primary); }
+        body.theme-light .rbt-sep { background:var(--border-color) !important; }
+        body.theme-light #rbt-count { color:var(--text-secondary) !important; }
+        body.theme-light .rbt-footer-hint { color:var(--text-muted) !important; }
+        
+        /* 操作行 border 和标签文字 */
+        body.theme-light .rbt-actions { border-color:var(--border-color) !important; }
+        body.theme-light .rbt-col-num { color:var(--text-muted) !important; }
+        body.theme-light .rbt-placeholder { color:var(--text-muted) !important; }
+        body.theme-light .rbt-tab { color:var(--text-secondary) !important; }
+        body.theme-light .rbt-tab:hover { color:var(--text-primary) !important; background:var(--bg-hover) !important; }
+        body.theme-light .rbt-tab-active { color:var(--accent) !important; }
+        body.theme-light .rbt-tab-add { color:var(--text-muted) !important; }
+        body.theme-light .rbt-batch-label { color:var(--text-secondary) !important; }
+        body.theme-light .rbt-group-label { color:var(--text-secondary) !important; border-color:var(--text-muted) !important; }
+        body.theme-light .rbt-ms-filter { color:var(--text-secondary) !important; }
+        body.theme-light .rbt-ms-filter:hover { background:var(--bg-hover-strong) !important; color:var(--text-primary) !important; }
+        body.theme-light .rbt-ms-filter.active { background:var(--bg-hover-strong) !important; color:var(--text-primary) !important; }
+        body.theme-light .rbt-ms-section { color:var(--text-muted) !important; }
+        body.theme-light .rbt-refresh-time { color:var(--text-muted) !important; }
+        body.theme-light .rbt-btn:hover { background:var(--bg-hover-strong) !important; color:var(--text-primary) !important; }
+        body.theme-light .rbt-scale-display { color:var(--text-secondary) !important; }
+        body.theme-light #rbt-lang-dropdown { background:var(--bg-secondary) !important; border-color:var(--border-color) !important; }
+        body.theme-light .rbt-ms-linked-dir { background:var(--bg-hover, rgba(0,0,0,0.04)) !important; border-color:var(--border-color) !important; }
+        body.theme-light .rbt-ms-bulk { border-color:var(--border-color) !important; }
+        body.theme-light .rbt-ms-pool { background:var(--bg-primary) !important; }
+        body.theme-light .rbt-ms-collapsible-header { border-color:var(--border-color) !important; }
+        body.theme-light .rbt-btn { background:var(--bg-card, #2a2a38) !important; color:var(--text-primary) !important; border-color:var(--border-color) !important; }
+        
+        /* 针对亮色模式下特定颜色按钮的优化 (重新找回彩色但适配亮版) */
+        body.theme-light #rbt-add-row-btn { background:rgba(40,160,40,0.15) !important; color:#0d612e !important; border-color:rgba(40,160,40,0.3) !important; font-weight:bold; }
+        body.theme-light #rbt-clear-btn, body.theme-light #rbt-close-btn, body.theme-light #rbt-ms-clear { background:rgba(220,40,40,0.1) !important; color:#c51818 !important; border-color:rgba(220,40,40,0.3) !important; font-weight:bold; }
+        body.theme-light #rbt-open-media-pool-btn { background:rgba(60,100,220,0.1) !important; color:#2040b0 !important; border-color:rgba(60,100,220,0.3) !important; font-weight:bold; }
+        body.theme-light #rbt-ai-settings-btn { background:rgba(140,60,220,0.1) !important; color:#6b21a8 !important; border-color:rgba(140,60,220,0.3) !important; font-weight:bold; }
+        body.theme-light #rbt-import-task-preset-btn, body.theme-light #rbt-import-sub-preset-btn, body.theme-light #rbt-import-card-preset-btn { background:rgba(60,100,220,0.08) !important; color:#1a3bb0 !important; border-color:rgba(60,100,220,0.2) !important; }
+        
+        /* 操作栏内联元素覆盖 — 强制主题色 */
+        body.theme-light .rbt-actions label { color:var(--text-primary) !important; }
+        body.theme-light .rbt-actions span { color:var(--text-secondary) !important; }
+        body.theme-light .rbt-actions input[type="number"],
+        body.theme-light .rbt-actions input[type="text"] { background:var(--bg-input) !important; color:var(--text-primary) !important; border-color:var(--border-color) !important; }
+        body.theme-light .rbt-actions select { background:var(--bg-input) !important; color:var(--text-primary) !important; border-color:var(--border-color) !important; }
+        body.theme-light .rbt-btn-primary { color:#fff !important; }
+        body.theme-light .rbt-btn-accent { color:#000 !important; }
     `;
     document.head.appendChild(style);
 }
@@ -9331,7 +9651,12 @@ function _showClipAbPasteModal() {
             fileInput.accept = '.mp4,.mov,.mkv,.png,.jpg,.jpeg';
             fileInput.addEventListener('change', (e) => {
                 if (e.target.files.length) {
-                    input.value = e.target.files[0].path || e.target.files[0].name;
+                    const file = e.target.files[0];
+                    let localPath = file.path;
+                    if (!localPath && window.electronAPI && window.electronAPI.getFilePath) {
+                        try { localPath = window.electronAPI.getFilePath(file); } catch (_) {}
+                    }
+                    input.value = localPath || file.name;
                 }
             });
             fileInput.click();
@@ -9348,7 +9673,12 @@ function _showClipAbPasteModal() {
         input.addEventListener('drop', e => {
             e.preventDefault();
             if (e.dataTransfer.files.length) {
-                input.value = e.dataTransfer.files[0].path || e.dataTransfer.files[0].name;
+                const file = e.dataTransfer.files[0];
+                let localPath = file.path;
+                if (!localPath && window.electronAPI && window.electronAPI.getFilePath) {
+                    try { localPath = window.electronAPI.getFilePath(file); } catch (_) {}
+                }
+                input.value = localPath || file.name;
             }
         });
     }
@@ -9808,7 +10138,13 @@ function _bindMediaSidebarEvents(container) {
             switch (role) {
                 case 'bg': task.bgPath = item.path; task.videoPath = item.path; task.bgSrcUrl = ''; applied++; break;
                 case 'overlay': task.contentVideoPath = item.path; applied++; break;
-                case 'hook': if (!task.hook) task.hook = {}; task.hook.enabled = true; task.hook.path = item.path; applied++; break;
+                case 'hook':
+                    if (!task.hook) task.hook = {};
+                    task.hook.enabled = true;
+                    task.hook.path = item.path;
+                    task.hookFile = item.path;
+                    applied++;
+                    break;
                 case 'universal': task.bgPath = item.path; task.videoPath = item.path; applied++; break;
                 case 'voice': task.audioPath = item.path; applied++; break;
                 case 'bgm': task.bgmPath = item.path; applied++; break;

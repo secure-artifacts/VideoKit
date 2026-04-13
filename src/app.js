@@ -487,18 +487,34 @@ function addToastStyles() {
 // 标签页切换
 function initTabs() {
     const tabs = document.querySelectorAll('.tab');
-    const panels = document.querySelectorAll('.panel');
 
     tabs.forEach(tab => {
         tab.addEventListener('click', () => {
-            tabs.forEach(t => t.classList.remove('active'));
-            panels.forEach(p => p.classList.remove('active'));
-
-            tab.classList.add('active');
-            const panelId = tab.dataset.tab + '-panel';
-            document.getElementById(panelId).classList.add('active');
+            openPanelByName(tab.dataset.tab);
         });
     });
+}
+
+function openPanelByName(tabName) {
+    const tabs = document.querySelectorAll('.tab');
+    const panels = document.querySelectorAll('.panel');
+    const tab = document.querySelector(`.tab[data-tab="${tabName}"]`);
+    const panel = document.getElementById(`${tabName}-panel`);
+
+    if (!tab || !panel) return;
+
+    tabs.forEach(t => t.classList.remove('active'));
+    panels.forEach(p => p.classList.remove('active'));
+
+    tab.classList.add('active');
+    panel.classList.add('active');
+
+    const content = document.querySelector('.content');
+    if (content?.scrollTo) {
+        content.scrollTo({ top: 0, behavior: 'smooth' });
+    } else if (content) {
+        content.scrollTop = 0;
+    }
 }
 
 // 子标签页切换
@@ -528,6 +544,7 @@ function initSubTabs() {
             } else if (contentId === 'media-watermark-subtab') {
                 setTimeout(updateWatermarkPreview, 100);
             }
+
         });
     });
 }
@@ -5855,6 +5872,406 @@ async function saveSettingsElevenLabsKeys() {
         showToast('保存失败: ' + error.message, 'error');
     }
 }
+
+/** 设置页 ElevenLabs 模式切换 */
+function settingsToggleELMode() {
+    const isWeb = document.getElementById('settings-mode-web')?.checked || false;
+    const apiPanel = document.getElementById('settings-el-apikey-panel');
+    const webPanel = document.getElementById('settings-el-web-panel');
+    if (apiPanel) apiPanel.style.display = isWeb ? 'none' : 'block';
+    if (webPanel) webPanel.style.display = isWeb ? 'block' : 'none';
+
+    // 同步主面板的模式选择
+    const mainModeWeb = document.getElementById('mode-web');
+    const mainModeApi = document.getElementById('mode-apikey');
+    if (isWeb && mainModeWeb) mainModeWeb.checked = true;
+    if (!isWeb && mainModeApi) mainModeApi.checked = true;
+    if (typeof updateWebTokenUI === 'function') updateWebTokenUI();
+
+    // 检查 web token 状态
+    if (isWeb) settingsCheckWebStatus();
+}
+
+/** 设置页检查 Web Token 状态 */
+async function settingsCheckWebStatus() {
+    const statusSpan = document.getElementById('settings-web-login-status');
+    if (!statusSpan) return;
+    try {
+        const res = await apiFetch(`${API_BASE}/elevenlabs/web-status`);
+        const data = await res.json();
+        if (data.hasToken) {
+            statusSpan.style.background = 'rgba(0, 217, 165, 0.15)';
+            statusSpan.style.color = '#00d9a5';
+            statusSpan.textContent = '🟢 已登录就绪';
+        } else {
+            statusSpan.style.background = 'rgba(255, 107, 107, 0.15)';
+            statusSpan.style.color = '#ff6b6b';
+            statusSpan.textContent = '🔴 未登录 / 无凭证';
+        }
+    } catch (e) {
+        statusSpan.textContent = '状态未知';
+    }
+}
+
+/** 设置页手动粘贴 Token 保存 */
+async function settingsSaveManualToken() {
+    const textarea = document.getElementById('settings-manual-token');
+    const raw = (textarea?.value || '').trim();
+    if (!raw) {
+        showToast('请先粘贴 Authorization Token', 'error');
+        return;
+    }
+    const payload = {};
+    if (raw.startsWith('Bearer ') || raw.startsWith('bearer ') || raw.startsWith('eyJ')) {
+        payload.authorization = raw.startsWith('eyJ') ? `Bearer ${raw}` : raw;
+    } else if (raw.length >= 20 && /^[a-zA-Z0-9_-]+$/.test(raw)) {
+        payload.xiApiKey = raw;
+    } else {
+        payload.authorization = raw;
+    }
+    try {
+        const res = await apiFetch(`${API_BASE}/elevenlabs/web-token-manual`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const json = await res.json();
+        if (json.success) {
+            showToast(json.message || '✅ Token 已保存', 'success');
+            textarea.value = '';
+            settingsCheckWebStatus();
+            if (typeof updateWebTokenUI === 'function') updateWebTokenUI();
+            if (typeof loadVoices === 'function') loadVoices();
+        } else {
+            showToast(json.message || '保存失败', 'error');
+        }
+    } catch (e) {
+        showToast('保存失败: ' + e.message, 'error');
+    }
+}
+
+// ==================== 全局界面缩放 ====================
+
+const UI_SCALE_KEY = 'videokit-ui-scale';
+
+/**
+ * 应用全局 UI 缩放比例
+ * @param {number|string} scale - 缩放百分比 (70-160)
+ */
+function applyUIScale(scale) {
+    scale = Math.max(70, Math.min(160, parseInt(scale) || 100));
+    const zoomValue = scale / 100;
+
+    // 优先使用 Electron 原生 webFrame 缩放（正确调整布局视口，不裁切）
+    if (window.electronAPI && window.electronAPI.setZoomFactor) {
+        window.electronAPI.setZoomFactor(zoomValue);
+        // 清除旧的 CSS zoom（如果之前设置过）
+        document.body.style.zoom = '';
+    } else {
+        // 纯浏览器回退
+        document.body.style.zoom = zoomValue;
+    }
+
+    // 更新滑块和标签
+    const slider = document.getElementById('settings-ui-scale');
+    const label = document.getElementById('settings-ui-scale-label');
+    if (slider) slider.value = scale;
+    if (label) label.textContent = scale + '%';
+
+    // 持久化
+    localStorage.setItem(UI_SCALE_KEY, String(scale));
+}
+
+/** 页面加载时恢复 UI 缩放 */
+function initUIScale() {
+    const saved = localStorage.getItem(UI_SCALE_KEY);
+    const scale = saved ? parseInt(saved) : 100;
+    applyUIScale(scale);
+}
+
+// 立即执行，确保页面一加载就应用缩放（避免闪烁）
+initUIScale();
+
+// 键盘快捷键支持
+document.addEventListener('keydown', (e) => {
+    const isCtrl = e.ctrlKey || e.metaKey;
+    if (!isCtrl) return;
+
+    const current = parseInt(localStorage.getItem(UI_SCALE_KEY)) || 100;
+    if (e.key === '=' || e.key === '+') {
+        e.preventDefault();
+        applyUIScale(Math.min(160, current + 5));
+    } else if (e.key === '-') {
+        e.preventDefault();
+        applyUIScale(Math.max(70, current - 5));
+    } else if (e.key === '0') {
+        e.preventDefault();
+        applyUIScale(100);
+    }
+});
+
+// ==================== 全局主题引擎 ====================
+
+const THEME_KEY = 'videokit-theme';
+const CUSTOM_THEME_KEY = 'videokit-custom-theme';
+
+/** 预设主题库 */
+const THEME_PRESETS = {
+    dark: {
+        name: '🌙 暗色 (默认)',
+        desc: '专业暗色调',
+        colors: {
+            '--bg-primary': '#181818', '--bg-secondary': '#1e1e1e', '--bg-tertiary': '#252525',
+            '--bg-card': '#2a2a2a', '--bg-input': '#141414', '--bg-titlebar': '#111111',
+            '--bg-hover': 'rgba(255,255,255,0.05)', '--bg-hover-strong': 'rgba(255,255,255,0.1)',
+            '--accent': '#4c9eff', '--accent-hover': '#6bb0ff',
+            '--accent-alpha': 'rgba(76,158,255,0.15)',
+            '--text-primary': '#e4e4e4', '--text-secondary': '#8b8b8b',
+            '--text-muted': '#666666', '--text-color': '#e4e4e4',
+            '--border-color': 'rgba(255,255,255,0.08)',
+            '--scrollbar-thumb': 'rgba(255,255,255,0.2)', '--scrollbar-thumb-hover': 'rgba(255,255,255,0.3)',
+            '--success': '#34d399', '--warning': '#fbbf24', '--error': '#f87171',
+            '--shadow': 'rgba(0,0,0,0.3)'
+        },
+        preview: ['#181818', '#1e1e1e', '#4c9eff', '#e4e4e4']
+    },
+    light: {
+        name: '☀️ 亮色',
+        desc: '清新薄荷绿',
+        colors: {
+            '--bg-primary': '#f0f5f0', '--bg-secondary': '#f7faf6', '--bg-tertiary': '#e6ede5',
+            '--bg-card': '#edf3ec', '--bg-input': '#f7faf6', '--bg-titlebar': '#e2ebe0',
+            '--bg-hover': 'rgba(46,125,50,0.05)', '--bg-hover-strong': 'rgba(46,125,50,0.1)',
+            '--accent': '#2e7d32', '--accent-hover': '#388e3c',
+            '--accent-alpha': 'rgba(46,125,50,0.12)',
+            '--text-primary': '#1b2e1b', '--text-secondary': '#4a6548',
+            '--text-muted': '#7d9a7a', '--text-color': '#1b2e1b',
+            '--border-color': 'rgba(46,100,46,0.12)',
+            '--scrollbar-thumb': 'rgba(46,100,46,0.2)', '--scrollbar-thumb-hover': 'rgba(46,100,46,0.35)',
+            '--success': '#16a34a', '--warning': '#ca8a04', '--error': '#dc2626',
+            '--shadow': 'rgba(30,60,30,0.08)'
+        },
+        preview: ['#f0f5f0', '#f7faf6', '#2e7d32', '#1b2e1b']
+    },
+    eyecare: {
+        name: '🌿 护眼',
+        desc: '淡绿护目',
+        colors: {
+            '--bg-primary': '#1a2318', '--bg-secondary': '#212d1e', '--bg-tertiary': '#2a3826',
+            '--bg-card': '#2f3e2b', '--bg-input': '#161e14', '--bg-titlebar': '#141c12',
+            '--bg-hover': 'rgba(180,220,160,0.06)', '--bg-hover-strong': 'rgba(180,220,160,0.12)',
+            '--accent': '#7bc67e', '--accent-hover': '#95d898',
+            '--accent-alpha': 'rgba(123,198,126,0.15)',
+            '--text-primary': '#d4e6d0', '--text-secondary': '#8aad85',
+            '--text-muted': '#5e7e59', '--text-color': '#d4e6d0',
+            '--border-color': 'rgba(120,180,120,0.1)',
+            '--scrollbar-thumb': 'rgba(120,180,120,0.25)', '--scrollbar-thumb-hover': 'rgba(120,180,120,0.4)',
+            '--success': '#4ade80', '--warning': '#facc15', '--error': '#f87171',
+            '--shadow': 'rgba(0,0,0,0.3)'
+        },
+        preview: ['#1a2318', '#212d1e', '#7bc67e', '#d4e6d0']
+    },
+    midnight: {
+        name: '🌊 午夜蓝',
+        desc: '深邃蓝调',
+        colors: {
+            '--bg-primary': '#0d1117', '--bg-secondary': '#161b22', '--bg-tertiary': '#1c2333',
+            '--bg-card': '#21293a', '--bg-input': '#0a0e14', '--bg-titlebar': '#080c12',
+            '--bg-hover': 'rgba(130,180,255,0.06)', '--bg-hover-strong': 'rgba(130,180,255,0.1)',
+            '--accent': '#58a6ff', '--accent-hover': '#79c0ff',
+            '--accent-alpha': 'rgba(88,166,255,0.15)',
+            '--text-primary': '#c9d1d9', '--text-secondary': '#7d8590',
+            '--text-muted': '#484f58', '--text-color': '#c9d1d9',
+            '--border-color': 'rgba(130,180,255,0.08)',
+            '--scrollbar-thumb': 'rgba(130,180,255,0.15)', '--scrollbar-thumb-hover': 'rgba(130,180,255,0.25)',
+            '--success': '#3fb950', '--warning': '#d29922', '--error': '#f85149',
+            '--shadow': 'rgba(0,0,0,0.4)'
+        },
+        preview: ['#0d1117', '#161b22', '#58a6ff', '#c9d1d9']
+    },
+    contrast: {
+        name: '⚡ 高对比',
+        desc: '纯黑高亮',
+        colors: {
+            '--bg-primary': '#000000', '--bg-secondary': '#0a0a0a', '--bg-tertiary': '#151515',
+            '--bg-card': '#1a1a1a', '--bg-input': '#050505', '--bg-titlebar': '#000000',
+            '--bg-hover': 'rgba(255,255,255,0.08)', '--bg-hover-strong': 'rgba(255,255,255,0.15)',
+            '--accent': '#00d4ff', '--accent-hover': '#33e0ff',
+            '--accent-alpha': 'rgba(0,212,255,0.18)',
+            '--text-primary': '#ffffff', '--text-secondary': '#b0b0b0',
+            '--text-muted': '#808080', '--text-color': '#ffffff',
+            '--border-color': 'rgba(255,255,255,0.15)',
+            '--scrollbar-thumb': 'rgba(255,255,255,0.3)', '--scrollbar-thumb-hover': 'rgba(255,255,255,0.5)',
+            '--success': '#00ff88', '--warning': '#ffcc00', '--error': '#ff4444',
+            '--shadow': 'rgba(0,0,0,0.5)'
+        },
+        preview: ['#000000', '#0a0a0a', '#00d4ff', '#ffffff']
+    }
+};
+
+/**
+ * 应用主题 — 将 CSS 变量覆盖到 :root
+ * @param {string} themeId - 预设主题 ID 或 'custom'
+ * @param {object} [customColors] - 自定义颜色对象（仅 themeId='custom' 时）
+ */
+function applyTheme(themeId, customColors) {
+    const root = document.documentElement;
+    let colors;
+    let isLight = false;
+
+    if (themeId === 'custom' && customColors) {
+        colors = customColors;
+        localStorage.setItem(CUSTOM_THEME_KEY, JSON.stringify(customColors));
+        // 判断自定义主题是否是亮色：检查 bg-primary
+        const bgP = customColors['--bg-primary'] || '';
+        isLight = _isLightColor(bgP);
+    } else if (THEME_PRESETS[themeId]) {
+        colors = THEME_PRESETS[themeId].colors;
+        isLight = (themeId === 'light');
+    } else {
+        colors = THEME_PRESETS.dark.colors;
+        themeId = 'dark';
+    }
+
+    // 设置所有 CSS 变量
+    for (const [key, val] of Object.entries(colors)) {
+        root.style.setProperty(key, val);
+    }
+
+    // 设置 body class 以便 CSS 区分亮色/暗色
+    document.body.classList.remove('theme-light', 'theme-dark');
+    document.body.classList.add(isLight ? 'theme-light' : 'theme-dark');
+
+    localStorage.setItem(THEME_KEY, themeId);
+
+    // 更新选中状态
+    document.querySelectorAll('.theme-card').forEach(card => {
+        const isActive = card.dataset.theme === themeId;
+        card.style.borderColor = isActive ? 'var(--accent)' : 'var(--border-color)';
+        card.style.boxShadow = isActive ? '0 0 0 2px var(--accent-alpha)' : 'none';
+    });
+}
+
+/** 判断 hex 颜色是否为亮色 */
+function _isLightColor(hex) {
+    if (!hex || hex.charAt(0) !== '#') return false;
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return (r * 0.299 + g * 0.587 + b * 0.114) > 140;
+}
+
+/** 从主色调生成完整主题 */
+function applyCustomThemeFromAccent(hex) {
+    const base = document.getElementById('theme-custom-base')?.value || 'dark';
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+
+    let colors;
+    if (base === 'light') {
+        colors = {
+            '--bg-primary': '#f5f5f5', '--bg-secondary': '#ffffff', '--bg-tertiary': '#e8e8e8',
+            '--bg-card': '#f0f0f0', '--bg-input': '#ffffff', '--bg-titlebar': '#e0e0e0',
+            '--bg-hover': 'rgba(0,0,0,0.04)', '--bg-hover-strong': 'rgba(0,0,0,0.08)',
+            '--accent': hex, '--accent-hover': _lightenHex(hex, 20),
+            '--accent-alpha': `rgba(${r},${g},${b},0.12)`,
+            '--text-primary': '#1a1a1a', '--text-secondary': '#555555',
+            '--text-muted': '#999999', '--text-color': '#1a1a1a',
+            '--border-color': 'rgba(0,0,0,0.1)',
+            '--scrollbar-thumb': 'rgba(0,0,0,0.2)', '--scrollbar-thumb-hover': 'rgba(0,0,0,0.35)',
+            '--success': '#16a34a', '--warning': '#d97706', '--error': '#dc2626',
+            '--shadow': 'rgba(0,0,0,0.08)'
+        };
+    } else {
+        colors = {
+            '--bg-primary': '#181818', '--bg-secondary': '#1e1e1e', '--bg-tertiary': '#252525',
+            '--bg-card': '#2a2a2a', '--bg-input': '#141414', '--bg-titlebar': '#111111',
+            '--bg-hover': 'rgba(255,255,255,0.05)', '--bg-hover-strong': 'rgba(255,255,255,0.1)',
+            '--accent': hex, '--accent-hover': _lightenHex(hex, 20),
+            '--accent-alpha': `rgba(${r},${g},${b},0.15)`,
+            '--text-primary': '#e4e4e4', '--text-secondary': '#8b8b8b',
+            '--text-muted': '#666666', '--text-color': '#e4e4e4',
+            '--border-color': 'rgba(255,255,255,0.08)',
+            '--scrollbar-thumb': 'rgba(255,255,255,0.2)', '--scrollbar-thumb-hover': 'rgba(255,255,255,0.3)',
+            '--success': '#34d399', '--warning': '#fbbf24', '--error': '#f87171',
+            '--shadow': 'rgba(0,0,0,0.3)'
+        };
+    }
+
+    applyTheme('custom', colors);
+}
+
+/** 辅助：将 hex 颜色加亮 */
+function _lightenHex(hex, amount) {
+    let r = parseInt(hex.slice(1, 3), 16);
+    let g = parseInt(hex.slice(3, 5), 16);
+    let b = parseInt(hex.slice(5, 7), 16);
+    r = Math.min(255, r + amount);
+    g = Math.min(255, g + amount);
+    b = Math.min(255, b + amount);
+    return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+}
+
+/** 渲染主题选择卡片 */
+function renderThemeCards() {
+    const container = document.getElementById('theme-cards');
+    if (!container) return;
+    const current = localStorage.getItem(THEME_KEY) || 'dark';
+
+    container.innerHTML = '';
+    for (const [id, preset] of Object.entries(THEME_PRESETS)) {
+        const isActive = id === current;
+        const card = document.createElement('div');
+        card.className = 'theme-card';
+        card.dataset.theme = id;
+        card.style.cssText = `
+            padding: 10px 12px; border-radius: 8px; cursor: pointer;
+            border: 2px solid ${isActive ? 'var(--accent)' : 'var(--border-color)'};
+            background: ${preset.colors['--bg-secondary']};
+            box-shadow: ${isActive ? '0 0 0 2px var(--accent-alpha)' : 'none'};
+            transition: all 0.2s;
+        `;
+        card.onmouseenter = () => { if (!card.style.boxShadow.includes('accent')) card.style.borderColor = 'rgba(255,255,255,0.2)'; };
+        card.onmouseleave = () => { if (card.dataset.theme !== (localStorage.getItem(THEME_KEY) || 'dark')) card.style.borderColor = 'var(--border-color)'; };
+        card.onclick = () => applyTheme(id);
+
+        // 色块预览
+        const swatches = preset.preview.map(c =>
+            `<div style="width:18px;height:18px;border-radius:4px;background:${c};border:1px solid rgba(128,128,128,0.3);"></div>`
+        ).join('');
+
+        card.innerHTML = `
+            <div style="display:flex;gap:4px;margin-bottom:8px;">${swatches}</div>
+            <div style="font-size:12px;font-weight:600;color:${preset.colors['--text-primary']};">${preset.name}</div>
+            <div style="font-size:10px;color:${preset.colors['--text-secondary']};margin-top:2px;">${preset.desc}</div>
+        `;
+        container.appendChild(card);
+    }
+}
+
+/** 初始化主题 */
+function initTheme() {
+    const saved = localStorage.getItem(THEME_KEY) || 'dark';
+    if (saved === 'custom') {
+        const customColors = JSON.parse(localStorage.getItem(CUSTOM_THEME_KEY) || 'null');
+        if (customColors) {
+            applyTheme('custom', customColors);
+        } else {
+            applyTheme('dark');
+        }
+    } else {
+        applyTheme(saved);
+    }
+}
+
+// 立即初始化主题
+initTheme();
+
+// DOM 就绪后渲染卡片
+document.addEventListener('DOMContentLoaded', () => {
+    setTimeout(renderThemeCards, 200);
+});
 
 async function saveGladiaKeys() {
     const keysText = document.getElementById('gladia-keys').value;
@@ -11246,4 +11663,3 @@ async function initUpdateChannelUI() {
 
 // 页面加载时初始化通道 UI
 document.addEventListener('DOMContentLoaded', initUpdateChannelUI);
-

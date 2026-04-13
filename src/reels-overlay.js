@@ -341,11 +341,30 @@ function _getCachedImage(path) {
     // Only set crossOrigin for http(s) — blob: and file: don't need it
     // and setting it on blob URLs causes CORS failures in Electron
     if (/^https?:\/\//.test(path)) img.crossOrigin = 'anonymous';
-    img.onload = () => { _imageCache[path] = img; };
+    const isGif = path.toLowerCase().endsWith('.gif');
+    img.onload = () => {
+        _imageCache[path] = img;
+        // GIF 需要挂到可见 DOM 中才能让 Chromium 推进动画帧
+        if (isGif) _attachGifToDom(img);
+    };
     img.onerror = () => { _imageCache[path] = null; }; // allow retry on error
     _imageCache[path] = _IMAGE_LOADING;
     img.src = path.startsWith('/') ? `file://${path}` : path;
     return null;
+}
+
+// 隐藏容器：让 GIF <img> 挂在 DOM 中以驱动动画帧
+// 必须在视口内（不能 left:-9999px），否则 Chromium 可能不推进动画
+let _gifDomContainer = null;
+function _attachGifToDom(img) {
+    if (!_gifDomContainer) {
+        _gifDomContainer = document.createElement('div');
+        _gifDomContainer.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;overflow:hidden;pointer-events:none;opacity:0.001;z-index:-9999;';
+        document.body.appendChild(_gifDomContainer);
+    }
+    // 强制 img 尺寸极小，避免影响性能
+    img.style.cssText = 'width:1px;height:1px;';
+    if (!img.parentNode) _gifDomContainer.appendChild(img);
 }
 
 const _videoCache = {};
@@ -353,16 +372,121 @@ function _getCachedVideo(path) {
     if (!path) return null;
     if (_videoCache[path]) return _videoCache[path];
     const vid = document.createElement('video');
-    vid.src = path;
+    // 本地路径需要加 file:// 前缀
+    vid.src = path.startsWith('/') ? `file://${path}` : path;
     vid.muted = true;
     vid.loop = true;
     vid.playsInline = true;
-    // We don't autoplay. We will manage its playback based on currentTime
+    vid.preload = 'auto';
     vid.load();
+    // 自动播放让 Canvas 能拿到帧
+    vid.play().catch(() => {});
     _videoCache[path] = vid;
     return vid;
 }
 
+// ═══ GIF 逐帧解码器 (WebCodecs ImageDecoder API) ═══
+const _gifDecoderCache = {};
+
+function _getGifDecoder(path) {
+    if (!path) return null;
+    if (_gifDecoderCache[path]) return _gifDecoderCache[path];
+
+    // 创建解码器对象
+    const gifData = {
+        ready: false,
+        frameCount: 0,
+        frameDurations: [],    // 每帧持续时间(ms)
+        totalDuration: 0,      // 总时长(秒)
+        frames: {},            // frameIndex → ImageBitmap
+        decoder: null,
+        _decoding: new Set(),  // 正在解码的帧索引
+    };
+    _gifDecoderCache[path] = gifData;
+
+    // 异步初始化解码器
+    (async () => {
+        try {
+            const url = path.startsWith('/') ? `file://${path}` : path;
+            const response = await fetch(url);
+            const arrayBuffer = await response.arrayBuffer();
+
+            // 使用 ImageDecoder（Chromium 94+, Electron 支持）
+            if (typeof ImageDecoder !== 'undefined') {
+                const decoder = new ImageDecoder({ data: arrayBuffer, type: 'image/gif' });
+                gifData.decoder = decoder;
+                await decoder.tracks.ready;
+                const track = decoder.tracks.selectedTrack;
+                gifData.frameCount = track.frameCount;
+
+                // 预解码全部帧
+                const preloadCount = gifData.frameCount;
+                for (let i = 0; i < preloadCount; i++) {
+                    try {
+                        const result = await decoder.decode({ frameIndex: i });
+                        // duration 单位: 微秒 → 毫秒，最小 10ms 防止除零
+                        const durMs = Math.max(10, result.image.duration ? result.image.duration / 1000 : 100);
+                        gifData.frameDurations[i] = durMs;
+                        // 转为 ImageBitmap 用于 Canvas 绘制
+                        const bitmap = await createImageBitmap(result.image);
+                        gifData.frames[i] = bitmap;
+                        result.image.close();
+                    } catch (e) {
+                        gifData.frameDurations[i] = 100; // 默认 100ms
+                    }
+                }
+
+                // 补齐未预解码的帧时长（用平均值）
+                const avgDur = gifData.frameDurations.length > 0
+                    ? gifData.frameDurations.reduce((a, b) => a + b, 0) / gifData.frameDurations.length
+                    : 100;
+                for (let i = preloadCount; i < gifData.frameCount; i++) {
+                    gifData.frameDurations[i] = avgDur;
+                }
+                gifData.totalDuration = gifData.frameDurations.reduce((a, b) => a + b, 0) / 1000;
+                gifData.nativeFps = gifData.frameCount / Math.max(0.01, gifData.totalDuration);
+                gifData.ready = true;
+                console.log(`[GIF] 解码完成: ${gifData.frameCount} 帧, 总时长 ${gifData.totalDuration.toFixed(2)}s, 原始帧率 ${gifData.nativeFps.toFixed(1)}fps`);
+            } else {
+                // ImageDecoder 不可用，回退到静态图
+                console.warn('[GIF] ImageDecoder API 不可用, GIF 将显示为静态图');
+                const img = new Image();
+                img.src = path.startsWith('/') ? `file://${path}` : path;
+                img.onload = () => {
+                    gifData.frames[0] = img;
+                    gifData.frameCount = 1;
+                    gifData.frameDurations = [100];
+                    gifData.totalDuration = 0.1;
+                    gifData.ready = true;
+                };
+            }
+        } catch (err) {
+            console.error('[GIF] 解码初始化失败:', err);
+        }
+    })();
+
+    return gifData;
+}
+
+// 异步按需解码指定帧（不阻塞渲染循环）
+function _ensureGifFrameDecoded(gifData, frameIdx) {
+    if (!gifData || !gifData.decoder) return;
+    // 预解码当前帧和下一帧
+    const toLoad = [frameIdx, (frameIdx + 1) % gifData.frameCount];
+    for (const fi of toLoad) {
+        if (gifData.frames[fi] || gifData._decoding.has(fi)) continue;
+        gifData._decoding.add(fi);
+        (async () => {
+            try {
+                const result = await gifData.decoder.decode({ frameIndex: fi });
+                const bitmap = await createImageBitmap(result.image);
+                gifData.frames[fi] = bitmap;
+                result.image.close();
+            } catch (e) { /* ignore */ }
+            gifData._decoding.delete(fi);
+        })();
+    }
+}
 
 /**
  * 渲染单个覆层到 Canvas。
@@ -381,9 +505,17 @@ function drawOverlay(ctx, ov, currentTime = 0, canvasW = 1920, canvasH = 1080) {
     const end = parseFloat(ov.end || 0);
 
     // 时间范围检查 (允许边界值)
-    // scroll 覆层: 动画完成后保持在最终位置，不根据 end 消失
+    // end >= 9999 = 全程，永不超时
+    // scroll 覆层: 动画完成后保持在最终位置
     if (currentTime < start) return;
-    if (ov.type !== 'scroll' && currentTime > end + 0.001) return;
+    if (end < 9999 && ov.type !== 'scroll' && currentTime > end + 0.001) {
+        // 对于 video/image 覆层，如果 end 恰好等于视频时长（被 9999 覆盖的遗留问题），也视为全程
+        if ((ov.type === 'video' || ov.type === 'image') && end > 0) {
+            // 允许继续绘制（循环播放）
+        } else {
+            return;
+        }
+    }
 
     let x = parseFloat(ov.x || 0);
     let y = parseFloat(ov.y || 0);
@@ -541,25 +673,40 @@ function _drawVideoOverlay(ctx, ov, x, y, w, h, currentTime) {
             drawable = _getCachedImage(`file://${fPath}`); 
         }
     } else {
-        // ═══ 预览模式：使用 <video> 或 <img> ═══
+        // ═══ 预览模式：使用 <video> 或 GIF 解码器 ═══
         if (isGif) {
-            // GIF 只是个 img，它会自由播放
-            drawable = _getCachedImage(videoPath);
+            // GIF: 使用 ImageDecoder 逐帧解码，按原始帧时长播放
+            const gifData = _getGifDecoder(videoPath);
+            if (gifData && gifData.ready && gifData.frameCount > 0) {
+                // 计算速度倍率：ov.fps / 原始帧率，默认 1x 原速
+                const nativeFps = gifData.nativeFps || 10;
+                const speedMul = (ov.fps && ov.fps !== 30) ? (ov.fps / nativeFps) : 1;
+                const adjustedTime = relTime * speedMul;
+                const totalGifDur = gifData.totalDuration || 1;
+                const loopedTime = adjustedTime % totalGifDur;
+                // 按累计帧时长查找当前帧
+                let accumulated = 0;
+                let targetFrame = 0;
+                for (let fi = 0; fi < gifData.frameCount; fi++) {
+                    accumulated += (gifData.frameDurations[fi] || 100) / 1000;
+                    if (loopedTime < accumulated) { targetFrame = fi; break; }
+                    targetFrame = fi;
+                }
+                drawable = gifData.frames[targetFrame] || gifData.frames[0] || null;
+                _ensureGifFrameDecoded(gifData, targetFrame);
+            }
         } else {
             const vid = _getCachedVideo(videoPath);
             if (vid && vid.readyState >= 2) {
                 drawable = vid;
-                // 让预览的 video 也循环，匹配导出时的循环机制
                 let targetTime = relTime;
                 const d = vid.duration || 1;
                 if (targetTime >= d) targetTime = targetTime % d;
-
-                // 简单的同步逻辑：检测如果误差大于0.2秒就seek
                 if (Math.abs(vid.currentTime - targetTime) > 0.2) {
                     vid.currentTime = targetTime;
                 }
                 if (vid.paused && document.visibilityState === 'visible') {
-                    // vid.play().catch(e => {}); 
+                    vid.play().catch(e => {}); 
                 }
             }
         }
@@ -1260,7 +1407,7 @@ function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime
         }
         ctx.restore();
         
-        if (ov.debug_title || (ov.debug_title === undefined && ov.debug_layout)) {
+        if (!ov._exporting && (ov.debug_title || (ov.debug_title === undefined && ov.debug_layout))) {
             ctx.save(); ctx.strokeStyle='#ff5555'; ctx.lineWidth=1; ctx.setLineDash([4,4]);
             ctx.strokeRect(x + padL + offsetX + customX, secBaseY, tW, tSpace);
             ctx.restore();
@@ -1329,7 +1476,7 @@ function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime
         }
         ctx.restore();
         
-        if (ov.debug_body || (ov.debug_body === undefined && ov.debug_layout)) {
+        if (!ov._exporting && (ov.debug_body || (ov.debug_body === undefined && ov.debug_layout))) {
             ctx.save(); ctx.strokeStyle='#55ff55'; ctx.lineWidth=1; ctx.setLineDash([4,4]);
             ctx.strokeRect(x + padL + offsetX + customX, secBaseY, bW, bSpace);
             ctx.restore();
@@ -1398,7 +1545,7 @@ function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime
         }
         ctx.restore();
         
-        if (ov.debug_footer || (ov.debug_footer === undefined && ov.debug_layout)) {
+        if (!ov._exporting && (ov.debug_footer || (ov.debug_footer === undefined && ov.debug_layout))) {
             ctx.save(); ctx.strokeStyle='#5555ff'; ctx.lineWidth=1; ctx.setLineDash([4,4]);
             ctx.strokeRect(x + padL + offsetX + customX, secBaseY, fW, fSpace);
             ctx.restore();

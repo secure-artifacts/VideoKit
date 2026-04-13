@@ -2,15 +2,26 @@
 :root {
     --bg-primary: #181818;
     --bg-secondary: #1e1e1e;
+    --bg-tertiary: #252525;
     --bg-card: #2a2a2a;
+    --bg-input: #141414;
+    --bg-titlebar: #111111;
+    --bg-hover: rgba(255, 255, 255, 0.05);
+    --bg-hover-strong: rgba(255, 255, 255, 0.1);
     --accent: #4c9eff;
     --accent-hover: #6bb0ff;
+    --accent-alpha: rgba(76, 158, 255, 0.15);
     --text-primary: #e4e4e4;
     --text-secondary: #8b8b8b;
+    --text-muted: #666666;
+    --text-color: #e4e4e4;
     --border-color: rgba(255, 255, 255, 0.08);
+    --scrollbar-thumb: rgba(255, 255, 255, 0.2);
+    --scrollbar-thumb-hover: rgba(255, 255, 255, 0.3);
     --success: #34d399;
     --warning: #fbbf24;
     --error: #f87171;
+    --shadow: rgba(0, 0, 0, 0.3);
 }
 
 * {
@@ -44,7 +55,7 @@ body {
     /* 避开Mac左侧红绿灯 */
     padding-right: 16px;
     -webkit-app-region: drag;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    border-bottom: 1px solid var(--border-color);
 }
 
 .titlebar-drag-region {
@@ -423,12 +434,12 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.2);
+    background: var(--scrollbar-thumb);
     border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.3);
+    background: var(--scrollbar-thumb-hover);
 }
 
 /* 响应式 */
@@ -707,12 +718,14 @@ input[type="number"]::-webkit-outer-spin-button {
 
 /* ═══ 三栏重排: Tasks | Preview | Inspector ═══ */
 #reels-col-tasks { order: 1; }
-.reels-resize-handle[data-left="reels-col-tasks"] { order: 2; }
-#reels-col-subtitle { order: 5; border-left: 1px solid var(--border-color); }
-.reels-resize-handle[data-left="reels-col-subtitle"] { display: none; }
+.reels-resize-handle-1 { order: 2; display: block; }
 #reels-col-preview { order: 3; }
-.reels-resize-handle[data-left="reels-col-preview"] { order: 4; }
+.reels-resize-handle-2 { order: 4; display: block; }
+#reels-col-subtitle { order: 5; border-left: 1px solid var(--border-color); }
 
+/* Hide obsolete handles safely */
+.reels-resize-handle[data-left="reels-col-tasks"][data-right="reels-col-subtitle"],
+.reels-resize-handle[data-left="reels-col-subtitle"][data-right="reels-col-preview"] { display: none; }
 /* ═══ 预览区 ═══ */
 #reels-preview-viewport {
     background: #0a0a0a !important;
@@ -732,7 +745,7 @@ input[type="number"]::-webkit-outer-spin-button {
     align-items: center;
     justify-content: space-between;
     padding: 4px 12px;
-    background: #0e0e0e;
+    background: var(--bg-titlebar);
     border-bottom: 1px solid var(--border-color);
     cursor: pointer;
     user-select: none;
@@ -782,4 +795,504 @@ input[type="number"]::-webkit-outer-spin-button {
 .reels-dropdown-item:hover,
 .rbt-dropdown-item:hover {
     background: rgba(255, 255, 255, 0.06);
+}
+
+/* ═══ 主题兼容性覆盖 — 确保内联硬编码色跟随主题 ═══ */
+body .input,
+body .textarea,
+body .select,
+body input[type="text"],
+body input[type="number"],
+body textarea,
+body select {
+    background-color: var(--bg-input) !important;
+    color: var(--text-primary) !important;
+    border-color: var(--border-color) !important;
+}
+
+body .form-section {
+    background: var(--bg-secondary) !important;
+    border-color: var(--border-color) !important;
+}
+
+body .titlebar {
+    background: var(--bg-titlebar) !important;
+}
+
+body .tab:hover {
+    background: var(--bg-hover) !important;
+}
+
+body .btn-secondary {
+    background: var(--bg-hover-strong) !important;
+    color: var(--text-primary) !important;
+    border-color: var(--border-color) !important;
+}
+
+body .btn-secondary:hover {
+    background: var(--bg-hover-strong) !important;
+    filter: brightness(1.2);
+}
+
+body .panel-content .hint {
+    color: var(--text-secondary) !important;
+}
+
+/* 主题卡片选中动画 */
+.theme-card {
+    transition: all 0.25s ease !important;
+}
+.theme-card:hover {
+    transform: translateY(-1px);
+}
+
+/* ═══ 全局主题覆盖 — 弹窗 / Toast / 下拉 / 上下文菜单 ═══ */
+
+/* 主内容区域背景 */
+body {
+    background: var(--bg-primary) !important;
+    color: var(--text-primary) !important;
+}
+
+.content {
+    background: var(--bg-primary) !important;
+}
+
+/* 通用弹窗/对话框覆盖 (固定定位的遮罩层内部面板) */
+[style*="position: fixed"] > div,
+[style*="position:fixed"] > div {
+    background-color: var(--bg-secondary) !important;
+    color: var(--text-primary) !important;
+}
+
+/* 所有模态框常见容器 */
+.modal, .dialog, .popup,
+[role="dialog"], [role="alertdialog"] {
+    background: var(--bg-secondary) !important;
+    color: var(--text-primary) !important;
+    border-color: var(--border-color) !important;
+}
+
+/* 状态框 */
+body .status-box {
+    background: var(--bg-secondary) !important;
+}
+
+/* 下拉菜单/上下文菜单 */
+.reels-toolbar-dropdown,
+.rbt-toolbar-dropdown,
+.dropdown-menu, .context-menu {
+    background: var(--bg-secondary) !important;
+    border-color: var(--border-color) !important;
+}
+
+/* 覆层检查器面板 */
+.rop-inspector, [class*="rop-"] {
+    color: var(--text-primary);
+}
+
+/* 确保所有 section-title 跟随主题 */
+body .section-title {
+    color: var(--text-secondary) !important;
+}
+
+/* 确保链接和小提示跟随主题 */
+body .about-info {
+    color: var(--text-primary) !important;
+}
+body .about-info p {
+    color: var(--text-secondary) !important;
+}
+
+/* Reels 面板内的输入框 */
+#batch-reels-panel input[type="text"],
+#batch-reels-panel input[type="number"],
+#batch-reels-panel select {
+    background: var(--bg-input) !important;
+    color: var(--text-primary) !important;
+    border-color: var(--border-color) !important;
+}
+
+/* 时间线 */
+.reels-timeline-bar {
+    background: var(--bg-titlebar) !important;
+    border-color: var(--border-color) !important;
+}
+.reels-timeline-header {
+    background: var(--bg-titlebar) !important;
+    border-color: var(--border-color) !important;
+}
+
+/* Toast 通知 */
+.toast {
+    background: var(--bg-card) !important;
+    color: var(--text-primary) !important;
+    border-color: var(--border-color) !important;
+}
+
+/* 预览区下方按钮区域 */
+#reels-preview-viewport {
+    background: var(--bg-primary) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   亮色主题专用修正 — 修复边框/滑块/分割线在白色背景上不可见的问题
+   ═══════════════════════════════════════════════════════════ */
+
+body.theme-light {
+    color-scheme: light;
+}
+
+/* 滑块轨道 - 暗色背景改为灰色 */
+body.theme-light input[type="range"] {
+    background: rgba(46, 125, 50, 0.12) !important;
+}
+body.theme-light input[type="range"]::-webkit-slider-thumb {
+    background: #2e7d32 !important;
+    border-color: #4caf50 !important;
+    box-shadow: 0 1px 4px rgba(46, 125, 50, 0.25) !important;
+}
+
+/* 输入框和选择框 — 加深边框 */
+body.theme-light input,
+body.theme-light select,
+body.theme-light textarea {
+    border-color: rgba(0, 0, 0, 0.15) !important;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+body.theme-light input:focus,
+body.theme-light select:focus,
+body.theme-light textarea:focus {
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 0 2px var(--accent-alpha) !important;
+}
+
+/* 按钮 — 加深边框和阴影 */
+body.theme-light .btn-secondary,
+body.theme-light .rbt-btn {
+    border-color: rgba(0, 0, 0, 0.15) !important;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+body.theme-light .btn-secondary:hover,
+body.theme-light .rbt-btn:hover {
+    border-color: rgba(0, 0, 0, 0.25) !important;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+}
+
+/* 表单区域 — 加深边框 */
+body.theme-light .form-section {
+    border-color: rgba(0, 0, 0, 0.1) !important;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+/* 标签页 */
+body.theme-light .tab.active {
+    color: white !important;
+}
+
+/* 批量表格面板 — 大面积修正 */
+body.theme-light .rbt-panel {
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15) !important;
+    border-color: rgba(0, 0, 0, 0.12) !important;
+}
+body.theme-light .rbt-table th {
+    border-bottom-color: rgba(0, 0, 0, 0.12) !important;
+    border-right-color: rgba(0, 0, 0, 0.06) !important;
+}
+body.theme-light .rbt-table td {
+    border-bottom-color: rgba(0, 0, 0, 0.06) !important;
+    border-right-color: rgba(0, 0, 0, 0.04) !important;
+}
+body.theme-light .rbt-header,
+body.theme-light .rbt-footer {
+    border-color: rgba(0, 0, 0, 0.1) !important;
+}
+body.theme-light .rbt-tabbar {
+    border-color: rgba(0, 0, 0, 0.1) !important;
+}
+body.theme-light .rbt-tab-active {
+    border-color: rgba(0, 0, 0, 0.1) !important;
+}
+body.theme-light .rbt-material-bar {
+    border-color: rgba(0, 0, 0, 0.1) !important;
+}
+body.theme-light .rbt-file-name {
+    border-color: rgba(0, 0, 0, 0.1) !important;
+}
+body.theme-light .rbt-file-name:hover {
+    border-color: var(--accent) !important;
+}
+body.theme-light .rbt-textarea {
+    color: var(--text-primary) !important;
+}
+body.theme-light .rbt-textarea:hover {
+    background: rgba(0, 0, 0, 0.02) !important;
+    border-color: rgba(0, 0, 0, 0.15) !important;
+}
+body.theme-light .rbt-textarea:focus {
+    border-color: var(--accent) !important;
+    background: var(--bg-input) !important;
+}
+body.theme-light .rbt-select {
+    border-color: rgba(0, 0, 0, 0.15) !important;
+}
+body.theme-light .rbt-scale-pack input {
+    border-color: rgba(0, 0, 0, 0.15) !important;
+}
+body.theme-light .rbt-scale-pack input:hover {
+    border-color: rgba(0, 0, 0, 0.25) !important;
+}
+body.theme-light .rbt-mat-path {
+    border-color: rgba(0, 0, 0, 0.1) !important;
+}
+body.theme-light .rbt-ms-resize-handle {
+    border-color: rgba(0, 0, 0, 0.1) !important;
+}
+body.theme-light .rbt-ms-filters,
+body.theme-light .rbt-ms-bulk,
+body.theme-light .rbt-ms-footer,
+body.theme-light .rbt-ms-linked-dir {
+    border-color: rgba(0, 0, 0, 0.08) !important;
+}
+body.theme-light .rbt-ms-header {
+    border-color: rgba(0, 0, 0, 0.1) !important;
+}
+body.theme-light .rbt-actions {
+    border-color: rgba(0, 0, 0, 0.06) !important;
+}
+body.theme-light .rbt-sep {
+    background: rgba(0, 0, 0, 0.12) !important;
+}
+body.theme-light .rbt-batch-group {
+    background: rgba(46, 125, 50, 0.06) !important;
+    border-color: rgba(46, 125, 50, 0.18) !important;
+}
+body.theme-light .rbt-batch-group-plain {
+    background: rgba(46, 125, 50, 0.03) !important;
+    border-color: rgba(46, 125, 50, 0.1) !important;
+}
+
+/* 行悬浮色 */
+body.theme-light .rbt-row:hover {
+    background: rgba(46, 125, 50, 0.05) !important;
+}
+body.theme-light .rbt-row-selected {
+    background: rgba(46, 125, 50, 0.1) !important;
+}
+
+/* 拖拽分隔条 */
+body.theme-light .reels-resize-handle:hover,
+body.theme-light .reels-resize-handle.active {
+    background: rgba(46, 125, 50, 0.4) !important;
+}
+
+/* Inspector 面板 */
+body.theme-light #reels-col-subtitle {
+    border-left-color: rgba(0, 0, 0, 0.1) !important;
+}
+
+/* 标题栏分隔线 */
+body.theme-light .titlebar {
+    border-bottom-color: rgba(0, 0, 0, 0.08) !important;
+}
+
+/* 时间线 */
+body.theme-light .reels-timeline-bar {
+    border-top-color: rgba(0, 0, 0, 0.1) !important;
+}
+
+/* 颜色选择器边框 */
+body.theme-light input[type="color"] {
+    border-color: rgba(0, 0, 0, 0.15) !important;
+}
+
+/* 滚动条 — 亮色下用深色缩略 */
+body.theme-light ::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.18) !important;
+}
+body.theme-light ::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 0, 0, 0.3) !important;
+}
+
+/* 通用 box-shadow 修正 */
+body.theme-light [style*="box-shadow"] {
+    --shadow: rgba(0, 0, 0, 0.08);
+}
+
+/* 列分组颜色条 — 亮色模式下用更柔和的底色 */
+body.theme-light .rbt-table th.rbt-grp-video { background: rgba(59, 130, 246, 0.06) !important; }
+body.theme-light .rbt-table th.rbt-grp-audio { background: rgba(139, 92, 246, 0.06) !important; }
+body.theme-light .rbt-table th.rbt-grp-sub   { background: rgba(14, 165, 233, 0.06) !important; }
+body.theme-light .rbt-table th.rbt-grp-media { background: rgba(16, 185, 129, 0.06) !important; }
+body.theme-light .rbt-table th.rbt-grp-ovl   { background: rgba(245, 158, 11, 0.06) !important; }
+body.theme-light .rbt-table th.rbt-grp-scr   { background: rgba(244, 63, 94, 0.06) !important; }
+
+/* 操作按钮功能色 — 亮色下调整 */
+body.theme-light .rbt-btn-accent {
+    color: #fff !important;
+}
+body.theme-light .rbt-btn-primary {
+    color: #fff !important;
+}
+
+/* 下拉菜单弹窗 */
+body.theme-light #rbt-lang-dropdown {
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12) !important;
+    border-color: rgba(0, 0, 0, 0.12) !important;
+}
+
+/* Reels 预览区域 */
+body.theme-light #reels-preview-viewport {
+    background: var(--bg-tertiary) !important;
+    box-shadow: inset 0 0 16px rgba(0, 0, 0, 0.05) !important;
+}
+body.theme-light #reels-preview-placeholder {
+    color: var(--text-muted) !important;
+}
+
+/* Reels 任务列表 */
+body.theme-light .reels-task-item {
+    border-color: rgba(46, 100, 46, 0.1) !important;
+}
+body.theme-light .reels-task-item:hover {
+    background: rgba(46, 125, 50, 0.05) !important;
+}
+body.theme-light .reels-task-item.active {
+    background: rgba(46, 125, 50, 0.1) !important;
+    border-color: rgba(46, 125, 50, 0.25) !important;
+}
+
+/* Reels 时间线 — 亮色 */
+body.theme-light .reels-timeline-bar {
+    background: var(--bg-secondary) !important;
+}
+body.theme-light .reels-timeline-track {
+    background: rgba(46, 125, 50, 0.08) !important;
+}
+
+/* Reels 面板三栏边框 */
+body.theme-light .reels-column {
+    border-color: rgba(46, 100, 46, 0.1) !important;
+}
+body.theme-light .reels-resize-handle {
+    background: rgba(46, 100, 46, 0.08) !important;
+}
+
+/* Reels Inspector — 亮色 */
+body.theme-light .inspector-tabs {
+    background: var(--bg-tertiary) !important;
+    border-color: rgba(46, 100, 46, 0.1) !important;
+}
+body.theme-light .inspector-tab {
+    color: var(--text-secondary) !important;
+}
+
+/* 主面板 form-section 亮色优化 */
+body.theme-light .form-section {
+    background: var(--bg-card) !important;
+    border-color: rgba(46, 100, 46, 0.1) !important;
+}
+body.theme-light .section-title {
+    color: var(--text-primary) !important;
+}
+
+/* 主导航栏 tab */
+body.theme-light .tab {
+    color: var(--text-secondary) !important;
+}
+body.theme-light .tab:hover {
+    background: rgba(46, 125, 50, 0.08) !important;
+}
+
+/* 亮色下 checkbox accent 统一跟随主题 */
+body.theme-light input[type="checkbox"] {
+    accent-color: var(--accent) !important;
+}
+
+/* ═══════════════════════════════════════
+   覆层面板 (ROP) 亮色修正
+   ═══════════════════════════════════════ */
+body.theme-light .rop-panel { color: var(--text-primary); }
+body.theme-light .rop-group { background: var(--bg-card) !important; }
+body.theme-light .rop-group-title { color: var(--text-primary) !important; }
+body.theme-light .rop-grid label { color: var(--text-secondary) !important; }
+body.theme-light .rop-input,
+body.theme-light .rop-select,
+body.theme-light .rop-textarea,
+body.theme-light .rop-num-readout {
+    background: var(--bg-input) !important;
+    color: var(--text-primary) !important;
+    border-color: rgba(46, 100, 46, 0.15) !important;
+}
+body.theme-light .rop-input:focus,
+body.theme-light .rop-select:focus,
+body.theme-light .rop-textarea:focus,
+body.theme-light .rop-num-readout:focus {
+    border-color: var(--accent) !important;
+}
+body.theme-light .rop-collapse-icon { color: var(--text-secondary) !important; }
+body.theme-light .rop-collapse-btn {
+    background: rgba(46, 125, 50, 0.06) !important;
+    border-color: rgba(46, 100, 46, 0.15) !important;
+    color: var(--text-secondary) !important;
+}
+body.theme-light .rop-collapse-btn:hover {
+    background: rgba(46, 125, 50, 0.12) !important;
+    color: var(--text-primary) !important;
+}
+body.theme-light .rop-reset-btn {
+    background: rgba(46, 125, 50, 0.05) !important;
+    border-color: rgba(46, 100, 46, 0.12) !important;
+    color: var(--text-muted) !important;
+}
+body.theme-light .rop-reset-btn:hover {
+    background: rgba(46, 125, 50, 0.15) !important;
+    color: var(--accent) !important;
+}
+body.theme-light .rop-reset-all {
+    background: rgba(46, 125, 50, 0.05) !important;
+    border-color: rgba(46, 100, 46, 0.12) !important;
+    color: var(--text-muted) !important;
+}
+body.theme-light .rop-reset-all:hover {
+    background: rgba(46, 125, 50, 0.15) !important;
+    color: var(--accent) !important;
+}
+
+/* 折叠小节标题 — 亮色下用深色文字，浅底 */
+body.theme-light .rop-subsection-head {
+    border-color: rgba(46, 100, 46, 0.15) !important;
+}
+body.theme-light .rop-subsection-head[data-section-tone="1"] { background: rgba(66, 145, 255, 0.08) !important; color: #1a5aa8 !important; border-color: rgba(66,145,255,0.2) !important; }
+body.theme-light .rop-subsection-head[data-section-tone="2"] { background: rgba(42, 201, 160, 0.08) !important; color: #1a7a5e !important; border-color: rgba(42,201,160,0.2) !important; }
+body.theme-light .rop-subsection-head[data-section-tone="3"] { background: rgba(246, 168, 56, 0.08) !important; color: #8a5f12 !important; border-color: rgba(246,168,56,0.2) !important; }
+body.theme-light .rop-subsection-head[data-section-tone="4"] { background: rgba(188, 118, 255, 0.08) !important; color: #6b3fa0 !important; border-color: rgba(188,118,255,0.2) !important; }
+body.theme-light .rop-subsection-head[data-section-tone="5"] { background: rgba(255, 111, 145, 0.08) !important; color: #9e3050 !important; border-color: rgba(255,111,145,0.2) !important; }
+body.theme-light .rop-subsection-head[data-section-tone="6"] { background: rgba(120, 220, 110, 0.08) !important; color: #2e6e28 !important; border-color: rgba(120,220,110,0.2) !important; }
+
+/* 列表项 */
+body.theme-light .rop-list-item { border-color: rgba(46, 100, 46, 0.08) !important; }
+body.theme-light .rop-list-item:hover { background: rgba(46, 125, 50, 0.05) !important; }
+body.theme-light .rop-list-item.selected { background: rgba(46, 125, 50, 0.1) !important; }
+body.theme-light .rop-list-time { color: var(--text-muted) !important; }
+body.theme-light .rop-list-arrow { color: var(--text-muted) !important; }
+body.theme-light .rop-list-del { color: var(--text-muted) !important; }
+body.theme-light .rop-list-toggle-eye { color: var(--text-muted) !important; }
+body.theme-light .rop-empty { color: var(--text-muted) !important; }
+body.theme-light .rop-header { color: var(--text-primary) !important; }
+body.theme-light .rop-section-title { color: var(--text-primary) !important; }
+
+/* 批量表操作栏按钮 — 亮色下强制深色文字 */
+body.theme-light .rbt-btn {
+    color: var(--text-primary) !important;
+}
+body.theme-light .rbt-btn[style*="background:rgba(40,80,40"] {
+    color: #1b5e20 !important;
+    background: rgba(46, 125, 50, 0.12) !important;
+    border-color: rgba(46, 125, 50, 0.25) !important;
+}
+body.theme-light .rbt-btn[style*="background:rgba(120,40,40"] {
+    color: #b71c1c !important;
+    background: rgba(220, 80, 80, 0.1) !important;
+    border-color: rgba(220, 80, 80, 0.25) !important;
 }

@@ -85,8 +85,11 @@ class ReelsTimelineEditor {
 
         // 事件
         this.canvas.addEventListener('mousedown', (e) => this._onMouseDown(e));
-        this.canvas.addEventListener('mousemove', (e) => this._onMouseMove(e));
-        this.canvas.addEventListener('mouseup', (e) => this._onMouseUp(e));
+        
+        // 绑定到 window 以防止鼠标移出画布后拖拽断开/卡住
+        window.addEventListener('mousemove', (e) => this._onMouseMove(e));
+        window.addEventListener('mouseup', (e) => this._onMouseUp(e));
+        
         this.canvas.addEventListener('wheel', (e) => this._onWheel(e), { passive: false });
 
         // 尺寸
@@ -116,6 +119,7 @@ class ReelsTimelineEditor {
     }
 
     setPlayhead(timeSec) {
+        if (this._drag && this._drag.type === 'playhead') return;
         this._playheadPos = Math.max(0, Math.min(timeSec, this._duration));
     }
 
@@ -538,6 +542,11 @@ class ReelsTimelineEditor {
         }
 
         // Hover
+        if (mx < 0 || my < 0 || mx > rect.width || my > rect.height) {
+            this._hoveredClip = null;
+            return;
+        }
+
         const hitInfo = this._hitTestClip(mx, my);
         this._hoveredClip = hitInfo ? { trackIdx: hitInfo.trackIdx, clipIdx: hitInfo.clipIdx } : null;
 
@@ -547,7 +556,7 @@ class ReelsTimelineEditor {
             } else {
                 this.canvas.style.cursor = 'pointer';
             }
-        } else if (my < TL_RULER_H) {
+        } else if (my < TL_RULER_H && mx >= TL_HEADER_W) {
             this.canvas.style.cursor = 'pointer';
         } else {
             this.canvas.style.cursor = 'default';

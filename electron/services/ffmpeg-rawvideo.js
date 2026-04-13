@@ -239,7 +239,8 @@ async function prepareBg(opts) {
                     '-t', String(duration),
                     '-r', String(fps),
                     '-an',
-                    `${framesDir}/frame_%06d.png`,
+                    '-qscale:v', '2',
+                    `${framesDir}/frame_%06d.jpg`,
                 );
             } else {
                 // 无转场: concat 硬切
@@ -255,7 +256,8 @@ async function prepareBg(opts) {
                     '-t', String(duration),
                     '-r', String(fps),
                     '-an',
-                    `${framesDir}/frame_%06d.png`,
+                    '-qscale:v', '2',
+                    `${framesDir}/frame_%06d.jpg`,
                 );
             }
 
@@ -264,7 +266,7 @@ async function prepareBg(opts) {
         }
 
         // 统计帧数
-        const files = fs.readdirSync(framesDir).filter(f => f.endsWith('.png'));
+        const files = fs.readdirSync(framesDir).filter(f => f.endsWith('.jpg') || f.endsWith('.png'));
         console.log(`[WYSIWYG-BG] 多素材帧提取完成: ${files.length} 帧`);
         return { framesDir, frameCount: files.length };
     }
@@ -307,7 +309,8 @@ async function prepareBg(opts) {
             '-y', '-i', backgroundPath,
             '-vf', scaleCropFilter,
             '-frames:v', '1',
-            `${framesDir}/frame_000001.png`,
+            '-qscale:v', '2',
+            `${framesDir}/frame_000001.jpg`,
         ];
         await runFFmpegSync(ffmpeg, args);
         return { framesDir, frameCount: 1 };
@@ -348,7 +351,8 @@ async function prepareBg(opts) {
                 '-t', String(duration),
                 '-r', String(fps),
                 '-an',
-                `${framesDir}/frame_%06d.png`,
+                '-qscale:v', '2',
+                `${framesDir}/frame_%06d.jpg`,
             );
 
             console.log(`[WYSIWYG-BG] xfade 循环: ${segCount}段, fadeDur=${fadeDur}s`);
@@ -361,7 +365,7 @@ async function prepareBg(opts) {
     }
 
     // 统计实际帧数
-    const files = fs.readdirSync(framesDir).filter(f => f.endsWith('.png'));
+    const files = fs.readdirSync(framesDir).filter(f => f.endsWith('.jpg') || f.endsWith('.png'));
     console.log(`[WYSIWYG-BG] 帧提取完成: ${files.length} 帧`);
     return { framesDir, frameCount: files.length };
 }
@@ -375,7 +379,8 @@ async function extractSimpleLoop(ffmpeg, backgroundPath, framesDir, scaleCropFil
         '-vf', scaleCropFilter,
         '-r', String(fps),
         '-an',
-        `${framesDir}/frame_%06d.png`,
+        '-qscale:v', '2',
+        `${framesDir}/frame_%06d.jpg`,
     ];
     await runFFmpegSync(ffmpeg, args);
 }
@@ -529,6 +534,7 @@ async function startSession(opts) {
         outputPath, voicePath, voiceVolume = 1.0,
         bgVolume = 0.1, backgroundPath, bgHasAudio = false,
         bgmPath = '', bgmVolume = 0,
+        contentVideoPath = '', contentVideoVolume = 1.0,
         audioDurScale = 100,
         reverbEnabled = false, reverbPreset = 'hall', reverbMix = 30, stereoWidth = 100, audioFxTarget = 'all',
         renderedAudioPath = null,
@@ -603,28 +609,55 @@ async function startSession(opts) {
         encoderArgs = cpuFallbackArgs;
     }
 
-    const args = [
-        '-y',
-        '-f', 'rawvideo',
-        '-pix_fmt', 'rgba',
-        '-s', `${width}x${height}`,
-        '-framerate', String(fps),
-        // 告诉 FFmpeg 输入是全范围 (0-255) RGB
-        '-color_range', 'pc',
-        '-i', 'pipe:0',
-        '-an',
-        // 色彩空间正确转换：Canvas sRGB 全范围 → BT.709 标准范围
-        '-vf', 'scale=in_range=full:in_color_matrix=bt709:out_range=limited:out_color_matrix=bt709',
+    let args = ['-y'];
+
+    if (opts.alphaOverlayBgPath) {
+        // Fast Alpha Overlay 模式：直接由 FFmpeg 解码背景图像/视频
+        const bgExt = require('path').extname(opts.alphaOverlayBgPath).toLowerCase();
+        const isAlphaBgImage = ['.jpg', '.jpeg', '.png', '.webp', '.bmp'].includes(bgExt);
+        if (isAlphaBgImage) {
+            args.push('-loop', '1', '-i', opts.alphaOverlayBgPath);
+        } else {
+            args.push('-stream_loop', '-1', '-i', opts.alphaOverlayBgPath);
+        }
+        
+        args.push(
+            '-f', 'rawvideo',
+            '-pix_fmt', 'rgba',
+            '-s', `${width}x${height}`,
+            '-framerate', String(fps),
+            '-color_range', 'pc',
+            '-i', 'pipe:0',
+            '-an'
+        );
+
+        const filterComplex = `[0:v]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height}[bg];[1:v]scale=in_range=full:in_color_matrix=bt709:out_range=limited:out_color_matrix=bt709,format=yuva420p[fg];[bg][fg]overlay=0:0:format=auto:shortest=1[outv]`;
+        args.push('-filter_complex', filterComplex, '-map', '[outv]');
+
+    } else {
+        // 传统模式：从管道读取已合成好的全尺寸帧
+        args.push(
+            '-f', 'rawvideo',
+            '-pix_fmt', 'rgba',
+            '-s', `${width}x${height}`,
+            '-framerate', String(fps),
+            '-color_range', 'pc',
+            '-i', 'pipe:0',
+            '-an',
+            '-vf', 'scale=in_range=full:in_color_matrix=bt709:out_range=limited:out_color_matrix=bt709'
+        );
+    }
+
+    args.push(
         ...encoderArgs,
         '-pix_fmt', 'yuv420p',
-        // 输出色彩元数据（让播放器正确解码颜色）
         '-color_range', 'tv',
         '-colorspace', 'bt709',
         '-color_primaries', 'bt709',
         '-color_trc', 'bt709',
         '-movflags', '+faststart',
-        tempVideo,
-    ];
+        tempVideo
+    );
 
     console.log(`[WYSIWYG] 启动编码: ${ffmpeg} ${args.join(' ')}`);
     const proc = spawn(ffmpeg, args, { stdio: ['pipe', 'ignore', 'pipe'] });
@@ -633,6 +666,7 @@ async function startSession(opts) {
         id: sessionId, proc, tempVideo, outputPath,
         voicePath, voiceVolume, bgVolume, backgroundPath, bgHasAudio,
         bgmPath, bgmVolume,
+        contentVideoPath, contentVideoVolume,
         audioDurScale,
         reverbEnabled, reverbPreset, reverbMix, stereoWidth, audioFxTarget,
         renderedAudioPath,
@@ -1003,6 +1037,11 @@ async function mixAudio(session) {
 
     // 检测 BGM 是否有效
     const hasBgm = bgmPath && fs.existsSync(bgmPath) && bgmVolume > 0.001;
+    // 检测覆层视频音频是否有效
+    const cvPath = session.contentVideoPath;
+    const cvVol = session.contentVideoVolume ?? 1.0;
+    const hasContentVideoAudio = cvPath && fs.existsSync(cvPath) && !isImageMedia(cvPath) && hasAudioTrack(cvPath);
+    if (hasContentVideoAudio) console.log(`[WYSIWYG] 覆层视频含音频轨: ${cvPath}`);
     // 检测是否有渲染后的背景音频（bg 层特效渲染产物）
     const renderedBgAudio = session._renderedBgAudioPath && fs.existsSync(session._renderedBgAudioPath)
         ? session._renderedBgAudioPath : null;
@@ -1025,6 +1064,9 @@ async function mixAudio(session) {
         }
         if (hasBgm) {
             audioInputs.push({ path: bgmPath, volume: bgmVolume, loop: true });
+        }
+        if (hasContentVideoAudio) {
+            audioInputs.push({ path: cvPath, volume: cvVol, loop: true });
         }
 
         if (audioInputs.length === 0) {
@@ -1084,6 +1126,11 @@ async function mixAudio(session) {
         const bgmInputIdx = hasBgm ? nextInputIdx : -1;
         if (bgmInputIdx >= 0) {
             args.push('-stream_loop', '-1', '-i', bgmPath);
+            nextInputIdx++;
+        }
+        const cvInputIdx = hasContentVideoAudio ? nextInputIdx : -1;
+        if (cvInputIdx >= 0) {
+            args.push('-stream_loop', '-1', '-i', cvPath);
             nextInputIdx++;
         }
 
@@ -1164,6 +1211,12 @@ async function mixAudio(session) {
         if (bgmInputIdx >= 0) {
             filterParts.push(`[${bgmInputIdx}:a]volume=${bgmVolume.toFixed(3)}[bgm]`);
             mixLabels.push('[bgm]');
+        }
+
+        // 覆层视频音频
+        if (cvInputIdx >= 0) {
+            filterParts.push(`[${cvInputIdx}:a]volume=${cvVol.toFixed(3)}[cva]`);
+            mixLabels.push('[cva]');
         }
 
         // 最终混合
@@ -1272,6 +1325,291 @@ function cleanupBg(framesDir) {
 }
 
 // ═══════════════════════════════════════════════════════
+// 阶段 finish-video-only: 仅关闭编码器，不混音（并行切片用）
+// ═══════════════════════════════════════════════════════
+
+async function finishVideoOnly(sessionId) {
+    const session = sessions.get(sessionId);
+    if (!session) return { error: '会话不存在' };
+    if (session.closed) return { error: '会话已关闭' };
+    session.closed = true;
+
+    const mb = (session.bytesWritten / 1024 / 1024).toFixed(1);
+    console.log(`[WYSIWYG-VO] 完成纯视频编码... 帧: ${session.frameCount}, 数据: ${mb}MB`);
+
+    // 等待编码器完成
+    if (!session.encoderExited) {
+        await new Promise((resolve) => {
+            try { session.proc.stdin.end(); } catch (_) { }
+            const check = () => {
+                if (session.encoderExited) { resolve(); return; }
+                setTimeout(check, 200);
+            };
+            check();
+            setTimeout(resolve, 120000);
+        });
+    }
+
+    if (session.encoderExitCode !== 0) {
+        const err = session.stderr.slice(-300);
+        sessions.delete(sessionId);
+        return { error: `编码失败 (code=${session.encoderExitCode}): ${err}` };
+    }
+
+    if (!fs.existsSync(session.tempVideo) || fs.statSync(session.tempVideo).size < 1024) {
+        sessions.delete(sessionId);
+        return { error: '临时视频无效' };
+    }
+
+    // 不删除 tempVideo! 返回路径供拼接使用
+    const videoPath = session.tempVideo;
+    sessions.delete(sessionId);
+    console.log(`[WYSIWYG-VO] 纯视频输出: ${videoPath} (${(fs.statSync(videoPath).size / 1024 / 1024).toFixed(1)}MB)`);
+    return { videoPath };
+}
+
+// ═══════════════════════════════════════════════════════
+// 并行影子窗口编排器
+// ═══════════════════════════════════════════════════════
+
+async function parallelExport(opts, mainWindow) {
+    const {
+        params,        // 原始导出参数
+        outputPath,    // 最终输出路径
+        concurrency,   // 并行度
+        totalFrames,   // 总帧数
+        duration,      // 总时长
+    } = opts;
+
+    const { BrowserWindow, ipcMain } = require('electron');
+    const settings = require('./settings');
+    const ffmpeg = findFFmpeg();
+
+    const fps = params.fps || 30;
+    const targetWidth = params.targetWidth || 1080;
+    const targetHeight = params.targetHeight || 1920;
+
+    // 计算脚本路径
+    const { app } = require('electron');
+    let scriptBase;
+    if (app.isPackaged) {
+        scriptBase = path.join(process.resourcesPath, 'app.asar', 'dist');
+        // 如果 asar 里没有，尝试 dist 外部
+        if (!fs.existsSync(path.join(scriptBase, 'reels-canvas-renderer.js'))) {
+            scriptBase = path.join(path.dirname(process.resourcesPath), 'dist');
+        }
+    } else {
+        scriptBase = path.join(__dirname, '..', '..', 'src');
+    }
+    const scriptPaths = {
+        canvasRenderer: path.join(scriptBase, 'reels-canvas-renderer.js'),
+        overlay: path.join(scriptBase, 'reels-overlay.js'),
+        animEngine: path.join(scriptBase, 'reels-anim-engine.js'),
+    };
+    console.log(`[Parallel] 脚本基础路径: ${scriptBase}`);
+    console.log(`[Parallel] canvas-renderer 存在: ${fs.existsSync(scriptPaths.canvasRenderer)}`);
+
+    // 切分帧范围
+    const framesPerChunk = Math.ceil(totalFrames / concurrency);
+    const chunks = [];
+    for (let i = 0; i < concurrency; i++) {
+        const start = i * framesPerChunk;
+        const end = Math.min(start + framesPerChunk, totalFrames);
+        if (start >= totalFrames) break;
+        chunks.push({ chunkId: i, startFrame: start, endFrame: end });
+    }
+    console.log(`[Parallel] 切片方案: ${chunks.length} 个切片, ${framesPerChunk} 帧/切片`);
+
+    // 为每个 chunk 创建 FFmpeg 启动参数（纯视频，不含音频）
+    const qualityPreset = params.qualityPreset || 'faster';
+    const crf = params.crf || 23;
+
+    const chunkResults = new Array(chunks.length).fill(null);
+    const progressMap = new Array(chunks.length).fill(0);
+
+    // 创建影子窗口并发渲染
+    const htmlPath = path.join(__dirname, '..', 'shadow-renderer.html');
+
+    const shadowPromises = chunks.map((chunk) => {
+        return new Promise(async (resolve, reject) => {
+            const chunkOutputPath = settings.secureTmpFile(`parallel_chunk_${chunk.chunkId}`, '.mp4');
+
+            // 影子窗口 FFmpeg session params
+            const sessionParams = {
+                width: targetWidth,
+                height: targetHeight,
+                fps,
+                outputPath: chunkOutputPath,
+                // 并行切片模式：强制 CPU 编码，避免 GPU 并发限制
+                useGPU: false,
+                qualityPreset,
+                crf,
+            };
+
+            const win = new BrowserWindow({
+                show: false, width: 200, height: 200,
+                webPreferences: {
+                    nodeIntegration: true,
+                    contextIsolation: false,
+                    backgroundThrottling: false,
+                    webSecurity: false,
+                },
+            });
+
+            const timeout = setTimeout(() => {
+                console.error(`[Parallel] Chunk ${chunk.chunkId} 超时 (5min)`);
+                try { win.close(); } catch(_) {}
+                reject(new Error(`Chunk ${chunk.chunkId} 渲染超时`));
+            }, 5 * 60 * 1000);
+
+            const onResult = (event, result) => {
+                if (result.chunkId !== chunk.chunkId) return;
+                clearTimeout(timeout);
+                ipcMain.removeListener('chunk-result', onResult);
+                ipcMain.removeListener('chunk-progress', onProgress);
+                try { win.close(); } catch(_) {}
+
+                if (result.success) {
+                    chunkResults[chunk.chunkId] = result.videoPath;
+                    resolve(result.videoPath);
+                } else {
+                    reject(new Error(`Chunk ${chunk.chunkId}: ${result.error}`));
+                }
+            };
+
+            const onProgress = (event, data) => {
+                if (data.chunkId !== chunk.chunkId) return;
+                progressMap[chunk.chunkId] = data.pct || 0;
+                // 聚合进度发回主窗口
+                const avgPct = Math.round(progressMap.reduce((a, b) => a + b, 0) / chunks.length);
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                    mainWindow.webContents.send('parallel-export-progress', {
+                        pct: 20 + Math.round(avgPct * 0.65),
+                        chunkId: data.chunkId,
+                        chunkPct: data.pct,
+                        fpsActual: data.fpsActual,
+                    });
+                }
+            };
+
+            const onReady = () => {
+                ipcMain.removeListener('shadow-renderer-ready', onReady);
+                win.webContents.send('render-chunk', {
+                    chunkId: chunk.chunkId,
+                    scriptPaths,
+                    startFrame: chunk.startFrame,
+                    endFrame: chunk.endFrame,
+                    fps,
+                    targetWidth,
+                    targetHeight,
+                    backgroundPath: params.backgroundPath,
+                    bgScale: params.bgScale || 100,
+                    loopFade: params.loopFade,
+                    loopFadeDur: params.loopFadeDur,
+                    style: params.style,
+                    segments: params.segments || [],
+                    overlays: params.overlays || [],
+                    contentVideoPath: params.contentVideoPath,
+                    contentVideoTrimStart: params.contentVideoTrimStart,
+                    contentVideoTrimEnd: params.contentVideoTrimEnd,
+                    contentVideoScale: params.contentVideoScale,
+                    contentVideoX: params.contentVideoX,
+                    contentVideoY: params.contentVideoY,
+                    sessionParams,
+                });
+            };
+
+            ipcMain.on('chunk-result', onResult);
+            ipcMain.on('chunk-progress', onProgress);
+            ipcMain.once('shadow-renderer-ready', onReady);
+
+            win.loadFile(htmlPath).catch(reject);
+        });
+    });
+
+    // 等待所有切片完成
+    console.log(`[Parallel] 启动 ${chunks.length} 个影子窗口...`);
+    let chunkVideos;
+    try {
+        chunkVideos = await Promise.all(shadowPromises);
+    } catch (e) {
+        // 清理已完成的临时文件
+        for (const vp of chunkResults) {
+            if (vp) try { fs.unlinkSync(vp); } catch(_) {}
+        }
+        throw e;
+    }
+    console.log(`[Parallel] 所有切片完成: ${chunkVideos.join(', ')}`);
+
+    // 通知进度
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('parallel-export-progress', { pct: 88, phase: 'concat' });
+    }
+
+    // 无损拼接所有切片
+    const concatListPath = settings.secureTmpFile('parallel_concat', '.txt');
+    const concatContent = chunkVideos.map(v => `file '${v.replace(/'/g, "'\\''")}'`).join('\n');
+    fs.writeFileSync(concatListPath, concatContent, 'utf-8');
+
+    const concatTempVideo = settings.secureTmpFile('parallel_merged', '.mp4');
+    const concatArgs = [
+        '-y', '-f', 'concat', '-safe', '0',
+        '-i', concatListPath,
+        '-c', 'copy',
+        '-movflags', '+faststart',
+        concatTempVideo,
+    ];
+    console.log(`[Parallel] 拼接: ${ffmpeg} ${concatArgs.join(' ')}`);
+    await runFFmpegSync(ffmpeg, concatArgs);
+
+    // 清理切片文件
+    for (const vp of chunkVideos) {
+        try { fs.unlinkSync(vp); } catch(_) {}
+    }
+    try { fs.unlinkSync(concatListPath); } catch(_) {}
+
+    // 混合音频
+    console.log(`[Parallel] 混合音频到最终输出: ${outputPath}`);
+    const pseudoSession = {
+        id: 'parallel_final',
+        tempVideo: concatTempVideo,
+        outputPath,
+        voicePath: params.voicePath,
+        voiceVolume: params.voiceVolume ?? 1.0,
+        bgVolume: params.bgVolume ?? 0.1,
+        backgroundPath: params.backgroundPath,
+        bgHasAudio: params.bgHasAudio !== false && !_isImageFile_node(params.backgroundPath),
+        bgmPath: params.bgmPath || '',
+        bgmVolume: params.bgmVolume ?? 0,
+        audioDurScale: params.audioDurScale || 100,
+        reverbEnabled: params.reverbEnabled || false,
+        reverbPreset: params.reverbPreset || 'hall',
+        reverbMix: params.reverbMix || 30,
+        stereoWidth: params.stereoWidth || 100,
+        audioFxTarget: params.audioFxTarget || 'all',
+        contentVideoPath: params.contentVideoPath || '',
+        contentVideoVolume: params.contentVideoVolume ?? 1.0,
+        width: targetWidth,
+        height: targetHeight,
+        fps,
+        stderr: '',
+    };
+
+    await mixAudio(pseudoSession);
+
+    // 清理拼接临时文件
+    try { fs.unlinkSync(concatTempVideo); } catch(_) {}
+
+    console.log(`[Parallel] ✅ 导出完成: ${outputPath}`);
+    return { output_path: outputPath };
+}
+
+function _isImageFile_node(filePath) {
+    const ext = (filePath || '').split('.').pop().toLowerCase();
+    return ['jpg', 'jpeg', 'png', 'webp', 'bmp', 'gif'].includes(ext);
+}
+
+// ═══════════════════════════════════════════════════════
 // IPC 入口
 // ═══════════════════════════════════════════════════════
 
@@ -1316,6 +1654,8 @@ async function handleWysiwygIPC(action, data) {
         }
         case 'finish':
             return finishSession(data.sessionId);
+        case 'finish-video-only':
+            return finishVideoOnly(data.sessionId);
         case 'abort':
             abortSession(data.sessionId);
             return true;
@@ -1378,4 +1718,4 @@ async function renderChromiumAudioWav(opts) {
     }
 }
 
-module.exports = { handleWysiwygIPC, renderChromiumAudioWav };
+module.exports = { handleWysiwygIPC, renderChromiumAudioWav, parallelExport };

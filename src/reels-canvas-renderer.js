@@ -78,7 +78,7 @@ class ReelsCanvasRenderer {
             : text.split(/\s+/).filter(Boolean);
         const joiner = ' ';
 
-        const lines = this._wrapTokensByPixelWidth(words, maxWidth, joiner);
+        const lines = this._wrapTokensByPixelWidth(words, maxWidth, joiner, letterSpacing);
         if (lines.length === 0) return;
 
         // ── 行高与布局 ──
@@ -119,7 +119,72 @@ class ReelsCanvasRenderer {
             if (i < visibleLines.length - 1) accumY += lineSpacing;
         }
         const totalH = accumY;
-        const renderMaxLineW = blockTypography ? blockTargetWidth : maxLineW;
+
+        // ── 精确计算每行实际渲染宽度（模拟渲染循环的 currX 推进） ──
+        const animInType_ = s.anim_in_type || 'none';
+        const _isWPR_ = animInType_ === 'word_pop_random';
+        const _isWPRP_ = animInType_ === 'word_pop_random_pulse';
+        const _isLJ_ = animInType_ === 'letter_jump';
+        const segDur_ = Math.max(0.001, segEnd - segStart);
+        const spaceW_ = ctx.measureText(' ').width;
+
+        let actualMaxLineW = 0;
+        const actualLineWidths = []; // 每行动画后实际渲染宽度
+        let simWordIdx = 0;
+        for (let li = 0; li < visibleLines.length; li++) {
+            const lineTokens = visibleLines[li].split(/\s+/).filter(Boolean);
+            const lScale = lineScales[li] || 1.0;
+            let lineRenderedW = 0;
+
+            for (let ti = 0; ti < lineTokens.length; ti++) {
+                const ww = this._measureTextWithSpacing(ctx, lineTokens[ti], letterSpacing);
+                // 与渲染循环完全一致的 advanceScale 计算
+                let advScale = lScale;
+
+                if (_isWPR_) {
+                    let ws = segStart;
+                    if (wordsInfo.length > 0 && simWordIdx < wordsInfo.length) {
+                        ws = wordsInfo[simWordIdx].start || segStart;
+                    } else {
+                        ws = segStart + segDur_ * (simWordIdx / Math.max(1, words.length));
+                    }
+                    if (currentTime >= ws) {
+                        advScale *= this._computeWordRandomFinalScale(
+                            simWordIdx, segStart, ws,
+                            Number(s.word_pop_random_min_scale ?? 0.86),
+                            Number(s.word_pop_random_max_scale ?? 1.34)
+                        );
+                    }
+                }
+
+                if (_isWPRP_) {
+                    const pMax = Number(s.word_pop_random_pulse_max_scale ?? 1.40);
+                    advScale *= Math.max(1.0, pMax * 0.85);
+                }
+
+                // letter_jump: 高亮词会有瞬时放大
+                if (_isLJ_) {
+                    const ljScale = Number(s.letter_jump_scale ?? 1.5);
+                    if (ljScale > 1.0) advScale *= ljScale;
+                }
+
+                // 视觉宽度 = wordW * scale (文字实际绘制宽度)
+                const visualWordW = ww * advScale;
+                // 累加：词宽 + 词间距（最后一个词不加间距）
+                if (ti < lineTokens.length - 1) {
+                    lineRenderedW += visualWordW + spaceW_ * advScale;
+                } else {
+                    lineRenderedW += visualWordW;
+                }
+                simWordIdx++;
+            }
+            actualLineWidths.push(lineRenderedW);
+            actualMaxLineW = Math.max(actualMaxLineW, lineRenderedW);
+        }
+
+        // 取静态测量与动态模拟中较大的那个作为最终行宽
+        let renderMaxLineW = blockTypography ? blockTargetWidth : maxLineW;
+        renderMaxLineW = Math.max(renderMaxLineW, actualMaxLineW);
 
         // ── 位置计算 ──
         let cx, cy;
@@ -135,14 +200,27 @@ class ReelsCanvasRenderer {
 
         const padX = s.box_padding_x || 12;
         const padY = s.box_padding_y || 8;
+        // 描边/扩展描边超出文字边界的额外量
+        let strokeExtra = 0;
+        if (s.use_stroke !== false && (s.border_width || 3) > 0) {
+            strokeExtra = Math.max(strokeExtra, (s.border_width || 3));
+        }
+        if (s.stroke_expand_enabled) {
+            const seLayers = parseInt(s.stroke_expand_layers) || 3;
+            const seStep = parseFloat(s.stroke_expand_step) || 4;
+            const seFeather = parseFloat(s.stroke_expand_feather) || 8;
+            strokeExtra = Math.max(strokeExtra, seLayers * seStep + seFeather);
+        }
+        const effectivePadX = padX + strokeExtra;
+        const effectivePadY = padY + strokeExtra;
         let rectX, rectY, rectW, rectH;
         if (advEnabled) {
             rectX = advX; rectY = advY; rectW = advW; rectH = advH;
         } else {
-            rectX = cx - renderMaxLineW / 2 - padX;
-            rectY = cy - totalH / 2 - padY;
-            rectW = renderMaxLineW + padX * 2;
-            rectH = totalH + padY * 2;
+            rectX = cx - renderMaxLineW / 2 - effectivePadX;
+            rectY = cy - totalH / 2 - effectivePadY;
+            rectW = renderMaxLineW + effectivePadX * 2;
+            rectH = totalH + effectivePadY * 2;
         }
 
         ctx.save();
@@ -420,20 +498,22 @@ class ReelsCanvasRenderer {
             const lineScale = lineScales[i] || 1.0;
             const lineHScaled = lineH * lineScale;
 
-            // Text alignment
+            // Text alignment — 使用动画后的实际行宽来居中，避免文字右溢出
+            const effectiveLineW = (actualLineWidths[i] != null && actualLineWidths[i] > lineW)
+                ? actualLineWidths[i] : lineW;
             let xStart;
             if (blockTypography && advEnabled && advAlign === 'left') {
                 xStart = advX;
             } else if (blockTypography && advEnabled && advAlign === 'right') {
-                xStart = advX + advW - blockTargetWidth;
+                xStart = advX + advW - renderMaxLineW;
             } else if (blockTypography) {
-                xStart = cx - blockTargetWidth / 2;
+                xStart = cx - renderMaxLineW / 2;
             } else if (advEnabled && advAlign === 'left') {
                 xStart = advX;
             } else if (advEnabled && advAlign === 'right') {
-                xStart = advX + advW - lineW;
+                xStart = advX + advW - effectiveLineW;
             } else {
-                xStart = cx - lineW / 2;
+                xStart = cx - effectiveLineW / 2;
             }
 
             const y = startY + (blockTypography ? lineTopOffsets[i] : (i * lineStep));
@@ -847,26 +927,17 @@ class ReelsCanvasRenderer {
             ctx.save();
             ctx.globalAlpha *= shadowAlpha;
             ctx.fillStyle = shadowColor;
+            // 使用 Canvas 原生阴影 API, 产生真正的高斯模糊
             if (shadowBlur > 0) {
-                // Blur + offset: draw multiple copies with blur spread around the offset position
-                const offStep = shadowBlur * 0.3;
-                for (const bx of [-offStep, 0, offStep]) {
-                    for (const by of [-offStep, 0, offStep]) {
-                        if (bx === 0 && by === 0 && shadowBlur > 0) continue;
-                        if (letterSpacing > 0) {
-                            this._fillTextSpaced(ctx, text, x + shadowOffX + bx, y + shadowOffY + by, letterSpacing);
-                        } else {
-                            ctx.fillText(text, x + shadowOffX + bx, y + shadowOffY + by);
-                        }
-                    }
-                }
+                ctx.shadowColor = shadowColor;
+                ctx.shadowBlur = shadowBlur;
+                ctx.shadowOffsetX = shadowOffX;
+                ctx.shadowOffsetY = shadowOffY;
+            }
+            if (letterSpacing > 0) {
+                this._fillTextSpaced(ctx, text, x + (shadowBlur > 0 ? 0 : shadowOffX), y + (shadowBlur > 0 ? 0 : shadowOffY), letterSpacing);
             } else {
-                // Pure offset, no blur
-                if (letterSpacing > 0) {
-                    this._fillTextSpaced(ctx, text, x + shadowOffX, y + shadowOffY, letterSpacing);
-                } else {
-                    ctx.fillText(text, x + shadowOffX, y + shadowOffY);
-                }
+                ctx.fillText(text, x + (shadowBlur > 0 ? 0 : shadowOffX), y + (shadowBlur > 0 ? 0 : shadowOffY));
             }
             ctx.restore();
         }
@@ -975,13 +1046,15 @@ class ReelsCanvasRenderer {
     }
 
     // ─── Wrap tokens by pixel width ───
-    _wrapTokensByPixelWidth(words, maxWidth, joiner = ' ') {
+    _wrapTokensByPixelWidth(words, maxWidth, joiner = ' ', letterSpacing = 0) {
         const ctx = this.ctx;
         const lines = [];
         let currentLine = '';
         for (const word of words) {
             const testLine = currentLine ? currentLine + joiner + word : word;
-            const testW = ctx.measureText(testLine).width;
+            const testW = letterSpacing > 0
+                ? this._measureTextWithSpacing(ctx, testLine, letterSpacing)
+                : ctx.measureText(testLine).width;
             if (testW > maxWidth && currentLine) {
                 lines.push(currentLine);
                 currentLine = word;

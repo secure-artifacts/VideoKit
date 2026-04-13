@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer, webUtils } = require('electron');
+const { contextBridge, ipcRenderer, webUtils, webFrame } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
@@ -71,6 +71,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     exportAudioMp3: (opts) => ipcRenderer.invoke('export-audio-mp3', opts),
     ensureDirectory: (dirPath) => ipcRenderer.invoke('ensure-directory', dirPath),
 
+    // V3 并行影子窗口导出
+    parallelWysiwygExport: (opts) => ipcRenderer.invoke('parallel-wysiwyg-export', opts),
+    onParallelProgress: (callback) => {
+        const handler = (_, data) => callback(data);
+        ipcRenderer.on('parallel-export-progress', handler);
+        return () => ipcRenderer.removeListener('parallel-export-progress', handler);
+    },
+
     // 自动更新
     checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
     downloadUpdate: () => ipcRenderer.invoke('download-update'),
@@ -130,4 +138,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     openExternal: (url) => {
         ipcRenderer.invoke('open-external-url', url).catch(() => {});
     },
+
+    // 界面缩放（使用 Electron 原生 webFrame，正确处理布局视口）
+    setZoomFactor: (factor) => webFrame.setZoomFactor(factor),
+    getZoomFactor: () => webFrame.getZoomFactor(),
 });

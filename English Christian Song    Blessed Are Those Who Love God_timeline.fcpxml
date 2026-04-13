@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE fcpxml>
+<fcpxml version="1.9">
+	<resources>
+		<format id="r0" name="FFVideoFormat1920p30" frameDuration="1/30s" width="1080" height="1920"/>
+		<asset name="Christian Dance    Praise Almighty God&apos;s Victory    Praise Song" src="file:///Users/ww/Movies/4K Video Downloader+/English Christian Song    Blessed Are Those Who Love God.mp4" start="0/30s" duration="7064/30s" hasVideo="1" hasAudio="1" format="r0" id="r1"/>
+		<asset name="English Christian Song    Blessed Are Those Who Love God" src="file:///Users/ww/Movies/4K Video Downloader+/English Christian Song    God in the Flesh Quietly Works to Save Mankind.mp4" start="0/30s" duration="10490/30s" hasVideo="1" hasAudio="1" format="r0" id="r2"/>
+		<asset name="English Christian Song    God in the Flesh Quietly Works to Save Mankind" src="file:///Users/ww/Movies/4K Video Downloader+/Christian Dance    Praise Almighty God&apos;s Victory    Praise Song.mp4" start="0/30s" duration="10286/30s" hasVideo="1" hasAudio="1" format="r0" id="r3"/>
+		<effect name="Basic Title" uid=".../Titles.localized/Build In:Out.localized/Basic Title.localized/Basic Title.moti" id="r100"/>
+	</resources>
+	<library>
+		<event name="English Christian Song    Blessed Are Those Who Love God_timeline">
+			<project name="English Christian Song    Blessed Are Those Who Love God_timeline">
+				<sequence tcFormat="NDF" tcStart="0/30s" duration="27840/30s" format="r0">
+					<spine>
+						<asset-clip name="Christian Dance    Praise Almighty God&apos;s Victory    Praise Song" ref="r1" offset="0/30s" start="0/30s" duration="7064/30s" format="r0" tcFormat="NDF">
+							<title name="为什么爱神的人才最有福？ 回应阿门，接受神的祝福" lane="3" offset="0/30s" ref="r100" duration="7064/30s" start="3600/1s">
+								<param name="Position" key="9999/999166631/999166633/2/100/101" value="720 800"/>
+								<text>
+									<text-style ref="ts_0_1">为什么爱神的人才最有福？ 回应阿门，接受神的祝福</text-style>
+								</text>
+								<text-style-def id="ts_0_1">
+									<text-style font="Playfair Display" fontFace="SemiBold" fontSize="32" fontColor="1 0.8980392156862745 0 1" bold="1" tracking="0" lineSpacing="0" alignment="center" verticalAlignment="top"/>
+								</text-style-def>
+							</title>
+							<title name="WHY ARE THOSE WHO LOVE GOD THE MOST BLES" lane="2" offset="0/30s" ref="r100" duration="7064/30s" start="3600/1s">
+								<param name="Position" key="9999/999166631/999166633/2/100/101" value="720 800"/>
+								<text>
+									<text-style ref="ts_0_2">WHY ARE THOSE WHO LOVE GOD THE MOST BLESSED?   PUT AMEN AND RECEIVE GOD’S BLESSING</text-style>
+								</text>
+								<text-style-def id="ts_0_2">
+									<text-style font="Playfair Display" fontFace="SemiBold" fontSize="32" fontColor="1 0.8980392156862745 0 1" bold="1" tracking="0" lineSpacing="0" alignment="center" verticalAlignment="top"/>
+								</text-style-def>
+							</title>
+							<title name="WHY ARE THOSE WHO LOVE GOD THE MOST BLES" lane="1" offset="0/30s" ref="r100" duration="7064/30s" start="3600/1s">
+								<param name="Position" key="9999/999166631/999166633/2/100/101" value="720 800"/>
+								<text>
+									<text-style ref="ts_0_3">WHY ARE THOSE WHO LOVE GOD THE MOST BLESSED?   PUT AMEN AND RECEIVE GOD’S BLESSING</text-style>
+								</text>
+								<text-style-def id="ts_0_3">
+									<text-style font="Playfair Display" fontFace="SemiBold" fontSize="32" fontColor="1 0.8980392156862745 0 1" bold="1" tracking="0" lineSpacing="0" alignment="center" verticalAlignment="top"/>
+								</text-style-def>
+							</title>
+						</asset-clip>
+						<asset-clip name="English Christian Song    Blessed Are Those Who Love God" ref="r2" offset="7064/30s" start="0/30s" duration="10490/30s" format="r0" tcFormat="NDF">
+							<title name="两千年的盼望实现了——神已再次来到人间！ 回应阿门，解更多" lane="3" offset="0/30s" ref="r100" duration="10490/30s" start="3600/1s">
+								<param name="Position" key="9999/999166631/999166633/2/100/101" value="720 800"/>
+								<text>
+									<text-style ref="ts_1_1">两千年的盼望实现了——神已再次来到人间！ 回应阿门，解更多</text-style>
+								</text>
+								<text-style-def id="ts_1_1">
+									<text-style font="Playfair Display" fontFace="SemiBold" fontSize="32" fontColor="1 0.8980392156862745 0 1" bold="1" tracking="0" lineSpacing="0" alignment="center" verticalAlignment="top"/>
+								</text-style-def>
+							</title>
+							<title name="THE HOPE OF TWO THOUSAND YEARS HAS BEEN " lane="2" offset="0/30s" ref="r100" duration="10490/30s" start="3600/1s">
+								<param name="Position" key="9999/999166631/999166633/2/100/101" value="720 800"/>
+								<text>
+									<text-style ref="ts_1_2">THE HOPE OF TWO THOUSAND YEARS HAS BEEN FULFILLED — GOD HAS COME TO EARTH AGAIN!   PUT AMEN TO LEARN MORE</text-style>
+								</text>
+								<text-style-def id="ts_1_2">
+									<text-style font="Playfair Display" fontFace="SemiBold" fontSize="32" fontColor="1 0.8980392156862745 0 1" bold="1" tracking="0" lineSpacing="0" alignment="center" verticalAlignment="top"/>
+								</text-style-def>
+							</title>
+							<title name="THE HOPE OF TWO THOUSAND YEARS HAS BEEN " lane="1" offset="0/30s" ref="r100" duration="10490/30s" start="3600/1s">
+								<param name="Position" key="9999/999166631/999166633/2/100/101" value="720 800"/>
+								<text>
+									<text-style ref="ts_1_3">THE HOPE OF TWO THOUSAND YEARS HAS BEEN FULFILLED — GOD HAS COME TO EARTH AGAIN!   PUT AMEN TO LEARN MORE</text-style>
+								</text>
+								<text-style-def id="ts_1_3">
+									<text-style font="Playfair Display" fontFace="SemiBold" fontSize="32" fontColor="1 0.8980392156862745 0 1" bold="1" tracking="0" lineSpacing="0" alignment="center" verticalAlignment="top"/>
+								</text-style-def>
+							</title>
+						</asset-clip>
+						<asset-clip name="English Christian Song    God in the Flesh Quietly Works to Save Mankind" ref="r3" offset="17554/30s" start="0/30s" duration="10286/30s" format="r0" tcFormat="NDF">
+							<title name="魔鬼最不想让你知道的消息——神已经得胜归来！ 回应阿门，了解更多！" lane="3" offset="0/30s" ref="r100" duration="10286/30s" start="3600/1s">
+								<param name="Position" key="9999/999166631/999166633/2/100/101" value="720 800"/>
+								<text>
+									<text-style ref="ts_2_1">魔鬼最不想让你知道的消息——神已经得胜归来！ 回应阿门，了解更多！</text-style>
+								</text>
+								<text-style-def id="ts_2_1">
+									<text-style font="Playfair Display" fontFace="SemiBold" fontSize="32" fontColor="1 0.8980392156862745 0 1" bold="1" tracking="0" lineSpacing="0" alignment="center" verticalAlignment="top"/>
+								</text-style-def>
+							</title>
+							<title name="THE MESSAGE THE DEVIL LEAST WANTS YOU TO" lane="2" offset="0/30s" ref="r100" duration="10286/30s" start="3600/1s">
+								<param name="Position" key="9999/999166631/999166633/2/100/101" value="720 800"/>
+								<text>
+									<text-style ref="ts_2_2">THE MESSAGE THE DEVIL LEAST WANTS YOU TO KNOW — GOD HAS RETURNED IN VICTORY!   PUT AMEN TO LEARN MORE!</text-style>
+								</text>
+								<text-style-def id="ts_2_2">
+									<text-style font="Playfair Display" fontFace="SemiBold" fontSize="32" fontColor="1 0.8980392156862745 0 1" bold="1" tracking="0" lineSpacing="0" alignment="center" verticalAlignment="top"/>
+								</text-style-def>
+							</title>
+							<title name="THE MESSAGE THE DEVIL LEAST WANTS YOU TO" lane="1" offset="0/30s" ref="r100" duration="10286/30s" start="3600/1s">
+								<param name="Position" key="9999/999166631/999166633/2/100/101" value="720 800"/>
+								<text>
+									<text-style ref="ts_2_3">THE MESSAGE THE DEVIL LEAST WANTS YOU TO KNOW — GOD HAS RETURNED IN VICTORY!   PUT AMEN TO LEARN MORE!</text-style>
+								</text>
+								<text-style-def id="ts_2_3">
+									<text-style font="Playfair Display" fontFace="SemiBold" fontSize="32" fontColor="1 0.8980392156862745 0 1" bold="1" tracking="0" lineSpacing="0" alignment="center" verticalAlignment="top"/>
+								</text-style-def>
+							</title>
+						</asset-clip>
+					</spine>
+				</sequence>
+			</project>
+		</event>
+	</library>
+</fcpxml>

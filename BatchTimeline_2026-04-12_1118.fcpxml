@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE fcpxml>
+<fcpxml version="1.9">
+	<resources>
+		<format id="r0" name="FFVideoFormat1920p30" frameDuration="1/30s" width="1080" height="1920"/>
+		<asset name="00:09 ——04:32_A" src="file:///Users/ww/Movies/4K%20Video%20Downloader+/Special%20Report%20on%20Church%20Life,%20Ep.%2017%20The%20Most%20Popular%20Experiential%20Testimonies%20by%20Vote%20%E2%80%93%20I,%20Part%201.mp4" start="0/30s" duration="98241/30s" hasVideo="1" hasAudio="1" format="r0" id="r1"/>
+		<asset name="00:09 ——04:32_B" src="file:///Users/ww/Movies/4K%20Video%20Downloader+/Special%20Report%20on%20Church%20Life,%20Ep.%2017%20The%20Most%20Popular%20Experiential%20Testimonies%20by%20Vote%20%E2%80%93%20I,%20Part%201.mp4" start="0/30s" duration="98241/30s" hasVideo="1" hasAudio="1" format="r0" id="r2"/>
+		<asset name="04:32——12:12_A" src="file:///Users/ww/Movies/4K%20Video%20Downloader+/Special%20Report%20on%20Church%20Life,%20Ep.%2017%20The%20Most%20Popular%20Experiential%20Testimonies%20by%20Vote%20%E2%80%93%20I,%20Part%201.mp4" start="0/30s" duration="98241/30s" hasVideo="1" hasAudio="1" format="r0" id="r3"/>
+		<asset name="04:32——12:12_B" src="file:///Users/ww/Movies/4K%20Video%20Downloader+/Special%20Report%20on%20Church%20Life,%20Ep.%2017%20The%20Most%20Popular%20Experiential%20Testimonies%20by%20Vote%20%E2%80%93%20I,%20Part%201.mp4" start="0/30s" duration="98241/30s" hasVideo="1" hasAudio="1" format="r0" id="r4"/>
+		<asset name="12:13—— 15:50_A" src="file:///Users/ww/Movies/4K%20Video%20Downloader+/Special%20Report%20on%20Church%20Life,%20Ep.%2017%20The%20Most%20Popular%20Experiential%20Testimonies%20by%20Vote%20%E2%80%93%20I,%20Part%201.mp4" start="0/30s" duration="98241/30s" hasVideo="1" hasAudio="1" format="r0" id="r5"/>
+		<asset name="12:13—— 15:50_B" src="file:///Users/ww/Movies/4K%20Video%20Downloader+/Special%20Report%20on%20Church%20Life,%20Ep.%2017%20The%20Most%20Popular%20Experiential%20Testimonies%20by%20Vote%20%E2%80%93%20I,%20Part%201.mp4" start="0/30s" duration="98241/30s" hasVideo="1" hasAudio="1" format="r0" id="r6"/>
+		<effect name="Basic Title" uid=".../Titles.localized/Build In:Out.localized/Basic Title.localized/Basic Title.moti" id="r100"/>
+	</resources>
+	<library>
+		<event name="BatchTimeline_2026-04-12_1118">
+			<project name="BatchTimeline_2026-04-12_1118">
+				<sequence tcFormat="NDF" tcStart="0/30s" duration="56400/30s" format="r0">
+					<spine>
+						<asset-clip name="00:09 ——04:32_A" ref="r1" offset="0/30s" start="270/30s" duration="7890/30s" format="r0" tcFormat="NDF">
+						</asset-clip>
+						<asset-clip name="00:09 ——04:32_B" ref="r2" offset="7890/30s" start="270/30s" duration="7890/30s" format="r0" tcFormat="NDF">
+						</asset-clip>
+						<asset-clip name="04:32——12:12_A" ref="r3" offset="15780/30s" start="8160/30s" duration="13800/30s" format="r0" tcFormat="NDF">
+						</asset-clip>
+						<asset-clip name="04:32——12:12_B" ref="r4" offset="29580/30s" start="8160/30s" duration="13800/30s" format="r0" tcFormat="NDF">
+						</asset-clip>
+						<asset-clip name="12:13—— 15:50_A" ref="r5" offset="43380/30s" start="21990/30s" duration="6510/30s" format="r0" tcFormat="NDF">
+						</asset-clip>
+						<asset-clip name="12:13—— 15:50_B" ref="r6" offset="49890/30s" start="21990/30s" duration="6510/30s" format="r0" tcFormat="NDF">
+						</asset-clip>
+					</spine>
+				</sequence>
+			</project>
+		</event>
+	</library>
+</fcpxml>
