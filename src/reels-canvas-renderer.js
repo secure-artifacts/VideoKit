@@ -1130,7 +1130,7 @@ class ReelsCanvasRenderer {
         const baseStyleConfig = {
             fontsize: s.fontsize || 74,
             color: s.color || '#FFFFFF',
-            bold: (fw == 700)
+            bold: (fw >= 600)
         };
         const letterSpacing = s.letter_spacing || 0;
 

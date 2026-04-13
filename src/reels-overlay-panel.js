@@ -2367,7 +2367,9 @@ class ReelsOverlayPanel {
             ov.radius_tr = radius;
             ov.radius_bl = radius;
             ov.radius_br = radius;
-            ov.title_text = this._get('rop-title-text');
+            const newTitleText = this._get('rop-title-text');
+            if (newTitleText !== ov.title_text) ov.title_styled_ranges = null; // 文本改变→失效旧样式范围
+            ov.title_text = newTitleText;
             ov.title_offset_x = this._get('rop-title-offset-x');
             ov.title_offset_y = this._get('rop-title-offset-y');
             ov.title_font_family = this._get('rop-title-font');
@@ -2384,7 +2386,9 @@ class ReelsOverlayPanel {
             ov.title_override_h = this._get('rop-title-override-h');
             ov.title_auto_shrink = this._get('rop-title-auto-shrink');
             ov.title_line_spacing = this._get('rop-title-linespacing');
-            ov.body_text = this._get('rop-body-text');
+            const newBodyText = this._get('rop-body-text');
+            if (newBodyText !== ov.body_text) ov.body_styled_ranges = null;
+            ov.body_text = newBodyText;
             ov.body_offset_x = this._get('rop-body-offset-x');
             ov.body_offset_y = this._get('rop-body-offset-y');
             ov.body_font_family = this._get('rop-body-font');
@@ -2401,7 +2405,9 @@ class ReelsOverlayPanel {
             ov.body_align = this._get('rop-body-align');
             ov.body_valign = this._get('rop-body-valign');
             // Footer
-            ov.footer_text = this._get('rop-footer-text');
+            const newFooterText = this._get('rop-footer-text');
+            if (newFooterText !== ov.footer_text) ov.footer_styled_ranges = null;
+            ov.footer_text = newFooterText;
             ov.footer_offset_x = this._get('rop-footer-offset-x');
             ov.footer_offset_y = this._get('rop-footer-offset-y');
             ov.footer_font_family = this._get('rop-footer-font');
