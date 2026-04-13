@@ -26,6 +26,8 @@ class ReelsRichTextEditor {
         // DOM state
         this._isClosing = false;
         this._selectionRange = null; // 原生 Range
+        this._savedStart = 0;
+        this._savedEnd = 0;
     }
 
     /**
@@ -38,6 +40,7 @@ class ReelsRichTextEditor {
         this.ranges = (styled_ranges || []).map(r => ({...r}));
         if (baseStyle) this.baseStyle = { ...this.baseStyle, ...baseStyle };
 
+        this._injectStyles();
         this._createUI(title, rect);
         this._renderContent();
 
@@ -69,6 +72,9 @@ class ReelsRichTextEditor {
             this.onCancel();
         }
 
+        // 清理选区监听
+        document.removeEventListener('selectionchange', this._onSelectionChangeWrapper);
+
         this.popup.classList.add('rte-se-closing');
         setTimeout(() => {
             if (this.popup && this.popup.parentNode) {
@@ -81,9 +87,7 @@ class ReelsRichTextEditor {
     }
 
     applyStyleToSelection(styleObj) {
-        if (!this._selectionRange) return;
-
-        const selInfo = this._getSelectionIndices();
+        const selInfo = { start: this._savedStart, end: this._savedEnd };
         if (selInfo.start >= selInfo.end) return;
 
         // 调用业务逻辑
@@ -100,8 +104,7 @@ class ReelsRichTextEditor {
     }
 
     removeStyleFromSelection(keys) {
-        if (!this._selectionRange) return;
-        const selInfo = this._getSelectionIndices();
+        const selInfo = { start: this._savedStart, end: this._savedEnd };
         if (selInfo.start >= selInfo.end) return;
 
         this.ranges = ReelsRichText.removeStyle(this.ranges, selInfo.start, selInfo.end, keys);
@@ -113,6 +116,173 @@ class ReelsRichTextEditor {
             const res = this._extractData();
             this.onChange(res.text, res.styled_ranges);
         }
+    }
+
+    // ═══════════════════════════════════════════════
+    // 注入 CSS 样式（仅注入一次）
+    // ═══════════════════════════════════════════════
+
+    _injectStyles() {
+        if (document.getElementById('rte-richtext-styles')) return;
+        const style = document.createElement('style');
+        style.id = 'rte-richtext-styles';
+        style.textContent = `
+            .rte-subtitle-editor {
+                position: fixed;
+                z-index: 99990;
+                background: #1a1a2e;
+                border: 1px solid #444;
+                border-radius: 12px;
+                box-shadow: 0 12px 48px rgba(0,0,0,0.65);
+                display: flex;
+                flex-direction: column;
+                overflow: hidden;
+                font-family: system-ui, -apple-system, sans-serif;
+                animation: rteSlideIn 0.15s ease-out;
+            }
+            .rte-subtitle-editor.rte-se-closing {
+                animation: rteSlideOut 0.15s ease-in forwards;
+            }
+            @keyframes rteSlideIn {
+                from { opacity:0; transform: translateY(8px) scale(0.96); }
+                to   { opacity:1; transform: translateY(0) scale(1); }
+            }
+            @keyframes rteSlideOut {
+                from { opacity:1; transform: scale(1); }
+                to   { opacity:0; transform: scale(0.95); }
+            }
+            .rte-se-header {
+                display: flex;
+                align-items: center;
+                padding: 8px 12px;
+                background: #16162b;
+                border-bottom: 1px solid #333;
+                cursor: move;
+            }
+            .rte-se-title {
+                flex: 1;
+                font-size: 13px;
+                font-weight: 600;
+                color: #ccc;
+            }
+            .rte-se-time {
+                font-size: 11px;
+                color: #888;
+                margin-right: 8px;
+            }
+            .rte-se-close {
+                width: 24px; height: 24px;
+                border: none;
+                background: transparent;
+                color: #888;
+                font-size: 14px;
+                cursor: pointer;
+                border-radius: 4px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+            .rte-se-close:hover { background: #ff4444; color: #fff; }
+
+            .rte-se-toolbar {
+                display: flex;
+                align-items: center;
+                gap: 4px;
+                padding: 6px 10px;
+                background: #1e1e36;
+                border-bottom: 1px solid #333;
+                flex-wrap: wrap;
+            }
+            .rt-btn {
+                min-width: 30px;
+                height: 28px;
+                border: 1px solid #555;
+                background: #2a2a44;
+                color: #ddd;
+                border-radius: 5px;
+                cursor: pointer;
+                font-size: 13px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                transition: all 0.12s;
+            }
+            .rt-btn:hover { background: #3a3a5a; border-color: #777; }
+            .rt-btn.active { background: #5b6abf; border-color: #7b8bef; color: #fff; }
+
+            .rt-divider {
+                width: 1px;
+                height: 20px;
+                background: #444;
+                margin: 0 2px;
+            }
+            .rt-select {
+                height: 28px;
+                border: 1px solid #555;
+                background: #2a2a44;
+                color: #ddd;
+                border-radius: 5px;
+                font-size: 12px;
+                padding: 0 6px;
+                cursor: pointer;
+            }
+            .rt-select:focus { border-color: #7b8bef; outline: none; }
+
+            .rt-color-picker {
+                width: 32px;
+                height: 28px;
+                border: 1px solid #555;
+                background: #2a2a44;
+                border-radius: 5px;
+                cursor: pointer;
+                padding: 1px;
+            }
+            .rt-color-picker::-webkit-color-swatch-wrapper { padding: 2px; }
+            .rt-color-picker::-webkit-color-swatch { border-radius: 3px; border: none; }
+
+            .rte-se-contenteditable {
+                min-height: 80px;
+                max-height: 200px;
+                overflow-y: auto;
+                padding: 12px 14px;
+                outline: none;
+                line-height: 1.6;
+                word-break: break-word;
+                white-space: pre-wrap;
+            }
+            .rte-se-contenteditable:focus {
+                background: rgba(255,255,255,0.03);
+            }
+            .rte-se-contenteditable::selection {
+                background: rgba(91,106,191,0.4);
+            }
+
+            .rte-se-footer {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                padding: 8px 12px;
+                background: #16162b;
+                border-top: 1px solid #333;
+            }
+            .rte-se-hint {
+                font-size: 11px;
+                color: #666;
+            }
+            .rte-se-save {
+                padding: 5px 16px;
+                border: none;
+                background: #5b6abf;
+                color: #fff;
+                border-radius: 6px;
+                cursor: pointer;
+                font-size: 13px;
+                font-weight: 600;
+                transition: background 0.15s;
+            }
+            .rte-se-save:hover { background: #6b7acf; }
+        `;
+        document.head.appendChild(style);
     }
 
     _createUI(title, rect) {
@@ -129,7 +299,7 @@ class ReelsRichTextEditor {
                 <button class="rt-btn rt-btn-bold" data-cmd="bold" title="粗体"><b>B</b></button>
                 <div class="rt-divider"></div>
                 <select class="rt-select rt-sel-size" title="字号">
-                    <option value="">默认</option>
+                    <option value="">字号</option>
                     <option value="40">超小(40)</option>
                     <option value="60">较小(60)</option>
                     <option value="80">正常(80)</option>
@@ -139,6 +309,7 @@ class ReelsRichTextEditor {
                     <option value="200">极巨(200)</option>
                 </select>
                 <input type="color" class="rt-color-picker" title="颜色" value="#ff0000">
+                <div class="rt-divider"></div>
                 <button class="rt-btn rt-btn-clear" data-cmd="clear" title="清除样式">✕</button>
             </div>
             <div class="rte-se-contenteditable" contenteditable="true" spellcheck="false"
@@ -151,13 +322,13 @@ class ReelsRichTextEditor {
         `;
 
         // 布局定位
-        const popupW = Math.max(320, Math.min(500, rect.w + 60));
-        let popupX = rect.x + rect.w / 2 - popupW / 2;
-        let popupY = rect.y - 180; // 在字幕块上方
+        const popupW = Math.max(360, Math.min(550, (rect?.w || 300) + 80));
+        let popupX = (rect?.x || 200) + (rect?.w || 100) / 2 - popupW / 2;
+        let popupY = (rect?.y || 300) - 260;
         
         if (popupX < 4) popupX = 4;
         if (popupX + popupW > window.innerWidth - 4) popupX = window.innerWidth - popupW - 4;
-        if (popupY < 4) popupY = rect.y + rect.h + 8; // 放下方
+        if (popupY < 4) popupY = (rect?.y || 300) + (rect?.h || 30) + 8;
 
         this.popup.style.left = `${popupX}px`;
         this.popup.style.top = `${popupY}px`;
@@ -171,7 +342,6 @@ class ReelsRichTextEditor {
         if (!this.editorEl) return;
         
         // 渲染时将 text 和 ranges 结合成 html
-        // 这里只是为了视觉上的富文本呈现，不含换行混版逻辑
         const segments = ReelsRichText.splitByRanges(this.initialText, this.ranges, this.baseStyle);
         
         let html = '';
@@ -181,14 +351,12 @@ class ReelsRichTextEditor {
             if (seg.style.bold) css += 'font-weight:bold;';
             if (seg.style.color) css += `color:${seg.style.color};`;
             if (seg.style.fontsize) {
-                // 仅换算展示比例: 真实字号 / 基础字号 * 编辑器基础字号(24)
                 const baseFs = this.baseStyle.fontsize || 80;
                 const ratio = seg.style.fontsize / baseFs;
                 css += `font-size:${Math.max(12, 24 * ratio)}px;`;
             }
             if (seg.style.bg_color) css += `background-color:${seg.style.bg_color};`;
             
-            // 为了安全，escape HTML
             const textHTML = this._escapeHtml(seg.text);
             
             if (css) {
@@ -202,21 +370,11 @@ class ReelsRichTextEditor {
     }
 
     _extractData() {
-        // 从 editorEl 中提炼文本 (如果用户修改了文本)
-        // 复杂点：contenteditable 文本修改会破坏原有的 offset 映射
-        // 简化实现 Phase 3: 仅支持纯文本的提取 (失去内部嵌套格式)，通过 _extractTextNode 提取
-        
-        // 获取纯文本
         let currentText = this.editorEl.innerText || '';
-        // 修正 contenteditable 结尾的多余换行
         if (currentText.endsWith('\n\n')) currentText = currentText.slice(0, -1);
         if (currentText.endsWith('\n')) currentText = currentText.slice(0, -1);
 
-        // 如果文本变了，我们假设样式被破坏（暂时不支持复杂的增删文字保持样式）
-        // 若要完美，需要 mutation observer 实时捕捉 offset 变化 (很复杂)
-        // 这里采用保守策略：如果总文本长度变了，直接废弃 range。后续再优化为逐字符同步。
         if (currentText !== this.initialText) {
-            // 文本改了，清空富文本属性
             this.initialText = currentText;
             this.ranges = [];
         }
@@ -230,13 +388,18 @@ class ReelsRichTextEditor {
     _bindEvents() {
         const toolbar = this.popup.querySelector('.rte-se-toolbar');
 
+        // ═══ 关键修复：工具栏按钮用 mousedown 阻止失焦 ═══
+        toolbar.addEventListener('mousedown', (e) => {
+            // 阻止点击工具栏导致 contenteditable 失去焦点（选区丢失）
+            e.preventDefault();
+        });
+
         // Toolbar 按钮
         toolbar.addEventListener('click', (e) => {
             const btn = e.target.closest('.rt-btn');
             if (!btn) return;
             const cmd = btn.getAttribute('data-cmd');
             if (cmd === 'bold') {
-                // 检查选区是否已经是粗体
                 const isBold = btn.classList.contains('active');
                 if (isBold) {
                     this.removeStyleFromSelection(['bold']);
@@ -257,8 +420,10 @@ class ReelsRichTextEditor {
             } else {
                 this.removeStyleFromSelection(['fontsize']);
             }
-            // 归位
             e.target.value = '';
+            // 恢复焦点到编辑器
+            this.editorEl.focus();
+            this._restoreSelection(this._savedStart, this._savedEnd);
         });
 
         // 颜色选择
@@ -268,6 +433,14 @@ class ReelsRichTextEditor {
         });
 
         // 选区变化监测 (更新工具栏状态)
+        this._onSelectionChangeWrapper = () => {
+            if (!this.editorEl) return;
+            const sel = window.getSelection();
+            if (sel.rangeCount > 0 && this.editorEl.contains(sel.anchorNode)) {
+                this._saveSelectionRange();
+                this._updateToolbarState();
+            }
+        };
         document.addEventListener('selectionchange', this._onSelectionChangeWrapper);
 
         // 热键 & 控制
@@ -278,12 +451,6 @@ class ReelsRichTextEditor {
             } else if (e.key === 'Escape') {
                 e.preventDefault();
                 this.close(false);
-            } else {
-                // 文本输入拦截：如果是修改文本，提醒失去富文本格式
-                // 我们通过 keydown+keyup 检测文字变化，如果文字变化了，强行将所有字变为单色纯文本
-                setTimeout(() => {
-                    this._syncText();
-                }, 10);
             }
         });
 
@@ -312,6 +479,7 @@ class ReelsRichTextEditor {
             const sel = window.getSelection();
             sel.removeAllRanges();
             sel.addRange(range);
+            this._saveSelectionRange();
             
             if (this.onChange) {
                 this.onChange(this.initialText, this.ranges);
@@ -319,19 +487,14 @@ class ReelsRichTextEditor {
         }
     }
 
-    _onSelectionChangeWrapper = () => {
-        if (!this.editorEl) return;
-        const sel = window.getSelection();
-        if (sel.rangeCount > 0 && this.editorEl.contains(sel.anchorNode)) {
-            this._saveSelectionRange();
-            this._updateToolbarState();
-        }
-    };
-
     _saveSelectionRange() {
         const sel = window.getSelection();
         if (sel.rangeCount > 0) {
             this._selectionRange = sel.getRangeAt(0).cloneRange();
+            // 同时保存字符偏移（这样即使失焦也不丢失）
+            const indices = this._getSelectionIndices();
+            this._savedStart = indices.start;
+            this._savedEnd = indices.end;
         }
     }
 
@@ -353,6 +516,18 @@ class ReelsRichTextEditor {
             if (curr === node) {
                 if (curr.nodeType === Node.TEXT_NODE) {
                     currentOffset += offset;
+                } else {
+                    // 如果目标是 element（例如 editorEl），offset 是子节点索引
+                    for (let i = 0; i < Math.min(offset, curr.childNodes.length); i++) {
+                        const child = curr.childNodes[i];
+                        if (child.nodeType === Node.TEXT_NODE) {
+                            currentOffset += child.textContent.length;
+                        } else if (child.nodeName === 'BR') {
+                            currentOffset += 1;
+                        } else {
+                            currentOffset += child.textContent.length;
+                        }
+                    }
                 }
                 found = true;
                 return;
@@ -405,7 +580,6 @@ class ReelsRichTextEditor {
 
         traverse(this.editorEl);
 
-        // 如果超出，绑在最后
         if (!startSet) range.setStart(this.editorEl, this.editorEl.childNodes.length);
         if (!endSet) range.setEnd(this.editorEl, this.editorEl.childNodes.length);
 
@@ -413,23 +587,21 @@ class ReelsRichTextEditor {
         sel.removeAllRanges();
         sel.addRange(range);
         this._selectionRange = range.cloneRange();
+        this._savedStart = startIdx;
+        this._savedEnd = endIdx;
     }
 
     _updateToolbarState() {
         if (!this.popup) return;
-        const selInfo = this._getSelectionIndices();
+        const selInfo = { start: this._savedStart, end: this._savedEnd };
         if (selInfo.start >= selInfo.end) return;
 
-        // 判断选中区间的综合样式
         let isBold = true;
         let mainColor = '';
         
-        // 我们只检查当前 styled_ranges 在此区间的覆盖情况
         for (let i = selInfo.start; i < selInfo.end; i++) {
-            // 找覆盖字符i的range
             const r = this.ranges.find(rg => rg.start <= i && rg.end > i);
             if (!r || !r.bold) isBold = false;
-            
             if (r && r.color && !mainColor) mainColor = r.color;
         }
 

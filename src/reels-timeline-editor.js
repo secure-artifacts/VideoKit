@@ -709,11 +709,25 @@ class ReelsTimelineEditor {
                 const oldText = track.clips[clipIdx]._fullText || track.clips[clipIdx].name;
                 track.clips[clipIdx]._fullText = newText;
                 track.clips[clipIdx].name = newText.slice(0, 20) + (newText.length > 20 ? '…' : '');
+                track.clips[clipIdx].styled_ranges = newRanges || null;
                 if (this.onSubtitleEdit) {
                     this.onSubtitleEdit(trackIdx, clipIdx, newText, oldText, newRanges);
                 }
             }
             this._rtEditor = null;
+        };
+
+        // 实时预览：编辑中实时同步到 segment 并刷新画布
+        rtEditor.onChange = (newText, newRanges) => {
+            const track = this._tracks[trackIdx];
+            if (track && track.clips[clipIdx]) {
+                track.clips[clipIdx]._fullText = newText;
+                track.clips[clipIdx].styled_ranges = newRanges || null;
+                if (this.onSubtitleEdit) {
+                    this.onSubtitleEdit(trackIdx, clipIdx, newText, 
+                        track.clips[clipIdx]._fullText, newRanges);
+                }
+            }
         };
 
         rtEditor.onCancel = () => {
