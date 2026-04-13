@@ -178,14 +178,18 @@ class ReelsTimelineEditor {
             else this._tracks.push(track);
             return;
         }
-        const clips = segments.map((seg, i) => ({
-            start: seg.start || 0,
-            end: seg.end || 0,
-            name: (seg.text || seg.content || '').slice(0, 20),
-            color: TL_COLORS.trackTypes.subs,
-            _segIdx: i,
-            styled_ranges: seg.styled_ranges || null,
-        }));
+        const clips = segments.map((seg, i) => {
+            const fullText = seg.text || seg.content || '';
+            return {
+                start: seg.start || 0,
+                end: seg.end || 0,
+                name: fullText.slice(0, 20) + (fullText.length > 20 ? '…' : ''),
+                _fullText: fullText,
+                color: TL_COLORS.trackTypes.subs,
+                _segIdx: i,
+                styled_ranges: seg.styled_ranges || null,
+            };
+        });
         // 检查是否已有字幕轨
         const existIdx = this._tracks.findIndex(t => t.type === 'subs');
         const track = { type: 'subs', name: '字幕', clips, locked: false, visible: true, domain: 'visual' };
@@ -702,10 +706,11 @@ class ReelsTimelineEditor {
         rtEditor.onSave = (newText, newRanges) => {
             const track = this._tracks[trackIdx];
             if (track && track.clips[clipIdx]) {
-                const oldName = track.clips[clipIdx].name;
-                track.clips[clipIdx].name = newText;
+                const oldText = track.clips[clipIdx]._fullText || track.clips[clipIdx].name;
+                track.clips[clipIdx]._fullText = newText;
+                track.clips[clipIdx].name = newText.slice(0, 20) + (newText.length > 20 ? '…' : '');
                 if (this.onSubtitleEdit) {
-                    this.onSubtitleEdit(trackIdx, clipIdx, newText, oldName, newRanges);
+                    this.onSubtitleEdit(trackIdx, clipIdx, newText, oldText, newRanges);
                 }
             }
             this._rtEditor = null;
@@ -717,8 +722,8 @@ class ReelsTimelineEditor {
 
         rtEditor.open({
             title: `✎ 编辑字幕 #${clipIdx + 1}`,
-            text: clip.name || '',
-            styled_ranges: clip.styled_ranges || [], // newly passed styled_ranges
+            text: clip._fullText || clip.name || '',
+            styled_ranges: clip.styled_ranges || [],
             rect: rect,
             trackIdx,
             clipIdx

@@ -209,8 +209,8 @@ class ReelsRichTextEditor {
         // 获取纯文本
         let currentText = this.editorEl.innerText || '';
         // 修正 contenteditable 结尾的多余换行
-        if (currentText.endsWith('\\n\\n')) currentText = currentText.slice(0, -1);
-        if (currentText.endsWith('\\n')) currentText = currentText.slice(0, -1);
+        if (currentText.endsWith('\n\n')) currentText = currentText.slice(0, -1);
+        if (currentText.endsWith('\n')) currentText = currentText.slice(0, -1);
 
         // 如果文本变了，我们假设样式被破坏（暂时不支持复杂的增删文字保持样式）
         // 若要完美，需要 mutation observer 实时捕捉 offset 变化 (很复杂)
@@ -298,8 +298,8 @@ class ReelsRichTextEditor {
 
     _syncText() {
         let currentText = this.editorEl.innerText || '';
-        if (currentText.endsWith('\\n\\n')) currentText = currentText.slice(0, -1);
-        if (currentText.endsWith('\\n')) currentText = currentText.slice(0, -1);
+        if (currentText.endsWith('\n\n')) currentText = currentText.slice(0, -1);
+        if (currentText.endsWith('\n')) currentText = currentText.slice(0, -1);
         if (currentText !== this.initialText) {
             this.initialText = currentText;
             this.ranges = []; // 破坏性修改，重置样式

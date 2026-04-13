@@ -1393,6 +1393,7 @@ function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime
             }
             _drawInlineBgGroup(ctx, 'title', boxes, titleFM.ascent, titleFM.descent, titleFontSize, fx);
         }
+        if (typeof _drawRichLine !== 'undefined') _drawRichLine._searchFrom = 0;
         for (const line of titleLines) {
             const lx = _alignX(ctx, line, x + padL + offsetX + customX, tW, ov.title_align || 'center');
             if (fx.strokeW > 0) {
@@ -1472,6 +1473,7 @@ function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime
             }
             _drawInlineBgGroup(ctx, 'body', boxes, bodyFM.ascent, bodyFM.descent, bodyFontSize, fx);
         }
+        if (typeof _drawRichLine !== 'undefined') _drawRichLine._searchFrom = 0;
         for (const line of bodyLines) {
             const lx = _alignX(ctx, line, x + padL + offsetX + customX, bW, ov.body_align || 'center');
             if (fx.strokeW > 0) {
@@ -1547,6 +1549,7 @@ function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime
             }
             _drawInlineBgGroup(ctx, 'footer', boxes, footerFM.ascent, footerFM.descent, footerFontSize, fx);
         }
+        if (typeof _drawRichLine !== 'undefined') _drawRichLine._searchFrom = 0;
         for (const line of footerLines) {
             const lx = _alignX(ctx, line, x + padL + offsetX + customX, fW, ov.footer_align || 'center');
             if (fx.strokeW > 0) {
@@ -2298,13 +2301,22 @@ function _drawTextLines(ctx, lines, boxX, boxY, boxW, lineHeight, align, color) 
  */
 function _drawRichLine(ctx, lineText, fullText, styledRanges, x, y, defaultColor, baseFontSize, fontFamily, fallback, fontWeight, letterSpacing) {
     // 定位 lineText 在 fullText 中的字符偏移
-    const lineStart = fullText.indexOf(lineText);
+    // 使用 _drawRichLine._searchFrom 跟踪当前搜索起点, 避免重复行错位
+    const searchFrom = _drawRichLine._searchFrom || 0;
+    let lineStart = fullText.indexOf(lineText, searchFrom);
+    if (lineStart < 0) {
+        // 原始搜索失败 —— 尝试从头搜索 (首次调用场景)
+        lineStart = fullText.indexOf(lineText);
+    }
     if (lineStart < 0) {
         // fallback: 找不到就原样绘制
         ctx.fillStyle = defaultColor;
         ctx.fillText(lineText, x, y);
         return;
     }
+    // 推进搜索游标到本行末尾，供下一次同段落调用使用
+    _drawRichLine._searchFrom = lineStart + lineText.length;
+
     const lineEnd = lineStart + lineText.length;
 
     const baseStyle = {
