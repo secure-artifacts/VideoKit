@@ -283,7 +283,11 @@ class ReelsOverlayPanel {
                     <!-- ① 内容：标题在前，正文在后 -->
                     <div class="rop-group-title" style="margin-top:4px;">标题</div>
                     <div class="rop-grid">
-                        <label>标题文字</label><input type="text" id="rop-scroll-title" class="rop-input" placeholder="留空=无标题">
+                        <label>标题文字</label>
+                        <div style="display:flex;gap:6px;align-items:center;">
+                            <input type="text" id="rop-scroll-title" class="rop-input" placeholder="留空=无标题" style="flex:1;">
+                            <button class="rop-richtext-btn" data-section="scroll_title" title="逐字样式编辑" style="padding:4px 8px;border:1px solid var(--border-color,#555);background:var(--bg-secondary,#2a2a3e);color:var(--accent-primary,#7b8bef);border-radius:6px;cursor:pointer;font-size:12px;white-space:nowrap;">✎ 富文本</button>
+                        </div>
                         <label>固定标题</label>
                         <div style="display:flex;align-items:center;gap:6px;">
                             <input type="checkbox" id="rop-scroll-title-fixed" checked>
@@ -301,7 +305,10 @@ class ReelsOverlayPanel {
                     </div>
 
                     <div class="rop-group-title" style="margin-top:6px;">正文</div>
-                    <textarea id="rop-scroll-content" class="rop-textarea" rows="4" placeholder="滚动文字内容（正文）"></textarea>
+                    <div style="display:flex;gap:6px;align-items:flex-start;">
+                        <textarea id="rop-scroll-content" class="rop-textarea" rows="4" placeholder="滚动文字内容（正文）" style="flex:1;"></textarea>
+                        <button class="rop-richtext-btn" data-section="scroll_body" title="逐字样式编辑" style="padding:4px 8px;border:1px solid var(--border-color,#555);background:var(--bg-secondary,#2a2a3e);color:var(--accent-primary,#7b8bef);border-radius:6px;cursor:pointer;font-size:12px;white-space:nowrap;">✎ 富文本</button>
+                    </div>
                     <div class="rop-grid">
                         <label>字体</label>
                         <select id="rop-scroll-font" class="rop-select"></select>
@@ -2505,9 +2512,13 @@ class ReelsOverlayPanel {
         }
 
         if (ov.type === 'scroll') {
-            ov.content = this._get('rop-scroll-content');
+            const newScrollContent = this._get('rop-scroll-content');
+            if (newScrollContent !== ov.content) ov.scroll_styled_ranges = null;
+            ov.content = newScrollContent;
             // 标题
-            ov.scroll_title = this._get('rop-scroll-title') || '';
+            const newScrollTitle = this._get('rop-scroll-title') || '';
+            if (newScrollTitle !== ov.scroll_title) ov.scroll_title_styled_ranges = null;
+            ov.scroll_title = newScrollTitle;
             ov.scroll_title_fontsize = this._get('rop-scroll-title-fontsize') || 56;
             ov.scroll_title_font_weight = this._get('rop-scroll-title-weight') || 700;
             ov.scroll_title_bold = (ov.scroll_title_font_weight >= 600);
@@ -2642,12 +2653,12 @@ class ReelsOverlayPanel {
     }
 
     /**
-     * 打开覆层 textcard 区段的富文本编辑器
-     * @param {'title'|'body'|'footer'} section
+     * 打开覆层 textcard/scroll 区段的富文本编辑器
+     * @param {'title'|'body'|'footer'|'scroll_title'|'scroll_body'} section
      */
     _openOverlayRichTextEditor(section) {
         const ov = this._selectedOv;
-        if (!ov || ov.type !== 'textcard') return;
+        if (!ov || (ov.type !== 'textcard' && ov.type !== 'scroll')) return;
         if (typeof ReelsRichTextEditor === 'undefined') {
             console.warn('[OverlayPanel] ReelsRichTextEditor not loaded');
             return;
@@ -2659,17 +2670,39 @@ class ReelsOverlayPanel {
             this._ovRtEditor = null;
         }
 
-        const textKey = `${section}_text`;
-        const rangesKey = `${section}_styled_ranges`;
+        let textKey, rangesKey, baseStyle, titleStr;
+        if (section === 'scroll_title') {
+            textKey = 'scroll_title';
+            rangesKey = 'scroll_title_styled_ranges';
+            baseStyle = {
+                fontsize: ov.scroll_title_fontsize || 56,
+                color: ov.scroll_title_color || '#ffffff',
+                bold: ov.scroll_title_bold || false,
+            };
+            titleStr = '滚动标题';
+        } else if (section === 'scroll_body') {
+            textKey = 'content';
+            rangesKey = 'scroll_styled_ranges';
+            baseStyle = {
+                fontsize: ov.fontsize || 40,
+                color: ov.color || '#ffffff',
+                bold: ov.bold || false,
+            };
+            titleStr = '滚动正文';
+        } else {
+            textKey = `${section}_text`;
+            rangesKey = `${section}_styled_ranges`;
+            baseStyle = {
+                fontsize: ov[`${section}_fontsize`] || 60,
+                color: ov[`${section}_color`] || '#000000',
+                bold: ov[`${section}_bold`] || false,
+            };
+            const sectionLabels = { title: '标题', body: '正文', footer: '结尾' };
+            titleStr = sectionLabels[section] || section;
+        }
+
         const text = ov[textKey] || '';
         const ranges = ov[rangesKey] || [];
-
-        // 获取该区段的基础样式
-        const baseStyle = {
-            fontsize: ov[`${section}_fontsize`] || 60,
-            color: ov[`${section}_color`] || '#000000',
-            bold: ov[`${section}_bold`] || false,
-        };
 
         // 弹出位置：在按钮旁边
         const btn = this.container.querySelector(`.rop-richtext-btn[data-section="${section}"]`);
@@ -2682,7 +2715,10 @@ class ReelsOverlayPanel {
             ov[textKey] = newText;
             ov[rangesKey] = (newRanges && newRanges.length > 0) ? newRanges : null;
             // 同步面板文本框
-            this._val(`rop-${section}-text`, newText);
+            let inputId = `rop-${section}-text`;
+            if (section === 'scroll_title') inputId = 'rop-scroll-title';
+            if (section === 'scroll_body') inputId = 'rop-scroll-content';
+            this._val(inputId, newText);
             // 刷新预览
             if (this.videoCanvas) this.videoCanvas.render();
             this._ovRtEditor = null;
@@ -2698,9 +2734,8 @@ class ReelsOverlayPanel {
             this._ovRtEditor = null;
         };
 
-        const sectionLabels = { title: '标题', body: '正文', footer: '结尾' };
         rtEditor.open({
-            title: `✎ 编辑${sectionLabels[section] || section}富文本`,
+            title: `✎ 编辑${titleStr}富文本`,
             text,
             styled_ranges: ranges,
             baseStyle,

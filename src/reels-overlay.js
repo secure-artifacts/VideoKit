@@ -257,6 +257,8 @@ function createScrollOverlay(opts = {}) {
         id: _overlayId(),
         type: 'scroll',
         content: opts.content || '滚动文字内容\n第二行文字\n第三行文字\n第四行文字\n第五行文字',
+        scroll_title_styled_ranges: opts.scroll_title_styled_ranges || null,
+        scroll_styled_ranges: opts.scroll_styled_ranges || null,
         // x/y/w/h = 裁切区域
         x: opts.x ?? 40,
         y: opts.y ?? 400,
@@ -1879,10 +1881,16 @@ function _drawScrollOverlay(ctx, ov, clipX, clipY, clipW, clipH, currentTime, ca
             ctx.restore();
         }
         // 填充
+        if (typeof _drawRichLine !== 'undefined') _drawRichLine._searchFrom = 0;
         ctx.fillStyle = tColor;
         let ty = titleDrawY + tSize;
         for (const line of titleLines) {
-            ctx.fillText(line, _alignX(ctx, line, titleDrawX, textW, tAlign), ty);
+            const lx = _alignX(ctx, line, titleDrawX, textW, tAlign);
+            if (ov.scroll_title_styled_ranges && ov.scroll_title_styled_ranges.length > 0 && typeof ReelsRichText !== 'undefined') {
+                _drawRichLine(ctx, line, titleText, ov.scroll_title_styled_ranges, lx, ty, tColor, tSize, tFamily, tFallback, tWeight, 0);
+            } else {
+                ctx.fillText(line, lx, ty);
+            }
             ty += tLineH;
         }
         ctx.restore();
@@ -2044,10 +2052,16 @@ function _drawScrollTextBlock(ctx, ov, lines, textX, textY, textW, lineHeight, f
             ctx.restore();
         }
         // 填充
+        if (typeof _drawRichLine !== 'undefined') _drawRichLine._searchFrom = 0;
         ctx.fillStyle = tColor;
         let ty = drawY + tSize;
         for (const line of titleLines) {
-            ctx.fillText(line, _alignX(ctx, line, textX, textW, tAlign), ty);
+            const lx = _alignX(ctx, line, textX, textW, tAlign);
+            if (ov.scroll_title_styled_ranges && ov.scroll_title_styled_ranges.length > 0 && typeof ReelsRichText !== 'undefined') {
+                _drawRichLine(ctx, line, titleText, ov.scroll_title_styled_ranges, lx, ty, tColor, tSize, tFamily, tFallback, tWeight, 0);
+            } else {
+                ctx.fillText(line, lx, ty);
+            }
             ty += tLineH;
         }
         drawY += titleLines.length * tLineH + tGap;
@@ -2088,11 +2102,19 @@ function _drawScrollTextBlock(ctx, ov, lines, textX, textY, textW, lineHeight, f
         ctx.restore();
     }
     // 填充
+    if (typeof _drawRichLine !== 'undefined') _drawRichLine._searchFrom = 0;
     ctx.fillStyle = ov.color || '#FFFFFF';
     let yc = drawY + fontSize;
+    const bodyFamily = ov.font_family || 'Arial';
+    const bodyFallback = _resolveOverlayFallback(bodyFamily);
+    const bodyWeight = _resolveOverlayFontWeight(ov.font_weight, ov.bold ? 700 : 400);
     for (const line of lines) {
         const lx = _alignX(ctx, line, textX, textW, align);
-        ctx.fillText(line, lx, yc);
+        if (ov.scroll_styled_ranges && ov.scroll_styled_ranges.length > 0 && typeof ReelsRichText !== 'undefined') {
+            _drawRichLine(ctx, line, ov.content || '', ov.scroll_styled_ranges, lx, yc, ov.color || '#FFFFFF', fontSize, bodyFamily, bodyFallback, bodyWeight, 0);
+        } else {
+            ctx.fillText(line, lx, yc);
+        }
         yc += lineHeight;
     }
 }
