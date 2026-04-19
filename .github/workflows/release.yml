@@ -1,31 +1,18 @@
-name: Release Electron App
+name: Release
 
 on:
   push:
     tags:
       - 'v*'
 
+permissions:
+  id-token: write
+  contents: write
+  attestations: write
+
 jobs:
   build:
-    strategy:
-      matrix:
-        include:
-          - os: macos-latest
-            platform: mac
-            arch_flags: '--arm64 --x64'
-          - os: windows-latest
-            platform: win
-            arch_flags: '--x64'
-          - os: ubuntu-latest
-            platform: linux
-            arch_flags: '--x64'
-
-    runs-on: ${{ matrix.os }}
-
-    permissions:
-      id-token: write
-      contents: write
-      attestations: write
+    runs-on: macos-latest
 
     steps:
       - uses: actions/checkout@v4
@@ -35,95 +22,25 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install Dependencies
-        run: npm ci
-
-      # ═══ 下载 FFmpeg 二进制（CI 环境没有 vendor 目录）═══
-      - name: Download FFmpeg (macOS)
-        if: matrix.platform == 'mac'
-        run: |
-          mkdir -p vendor/darwin/ffmpeg
-          curl -L "https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip" -o /tmp/ffmpeg.zip
-          curl -L "https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip" -o /tmp/ffprobe.zip
-          unzip -o /tmp/ffmpeg.zip -d vendor/darwin/ffmpeg/
-          unzip -o /tmp/ffprobe.zip -d vendor/darwin/ffmpeg/
-          chmod +x vendor/darwin/ffmpeg/ffmpeg vendor/darwin/ffmpeg/ffprobe
-          ls -la vendor/darwin/ffmpeg/
-
-      - name: Download FFmpeg (Windows)
-        if: matrix.platform == 'win'
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path vendor/windows/ffmpeg/bin
-          $ffmpegUrl = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
-          Invoke-WebRequest -Uri $ffmpegUrl -OutFile "$env:TEMP\ffmpeg.zip"
-          Expand-Archive -Path "$env:TEMP\ffmpeg.zip" -DestinationPath "$env:TEMP\ffmpeg-extract" -Force
-          $binDir = Get-ChildItem -Path "$env:TEMP\ffmpeg-extract" -Recurse -Directory -Filter "bin" | Select-Object -First 1
-          Copy-Item -Path "$binDir\ffmpeg.exe" -Destination "vendor/windows/ffmpeg/bin/"
-          Copy-Item -Path "$binDir\ffprobe.exe" -Destination "vendor/windows/ffmpeg/bin/"
-          Get-ChildItem vendor/windows/ffmpeg/bin/
+      - name: Install dependencies
+        run: npm install
 
       - name: Build App
-        run: npm run build
-
-      - name: Package Electron App
+        run: npm run pack:mac-universal
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --${{ matrix.platform }} ${{ matrix.arch_flags }} --publish never
 
       - name: Attest Build Provenance
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: |
-            dist-electron/*.dmg
-            dist-electron/*.zip
-            dist-electron/*.exe
-            dist-electron/*.AppImage
+          subject-path: 'dist-electron/*'
 
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: electron-${{ matrix.platform }}
-          path: |
+          files: |
             dist-electron/*.dmg
             dist-electron/*.zip
-            dist-electron/*.exe
-            dist-electron/*.AppImage
+            dist-electron/*.yml
             dist-electron/*.blockmap
-            dist-electron/latest*.yml
-
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: dist
-          merge-multiple: true
-
-      - name: List release files
-        run: ls -la dist/
-
-      # 根据 tag 名自动判断是否为 prerelease
-      # v2.2.0        → 正式版 (prerelease: false)
-      # v2.3.0-beta.1 → 测试版 (prerelease: true)
-      - name: Determine release type
-        id: release_type
-        run: |
-          TAG="${GITHUB_REF_NAME}"
-          if [[ "$TAG" == *"-beta"* ]] || [[ "$TAG" == *"-alpha"* ]] || [[ "$TAG" == *"-rc"* ]]; then
-            echo "is_prerelease=true" >> $GITHUB_OUTPUT
-            echo "📦 测试版发布: $TAG"
-          else
-            echo "is_prerelease=false" >> $GITHUB_OUTPUT
-            echo "📦 正式版发布: $TAG"
-          fi
-
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: dist/*
           generate_release_notes: true
-          prerelease: ${{ steps.release_type.outputs.is_prerelease == 'true' }}
-          name: ${{ contains(github.ref, '-beta') && format('🧪 测试版 {0}', github.ref_name) || format('✅ 正式版 {0}', github.ref_name) }}
