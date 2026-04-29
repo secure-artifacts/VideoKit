@@ -45,8 +45,15 @@ const GOOGLE_FONTS = [
     'Quicksand', 'Mulish', 'Karla', 'Barlow', 'DM Sans',
     'Manrope', 'Figtree', 'Lexend', 'Space Grotesk', 'Sora',
     'Albert Sans', 'Plus Jakarta Sans', 'Red Hat Display', 'Urbanist', 'Jost',
-    'Exo 2', 'Archivo', 'Cabin', 'Hind', 'Mukta',
+    'Exo 2', 'Archivo', 'Archivo Black', 'Cabin', 'Hind', 'Mukta',
     'Overpass', 'Titillium Web', 'Fira Sans', 'Signika', 'Catamaran',
+    'PT Sans', 'Roboto Condensed', 'Noto Sans Display', 'IBM Plex Sans',
+    'IBM Plex Serif', 'Roboto Flex', 'Roboto Serif', 'Arimo', 'Tinos',
+    'Play', 'Russo One', 'Cuprum', 'Literata', 'Noto Sans Tagalog',
+    'Noto Sans Arabic', 'Noto Naskh Arabic', 'Noto Kufi Arabic',
+    'Cairo', 'Tajawal', 'Almarai', 'Amiri', 'Changa',
+    'El Messiri', 'Lateef', 'Scheherazade New', 'Reem Kufi',
+    'Mada', 'Markazi Text', 'IBM Plex Sans Arabic', 'Readex Pro',
     'Noto Sans', 'Noto Sans SC', 'Noto Sans JP', 'Noto Sans KR',
     'Noto Sans TC', 'Noto Sans HK',
     // ── Sans-Serif 无衬线 (更多) ──
@@ -102,6 +109,69 @@ const GOOGLE_FONTS = [
     'ZCOOL XiaoWei', 'ZCOOL QingKe HuangYou', 'ZCOOL KuaiLe',
     'Liu Jian Mao Cao', 'Long Cang', 'Zhi Mang Xing',
     'Noto Sans Mono', 'Noto Serif Display',
+];
+
+// 默认展开时优先展示的热门 Google 字体。
+// 覆盖英文短视频常用、欧洲语言、俄语/西里尔文、希腊语、菲律宾语、阿拉伯语等场景。
+const POPULAR_GOOGLE_FONTS = [
+    'Roboto', 'Open Sans', 'Montserrat', 'Lato', 'Poppins',
+    'Inter', 'Oswald', 'Nunito Sans', 'Nunito', 'Raleway',
+    'Rubik', 'Ubuntu', 'Fira Sans', 'Source Sans 3', 'DM Sans',
+    'Work Sans', 'Merriweather', 'Playfair Display', 'Lora', 'Roboto Slab',
+    'Bebas Neue', 'Anton', 'Archivo Black', 'Barlow', 'Barlow Condensed',
+    'Roboto Condensed', 'PT Sans', 'PT Serif', 'PT Mono', 'Noto Sans',
+    'Noto Serif', 'Noto Sans Display', 'Noto Serif Display', 'Noto Sans Mono', 'IBM Plex Sans',
+    'IBM Plex Serif', 'IBM Plex Mono', 'Manrope', 'Exo 2', 'Comfortaa',
+    'Russo One', 'Play', 'Cuprum', 'Cormorant Garamond', 'Cormorant',
+    'Caveat', 'Pacifico', 'Rubik Mono One', 'Tinos', 'Arimo',
+    'Roboto Flex', 'Roboto Serif', 'Roboto Mono', 'Libre Franklin', 'Karla',
+    'Mulish', 'Quicksand', 'Lexend', 'Jost', 'Urbanist',
+    'Outfit', 'Figtree', 'Space Grotesk', 'Sora', 'Plus Jakarta Sans',
+    'Red Hat Display', 'Albert Sans', 'Overpass', 'Titillium Web', 'Kanit',
+    'Josefin Sans', 'Asap', 'Dosis', 'Cabin', 'Hind',
+    'Mukta', 'Signika', 'Catamaran', 'Public Sans', 'Heebo',
+    'Assistant', 'Encode Sans', 'Readex Pro', 'Atkinson Hyperlegible', 'Instrument Sans',
+    'Onest', 'Afacad', 'Bricolage Grotesque', 'Funnel Sans', 'Libre Baskerville',
+    'Crimson Pro', 'EB Garamond', 'Bitter', 'DM Serif Display', 'Gelasio',
+    'Spectral', 'Vollkorn', 'Cardo', 'Arvo', 'Domine',
+    'Rokkitt', 'Alegreya', 'Crimson Text', 'Fraunces', 'Newsreader',
+    'Instrument Serif', 'Young Serif', 'Bodoni Moda', 'Prata', 'Abril Fatface',
+    'Alfa Slab One', 'Lilita One', 'Passion One', 'Bangers', 'Lobster',
+    'Lobster Two', 'Permanent Marker', 'Satisfy', 'Dancing Script', 'Kalam',
+    'Indie Flower', 'Great Vibes', 'Allura', 'Courgette', 'Cookie',
+    // 欧洲语言 / 拉丁扩展 / 希腊语 / 西里尔文常用
+    'Noto Sans', 'Noto Serif', 'Noto Sans Display', 'Noto Serif Display',
+    'Noto Sans Mono', 'Noto Sans Georgian', 'Noto Serif Georgian',
+    'Noto Sans Armenian', 'Noto Serif Armenian', 'Noto Sans Hebrew',
+    'Noto Serif Hebrew', 'Noto Sans Greek', 'Noto Serif Greek',
+    'Noto Sans Devanagari', 'Noto Sans Tagalog',
+    'PT Sans', 'PT Serif', 'PT Mono', 'Ubuntu', 'Ubuntu Condensed',
+    'Ubuntu Mono', 'Fira Sans', 'Fira Sans Condensed', 'Fira Sans Extra Condensed',
+    'Fira Code', 'Roboto Condensed', 'Roboto Mono', 'Roboto Slab',
+    'Literata', 'Spectral', 'Alegreya Sans', 'Alegreya',
+    'Merriweather Sans', 'Source Serif 4', 'IBM Plex Sans',
+    'IBM Plex Serif', 'IBM Plex Mono', 'Libre Franklin', 'Libre Baskerville',
+    'Libre Caslon Text', 'Libre Caslon Display', 'Bitter', 'Vollkorn',
+    'Cormorant', 'Cormorant Garamond', 'Cormorant Infant', 'Cormorant SC',
+    'Cormorant Unicase', 'Gelasio', 'Old Standard TT', 'Neucha',
+    'Philosopher', 'Forum', 'Oranienbaum', 'Poiret One', 'Yeseva One',
+    'Tenor Sans', 'Jura', 'Didact Gothic', 'Scada', 'Podkova',
+    'Prata', 'Kelly Slab', 'Pangolin', 'Bad Script', 'Marck Script',
+    'Comfortaa', 'Exo 2', 'Play', 'Russo One', 'Cuprum',
+    'Rubik Mono One', 'Rubik Glitch', 'Rubik Beastly', 'Sofia Sans',
+    'Sofia Sans Condensed', 'Sofia Sans Extra Condensed', 'Sofia Sans Semi Condensed',
+    'Ysabeau', 'Ysabeau SC', 'Ysabeau Infant', 'Ysabeau Office',
+    'Commissioner', 'Afacad', 'Onest', 'Geologica', 'Wix Madefor Display',
+    'Wix Madefor Text', 'Geist', 'Geist Mono', 'Manrope',
+    // 阿拉伯语 / 中东语言常用
+    'Noto Sans Arabic', 'Noto Naskh Arabic', 'Noto Kufi Arabic',
+    'Cairo', 'Tajawal', 'Almarai', 'Amiri', 'Changa',
+    'El Messiri', 'Lateef', 'Scheherazade New', 'Reem Kufi',
+    'Reem Kufi Fun', 'Reem Kufi Ink', 'Mada', 'Markazi Text',
+    'IBM Plex Sans Arabic', 'Readex Pro', 'Aref Ruqaa', 'Aref Ruqaa Ink',
+    'Lalezar', 'Lemonada', 'Rakkas', 'Mirza', 'Katibeh',
+    'Harmattan', 'Noto Nastaliq Urdu', 'Noto Sans Hebrew',
+    'Noto Serif Hebrew',
 ];
 
 // ═══════════════════════════════════════════════════════
@@ -301,8 +371,8 @@ class ReelsFontManager {
             await fontFace.load();
             document.fonts.add(fontFace);
 
-            if (!this._customFonts.includes(fontInfo.family)) {
-                this._customFonts.push(fontInfo.family);
+            if (!this._allowedFonts.includes(fontInfo.family)) {
+                this._allowedFonts.push(fontInfo.family);
             }
             this._recordVariant(fontInfo.family, descriptors.weight || '400', descriptors.style || 'normal');
         } catch (err) {
@@ -544,9 +614,22 @@ class ReelsFontManager {
             }
         }
 
+        const priority = new Map(POPULAR_GOOGLE_FONTS.map((font, idx) => [font, idx]));
+        const popularFirst = (a, b) => {
+            const ap = priority.has(a) ? priority.get(a) : Number.POSITIVE_INFINITY;
+            const bp = priority.has(b) ? priority.get(b) : Number.POSITIVE_INFINITY;
+            if (ap !== bp) return ap - bp;
+            return a.localeCompare(b, undefined, { sensitivity: 'base' });
+        };
+
+        groups.google.sort(popularFirst);
+        groups.embedded.sort(popularFirst);
+        groups.system.sort(popularFirst);
+        groups.custom.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+
         const groupDefs = [
             { key: 'system',   label: '💻 系统字体', emoji: '💻' },
-            { key: 'google',   label: '🌐 Google 免费', emoji: '🌐' },
+            { key: 'google',   label: '🌐 Google 免费 · 热门优先', emoji: '🌐' },
             { key: 'embedded', label: '📦 内置字体', emoji: '📦' },
             { key: 'custom',   label: '📤 用户上传', emoji: '📤' },
         ];
@@ -589,10 +672,11 @@ class ReelsFontManager {
             .fp-input {
                 width:100%; box-sizing:border-box;
                 padding:4px 24px 4px 8px; border:1px solid var(--border-color, #555);
-                border-radius:4px; font-size:12px; cursor:pointer;
+                border-radius:4px; font-size:12px; cursor:text;
                 background:var(--bg-input, #1e1e2e); color:var(--text-primary, #eee);
                 outline:none; text-overflow:ellipsis;
             }
+            .fp-input:hover { border-color:var(--accent, #4c9eff); }
             .fp-input:focus { border-color:var(--accent, #4c9eff); }
             .fp-input::placeholder { color:var(--text-muted, #888); }
             .fp-arrow {
@@ -601,7 +685,7 @@ class ReelsFontManager {
             }
             .fp-dropdown {
                 display:none; position:absolute; left:0; top:100%; z-index:99999;
-                width:280px; max-height:350px; overflow-y:auto;
+                width:100%; min-width:220px; max-width:min(320px, 92vw); max-height:420px; overflow-y:auto;
                 background:var(--bg-secondary, #1e1e2e); border:1px solid var(--border-color, #555);
                 border-radius:6px; box-shadow:0 8px 24px rgba(0,0,0,0.4);
                 margin-top:2px; padding:4px 0;
@@ -619,6 +703,10 @@ class ReelsFontManager {
             .fp-item:hover, .fp-item.fp-active { background:var(--accent, #4c9eff); color:#fff; }
             .fp-no-results { padding:12px; text-align:center; font-size:12px; color:var(--text-muted, #888); }
             .fp-count { font-size:10px; color:var(--text-muted, #888); margin-left:4px; }
+            .fp-tip {
+                padding:6px 10px; font-size:11px; color:var(--text-muted, #888);
+                border-bottom:1px solid var(--border-color, #444);
+            }
         `;
         document.head.appendChild(style);
     }
@@ -647,7 +735,9 @@ class ReelsFontManager {
             const input = document.createElement('input');
             input.type = 'text';
             input.className = 'fp-input';
-            input.placeholder = '🔍 搜索字体...';
+            input.placeholder = '搜索字体...';
+            input.autocomplete = 'off';
+            input.spellcheck = false;
             wrap.insertBefore(input, select);
 
             // 下拉箭头
@@ -677,12 +767,23 @@ class ReelsFontManager {
             wrap._fpBound = true;
             const self = this;
 
-            // 点击输入框 → 打开下拉
-            input.addEventListener('focus', () => {
-                input.select();
+            const enterSearchMode = () => {
+                input.value = '';
+                input.placeholder = '输入字体名搜索...';
                 _renderDropdown('');
                 dropdown.classList.add('fp-open');
-            });
+            };
+
+            const restoreCurrentValue = () => {
+                const d = wrap._fpData;
+                const cv = d.selectEl.value;
+                input.value = d.displayNames[cv] || cv;
+                input.placeholder = '搜索字体...';
+            };
+
+            // 点击输入框 → 进入搜索模式
+            input.addEventListener('focus', enterSearchMode);
+            input.addEventListener('click', enterSearchMode);
 
             // 输入搜索
             input.addEventListener('input', () => {
@@ -710,6 +811,7 @@ class ReelsFontManager {
                     if (active) active.click();
                 } else if (e.key === 'Escape') {
                     dropdown.classList.remove('fp-open');
+                    restoreCurrentValue();
                     input.blur();
                 }
             });
@@ -718,10 +820,7 @@ class ReelsFontManager {
             document.addEventListener('mousedown', (e) => {
                 if (!wrap.contains(e.target)) {
                     dropdown.classList.remove('fp-open');
-                    // 恢复显示当前值
-                    const d = wrap._fpData;
-                    const cv = d.selectEl.value;
-                    input.value = d.displayNames[cv] || cv;
+                    restoreCurrentValue();
                 }
             });
 
@@ -730,7 +829,14 @@ class ReelsFontManager {
                 const q = query.toLowerCase();
                 dropdown.innerHTML = '';
                 let totalShown = 0;
-                const MAX_PER_GROUP = q ? 50 : 30; // 搜索时多显示一些
+                const MAX_PER_GROUP = q ? 300 : 150; // 默认多展示，搜索时尽量给足结果
+
+                const tip = document.createElement('div');
+                tip.className = 'fp-tip';
+                tip.textContent = q
+                    ? `搜索: ${query}`
+                    : '输入字体名即可搜索，支持系统字体、内置字体和 Google 字体';
+                dropdown.appendChild(tip);
 
                 for (const { key, label } of d.groupDefs) {
                     const list = d.groups[key];

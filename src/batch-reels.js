@@ -1141,13 +1141,32 @@ async function _initFontManager() {
     }
     const fm = getFontManager();
     await fm.register();
-    fm.refreshFontSelect('reels-font-family', _reelsState.renderer ? 'Arial' : undefined);
-    fm.refreshFontSelect('rop-font', 'Arial');
-    fm.refreshFontSelect('rop-title-font', 'Crimson Pro');
-    fm.refreshFontSelect('rop-body-font', 'Arial');
+    _refreshReelsFontSelects(fm, {
+        'reels-font-family': _reelsState.renderer ? 'Arial' : undefined,
+        'rop-font': 'Arial',
+        'rop-title-font': 'Crimson Pro',
+        'rop-body-font': 'Arial',
+        'rop-footer-font': 'Arial',
+        'rop-scroll-font': 'Arial',
+    });
     try { await fm.loadGoogleFont('Crimson Pro'); } catch (_) { }
     reelsRefreshSubtitleWeightOptions();
     console.log(`[Reels] FontManager ready — ${fm.getAllFonts().length} fonts available`);
+}
+
+function _refreshReelsFontSelects(fm, values = {}) {
+    if (!fm || typeof fm.refreshFontSelect !== 'function') return;
+    const defaults = {
+        'reels-font-family': 'Arial',
+        'rop-font': 'Arial',
+        'rop-title-font': 'Crimson Pro',
+        'rop-body-font': 'Arial',
+        'rop-footer-font': 'Arial',
+        'rop-scroll-font': 'Arial',
+    };
+    for (const [id, fallback] of Object.entries(defaults)) {
+        fm.refreshFontSelect(id, Object.prototype.hasOwnProperty.call(values, id) ? values[id] : fallback);
+    }
 }
 
 function _initReelsFontPresetUI() {
@@ -1319,10 +1338,14 @@ function reelsUploadFont() {
         const fm = getFontManager();
         const familyName = await fm.uploadFont(file);
         if (familyName) {
-            fm.refreshFontSelect('reels-font-family', familyName);
-            fm.refreshFontSelect('rop-font', familyName);
-            fm.refreshFontSelect('rop-title-font', familyName);
-            fm.refreshFontSelect('rop-body-font', familyName);
+            _refreshReelsFontSelects(fm, {
+                'reels-font-family': familyName,
+                'rop-font': familyName,
+                'rop-title-font': familyName,
+                'rop-body-font': familyName,
+                'rop-footer-font': familyName,
+                'rop-scroll-font': familyName,
+            });
             const select = document.getElementById('reels-font-family');
             if (select) select.value = familyName;
             reelsRefreshSubtitleWeightOptions();
@@ -6301,10 +6324,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 const fm = getFontManager();
                 const familyName = await fm.uploadFont(file);
                 if (familyName) {
-                    fm.refreshFontSelect('reels-font-family', familyName);
-                    fm.refreshFontSelect('rop-font', familyName);
-                    fm.refreshFontSelect('rop-title-font', familyName);
-                    fm.refreshFontSelect('rop-body-font', familyName);
+                    _refreshReelsFontSelects(fm, {
+                        'reels-font-family': familyName,
+                        'rop-font': familyName,
+                        'rop-title-font': familyName,
+                        'rop-body-font': familyName,
+                        'rop-footer-font': familyName,
+                        'rop-scroll-font': familyName,
+                    });
                     const familyEl = document.getElementById('reels-font-family');
                     if (familyEl) familyEl.value = familyName;
                     reelsRefreshSubtitleWeightOptions();
@@ -6322,10 +6349,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (window.getFontManager) {
         const fm = getFontManager();
         fm.register().then(() => {
-            fm.refreshFontSelect('reels-font-family', 'Arial');
-            fm.refreshFontSelect('rop-font', 'Arial');
-            fm.refreshFontSelect('rop-title-font', 'Crimson Pro');
-            fm.refreshFontSelect('rop-body-font', 'Arial');
+            _refreshReelsFontSelects(fm);
             fm.loadGoogleFont('Crimson Pro').catch(() => { });
             reelsRefreshSubtitleWeightOptions();
         });
