@@ -2,6 +2,14 @@
 
 专业媒体转换、配音、智能字幕编辑的桌面应用（Electron 版）。
 
+## 当前发布版本
+
+- 最新版本：v4.3.0
+- Release 页面：https://github.com/secure-artifacts/VideoKit/releases/tag/v4.3.0
+- Windows 安装包：https://github.com/secure-artifacts/VideoKit/releases/download/v4.3.0/VideoKit-Setup-4.3.0.exe
+- macOS Universal DMG：https://github.com/secure-artifacts/VideoKit/releases/download/v4.3.0/VideoKit-4.3.0.dmg
+- macOS ARM64 DMG：https://github.com/secure-artifacts/VideoKit/releases/download/v4.3.0/VideoKit-4.3.0-arm64.dmg
+
 ## 如何发布新版本
 
 本项目使用 GitHub Actions 自动构建和发布。每次发布新版本只需要创建一个 Git Tag 并推送即可。
@@ -31,15 +39,15 @@ git push secure main
 Git Tag 是一个版本标记，用于标识发布的版本号。版本号格式为 `v主版本.次版本.修订版本`，例如 `v1.0.0`、`v1.1.0`、`v2.0.0`。
 
 ```bash
-# 创建一个新的版本 tag（将 v4.2.0 替换为你想要的版本号）
-git tag v4.2.0
+# 创建一个新的版本 tag（将 v4.3.0 替换为你想要的版本号）
+git tag v4.3.0
 ```
 
 #### 3. 推送 Tag 触发自动构建
 
 ```bash
 # 推送 tag 到 GitHub（这会自动触发 CI 构建）
-git push secure v4.2.0
+git push secure v4.3.0
 ```
 
 推送后，GitHub Actions 会自动执行以下操作：
@@ -69,12 +77,12 @@ git push secure v4.2.0
 
 ```bash
 # 删除本地 tag
-git tag -d v4.2.0
+git tag -d v4.3.0
 
 # 删除远程 tag
-git push secure :refs/tags/v4.2.0
+git push secure :refs/tags/v4.3.0
 
 # 修复问题后，重新创建并推送
-git tag v4.2.0
-git push secure v4.2.0
+git tag v4.3.0
+git push secure v4.3.0
 ```
