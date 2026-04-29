@@ -315,7 +315,13 @@ async function routeAPI(endpoint, data) {
             const keysData = settingsService.loadGeminiKeys() || {};
             const keys = keysData.keys || [];
             const customPrompt = keysData.prompt || null;
-            return await geminiService.processScripts(data.scripts, keys, customPrompt);
+            const geminiModel = keysData.model || null;
+            return await geminiService.processScripts(data.scripts, keys, customPrompt, geminiModel);
+        }
+
+        case 'ai/test-keys': {
+            if (!data.keys || !Array.isArray(data.keys) || data.keys.length === 0) throw new Error('缺少 API Keys');
+            return await geminiService.testKeys(data.keys, data.model || null);
         }
 
         // ==================== 媒体操作 ====================
@@ -355,6 +361,112 @@ async function routeAPI(endpoint, data) {
         case 'media/scene-split':
             if (!data.file_path || !data.segments) throw new Error('缺少参数');
             return await ffmpegService.sceneSplit(data.file_path, data.segments, data.output_dir);
+
+        case 'media/scene-detect-frames': {
+            if (!data.file_path) throw new Error('缺少文件路径');
+            return await ffmpegService.sceneDetectFrames(data.file_path, {
+                threshold: parseFloat(data.threshold || 0.3),
+                minInterval: parseFloat(data.min_interval || 0.5),
+                framesPerScene: parseInt(data.frames_per_scene || 0),
+                format: data.format || 'jpg',
+                quality: parseInt(data.quality || 2),
+                outputDir: data.output_dir || '',
+                boundaryOffset: parseFloat(data.boundary_offset || 0.04),
+                cleanOld: !!data.clean_old,
+            });
+        }
+
+        case 'media/scene-export-frames': {
+            if (!data.file_path) throw new Error('缺少文件路径');
+            if (!data.frames || data.frames.length === 0) throw new Error('缺少帧列表');
+            return await ffmpegService.sceneExportFrames(data.file_path, data.frames, {
+                format: data.format || 'jpg',
+                quality: parseInt(data.quality || 2),
+                outputDir: data.output_dir || '',
+                cleanOld: !!data.clean_old,
+            });
+        }
+
+        case 'media/download-and-detect-frames': {
+            // 从视频链接下载 → 场景检测 → 关键帧截取 → 删除临时视频
+            if (!data.urls || data.urls.length === 0) throw new Error('缺少视频链接列表');
+            const outDir = data.output_dir || settingsService.getSecureTmpDir('smart_keyframes');
+            fs.mkdirSync(outDir, { recursive: true });
+
+            const { BrowserWindow: BWFrames } = require('electron');
+            const winsFrames = BWFrames.getAllWindows();
+
+            const allResults = [];
+            for (let i = 0; i < data.urls.length; i++) {
+                const url = data.urls[i].trim();
+                if (!url) continue;
+
+                // 通知进度
+                for (const w of winsFrames) {
+                    try { w.webContents.send('url-thumbnail-progress', { index: i, total: data.urls.length, status: 'downloading', url }); } catch {}
+                }
+
+                let tmpVideoPath = null;
+                try {
+                    // 下载视频
+                    const tmpDir = settingsService.getSecureTmpDir('smart_kf_dl');
+                    fs.mkdirSync(tmpDir, { recursive: true });
+                    const dlResult = await ytdlpService.downloadVideo(url, {
+                        quality: data.download_quality || 'best',
+                        outputDir: tmpDir,
+                        outputTemplate: `kf_${i}_%(id)s.%(ext)s`,
+                    });
+                    tmpVideoPath = dlResult.file_path || dlResult.output_path || null;
+
+                    if (!tmpVideoPath || !fs.existsSync(tmpVideoPath)) {
+                        const files = fs.readdirSync(tmpDir)
+                            .filter(f => f.startsWith(`kf_${i}_`))
+                            .map(f => ({ f, mtime: fs.statSync(path.join(tmpDir, f)).mtimeMs }))
+                            .sort((a, b) => b.mtime - a.mtime);
+                        if (files.length > 0) tmpVideoPath = path.join(tmpDir, files[0].f);
+                    }
+
+                    if (!tmpVideoPath || !fs.existsSync(tmpVideoPath)) throw new Error('下载后找不到视频文件');
+
+                    // 通知进度：分析中
+                    for (const w of winsFrames) {
+                        try { w.webContents.send('url-thumbnail-progress', { index: i, total: data.urls.length, status: 'analyzing', url }); } catch {}
+                    }
+
+                    // 场景检测 + 关键帧截取
+                    const result = await ffmpegService.sceneDetectFrames(tmpVideoPath, {
+                        threshold: parseFloat(data.threshold || 0.3),
+                        minInterval: parseFloat(data.min_interval || 0.5),
+                        framesPerScene: parseInt(data.frames_per_scene || 0),
+                        format: data.format || 'jpg',
+                        quality: parseInt(data.quality || 2),
+                        outputDir: outDir,
+                        boundaryOffset: parseFloat(data.boundary_offset || 0.04),
+                    });
+
+                    allResults.push({ url, success: true, ...result });
+
+                } catch (e) {
+                    allResults.push({ url, success: false, error: e.message });
+                } finally {
+                    // 删除临时视频
+                    if (tmpVideoPath && fs.existsSync(tmpVideoPath)) {
+                        try { fs.unlinkSync(tmpVideoPath); } catch {}
+                    }
+                    for (const w of winsFrames) {
+                        try { w.webContents.send('url-thumbnail-progress', { index: i, total: data.urls.length, status: 'done', url }); } catch {}
+                    }
+                }
+            }
+
+            const successCount = allResults.filter(r => r.success).length;
+            const totalFrames = allResults.reduce((sum, r) => sum + (r.success || 0), 0);
+            return {
+                message: `处理 ${successCount}/${allResults.length} 个视频，共导出 ${totalFrames} 帧`,
+                results: allResults,
+                output_dir: outDir,
+            };
+        }
 
         case 'media/batch-cut':
             if (!data.file_path) throw new Error('缺少文件路径');

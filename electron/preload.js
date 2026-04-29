@@ -55,6 +55,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
     // 选择目录
     selectDirectory: () => ipcRenderer.invoke('select-directory'),
+    selectFiles: (options) => ipcRenderer.invoke('select-files', options),
     scanDirectory: (dirPath) => ipcRenderer.invoke('scan-directory', dirPath),
     getDownloadsPath: () => ipcRenderer.invoke('get-downloads-path'),
 

@@ -124,7 +124,11 @@ async function prepareBg(opts) {
         loopFade = true,
         loopFadeDur = 1.0,
         bgScale = 100,
+        bgDurScale = 100,
     } = opts;
+    
+    const ptsFactor = (bgDurScale || 100) / 100;
+    const ptsFilter = Math.abs(ptsFactor - 1.0) < 0.01 ? 'setpts=PTS-STARTPTS' : `setpts=(PTS-STARTPTS)*${ptsFactor.toFixed(3)}`;
 
     const ffmpeg = findFFmpeg();
     const settings = require('./settings');
@@ -161,7 +165,7 @@ async function prepareBg(opts) {
         const clipDurations = [];
         for (const clip of validClips) {
             const dur = isImageMedia(clip) ? 5.0 : await getMediaDuration(clip);
-            clipDurations.push({ path: clip, duration: Math.max(dur, 0.5), isImage: isImageMedia(clip) });
+            clipDurations.push({ path: clip, duration: Math.max(dur, 0.5) * ptsFactor, isImage: isImageMedia(clip) });
         }
 
         // 随机选择素材直到总时长 >= 目标时长
@@ -217,7 +221,7 @@ async function prepareBg(opts) {
 
                 // 预处理每个输入
                 for (let i = 0; i < selectedClips.length; i++) {
-                    filterParts.push(`[${i}:v]${scaleCropFilter},setpts=PTS-STARTPTS[v${i}]`);
+                    filterParts.push(`[${i}:v]${scaleCropFilter},${ptsFilter}[v${i}]`);
                 }
 
                 // 链式 xfade
@@ -245,7 +249,7 @@ async function prepareBg(opts) {
             } else {
                 // 无转场: concat 硬切
                 for (let i = 0; i < selectedClips.length; i++) {
-                    filterParts.push(`[${i}:v]${scaleCropFilter},setpts=PTS-STARTPTS[v${i}]`);
+                    filterParts.push(`[${i}:v]${scaleCropFilter},${ptsFilter}[v${i}]`);
                 }
                 const concatLabels = selectedClips.map((_, i) => `[v${i}]`).join('');
                 filterParts.push(`${concatLabels}concat=n=${selectedClips.length}:v=1:a=0[vout]`);
@@ -317,7 +321,8 @@ async function prepareBg(opts) {
     }
 
     // 视频背景
-    const bgDuration = await getMediaDuration(backgroundPath);
+    const rawBgDuration = await getMediaDuration(backgroundPath);
+    const bgDuration = rawBgDuration * ptsFactor;
     const fadeEnabled = loopFade && bgDuration > 0;
     const fadeDur = Math.min(loopFadeDur || 1.0, bgDuration * 0.4);
 
@@ -331,14 +336,14 @@ async function prepareBg(opts) {
                 args.push('-i', backgroundPath);
             }
 
-            const filterParts = [`[0:v]${scaleCropFilter},setpts=PTS-STARTPTS[v0]`];
+            const filterParts = [`[0:v]${scaleCropFilter},${ptsFilter}[v0]`];
             let prevLabel = 'v0';
 
             for (let i = 1; i < segCount; i++) {
                 const inLabel = `v${i}`;
                 const outLabel = i === segCount - 1 ? 'vout' : `vx${i}`;
                 const offset = Math.max(0, i * step - 0.01).toFixed(3);
-                filterParts.push(`[${i}:v]${scaleCropFilter},setpts=PTS-STARTPTS[${inLabel}]`);
+                filterParts.push(`[${i}:v]${scaleCropFilter},${ptsFilter}[${inLabel}]`);
                 filterParts.push(
                     `[${prevLabel}][${inLabel}]xfade=transition=fade:duration=${fadeDur.toFixed(3)}:offset=${offset}[${outLabel}]`
                 );
@@ -358,10 +363,10 @@ async function prepareBg(opts) {
             console.log(`[WYSIWYG-BG] xfade 循环: ${segCount}段, fadeDur=${fadeDur}s`);
             await runFFmpegSync(ffmpeg, args);
         } else {
-            await extractSimpleLoop(ffmpeg, backgroundPath, framesDir, scaleCropFilter, fps, duration);
+            await extractSimpleLoop(ffmpeg, backgroundPath, framesDir, scaleCropFilter, fps, duration, ptsFactor);
         }
     } else {
-        await extractSimpleLoop(ffmpeg, backgroundPath, framesDir, scaleCropFilter, fps, duration);
+        await extractSimpleLoop(ffmpeg, backgroundPath, framesDir, scaleCropFilter, fps, duration, ptsFactor);
     }
 
     // 统计实际帧数
@@ -370,13 +375,17 @@ async function prepareBg(opts) {
     return { framesDir, frameCount: files.length };
 }
 
-async function extractSimpleLoop(ffmpeg, backgroundPath, framesDir, scaleCropFilter, fps, duration) {
+async function extractSimpleLoop(ffmpeg, backgroundPath, framesDir, scaleCropFilter, fps, duration, ptsFactor = 1.0) {
+    let vf = scaleCropFilter;
+    if (Math.abs(ptsFactor - 1.0) > 0.01) {
+        vf = `${scaleCropFilter},setpts=PTS*${ptsFactor.toFixed(3)}`;
+    }
     const args = [
         '-y',
         '-stream_loop', '-1',
         '-i', backgroundPath,
         '-t', String(duration),
-        '-vf', scaleCropFilter,
+        '-vf', vf,
         '-r', String(fps),
         '-an',
         '-qscale:v', '2',

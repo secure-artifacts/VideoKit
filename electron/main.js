@@ -1,6 +1,7 @@
-const { app, BrowserWindow, ipcMain, dialog, powerSaveBlocker, protocol, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, powerSaveBlocker, protocol, shell, net } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { pathToFileURL } = require('url');
 const ffmpegService = require('./services/ffmpeg');
 const { initAutoUpdater } = require('./updater');
 
@@ -11,6 +12,22 @@ let mainWindow;
 let appIsReady = false;
 let powerSaveId = null;
 let isQuitting = false;
+
+// local-media 用于渲染本地生成的预览图/媒体。必须在 app.ready 前声明权限，
+// 否则 video/img 的 range/fetch 行为在部分 Electron 版本里会不稳定。
+try {
+    protocol.registerSchemesAsPrivileged([{
+        scheme: 'local-media',
+        privileges: {
+            secure: true,
+            supportFetchAPI: true,
+            stream: true,
+            corsEnabled: true,
+        },
+    }]);
+} catch (e) {
+    console.warn('[Protocol] local-media privilege registration skipped:', e.message);
+}
 
 // ── 自定义缓存路径（必须在 app.ready 之前设置）──
 const _cacheConfigPath = path.join(app.isPackaged ? path.dirname(process.execPath) : __dirname, '.videokit-cache-config.json');
@@ -134,7 +151,7 @@ function createWindow() {
 
     if (!appIsReady) return;
 
-    mainWindow = new BrowserWindow({
+    const windowOptions = {
         width: 1200,
         height: 800,
         minWidth: 900,
@@ -147,9 +164,15 @@ function createWindow() {
             webSecurity: false,  // 桌面应用需要加载 file:// 本地媒体预览
             preload: path.join(__dirname, 'preload.js')
         },
-        titleBarStyle: 'hiddenInset',
-        trafficLightPosition: { x: 15, y: 15 },
-    });
+    };
+
+    // macOS 专用：隐藏标题栏 + 红绿灯按钮位置
+    if (process.platform === 'darwin') {
+        windowOptions.titleBarStyle = 'hiddenInset';
+        windowOptions.trafficLightPosition = { x: 15, y: 15 };
+    }
+
+    mainWindow = new BrowserWindow(windowOptions);
 
     if (!app.isPackaged) {
         mainWindow.loadURL('http://localhost:5173');
@@ -168,17 +191,63 @@ app.whenReady().then(async () => {
     appIsReady = true;
     log('=== App Ready (Node.js Backend) ===');
 
-    // Register custom protocol for serving local media files securely
-    // This replaces the previous webSecurity:false approach
-    protocol.handle('local-media', (request) => {
-        const url = request.url.replace('local-media://', '');
-        const filePath = decodeURIComponent(url);
-        // Security: only allow reading existing files, no directory traversal
+    protocol.handle('local-media', async (request) => {
+        // 不用 standard:true → URL 不会被解析为 host/path 格式
+        // local-media:///Users/ww/file.mp4 → 直接截取 scheme 后的路径
+        const afterScheme = request.url.replace(/^local-media:\/\//, '');
+        const filePath = decodeURIComponent(afterScheme);
         const resolved = path.resolve(filePath);
-        if (!fs.existsSync(resolved)) {
-            return new Response('Not Found', { status: 404 });
+
+        try {
+            if (!fs.existsSync(resolved)) {
+                console.error('[local-media] File not found:', resolved);
+                return new Response('Not Found', { status: 404 });
+            }
+
+            const fileUrl = pathToFileURL(resolved).href;
+            const rangeHeader = request.headers.get('Range');
+            if (rangeHeader) {
+                // 手动处理 Range 请求以确保视频 seek 可靠
+                const stat = fs.statSync(resolved);
+                const fileSize = stat.size;
+                const m = rangeHeader.match(/bytes=(\d+)-(\d*)/);
+                if (m) {
+                    const start = parseInt(m[1], 10);
+                    const end = m[2] ? parseInt(m[2], 10) : Math.min(start + 1024 * 1024 - 1, fileSize - 1);
+                    const chunkSize = end - start + 1;
+                    const buf = Buffer.alloc(chunkSize);
+                    const fd = fs.openSync(resolved, 'r');
+                    fs.readSync(fd, buf, 0, chunkSize, start);
+                    fs.closeSync(fd);
+
+                    const ext = path.extname(resolved).toLowerCase();
+                    const mimeMap = {
+                        '.mp4':'video/mp4','.webm':'video/webm','.mkv':'video/x-matroska',
+                        '.avi':'video/x-msvideo','.mov':'video/quicktime','.m4v':'video/mp4',
+                        '.ts':'video/mp2t','.flv':'video/x-flv',
+                        '.jpg':'image/jpeg','.jpeg':'image/jpeg','.png':'image/png',
+                        '.gif':'image/gif','.webp':'image/webp','.bmp':'image/bmp',
+                    };
+                    const contentType = mimeMap[ext] || 'application/octet-stream';
+
+                    return new Response(buf, {
+                        status: 206,
+                        headers: {
+                            'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+                            'Accept-Ranges': 'bytes',
+                            'Content-Length': String(chunkSize),
+                            'Content-Type': contentType,
+                        }
+                    });
+                }
+            }
+
+            // 非 Range 请求: 用 net.fetch 委托给 file:// 协议
+            return net.fetch(fileUrl);
+        } catch (e) {
+            console.error('[local-media] Error:', e.message, 'File:', resolved);
+            return new Response('Internal Error: ' + e.message, { status: 500 });
         }
-        return new Response(fs.createReadStream(resolved));
     });
 
     // 设置 FFmpeg 环境
@@ -197,6 +266,21 @@ app.whenReady().then(async () => {
         });
         if (!result.canceled && result.filePaths.length > 0) {
             return result.filePaths[0];
+        }
+        return null;
+    });
+
+    ipcMain.handle('select-files', async (event, options = {}) => {
+        const props = ['openFile'];
+        if (options.multiple !== false) props.push('multiSelections');
+        const dialogOpts = {
+            properties: props,
+            title: options.title || '选择文件',
+        };
+        if (options.filters) dialogOpts.filters = options.filters;
+        const result = await dialog.showOpenDialog(mainWindow, dialogOpts);
+        if (!result.canceled && result.filePaths.length > 0) {
+            return result.filePaths;
         }
         return null;
     });

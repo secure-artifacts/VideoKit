@@ -19,6 +19,7 @@
         <button class="tab" data-tab="elevenlabs">ElevenLabs</button>
         <button class="tab" data-tab="subtitle">字幕对齐</button>
         <button class="tab" data-tab="media">媒体转换</button>
+        <button class="tab" data-tab="media-toolbox">媒体工具箱 Beta</button>
         <button class="tab" data-tab="srt-tools">SRT工具</button>
         <button class="tab" data-tab="video-download">视频下载</button>
         <button class="tab" data-tab="batch-reels">🎬 批量Reels</button>
@@ -312,6 +313,7 @@
             <button class="sub-tab" data-subtab="media-watermark">✏️ 文字水印</button>
             <button class="sub-tab" data-subtab="media-format">🔧 格式转换</button>
             <button class="sub-tab" data-subtab="media-scene">✂️ 场景检测</button>
+            <button class="sub-tab" data-subtab="media-smartkf">🧠 智能关键帧</button>
             <button class="sub-tab" data-subtab="media-thumbnail">📸 批量截图</button>
             <button class="sub-tab" data-subtab="media-classify">🔍 画面分类</button>
             <button class="sub-tab" data-subtab="media-lipsync">🗣️ 口型同步</button>
@@ -1034,6 +1036,256 @@
                 style="display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; max-height: 500px; overflow-y: auto; padding: 4px;">
               </div>
             </div>
+          </div>
+
+          <!-- ========== 🧠 智能关键帧模块 ========== -->
+          <div id="media-smartkf-subtab" class="subtab-content">
+
+            <!-- 模式切换 -->
+            <div class="sub-tabs" style="margin-bottom: 16px;">
+              <button class="sub-tab active" id="skf-mode-file-btn" onclick="switchSmartKfMode('file')">📁 本地视频</button>
+              <button class="sub-tab" id="skf-mode-url-btn" onclick="switchSmartKfMode('url')">🔗 视频链接</button>
+            </div>
+
+            <!-- ===== 本地文件模式 ===== -->
+            <div id="skf-file-mode">
+              <div class="form-section">
+                <h4 style="margin-bottom: 12px; color: var(--text-secondary);">🎬 选择视频文件（支持批量拖拽）</h4>
+                <div class="file-input-group" id="skf-drop-zone"
+                  style="border: 2px dashed var(--border-color); border-radius: 8px; padding: 12px; transition: all 0.2s;">
+                  <input type="text" id="skf-video-path" class="input file-path" placeholder="选择或拖拽视频文件（支持多选）" readonly>
+                  <input type="file" id="skf-video-input" class="hidden-file-input"
+                    accept=".mp4,.mov,.mkv,.avi,.wmv,.flv,.webm,.m4v" multiple>
+                  <button class="btn btn-secondary"
+                    onclick="selectSmartKfFiles()">选择文件</button>
+                  <button class="btn btn-secondary" onclick="clearSmartKfFiles()" style="font-size: 12px;">🧹 清空</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- ===== 链接模式 ===== -->
+            <div id="skf-url-mode" style="display:none;">
+              <div class="form-section">
+                <h4 style="margin-bottom: 8px; color: var(--text-secondary);">🔗 粘贴视频链接（每行一个）</h4>
+                <p class="hint" style="margin-bottom: 10px;">支持 Facebook、YouTube、Instagram、TikTok 等平台链接。</p>
+                <textarea id="skf-url-links" class="textarea" rows="5"
+                  placeholder="https://www.youtube.com/watch?v=...&#10;https://www.facebook.com/video/...&#10;https://www.tiktok.com/@user/video/..."></textarea>
+                <div style="display:flex; gap:8px; margin-top:8px;">
+                  <button class="btn btn-secondary" style="font-size:12px; padding:4px 10px;"
+                    onclick="document.getElementById('skf-url-links').value=''">🧹 清空</button>
+                  <span id="skf-url-count" style="font-size:12px; color:var(--text-muted); margin-left:auto; align-self:center;"></span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 输出目录 -->
+            <div class="form-section">
+              <h4 style="margin-bottom: 12px; color: var(--text-secondary);">📤 输出目录（可选）</h4>
+              <div class="file-input-group">
+                <input type="text" id="skf-output-path" class="input file-path"
+                  placeholder="默认在视频文件旁创建 _keyframes 文件夹">
+                <button class="btn btn-secondary" onclick="selectSmartKfOutputDir()">选择目录</button>
+              </div>
+            </div>
+
+            <!-- 检测参数 -->
+            <div class="form-section">
+              <h4 style="margin-bottom: 12px; color: var(--text-secondary);">⚙️ 场景检测参数</h4>
+              <div class="param-row" style="flex-wrap: wrap; gap: 12px;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <label>灵敏度:</label>
+                  <input type="range" id="skf-threshold" min="0.02" max="0.8" step="0.01" value="0.05"
+                    style="width: 150px;"
+                    oninput="document.getElementById('skf-threshold-label').textContent = this.value">
+                  <span id="skf-threshold-label"
+                    style="font-size: 12px; color: var(--text-muted); min-width: 30px;">0.05</span>
+                  <span style="font-size: 11px; color: var(--text-muted);">（越小越灵敏）</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <label>最小间隔:</label>
+                  <input type="number" id="skf-min-interval" class="input input-small" value="0.5" min="0.1" max="10"
+                    step="0.1" style="width: 70px;">
+                  <span style="font-size: 11px; color: var(--text-muted);">秒</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 截帧密度设置 -->
+            <div class="form-section"
+              style="background: linear-gradient(135deg, rgba(102, 126, 234, 0.08), rgba(118, 75, 162, 0.08)); border-radius: 8px; padding: 14px; border: 1px solid rgba(102, 126, 234, 0.15);">
+              <h4
+                style="margin-bottom: 10px; color: var(--text-secondary); display: flex; align-items: center; gap: 8px;">
+                🎯 截帧策略
+                <span style="font-size: 11px; color: var(--text-muted); font-weight: normal;">（控制输出帧的数量和密度）</span>
+              </h4>
+              <div class="param-row" style="flex-wrap: wrap; gap: 12px;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <label>每场景额外采样:</label>
+                  <input type="number" id="skf-frames-per-scene" class="input input-small" value="0" min="0" max="20"
+                    style="width: 65px;">
+                  <span style="font-size: 11px; color: var(--text-muted);">帧（0=仅边界帧）</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <label>图片格式:</label>
+                  <select id="skf-format" class="select" style="width: 100px;">
+                    <option value="jpg" selected>JPG</option>
+                    <option value="png">PNG</option>
+                  </select>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <label>JPG 质量:</label>
+                  <input type="range" id="skf-quality" min="1" max="10" value="2" style="width: 120px;"
+                    oninput="document.getElementById('skf-quality-label').textContent = this.value <= 3 ? '高' : this.value <= 6 ? '中' : '低'">
+                  <span id="skf-quality-label"
+                    style="font-size: 12px; color: var(--text-muted); min-width: 20px;">高</span>
+                </div>
+              </div>
+              <p class="hint" style="margin-top: 10px; font-size: 11px;">
+                <b>默认输出：</b>首帧 + 每个场景切换点的「结束帧 + 开始帧」+ 尾帧。<br>
+                例如检测到 5 个场景切换点 → 首帧(1) + 边界帧(5×2=10) + 尾帧(1) = 共 12 帧。<br>
+                设定额外采样 3 → 每场景再加 3 帧均匀分布 → 总帧数更多。
+              </p>
+            </div>
+
+            <!-- 操作按钮 -->
+            <div class="form-section" style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+              <select id="skf-mode" class="select" style="width: 170px; font-size: 13px;"
+                onchange="skfModeChanged(this.value)">
+                <option value="scene">🔍 场景检测分析</option>
+                <option value="grid">🖼️ 帧网格浏览</option>
+              </select>
+              <button id="skf-start-btn" class="btn btn-primary" onclick="startSmartKeyframes()"
+                style="min-width: 150px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border: none; font-size: 14px; padding: 10px 20px;">
+                🚀 开始
+              </button>
+              <button class="btn btn-secondary hidden" id="skf-open-dir-btn" onclick="openSmartKfOutputDir()"
+                style="padding: 6px 12px; font-size: 12px;">
+                📁 打开目录
+              </button>
+              <span id="skf-status" class="status-text" style="font-size: 13px;">就绪</span>
+            </div>
+
+            <!-- 进度条 -->
+            <div id="skf-progress-section" class="form-section hidden">
+              <div class="status-box">
+                <span id="skf-progress-text" class="status-text">处理中...</span>
+                <div id="skf-progress-bar" class="progress-bar">
+                  <div class="progress-bar-inner" style="width: 0%; transition: width 0.3s;"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 视频预览 & 帧标记时间线 -->
+            <div id="skf-video-preview" class="form-section hidden">
+              <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                <h4 style="margin: 0; color: var(--text-secondary);">🎬 视频预览 & 帧标记</h4>
+                <span id="skf-video-time" style="font-family: monospace; font-size: 12px; color: var(--text-muted);">00:00.000 / 00:00.000</span>
+              </div>
+
+              <!-- 视频播放器 -->
+              <div style="position: relative; background: #000; border-radius: 8px; overflow: hidden;">
+                <video id="skf-video" controls style="width: 100%; max-height: 420px; display: block;" preload="auto"></video>
+              </div>
+
+              <!-- 时间线 -->
+              <div id="skf-timeline" style="position: relative; height: 44px; background: var(--bg-tertiary); border-radius: 6px; margin-top: 8px; cursor: pointer; user-select: none; border: 1px solid rgba(255,255,255,0.06); overflow: visible;"
+                   onmousedown="skfTimelineSeek(event)" onmousemove="skfTimelineHover(event)" onmouseleave="skfTimelineHoverEnd()">
+                <div id="skf-timeline-progress" style="position: absolute; top: 0; left: 0; height: 100%; background: rgba(102,126,234,0.12); border-radius: 6px; pointer-events: none;"></div>
+                <div id="skf-playhead" style="position: absolute; top: 0; left: 0; width: 2px; height: 100%; background: rgba(255,255,255,0.9); pointer-events: none; z-index: 10; box-shadow: 0 0 4px rgba(0,0,0,0.4);"></div>
+                <div id="skf-markers-container" style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 5;"></div>
+                <div id="skf-timeline-tooltip" style="display: none; position: absolute; top: -28px; transform: translateX(-50%); background: rgba(0,0,0,0.8); color: #fff; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-family: monospace; pointer-events: none; white-space: nowrap; z-index: 20;"></div>
+              </div>
+
+	              <!-- 标记列表 & 控制 -->
+	              <div style="display: flex; gap: 8px; margin-top: 8px; align-items: center; flex-wrap: wrap;">
+	                <button onclick="skfJumpMarker(-1)" id="skf-prev-marker-btn" class="btn btn-secondary" style="font-size: 12px; padding: 5px 12px;">上一帧</button>
+	                <button onclick="skfJumpMarker(1)" id="skf-next-marker-btn" class="btn btn-secondary" style="font-size: 12px; padding: 5px 12px;">下一帧</button>
+	                <button onclick="skfAddMarkerAtCurrent()" class="btn btn-secondary" style="font-size: 12px; padding: 5px 12px;">➕ 添加标记</button>
+	                <button onclick="skfRemoveSelectedMarker()" id="skf-remove-marker-btn" class="btn btn-secondary" style="font-size: 12px; padding: 5px 12px; opacity: 0.5;" disabled>🗑️ 删除选中</button>
+	                <button onclick="skfClearAllMarkers()" class="btn btn-secondary" style="font-size: 12px; padding: 5px 12px;">🧹 清空</button>
+                <span id="skf-marker-count" style="font-size: 12px; color: var(--text-secondary); margin-left: 4px;">0 个标记</span>
+                <div style="flex: 1;"></div>
+                <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); cursor: pointer; user-select: none;">
+                  <input type="checkbox" id="skf-clean-old-tl" checked style="accent-color: var(--accent);">
+                  清除旧文件
+                </label>
+                <button onclick="skfExportMarkedFrames()" id="skf-export-marked-btn" class="btn btn-primary"
+                  style="font-size: 13px; padding: 8px 20px; background: linear-gradient(135deg, #00d9a5 0%, #00b894 100%); border: none; min-width: 140px;">
+                  ✅ 导出选中帧
+                </button>
+              </div>
+
+              <!-- 选中标记信息 -->
+              <div id="skf-marker-info" class="hidden" style="margin-top: 8px; padding: 6px 12px; background: var(--bg-tertiary); border-radius: 6px; font-size: 12px; color: var(--text-secondary);"></div>
+            </div>
+
+            <!-- 帧网格浏览 -->
+            <div id="skf-frame-grid-section" class="form-section hidden">
+              <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; flex-wrap: wrap; gap: 8px;">
+                <h4 style="margin: 0; color: var(--text-secondary);">🖼️ 帧网格浏览 <span style="font-size:11px; font-weight:normal; color:var(--text-muted);">（点击选择，再次点击取消）</span></h4>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                  <label style="font-size: 12px; color: var(--text-muted);">间隔:</label>
+                  <select id="skf-grid-interval" class="select" style="width: 80px; font-size: 12px;" onchange="skfRegenerateGrid()">
+                    <option value="0.5">0.5秒</option>
+                    <option value="1" selected>1秒</option>
+                    <option value="2">2秒</option>
+                    <option value="3">3秒</option>
+                    <option value="5">5秒</option>
+                  </select>
+                  <button class="btn btn-secondary" style="font-size: 11px; padding: 4px 10px;" onclick="skfSelectAllGrid()">全选</button>
+                  <button class="btn btn-secondary" style="font-size: 11px; padding: 4px 10px;" onclick="skfDeselectAllGrid()">全不选</button>
+                  <span id="skf-grid-selected-count" style="font-size: 12px; color: var(--accent); font-weight: 600;">0 / 0 已选</span>
+                </div>
+              </div>
+              <div id="skf-grid-progress" class="hidden" style="margin-bottom: 8px;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <span style="font-size: 12px; color: var(--text-muted);">正在提取帧...</span>
+                  <div style="flex: 1; height: 4px; background: var(--bg-tertiary); border-radius: 2px; overflow: hidden;">
+                    <div id="skf-grid-progress-bar" style="height: 100%; width: 0%; background: linear-gradient(90deg, #667eea, #764ba2); transition: width 0.2s;"></div>
+                  </div>
+                  <span id="skf-grid-progress-text" style="font-size: 11px; color: var(--text-muted);">0%</span>
+                </div>
+              </div>
+              <div id="skf-frame-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 6px; max-height: 600px; overflow-y: auto; padding: 4px;"></div>
+              <div style="display: flex; gap: 8px; margin-top: 10px; align-items: center; justify-content: flex-end;">
+                <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); cursor: pointer;">
+                  <input type="checkbox" id="skf-grid-clean-old" checked style="accent-color: var(--accent);">
+                  清除旧文件
+                </label>
+                <button onclick="skfExportSelectedGridFrames()" class="btn btn-primary"
+                  style="font-size: 13px; padding: 8px 20px; background: linear-gradient(135deg, #00d9a5 0%, #00b894 100%); border: none;">
+                  ✅ 导出选中帧
+                </button>
+              </div>
+            </div>
+
+            <!-- 结果预览 -->
+            <div id="skf-result-section" class="form-section hidden">
+              <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+                <h4 style="margin: 0; color: var(--text-secondary);">🖼️ 关键帧预览</h4>
+                <span id="skf-result-count" style="font-size: 12px; color: var(--text-muted);"></span>
+                <div style="display: flex; gap: 6px; margin-left: 8px;">
+                  <span style="display:inline-flex; align-items:center; gap:3px; font-size:10px; color:var(--text-muted);">
+                    <span style="width:10px; height:10px; border-radius:2px; background:#00d9a5;"></span>首/尾帧
+                  </span>
+                  <span style="display:inline-flex; align-items:center; gap:3px; font-size:10px; color:var(--text-muted);">
+                    <span style="width:10px; height:10px; border-radius:2px; background:#ff6b6b;"></span>场景结束
+                  </span>
+                  <span style="display:inline-flex; align-items:center; gap:3px; font-size:10px; color:var(--text-muted);">
+                    <span style="width:10px; height:10px; border-radius:2px; background:#667eea;"></span>场景开始
+                  </span>
+                  <span style="display:inline-flex; align-items:center; gap:3px; font-size:10px; color:var(--text-muted);">
+                    <span style="width:10px; height:10px; border-radius:2px; background:#ffa726;"></span>采样帧
+                  </span>
+                </div>
+                <button class="btn btn-secondary" onclick="openSmartKfOutputDir()"
+                  style="padding: 4px 10px; font-size: 11px; margin-left: auto;">📁 打开目录</button>
+              </div>
+              <div id="skf-result-grid"
+                style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; max-height: 600px; overflow-y: auto; padding: 4px;">
+              </div>
+            </div>
+
           </div>
 
           <!-- ========== 批量截图模块 ========== -->
@@ -1810,7 +2062,7 @@
           </div>
 
           <!-- 输出目录 -->
-          <div class="form-section">
+          <div class="form-section" id="media-output-section">
             <h3 class="section-title">输出目录</h3>
             <div class="file-input-group">
               <input type="text" id="media-output-path" class="input file-path" placeholder="默认与源文件相同目录">
@@ -1819,7 +2071,7 @@
           </div>
 
           <!-- 状态 -->
-          <div class="form-section status-section">
+          <div class="form-section status-section" id="media-status-section">
             <div class="status-box">
               <span id="media-status" class="status-text">就绪</span>
               <div id="media-progress" class="progress-bar hidden">
@@ -1828,7 +2080,90 @@
             </div>
           </div>
 
-          <button class="btn btn-primary btn-large" onclick="startMediaConvert()">🚀 开始转换</button>
+          <button class="btn btn-primary btn-large" id="media-start-btn" onclick="startMediaConvert()">🚀 开始转换</button>
+        </div>
+      </section>
+
+      <!-- ==================== 新版媒体工具箱 Beta（保留旧媒体转换面板） ==================== -->
+      <section id="media-toolbox-panel" class="panel">
+        <div class="panel-content mtb-shell">
+          <div class="mtb-header">
+            <div>
+              <h2 class="mtb-title">媒体工具箱 Beta</h2>
+              <p class="mtb-subtitle">按工作流重新整理现有媒体工具。旧版“媒体转换”仍完整保留。</p>
+            </div>
+            <button class="btn btn-secondary" onclick="openPanelByName('media')">打开旧版媒体转换</button>
+          </div>
+
+          <div class="mtb-layout">
+            <aside class="mtb-sidebar">
+              <button class="mtb-cat active" data-mtb-category="common">常用处理</button>
+              <button class="mtb-cat" data-mtb-category="audio">音频工具</button>
+              <button class="mtb-cat" data-mtb-category="analysis">截图与分析</button>
+              <button class="mtb-cat" data-mtb-category="edit">剪辑工具</button>
+              <button class="mtb-cat" data-mtb-category="text">文本与命名</button>
+            </aside>
+
+            <div class="mtb-main">
+              <div id="mtb-tool-grid" class="mtb-tool-grid"></div>
+
+              <div class="mtb-workbench">
+                <div class="mtb-workbench-head">
+                  <div>
+                    <h3 id="mtb-tool-title" class="section-title">选择一个工具</h3>
+                    <p id="mtb-tool-desc" class="hint">从左侧分类中选择工具后，在这里配置输入、参数和输出。</p>
+                  </div>
+                  <div class="mtb-head-actions">
+                    <button id="mtb-help-btn" class="btn btn-secondary" onclick="mtbShowHelp()">使用说明</button>
+                    <span id="mtb-tool-badge" class="mtb-badge">Beta</span>
+                  </div>
+                </div>
+
+                <div id="mtb-direct-tool">
+                  <div class="form-section">
+                    <h3 class="section-title">输入</h3>
+                    <div class="file-input-group" id="mtb-drop-zone">
+                      <input type="text" id="mtb-input-path" class="input file-path" placeholder="选择或拖拽文件，支持多选" readonly>
+                      <input type="file" id="mtb-input-file" class="hidden-file-input" multiple>
+                      <button class="btn btn-secondary" onclick="document.getElementById('mtb-input-file').click()">选择文件</button>
+                      <button class="btn btn-secondary" onclick="mtbClearFiles()">清空</button>
+                    </div>
+                    <div id="mtb-file-list" class="mtb-file-list"></div>
+                  </div>
+
+                  <div class="form-section">
+                    <h3 class="section-title">参数</h3>
+                    <div id="mtb-options"></div>
+                  </div>
+
+                  <div class="form-section">
+                    <h3 class="section-title">输出目录</h3>
+                    <div class="file-input-group">
+                      <input type="text" id="mtb-output-path" class="input file-path" placeholder="默认与源文件相同目录">
+                      <button class="btn btn-secondary" onclick="mtbSelectOutputDir()">选择目录</button>
+                    </div>
+                  </div>
+
+                  <div class="form-section status-section">
+                    <div class="status-box">
+                      <span id="mtb-status" class="status-text">就绪</span>
+                      <div id="mtb-progress" class="progress-bar hidden">
+                        <div class="progress-bar-inner" style="width: 0%;"></div>
+                      </div>
+                    </div>
+                    <div id="mtb-result"></div>
+                  </div>
+
+                  <button class="btn btn-primary btn-large" onclick="mtbRunSelectedTool()">开始处理</button>
+                </div>
+
+                <div id="mtb-ported-tool" class="mtb-ported hidden">
+                  <div id="mtb-ported-global"></div>
+                  <div id="mtb-ported-content"></div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -3720,8 +4055,28 @@
           <div class="form-section">
             <h3 class="section-title">AI 处理设置 (Gemini)</h3>
             <p class="hint">用于文案情绪打标签与断句引擎(人声模式)，每行一个 Gemini API Key（支持自动轮询）</p>
-            <textarea id="gemini-keys" class="textarea" rows="3" placeholder="输入 Gemini API Keys..."></textarea>
+            <textarea id="gemini-keys" class="textarea" rows="3" placeholder="每行一个 API Key，支持 AIzaSy... (旧) 和 AQ... (新) 格式"></textarea>
             
+            <p class="hint" style="margin-top: 12px; font-weight: 500;">模型选择</p>
+            <select id="gemini-model" class="select" style="width: 100%; font-size: 12px;">
+                <option value="gemini-2.5-flash">⚡ gemini-2.5-flash (GA·快速)</option>
+                <option value="gemini-2.5-flash-lite">⚡ gemini-2.5-flash-lite (GA·最快最省)</option>
+                <option value="gemini-2.5-pro">🧠 gemini-2.5-pro (GA·强推理)</option>
+                <option value="gemini-3-flash-preview">gemini-3-flash-preview (Preview)</option>
+                <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview (Preview·最新)</option>
+                <option value="gemini-3.1-flash-lite-preview" selected>gemini-3.1-flash-lite-preview (Preview·Lite⚡·默认)</option>
+                <option value="gemma-4-31b-it">💎 Gemma 4 31B (Dense·256K·30RPM)</option>
+                <option value="gemma-4-26b-it">💎 Gemma 4 26B MoE (256K·30RPM)</option>
+            </select>
+
+            <p class="hint" style="margin-top: 8px; font-size: 10px; color: var(--text-muted);">💡 自动识别：AIza... 开头走 AI Studio，其他 Key 自动走 Vertex AI — 无需手动设置</p>
+
+            <div style="display: flex; gap: 8px; align-items: center; margin-top: 12px;">
+                <button class="btn btn-secondary" onclick="testGeminiKeys()" style="font-size: 12px; padding: 5px 14px; background: rgba(110,231,183,0.1); color: #6ee7b7; border: 1px solid rgba(110,231,183,0.3);">🔍 测试 Key</button>
+                <span id="gemini-test-status" style="font-size: 11px; color: var(--text-muted);"></span>
+            </div>
+            <div id="gemini-test-results" style="display:none; margin-top: 8px; padding: 10px; background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); border-radius: 6px; font-size: 12px; font-family: monospace; max-height: 150px; overflow-y: auto;"></div>
+
             <p class="hint" style="margin-top: 12px; font-weight: 500;">自定义系统提示词 (Prompt)</p>
             <textarea id="gemini-prompt" class="textarea" rows="12" placeholder="在此输入自定义系统指令..."></textarea>
             

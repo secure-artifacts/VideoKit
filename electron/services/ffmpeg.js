@@ -303,13 +303,15 @@ function getWaveformBinary(filePath, numPeaks = 300) {
 }
 
 /** 场景检测 */
-async function sceneDetect(filePath, threshold = 0.3, minInterval = 0.5) {
+async function sceneDetect(filePath, threshold = 0.05, minInterval = 0.5) {
     const duration = await getDuration(filePath);
     if (!duration) throw new Error(`无法获取视频时长，请检查文件是否有效: ${path.basename(filePath)}`);
 
     const fps = await getFrameRate(filePath);
     const resolution = await getResolution(filePath);
 
+    // 使用 select 滤镜检测场景变化
+    // threshold 越小越灵敏（0.03 = 非常灵敏, 0.1 = 中等, 0.3 = 只检测硬切）
     const { stderr } = await runCommand('ffmpeg', [
         '-hide_banner', '-i', filePath,
         '-vf', `select='gt(scene,${threshold})',showinfo`,
@@ -325,8 +327,8 @@ async function sceneDetect(filePath, threshold = 0.3, minInterval = 0.5) {
             const m = line.match(ptsRegex);
             if (m) {
                 const ptsTime = parseFloat(m[1]);
-                if (ptsTime < 0.3) continue;
-                if (ptsTime - lastTime < minInterval) continue;
+                if (ptsTime < 0.2) continue;  // 跳过片头极早帧
+                if (ptsTime - lastTime < minInterval) continue;  // 去重
                 scenePoints.push({
                     time: Math.round(ptsTime * 1000) / 1000,
                     time_str: formatSceneTime(ptsTime)
@@ -362,8 +364,274 @@ async function sceneDetect(filePath, threshold = 0.3, minInterval = 0.5) {
         resolution,
         threshold,
         scene_points: scenePoints,
+        scenes: segments,
         segments
     };
+}
+
+/**
+ * 场景检测 + 智能关键帧提取（合并版，支持预览/导出两步流程）
+ * 
+ * preview=true 时：生成 320px 宽的低质量缩略图用于预览确认
+ * preview=false 时：生成原始尺寸高质量帧到正式输出目录
+ */
+async function sceneDetectFrames(filePath, options = {}) {
+    const {
+        threshold = 0.3,
+        minInterval = 0.5,
+        framesPerScene = 0,
+        format = 'jpg',
+        quality = 2,
+        outputDir = '',
+        boundaryOffset = 0.04,
+        cleanOld = false,
+    } = options;
+
+    // 1. 场景检测
+    const detectResult = await sceneDetect(filePath, threshold, minInterval);
+    const { duration, fps, resolution, scene_points, segments } = detectResult;
+
+    // 2. 构建输出目录
+    const baseName = path.parse(filePath).name;
+    const outDir = outputDir || path.dirname(filePath);
+    const framesDir = path.join(outDir, `${baseName}_keyframes`);
+
+    // 清除旧文件
+    if (cleanOld && fs.existsSync(framesDir)) {
+        const oldFiles = fs.readdirSync(framesDir);
+        for (const f of oldFiles) {
+            try { fs.unlinkSync(path.join(framesDir, f)); } catch (_) {}
+        }
+    }
+    fs.mkdirSync(framesDir, { recursive: true });
+
+    // 3. 计算所有需要截取的时间点
+    const frameTimestamps = _buildFrameTimestamps(segments, duration, framesPerScene, boundaryOffset);
+
+    // 4. 批量截帧
+    const results = [];
+    let success = 0;
+    let failed = 0;
+
+    for (let i = 0; i < frameTimestamps.length; i++) {
+        const frame = frameTimestamps[i];
+        const idx = String(i + 1).padStart(3, '0');
+        const timeTag = formatSceneTime(frame.time).replace(/:/g, '.');
+        const typeTag = frame.type;
+        const filename = `${baseName}_${idx}_${typeTag}_${timeTag}.${format}`;
+        const outputPath = path.join(framesDir, filename);
+
+        try {
+            const args = [
+                '-y',
+                '-ss', frame.time.toFixed(3),
+                '-i', filePath,
+                '-vframes', '1',
+            ];
+            if (format === 'jpg') args.push('-q:v', String(quality));
+            args.push(outputPath);
+
+            await runCommand('ffmpeg', args, { timeout: 15000 });
+
+            if (fs.existsSync(outputPath)) {
+                results.push({
+                    status: 'ok',
+                    index: i + 1,
+                    type: frame.type,
+                    label: frame.label,
+                    scene: frame.scene,
+                    time: frame.time,
+                    time_str: formatSceneTime(frame.time),
+                    filename,
+                    output: outputPath,
+                });
+                success++;
+            } else {
+                throw new Error('输出文件未生成');
+            }
+        } catch (e) {
+            results.push({
+                status: 'error',
+                index: i + 1,
+                type: frame.type,
+                label: frame.label,
+                scene: frame.scene,
+                time: frame.time,
+                time_str: formatSceneTime(frame.time),
+                error: e.message,
+            });
+            failed++;
+        }
+    }
+
+    return {
+        message: `检测到 ${scene_points.length} 个场景切换点，导出 ${success} 帧${failed > 0 ? `（${failed} 帧失败）` : ''}`,
+        file: filePath,
+        duration: Math.round(duration * 1000) / 1000,
+        fps: Math.round(fps * 100) / 100,
+        resolution,
+        threshold,
+        total_scenes: segments.length,
+        scene_points,
+        segments,
+        frames: results,
+        success,
+        failed,
+        output_dir: framesDir,
+    };
+}
+
+/**
+ * 根据确认的帧列表，导出高清关键帧
+ * @param {string} filePath - 视频文件路径
+ * @param {Array} frameList - [{time, type, label, scene}] 确认的帧列表
+ * @param {object} options - {format, quality, outputDir}
+ */
+async function sceneExportFrames(filePath, frameList, options = {}) {
+    const {
+        format = 'jpg',
+        quality = 2,
+        outputDir = '',
+        cleanOld = false,
+    } = options;
+
+    const baseName = path.parse(filePath).name;
+    const outDir = outputDir || path.dirname(filePath);
+    const framesDir = path.join(outDir, `${baseName}_keyframes`);
+    fs.mkdirSync(framesDir, { recursive: true });
+
+    // 清除旧文件
+    if (cleanOld) {
+        try {
+            const oldFiles = fs.readdirSync(framesDir);
+            for (const f of oldFiles) {
+                try { fs.unlinkSync(path.join(framesDir, f)); } catch {}
+            }
+            console.log(`[SceneExport] 已清除 ${oldFiles.length} 个旧文件`);
+        } catch {}
+    }
+
+    const results = [];
+    let success = 0;
+    let failed = 0;
+
+    for (let i = 0; i < frameList.length; i++) {
+        const frame = frameList[i];
+        const idx = String(i + 1).padStart(3, '0');
+        const timeTag = formatSceneTime(frame.time).replace(/:/g, '.');
+        const typeTag = frame.type || 'frame';
+        const filename = `${baseName}_${idx}_${typeTag}_${timeTag}.${format}`;
+        const outputPath = path.join(framesDir, filename);
+
+        try {
+            const args = [
+                '-y',
+                '-ss', parseFloat(frame.time).toFixed(3),
+                '-i', filePath,
+                '-vframes', '1',
+            ];
+            if (format === 'jpg') args.push('-q:v', String(quality));
+            args.push(outputPath);
+
+            await runCommand('ffmpeg', args, { timeout: 15000 });
+
+            if (fs.existsSync(outputPath)) {
+                results.push({
+                    status: 'ok',
+                    index: i + 1,
+                    type: frame.type,
+                    label: frame.label,
+                    scene: frame.scene,
+                    time: frame.time,
+                    time_str: formatSceneTime(frame.time),
+                    filename,
+                    output: outputPath,
+                });
+                success++;
+            } else {
+                throw new Error('输出文件未生成');
+            }
+        } catch (e) {
+            results.push({
+                status: 'error',
+                index: i + 1,
+                time: frame.time,
+                error: e.message,
+            });
+            failed++;
+        }
+    }
+
+    return {
+        message: `导出完成: ${success} 帧${failed > 0 ? `（${failed} 帧失败）` : ''}`,
+        file: filePath,
+        frames: results,
+        success,
+        failed,
+        output_dir: framesDir,
+    };
+}
+
+/** 内部工具：计算关键帧时间点列表 */
+function _buildFrameTimestamps(segments, duration, framesPerScene, boundaryOffset) {
+    const frameTimestamps = [];
+    let frameIndex = 0;
+
+    // 首帧
+    frameTimestamps.push({ time: 0, type: 'first', label: '首帧', scene: 0, index: frameIndex++ });
+
+    // 场景边界帧 + 场景内均匀采样
+    for (let sIdx = 0; sIdx < segments.length; sIdx++) {
+        const seg = segments[sIdx];
+
+        if (framesPerScene > 0) {
+            const segDur = seg.end - seg.start;
+            for (let f = 0; f < framesPerScene; f++) {
+                let t;
+                if (framesPerScene === 1) {
+                    t = seg.start + segDur / 2;
+                } else {
+                    t = seg.start + (segDur * (f + 1)) / (framesPerScene + 1);
+                }
+                t = Math.max(seg.start + 0.01, Math.min(seg.end - 0.01, t));
+                frameTimestamps.push({
+                    time: Math.round(t * 1000) / 1000, type: 'sample',
+                    label: `场景${seg.index}-采样${f + 1}`, scene: seg.index, index: frameIndex++,
+                });
+            }
+        }
+
+        if (sIdx < segments.length - 1) {
+            const switchTime = seg.end;
+            const endFrameTime = Math.max(0.01, switchTime - boundaryOffset);
+            frameTimestamps.push({
+                time: Math.round(endFrameTime * 1000) / 1000, type: 'scene_end',
+                label: `场景${seg.index}-结束`, scene: seg.index, sceneSwitch: sIdx + 1, index: frameIndex++,
+            });
+            const startFrameTime = Math.min(duration - 0.01, switchTime + boundaryOffset);
+            frameTimestamps.push({
+                time: Math.round(startFrameTime * 1000) / 1000, type: 'scene_start',
+                label: `场景${segments[sIdx + 1].index}-开始`, scene: segments[sIdx + 1].index, sceneSwitch: sIdx + 1, index: frameIndex++,
+            });
+        }
+    }
+
+    // 尾帧
+    const lastFrameTime = Math.max(0, duration - 0.05);
+    frameTimestamps.push({
+        time: Math.round(lastFrameTime * 1000) / 1000, type: 'last', label: '尾帧',
+        scene: segments.length > 0 ? segments[segments.length - 1].index : 0, index: frameIndex++,
+    });
+
+    // 去重
+    frameTimestamps.sort((a, b) => a.time - b.time);
+    const deduped = [];
+    for (const frame of frameTimestamps) {
+        if (deduped.length === 0 || frame.time - deduped[deduped.length - 1].time >= 0.02) {
+            deduped.push(frame);
+        }
+    }
+    return deduped;
 }
 
 /** 场景拆分 */
@@ -1599,6 +1867,8 @@ module.exports = {
     getResolution,
     getWaveformBinary,
     sceneDetect,
+    sceneDetectFrames,
+    sceneExportFrames,
     sceneSplit,
     mediaTrim,
     batchThumbnail,

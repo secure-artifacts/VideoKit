@@ -18,17 +18,41 @@
 
 /**
  * 按语言特性拆分文本为 token 数组。
- * - 含空格的文本 → 按空格分割 (英语/拉丁)
- * - 无空格 → 按字符分割 (中/日/韩)
+ * - 含空白的文本 → 按空白分割 (英语/拉丁)
+ * - 无空白且不含 CJK → 整段保留为一个 token，避免单个英文词被拆成字母
+ * - 无空白且含 CJK → CJK 按字拆，拉丁/数字连续串保持完整
  * @returns {[string[], string]} [tokens, joiner]
  */
 function tokenizeForWrap(text) {
     if (!text) return [[], ''];
-    if (text.includes(' ')) {
-        const tokens = text.split(' ').filter(t => t !== '');
+    const normalized = String(text).trim();
+    if (!normalized) return [[], ''];
+
+    if (/\s/.test(normalized)) {
+        const tokens = normalized.split(/\s+/).filter(t => t !== '');
         return [tokens, ' '];
     }
-    return [Array.from(text), ''];
+
+    const cjkLikeRe = /[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\u3040-\u30FF\uAC00-\uD7AF]/;
+    if (!cjkLikeRe.test(normalized)) {
+        return [[normalized], ''];
+    }
+
+    const tokens = [];
+    let nonCjkRun = '';
+    for (const ch of Array.from(normalized)) {
+        if (cjkLikeRe.test(ch)) {
+            if (nonCjkRun) {
+                tokens.push(nonCjkRun);
+                nonCjkRun = '';
+            }
+            tokens.push(ch);
+        } else {
+            nonCjkRun += ch;
+        }
+    }
+    if (nonCjkRun) tokens.push(nonCjkRun);
+    return [tokens, ''];
 }
 
 // ═══════════════════════════════════════════════════════

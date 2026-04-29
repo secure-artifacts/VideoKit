@@ -271,6 +271,7 @@ async function reelsWysiwygExport(params) {
     // ── 智能补偿：如果处于单视频且开启了循环渐变，但实际合成短于视频本身，抢回极速模式！ ──
     if (loopFade && backgroundPath && !_isImageFile(backgroundPath) && !isMultiClip) {
         let _probedBg = await window.electronAPI.getMediaDuration(backgroundPath);
+        _probedBg = _probedBg * (_bgDurFactor || 1.0);
         if (_probedBg > 0 && duration <= _probedBg) {
             log(`🎯 [智能提速] 合成时长(${duration.toFixed(2)}s)无需底板(${_probedBg.toFixed(2)}s)循环！强制关闭渐变，唤醒极速贴合 ⚡️！`);
             loopFade = false; 
@@ -314,6 +315,7 @@ async function reelsWysiwygExport(params) {
             loopFade: isMultiClip ? false : loopFade,
             loopFadeDur,
             bgScale: bgScale || 100,
+            bgDurScale: bgDurScale || 100,
         });
 
         if (!prepResult || prepResult.error) {

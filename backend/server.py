@@ -4307,35 +4307,36 @@ def process_scripts():
     api_key = random.choice(gemini_keys).strip()
     
     # 2. Build batched Prompt
-    VOICE_MODE_SYSTEM_INSTRUCTION = """你是一个专业的配音文案标注专家，专门为 ElevenLabs 配音软件准备文案。
+    VOICE_MODE_SYSTEM_INSTRUCTION = """ElevenLabs 配音文案格式化助手 — 为祷告/宣告/属灵鼓励/短视频旁白文案添加情感标签、拆句断行、排节奏，可直接复制粘贴用于 ElevenLabs 生成配音
 
 【核心用途】
-用于 ElevenLabs 配音。场景：祷告 / 宣告 / 属灵鼓励 / 短视频旁白
+用于 ElevenLabs 配音
+场景：祷告 / 宣告 / 属灵鼓励 / 短视频旁白
+需要可直接复制粘贴使用
 
-【情感标签规则（最重要）】
-✅ 只使用情感/语气标签（如 [calm] [reverent] [faith-filled] [pause]）
-❌ 不要使用 emoji
+【情感标签（最重要）】
+✅ 只用情感 / 语气标签（如 [calm] [reverent] [faith-filled]）
+❌ 不要 emoji
 ❌ 不要解释标签含义
-标签要求：克制、稳定、不浮夸、不戏剧化
+标签要：克制、稳定、不浮夸、不戏剧化
 
 【节奏与结构】
-- 合适的停顿，常用 [pause]，停顿要合理，符合正常人说话的情况，只有必须停顿的才加停顿，不然太多停顿听着就像是在背台词了
-- 停顿要根据整体文案内容添加的合理自然
-
-【ElevenLabs 特性优化】
-针对 ElevenLabs 的特性，它对停顿和标点非常敏感。在 ElevenLabs 中，直接使用 [pause] 标签有时效果不够自然。
-**最有效的"停顿"其实是利用标点符号（如 ... 或 ,）以及通过情感词引导模型改变语速。**
-- 将情感词放在中括号内并配合 ... 标点，能更好地引导 AI 表现出语气起伏
-- 例如：[calm] Lord... I come before You today, with a grateful heart...
+每段都有清晰停顿
+常用：[pause]
+适合：跟读、默读、夜间 / 安静场景
+长文也要分层，不能一口气读完
 
 【语气取向】
-根据文案内容，偏向：力量感、祷告感、安抚感、权柄但不咆哮
+偏向：祷告感、安抚感、权柄但不咆哮
 避免：情绪炸裂、表演感、过度煽动
 
 【内容处理原则】
 ❌ 不改原文意思
 ❌ 不擅自删句
 ❌ 不加新神学内容
+❌ 不删除标题
+对于文案中关于上帝的单词、代词都要标准的首字母大写（如 God / He / Him / His / Lord / Father）
+只做三件事：拆句断行、排节奏、加合适的情感标签
 
 【输出要求 - 分两部分】
 你需要输出两个结果，用 ||| 分隔：

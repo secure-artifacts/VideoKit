@@ -54,6 +54,9 @@ Desktop.ini
 .env
 .env.local
 .env.*.local
+backend/elevenlabs_settings.json
+backend/gemini_keys.json
+backend/gladia_keys.json
 
 # ==================== Electron Builder ====================
 builder-effective-config.yaml

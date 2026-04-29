@@ -421,6 +421,29 @@ function _initReelsModule() {
                 }
             }
         };
+        const syncEditedSubtitleSegment = (seg, newText) => {
+            const text = String(newText || '');
+            seg.text = text;
+            seg.edited_text = text;
+
+            const newWords = text.replace(/\n/g, ' ').split(/\s+/).filter(Boolean);
+            if (!Array.isArray(seg.words) || seg.words.length === 0) return;
+
+            if (newWords.length === seg.words.length) {
+                seg.words = seg.words.map((w, i) => ({ ...w, word: newWords[i] }));
+                return;
+            }
+
+            const start = Number(seg.start) || 0;
+            const end = Number(seg.end) || start;
+            const dur = Math.max(0.001, end - start);
+            seg.words = newWords.map((word, i) => ({
+                word,
+                start: start + dur * (i / Math.max(1, newWords.length)),
+                end: start + dur * ((i + 1) / Math.max(1, newWords.length)),
+            }));
+        };
+
         // 双击字幕编辑后的回写
         _reelsState.timelineEditor.onSubtitleEdit = (trackIdx, clipIdx, newText, oldText, newRanges) => {
             const task = _getSelectedTask();
@@ -431,8 +454,7 @@ function _initReelsModule() {
             const segIdx = (clip && clip._segIdx != null) ? clip._segIdx : clipIdx;
             if (segIdx >= 0 && segIdx < task.segments.length) {
                 const seg = task.segments[segIdx];
-                seg.text = newText;
-                if (seg.edited_text !== undefined) seg.edited_text = newText;
+                syncEditedSubtitleSegment(seg, newText);
                 // 保存富文本样式范围
                 if (newRanges && newRanges.length > 0) {
                     seg.styled_ranges = newRanges;
@@ -500,6 +522,11 @@ function _initReelsColumnResize() {
     const handles = document.querySelectorAll('.reels-resize-handle');
     if (!handles.length) return;
 
+    // 全局安全网：任何点击时清理可能残留的拖拽覆盖层
+    document.addEventListener('click', () => {
+        document.querySelectorAll('[data-reels-resize-overlay]').forEach(el => el.remove());
+    }, true);
+
     // Restore saved widths
     const saved = localStorage.getItem('reels-col-widths');
     if (saved) {
@@ -532,10 +559,15 @@ function _initReelsColumnResize() {
             const rightMin = parseInt(getComputedStyle(rightEl).minWidth) || 100;
 
             // Prevent text selection during drag
+            // 先清理可能残留的旧覆盖层（安全网）
+            document.querySelectorAll('[data-reels-resize-overlay]').forEach(el => el.remove());
+
             const overlay = document.createElement('div');
+            overlay.setAttribute('data-reels-resize-overlay', '1');
             overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;cursor:col-resize;';
             document.body.appendChild(overlay);
 
+            let _cleanedUp = false;
             const onMove = (ev) => {
                 const dx = ev.clientX - startX;
                 const newLeft = Math.max(leftMin, leftW0 + dx);
@@ -557,11 +589,19 @@ function _initReelsColumnResize() {
                 }
             };
 
+            // 超时安全网 ID（Windows 下 mouseup/mouseleave 都可能不触发）
+            let _dragTimeout = null;
+
             const onUp = () => {
+                if (_cleanedUp) return;
+                _cleanedUp = true;
                 handle.classList.remove('active');
-                overlay.remove();
+                if (overlay.parentNode) overlay.remove();
                 document.removeEventListener('mousemove', onMove);
                 document.removeEventListener('mouseup', onUp);
+                document.removeEventListener('mouseleave', onUp);
+                window.removeEventListener('blur', onUp);
+                if (_dragTimeout) { clearTimeout(_dragTimeout); _dragTimeout = null; }
 
                 // Save column widths
                 const cols = {};
@@ -574,6 +614,12 @@ function _initReelsColumnResize() {
 
             document.addEventListener('mousemove', onMove);
             document.addEventListener('mouseup', onUp);
+            // 安全网：鼠标离开窗口也清除覆盖层
+            document.addEventListener('mouseleave', onUp);
+            // Windows 安全网：Alt-Tab 切换窗口时 blur 触发清理
+            window.addEventListener('blur', onUp);
+            // 终极安全网：10秒超时强制清理（防止任何事件丢失场景）
+            _dragTimeout = setTimeout(onUp, 10000);
         });
     });
 }
@@ -2791,7 +2837,8 @@ function _getPreviewDuration() {
     }
 
     // 无音频、无覆层视频时以背景视频时长为准，若仍无时长则推算虚拟进度
-    const baseDur = Math.max(vDur, subDur, 0);
+    const bDurScale = (task && task.bgDurScale) ? (task.bgDurScale / 100) : 1;
+    const baseDur = Math.max(vDur * bDurScale, subDur, 0);
     if (baseDur <= 0 && !_getPreviewMasterElement()) {
         let maxOverlayEnd = 0;
         if (_reelsState.overlayProxy && _reelsState.overlayProxy.overlayMgr) {
@@ -4449,11 +4496,16 @@ function reelsTogglePlay() {
                 audio.play().catch(() => { });
             }
             if (hasVideo && video) {
+                // 应用视频变速：bgDurScale=150% → playbackRate=0.667
+                const bDurScale = (task && task.bgDurScale) || 100;
+                video.playbackRate = (bDurScale !== 100) ? (100 / bDurScale) : 1.0;
+                
                 if (hasAudio && task && task.audioPath && video.duration > 0) {
                     try { video.currentTime = (audio.currentTime || 0) % video.duration; } catch (e) { }
                 }
                 video.play().catch(() => { });
                 if (fadeVideo && hasAudio && task && task.audioPath) {
+                    fadeVideo.playbackRate = video.playbackRate;
                     fadeVideo.play().catch(() => { });
                 }
             }
@@ -4525,9 +4577,14 @@ function _syncHookPhaseTransition() {
             audio.play().catch(() => { });
         }
         if (hasVideo && video) {
+            const bDurScale = task.bgDurScale || 100;
+            video.playbackRate = (bDurScale !== 100) ? (100 / bDurScale) : 1.0;
             video.currentTime = 0;
             video.play().catch(() => { });
-            if (fadeVideo && hasAudio) fadeVideo.play().catch(() => { });
+            if (fadeVideo && hasAudio) {
+                fadeVideo.playbackRate = video.playbackRate;
+                fadeVideo.play().catch(() => { });
+            }
         }
 
         // 覆层视频作为 master 时也要启动播放
@@ -4739,7 +4796,7 @@ function reelsSetDefaultPreset() {
 function _showInputDialog(title, placeholder) {
     return new Promise((resolve) => {
         const overlay = document.createElement('div');
-        overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;';
+        overlay.style.cssText = 'position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;';
         const box = document.createElement('div');
         box.style.cssText = 'background:var(--bg-primary,#1e1e2e);border:1px solid var(--border-color,#444);border-radius:12px;padding:24px;min-width:340px;box-shadow:0 8px 32px rgba(0,0,0,0.5);';
         box.innerHTML = `
@@ -4757,7 +4814,15 @@ function _showInputDialog(title, placeholder) {
         const okBtn = box.querySelector('#_input_dialog_ok');
         const cancelBtn = box.querySelector('#_input_dialog_cancel');
 
-        const close = (val) => { document.body.removeChild(overlay); resolve(val); };
+        // 防止外层事件监听器抢焦点
+        input.addEventListener('mousedown', (e) => e.stopPropagation());
+        input.addEventListener('click', (e) => e.stopPropagation());
+        box.addEventListener('mousedown', (e) => e.stopPropagation());
+
+        const close = (val) => {
+            if (overlay.parentNode) document.body.removeChild(overlay);
+            resolve(val);
+        };
 
         okBtn.onclick = () => close(input.value.trim() || null);
         cancelBtn.onclick = () => close(null);
@@ -4766,7 +4831,9 @@ function _showInputDialog(title, placeholder) {
             if (e.key === 'Enter') close(input.value.trim() || null);
             if (e.key === 'Escape') close(null);
         });
+        // 多次尝试 focus 确保 Electron 渲染完成后能获得焦点
         setTimeout(() => input.focus(), 50);
+        setTimeout(() => { if (document.activeElement !== input) input.focus(); }, 150);
     });
 }
 
@@ -5298,6 +5365,8 @@ async function reelsStartExport() {
                 }
             }
             baseName = baseName.replace(/\.[^.]+$/, '');
+            // 统一清除 Windows 文件名非法字符
+            baseName = baseName.replace(/[<>:"/\\|?*]+/g, '_');
             const outputPath = `${outputDirTrimmed}${outputJoinSep}${baseName}${suffix}.mp4`;
             let bgPath = task.bgPath || task.videoPath;
             

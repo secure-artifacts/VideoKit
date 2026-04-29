@@ -1860,8 +1860,9 @@ function _drawScrollOverlay(ctx, ov, clipX, clipY, clipW, clipH, currentTime, ca
         const tFont = `${italicStr} ${tWeight} ${tSize}px "${tFamily}", ${tFallback}`;
         const tLineH = actualTitleFontSize * 1.3 + lineSpacing;
         const tGap = parseFloat(ov.scroll_title_gap ?? 20);
+        const tLetterSpacing = parseFloat(ov.scroll_title_letter_spacing || 0);
         ctx.font = tFont;
-        const titleLines = _wrapText(ctx, scrollTitleText, textW);
+        const titleLines = _wrapText(ctx, scrollTitleText, textW, tLetterSpacing);
         titleOccupiedH = titleLines.length * tLineH + tGap;
     }
 
@@ -1881,7 +1882,7 @@ function _drawScrollOverlay(ctx, ov, clipX, clipY, clipW, clipH, currentTime, ca
             lineHeight = actualTrySize * 1.3 + lineSpacing;
             fontStr = `${italicStr} ${fontWeight} ${trySize}px "${fontFamily}", ${fallback}`;
             ctx.font = fontStr;
-            lines = _wrapText(ctx, content, textW);
+            lines = _wrapText(ctx, content, textW, parseFloat(ov.scroll_letter_spacing || 0));
             const totalH = lines.length * lineHeight;
             if (totalH <= bodyVisibleH) {
                 fontSize = trySize;
@@ -1894,7 +1895,7 @@ function _drawScrollOverlay(ctx, ov, clipX, clipY, clipW, clipH, currentTime, ca
         lineHeight = actualBfs * 1.3 + lineSpacing;
         fontStr = `${italicStr} ${fontWeight} ${fontSize}px "${fontFamily}", ${fallback}`;
         ctx.font = fontStr;
-        lines = _wrapText(ctx, content, textW);
+        lines = _wrapText(ctx, content, textW, parseFloat(ov.scroll_letter_spacing || 0));
     }
 
     // ── 自动停止：到达最终位置后冻结 ──
@@ -1988,7 +1989,7 @@ function _drawScrollOverlay(ctx, ov, clipX, clipY, clipW, clipH, currentTime, ca
             if (tLetterSpacing !== 0 && typeof ctx.letterSpacing !== 'undefined') {
                 ctx.letterSpacing = tLetterSpacing + 'px';
             }
-            const titleLines = _wrapText(ctx, titleText, textW);
+            const titleLines = _wrapText(ctx, titleText, textW, tLetterSpacing);
             const titleBlockH = titleLines.length * tLineH;
 
             // ── 1. 绘制固定标题 (在覆层顶部，不受裁切) ──
@@ -2007,9 +2008,9 @@ function _drawScrollOverlay(ctx, ov, clipX, clipY, clipW, clipH, currentTime, ca
                 let ty = titleDrawY + tSize;
                 for (const line of titleLines) {
                     if (typeof _fillTextWithLetterSpacing !== 'undefined' && tLetterSpacing !== 0 && typeof ctx.letterSpacing === 'undefined') {
-                        _fillTextWithLetterSpacing(ctx, line, _alignX(ctx, line, titleDrawX, textW, tAlign), ty, tLetterSpacing);
+                        _fillTextWithLetterSpacing(ctx, line, _alignX(ctx, line, titleDrawX, textW, tAlign, tLetterSpacing), ty, tLetterSpacing);
                     } else {
-                        ctx.fillText(line, _alignX(ctx, line, titleDrawX, textW, tAlign), ty);
+                        ctx.fillText(line, _alignX(ctx, line, titleDrawX, textW, tAlign, tLetterSpacing), ty);
                     }
                     ty += tLineH;
                 }
@@ -2026,9 +2027,9 @@ function _drawScrollOverlay(ctx, ov, clipX, clipY, clipW, clipH, currentTime, ca
                 let ty = titleDrawY + tSize;
                 for (const line of titleLines) {
                     if (typeof _strokeTextWithLetterSpacing !== 'undefined' && tLetterSpacing !== 0 && typeof ctx.letterSpacing === 'undefined') {
-                        _strokeTextWithLetterSpacing(ctx, line, _alignX(ctx, line, titleDrawX, textW, tAlign), ty, tLetterSpacing);
+                        _strokeTextWithLetterSpacing(ctx, line, _alignX(ctx, line, titleDrawX, textW, tAlign, tLetterSpacing), ty, tLetterSpacing);
                     } else {
-                        ctx.strokeText(line, _alignX(ctx, line, titleDrawX, textW, tAlign), ty);
+                        ctx.strokeText(line, _alignX(ctx, line, titleDrawX, textW, tAlign, tLetterSpacing), ty);
                     }
                     ty += tLineH;
                 }
@@ -2039,7 +2040,7 @@ function _drawScrollOverlay(ctx, ov, clipX, clipY, clipW, clipH, currentTime, ca
             ctx.fillStyle = tColor;
             let ty = titleDrawY + tSize;
             for (const line of titleLines) {
-                const lx = _alignX(ctx, line, titleDrawX, textW, tAlign);
+                const lx = _alignX(ctx, line, titleDrawX, textW, tAlign, tLetterSpacing);
                 const _scrollTitleMerged1 = _getAutoColorMergedRanges(ov, 'scroll_title', titleText);
                 const _scrollTitleRanges1 = _scrollTitleMerged1 || ov.scroll_title_styled_ranges;
                 if (_scrollTitleRanges1 && _scrollTitleRanges1.length > 0 && typeof ReelsRichText !== 'undefined') {
@@ -2184,32 +2185,38 @@ function _drawScrollTextBlock(ctx, ov, lines, textX, textY, textW, lineHeight, f
 
         ctx.save();
         ctx.font = tFont;
-        const titleLines = _wrapText(ctx, titleText, textW);
+        const tLetterSpacing = parseFloat(ov.scroll_title_letter_spacing || 0);
+        if (tLetterSpacing !== 0 && typeof ctx.letterSpacing !== 'undefined') {
+            ctx.letterSpacing = tLetterSpacing + 'px';
+        }
+        const titleLines = _wrapText(ctx, titleText, textW, tLetterSpacing);
 
         // 阴影
-        if (ov.shadow_enabled) {
+        const tShadowEnabled2 = ov.scroll_title_shadow_enabled !== undefined ? ov.scroll_title_shadow_enabled : ov.shadow_enabled;
+        if (tShadowEnabled2) {
             ctx.save();
-            ctx.shadowColor = _withAlpha(ov.shadow_color || '#000000', (ov.shadow_opacity || 120) / 255);
-            ctx.shadowBlur = parseFloat(ov.shadow_blur || 4);
-            ctx.shadowOffsetX = parseFloat(ov.shadow_offset_x || 2);
-            ctx.shadowOffsetY = parseFloat(ov.shadow_offset_y || 2);
+            ctx.shadowColor = _withAlpha(ov.scroll_title_shadow_color || ov.shadow_color || '#000000', (ov.shadow_opacity || 120) / 255);
+            ctx.shadowBlur = parseFloat(ov.scroll_title_shadow_blur ?? ov.shadow_blur ?? 4);
+            ctx.shadowOffsetX = parseFloat(ov.scroll_title_shadow_x ?? ov.shadow_offset_x ?? 2);
+            ctx.shadowOffsetY = parseFloat(ov.scroll_title_shadow_y ?? ov.shadow_offset_y ?? 2);
             ctx.fillStyle = tColor;
             let ty = drawY + tSize;
             for (const line of titleLines) {
-                ctx.fillText(line, _alignX(ctx, line, textX, textW, tAlign), ty);
+                ctx.fillText(line, _alignX(ctx, line, textX, textW, tAlign, tLetterSpacing), ty);
                 ty += tLineH;
             }
             ctx.restore();
         }
         // 描边
-        if (ov.use_stroke && (ov.stroke_width || 0) > 0) {
+        const tStrokeWidth2 = parseFloat(ov.scroll_title_stroke_width ?? ov.stroke_width ?? 0);
+        if (tStrokeWidth2 > 0) {
             ctx.save();
-            ctx.strokeStyle = ov.stroke_color || '#000000';
-            ctx.lineWidth = parseFloat(ov.stroke_width || 2) * 2;
+            ctx.strokeStyle = ov.scroll_title_stroke_color || ov.stroke_color || '#000000';
+            ctx.lineWidth = tStrokeWidth2 * 2;
             ctx.lineJoin = 'round'; ctx.miterLimit = 2;
             let ty = drawY + tSize;
             for (const line of titleLines) {
-                ctx.strokeText(line, _alignX(ctx, line, textX, textW, tAlign), ty);
+                ctx.strokeText(line, _alignX(ctx, line, textX, textW, tAlign, tLetterSpacing), ty);
                 ty += tLineH;
             }
             ctx.restore();
@@ -2219,11 +2226,11 @@ function _drawScrollTextBlock(ctx, ov, lines, textX, textY, textW, lineHeight, f
         ctx.fillStyle = tColor;
         let ty = drawY + tSize;
         for (const line of titleLines) {
-            const lx = _alignX(ctx, line, textX, textW, tAlign);
+            const lx = _alignX(ctx, line, textX, textW, tAlign, tLetterSpacing);
             const _scrollTitleMerged2 = _getAutoColorMergedRanges(ov, 'scroll_title', titleText);
             const _scrollTitleRanges2 = _scrollTitleMerged2 || ov.scroll_title_styled_ranges;
             if (_scrollTitleRanges2 && _scrollTitleRanges2.length > 0 && typeof ReelsRichText !== 'undefined') {
-                _drawRichLine(ctx, line, titleText, _scrollTitleRanges2, lx, ty, tColor, tSize, tFamily, tFallback, tWeight, 0);
+                _drawRichLine(ctx, line, titleText, _scrollTitleRanges2, lx, ty, tColor, tSize, tFamily, tFallback, tWeight, tLetterSpacing);
             } else {
                 ctx.fillText(line, lx, ty);
             }
@@ -2250,7 +2257,7 @@ function _drawScrollTextBlock(ctx, ov, lines, textX, textY, textW, lineHeight, f
         ctx.fillStyle = ov.color || '#FFFFFF';
         let sy = drawY + fontSize;
         for (const line of lines) {
-            const lx = _alignX(ctx, line, textX, textW, align);
+            const lx = _alignX(ctx, line, textX, textW, align, bLetterSpacing);
             if (typeof _fillTextWithLetterSpacing !== 'undefined' && bLetterSpacing !== 0 && typeof ctx.letterSpacing === 'undefined') {
                 _fillTextWithLetterSpacing(ctx, line, lx, sy, bLetterSpacing);
             } else {
@@ -2269,7 +2276,7 @@ function _drawScrollTextBlock(ctx, ov, lines, textX, textY, textW, lineHeight, f
         ctx.miterLimit = 2;
         let sy = drawY + fontSize;
         for (const line of lines) {
-            const lx = _alignX(ctx, line, textX, textW, align);
+            const lx = _alignX(ctx, line, textX, textW, align, bLetterSpacing);
             if (typeof _strokeTextWithLetterSpacing !== 'undefined' && bLetterSpacing !== 0 && typeof ctx.letterSpacing === 'undefined') {
                 _strokeTextWithLetterSpacing(ctx, line, lx, sy, bLetterSpacing);
             } else {
@@ -2291,7 +2298,7 @@ function _drawScrollTextBlock(ctx, ov, lines, textX, textY, textW, lineHeight, f
     if (ov.scroll_uppercase !== false) rawContent = rawContent.toUpperCase();
 
     for (const line of lines) {
-        const lx = _alignX(ctx, line, textX, textW, align);
+        const lx = _alignX(ctx, line, textX, textW, align, bLetterSpacing);
         const _scrollBodyMerged = _getAutoColorMergedRanges(ov, 'scroll_body', rawContent);
         const _scrollBodyRanges = _scrollBodyMerged || ov.scroll_styled_ranges;
         if (_scrollBodyRanges && _scrollBodyRanges.length > 0 && typeof ReelsRichText !== 'undefined') {
@@ -2442,7 +2449,40 @@ class OverlayManager {
 // 4. Drawing Helpers
 // ═══════════════════════════════════════════════════════
 
-function _wrapText(ctx, text, maxWidth) {
+function _measureTextWithLetterSpacing(ctx, text, letterSpacing = 0) {
+    const spacing = parseFloat(letterSpacing || 0);
+    const baseW = ctx.measureText(text || '').width;
+    if (!spacing || !text || text.length <= 1) return baseW;
+    return baseW + spacing * (text.length - 1);
+}
+
+function _fillTextWithLetterSpacing(ctx, text, x, y, letterSpacing = 0) {
+    const spacing = parseFloat(letterSpacing || 0);
+    if (!spacing) {
+        ctx.fillText(text, x, y);
+        return;
+    }
+    let cx = x;
+    for (const ch of text) {
+        ctx.fillText(ch, cx, y);
+        cx += ctx.measureText(ch).width + spacing;
+    }
+}
+
+function _strokeTextWithLetterSpacing(ctx, text, x, y, letterSpacing = 0) {
+    const spacing = parseFloat(letterSpacing || 0);
+    if (!spacing) {
+        ctx.strokeText(text, x, y);
+        return;
+    }
+    let cx = x;
+    for (const ch of text) {
+        ctx.strokeText(ch, cx, y);
+        cx += ctx.measureText(ch).width + spacing;
+    }
+}
+
+function _wrapText(ctx, text, maxWidth, letterSpacing = 0) {
     if (maxWidth <= 0) return [text];
     const paragraphs = text.split('\n');
     const lines = [];
@@ -2470,11 +2510,23 @@ function _wrapText(ctx, text, maxWidth) {
         let line = '';
         for (const seg of segments) {
             const test = line + seg;
-            if (ctx.measureText(test).width > maxWidth && line) {
+            if (_measureTextWithLetterSpacing(ctx, test, letterSpacing) > maxWidth && line) {
                 lines.push(line.trim());
-                line = seg;
+                line = '';
+            }
+
+            if (_measureTextWithLetterSpacing(ctx, seg, letterSpacing) > maxWidth) {
+                for (const ch of seg) {
+                    const charTest = line + ch;
+                    if (_measureTextWithLetterSpacing(ctx, charTest, letterSpacing) > maxWidth && line) {
+                        lines.push(line.trim());
+                        line = ch;
+                    } else {
+                        line = charTest;
+                    }
+                }
             } else {
-                line = test;
+                line = line ? line + seg : seg;
             }
         }
         if (line) lines.push(line.trim());
@@ -2521,7 +2573,11 @@ function _drawRichLine(ctx, lineText, fullText, styledRanges, x, y, defaultColor
     if (lineStart < 0) {
         // fallback: 找不到就原样绘制
         ctx.fillStyle = defaultColor;
-        ctx.fillText(lineText, x, y);
+        if (letterSpacing && typeof _fillTextWithLetterSpacing !== 'undefined' && typeof ctx.letterSpacing === 'undefined') {
+            _fillTextWithLetterSpacing(ctx, lineText, x, y, letterSpacing);
+        } else {
+            ctx.fillText(lineText, x, y);
+        }
         return;
     }
     // 推进搜索游标到本行末尾，供下一次同段落调用使用
@@ -2555,17 +2611,21 @@ function _drawRichLine(ctx, lineText, fullText, styledRanges, x, y, defaultColor
         ctx.font = tokFont;
         ctx.fillStyle = chunk.style.color || defaultColor;
         
-        ctx.fillText(segText, cx, y);
-        cx += ctx.measureText(segText).width;
+        if (letterSpacing && typeof _fillTextWithLetterSpacing !== 'undefined' && typeof ctx.letterSpacing === 'undefined') {
+            _fillTextWithLetterSpacing(ctx, segText, cx, y, letterSpacing);
+        } else {
+            ctx.fillText(segText, cx, y);
+        }
+        cx += _measureTextWithLetterSpacing(ctx, segText, letterSpacing);
     }
 }
 
-function _alignX(ctx, text, boxX, boxW, align) {
+function _alignX(ctx, text, boxX, boxW, align, letterSpacing = 0) {
     if (align === 'center') {
-        const tw = ctx.measureText(text).width;
+        const tw = _measureTextWithLetterSpacing(ctx, text, letterSpacing);
         return boxX + (boxW - tw) / 2;
     } else if (align === 'right') {
-        const tw = ctx.measureText(text).width;
+        const tw = _measureTextWithLetterSpacing(ctx, text, letterSpacing);
         return boxX + boxW - tw;
     }
     return boxX;

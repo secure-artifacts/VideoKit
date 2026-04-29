@@ -93,10 +93,10 @@ function _removeTab(tabId) {
     _renderBatchTable();
 }
 
-function _renameTab(tabId) {
+async function _renameTab(tabId) {
     const tab = _batchTableState.tabs.find(t => t.id === tabId);
     if (!tab) return;
-    const newName = prompt('输入标签名称：', tab.name);
+    const newName = await _showInputDialog('重命名标签', '输入标签名称');
     if (newName && newName.trim()) {
         tab.name = newName.trim();
         _renderBatchTable();
@@ -407,13 +407,8 @@ function _renderBatchTable() {
     const lastRefresh = activeTab.lastRefreshTime ? new Date(activeTab.lastRefreshTime).toLocaleTimeString() : '';
 
     // 批量选择子模板选项
-    const batchSubOpts = subtitlePresets.map(t =>
-        `<option value="${_escHtml(t)}">${_escHtml(t)}</option>`
-    ).join('');
-
-    const batchCardOpts = cardTemplates.map(t =>
-        `<option value="${_escHtml(t.name)}">${_escHtml(t.name)} (${t.count}层)</option>`
-    ).join('');
+    const batchSubOpts = _renderSubtitlePresetOptions(subtitlePresets, '');
+    const batchCardOpts = _renderOverlayPresetOptions(cardTemplates, '');
 
     container.innerHTML = `
         <div class="rbt-panel">
@@ -906,6 +901,19 @@ function _applyOverlayField(task, fieldCategory, str) {
     }
 }
 
+function _syncSelectedTaskOverlayMgrIfNeeded(taskIdx) {
+    const state = window._reelsState;
+    if (!state || state.selectedIdx !== taskIdx) return;
+    const task = state.tasks && state.tasks[taskIdx];
+    if (!task || !state.overlayProxy || !state.overlayProxy.overlayMgr) return;
+    const mgr = state.overlayProxy.overlayMgr;
+    mgr.overlays = task.overlays ? [...task.overlays] : [];
+    if (state.overlayPanel) {
+        state.overlayPanel.deselectOverlay();
+        state.overlayPanel._refreshList();
+    }
+}
+
 function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
     // 提取覆层信息
     const ov = (task.overlays || []).find(o => o && (o.type === 'textcard' || !o.type || o.type === ''));
@@ -1008,13 +1016,8 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
         pipContent = `<span class="rbt-file-name" style="width:100%;" title="">${pipContent}</span>`;
     }
 
-    const subTplOptions = subtitlePresets.map(t =>
-        `<option value="${_escHtml(t)}" ${task._subtitlePreset === t ? 'selected' : ''}>${_escHtml(t)}</option>`
-    ).join('');
-
-    const cardTplOptions = cardTemplates.map(t =>
-        `<option value="${_escHtml(t.name)}" ${task._overlayPresetName === t.name ? 'selected' : ''}>${_escHtml(t.name)} (${t.count}层)</option>`
-    ).join('');
+    const subTplOptions = _renderSubtitlePresetOptions(subtitlePresets, task._subtitlePreset || '');
+    const cardTplOptions = _renderOverlayPresetOptions(cardTemplates, task._overlayPresetName || '');
 
     // --- Cover Cover --- 
     const coverEnabled = task.cover && task.cover.enabled;
@@ -1655,7 +1658,7 @@ function _bindBatchTableEvents() {
                 if (!task.cover.overlays) task.cover.overlays = [];
                 
                 const selOvlTpl = container.querySelector('#rbt-cover-overlay-sel')?.value || '';
-                if (selOvlTpl && selOvlTpl !== task.cover.overlayTpl && window.ReelsOverlay) {
+                if (selOvlTpl && window.ReelsOverlay) {
                     let presets = {};
                     try { presets = JSON.parse(localStorage.getItem('reels_overlay_group_presets') || '{}'); } catch(e) {}
                     const presetData = presets[selOvlTpl];
@@ -1717,8 +1720,8 @@ function _bindBatchTableEvents() {
 
         // Cover Preset Handlers
         const presetSel = container.querySelector('#rbt-cover-preset-sel');
-        container.querySelector('#rbt-cover-preset-save')?.addEventListener('click', () => {
-             const pname = prompt('请输入你要保存的封面预设名称 (例如: 蓝底黄字模版):');
+        container.querySelector('#rbt-cover-preset-save')?.addEventListener('click', async () => {
+             const pname = await _showInputDialog('保存封面预设', '请输入预设名称 (例如: 蓝底黄字模版)');
              if (!pname) return;
              const newP = {
                   enabled: container.querySelector('#rbt-cover-enabled').checked,
@@ -1866,15 +1869,27 @@ function _bindBatchTableEvents() {
         if (!val) { alert('请先选择覆层预设'); return; }
         const indices = _getSelectedIndices();
         if (indices.length === 0) { alert('请先勾选需要批量设置的行'); return; }
-        for (const idx of indices) {
-            const task = window._reelsState.tasks[idx];
-            if (task) {
-                task._overlayPresetName = val;
-                _applyOverlayGroupPresetToTask(task, val);
+        
+        const tasksToApply = indices.map(idx => window._reelsState.tasks[idx]).filter(Boolean);
+        
+        _promptOverlayPresetOptions(val, tasksToApply, (opts) => {
+            const failedRows = [];
+            for (const idx of indices) {
+                const task = window._reelsState.tasks[idx];
+                if (task) {
+                    task._overlayPresetName = val;
+                    const result = _applyAndVerifyOverlayGroupPresetToTask(task, val, opts);
+                    if (!result.ok) failedRows.push(`${idx + 1}行(${result.reason})`);
+                }
             }
-        }
-        _renderBatchTable();
-        alert(`✅ 已将覆层预设「${val}」应用到 ${indices.length} 行`);
+            _skipNextApply = true;
+            _renderBatchTable();
+            if (failedRows.length > 0) {
+                alert(`⚠️ 覆层预设「${val}」有 ${failedRows.length}/${indices.length} 行未通过校验：\n${failedRows.slice(0, 8).join('\n')}${failedRows.length > 8 ? '\n...' : ''}`);
+            } else {
+                alert(`✅ 已校验：覆层预设「${val}」已应用到 ${indices.length} 行`);
+            }
+        });
     });
 
     // ══ Batch scale apply ══
@@ -3389,6 +3404,29 @@ function _bindBatchTableEvents() {
                     _batchTableState.selectedRows.delete(idx);
                 }
                 _updateBatchSelectCount();
+            } else if (e.target.classList.contains('rbt-card-tpl-select')) {
+                const idx = parseInt(e.target.dataset.idx);
+                const task = window._reelsState?.tasks?.[idx];
+                const presetName = e.target.value || '';
+                const selectEl = e.target;
+                if (task) {
+                    if (presetName) {
+                        _promptOverlayPresetOptions(presetName, [task], (opts) => {
+                            const result = _applyAndVerifyOverlayGroupPresetToTask(task, presetName, opts);
+                            if (!result.ok) {
+                                alert(`⚠️ 第 ${idx + 1} 行覆层预设未通过校验：${result.reason}`);
+                            }
+                            _syncSelectedTaskOverlayMgrIfNeeded(idx);
+                            if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
+                            _renderBatchTable(); // Force re-render to update inputs
+                        });
+                    } else {
+                        task._overlayPresetName = '';
+                        _syncSelectedTaskOverlayMgrIfNeeded(idx);
+                        if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
+                        _renderBatchTable();
+                    }
+                }
             }
         });
         tbody.addEventListener('click', (e) => {
@@ -4465,8 +4503,13 @@ function _applyBatchTableChanges() {
         const task = state.tasks[idx];
         if (!task) return;
         const presetName = el.value;
-        if (presetName) {
-            _applyOverlayGroupPresetToTask(task, presetName);
+        if (presetName && task._overlayPresetName !== presetName) {
+            const result = _applyAndVerifyOverlayGroupPresetToTask(task, presetName);
+            if (!result.ok) {
+                console.warn(`[BatchTable] 第 ${idx + 1} 行覆层预设未通过校验:`, result.reason);
+            }
+        } else if (!presetName && task._overlayPresetName) {
+            task._overlayPresetName = '';
         }
     });
 
@@ -4486,12 +4529,7 @@ function _applyBatchTableChanges() {
     const selIdx = state.selectedIdx;
     const selTask = state.tasks[selIdx];
     if (selTask && state.overlayProxy && state.overlayProxy.overlayMgr) {
-        const mgr = state.overlayProxy.overlayMgr;
-        mgr.overlays = selTask.overlays ? [...selTask.overlays] : [];
-        if (state.overlayPanel) {
-            state.overlayPanel.deselectOverlay();
-            state.overlayPanel._refreshList();
-        }
+        _syncSelectedTaskOverlayMgrIfNeeded(selIdx);
     }
 }
 
@@ -6815,39 +6853,239 @@ function _parseBatchTSV(raw) {
 // 9. Template helpers
 // ═══════════════════════════════════════════════════════
 
+function _renderSubtitlePresetOptions(subtitlePresets, selectedValue = '') {
+    const builtinNames = window.REELS_BUILTIN_PRESETS ? Object.keys(window.REELS_BUILTIN_PRESETS) : [];
+    const builtins = subtitlePresets.filter(t => builtinNames.includes(t));
+    const customs = subtitlePresets.filter(t => !builtinNames.includes(t));
+    
+    let html = '';
+    if (customs.length > 0) {
+        html += `<optgroup label="我的预设">` + customs.map(t => `<option value="${_escHtml(t)}" ${selectedValue === t ? 'selected' : ''}>${_escHtml(t)}</option>`).join('') + `</optgroup>`;
+    }
+    if (builtins.length > 0) {
+        html += `<optgroup label="内置预设">` + builtins.map(t => `<option value="${_escHtml(t)}" ${selectedValue === t ? 'selected' : ''}>${_escHtml(t)}</option>`).join('') + `</optgroup>`;
+    }
+    return html;
+}
+
+function _renderOverlayPresetOptions(cardTemplates, selectedValue = '') {
+    const builtinNames = window.REELS_BUILTIN_OVERLAY_GROUP_PRESETS ? Object.keys(window.REELS_BUILTIN_OVERLAY_GROUP_PRESETS) : [];
+    const builtins = cardTemplates.filter(t => builtinNames.includes(t.name));
+    const customs = cardTemplates.filter(t => !builtinNames.includes(t.name));
+    
+    let html = '';
+    if (customs.length > 0) {
+        html += `<optgroup label="我的预设">` + customs.map(t => `<option value="${_escHtml(t.name)}" ${selectedValue === t.name ? 'selected' : ''}>${_escHtml(t.name)} (${t.count}层)</option>`).join('') + `</optgroup>`;
+    }
+    if (builtins.length > 0) {
+        html += `<optgroup label="内置预设">` + builtins.map(t => `<option value="${_escHtml(t.name)}" ${selectedValue === t.name ? 'selected' : ''}>${_escHtml(t.name)} (${t.count}层)</option>`).join('') + `</optgroup>`;
+    }
+    return html;
+}
+
+function _renderTaskPresetOptions(taskPresetNames, selectedValue = '') {
+    if (taskPresetNames.length === 0) return '';
+    return `<optgroup label="我的预设">` + taskPresetNames.map(n => `<option value="${_escHtml(n)}" ${selectedValue === n ? 'selected' : ''}>${_escHtml(n)}</option>`).join('') + `</optgroup>`;
+}
+
 function _getSubtitlePresetList() {
     try {
         if (window.ReelsStyleEngine && typeof ReelsStyleEngine.loadSubtitlePresets === 'function') {
             const data = ReelsStyleEngine.loadSubtitlePresets();
-            return Object.keys(data.presets || {});
+            const presetsMap = data.presets || {};
+            if (window.REELS_BUILTIN_PRESETS) {
+                for (const k of Object.keys(window.REELS_BUILTIN_PRESETS)) {
+                    if (!presetsMap[k]) presetsMap[k] = window.REELS_BUILTIN_PRESETS[k];
+                }
+            }
+            return Object.keys(presetsMap);
         }
     } catch (e) { }
-    return [];
+    return window.REELS_BUILTIN_PRESETS ? Object.keys(window.REELS_BUILTIN_PRESETS) : [];
 }
 
 function _getOverlayGroupPresetList() {
+    const list = [];
+    const seen = new Set();
+
+    // 1. 获取覆层组预设
     try {
         const stored = localStorage.getItem('reels_overlay_group_presets');
-        if (stored) {
-            const obj = JSON.parse(stored);
-            return Object.keys(obj).map(name => ({
-                name,
-                count: Array.isArray(obj[name]) ? obj[name].length : 0,
-            }));
+        const obj = stored ? JSON.parse(stored) : {};
+        // 确保内置预设始终存在
+        if (window.REELS_BUILTIN_OVERLAY_GROUP_PRESETS) {
+            for (const [k, v] of Object.entries(window.REELS_BUILTIN_OVERLAY_GROUP_PRESETS)) {
+                if (!obj[k]) obj[k] = v;
+            }
+        }
+        for (const name of Object.keys(obj)) {
+            list.push({ name, count: Array.isArray(obj[name]) ? obj[name].length : 0 });
+            seen.add(name);
         }
     } catch (e) { }
-    // Fallback: also include single-card templates as 1-layer presets
+
+    // 2. 兼容旧的单卡片模板
     try {
         const stored = localStorage.getItem('reels_card_templates');
         if (stored) {
             const obj = JSON.parse(stored);
-            return Object.keys(obj).map(name => ({ name, count: 1 }));
+            for (const name of Object.keys(obj)) {
+                if (!seen.has(name)) {
+                    list.push({ name, count: 1 });
+                    seen.add(name);
+                }
+            }
         }
     } catch (e) { }
-    return [];
+
+    return list;
 }
 
-function _applyOverlayGroupPresetToTask(task, presetName) {
+function _getOverlayPresetDefinition(presetName) {
+    try {
+        const groupStored = localStorage.getItem('reels_overlay_group_presets');
+        if (groupStored) {
+            const presets = JSON.parse(groupStored);
+            if (Array.isArray(presets[presetName])) {
+                return { kind: 'group', layers: presets[presetName] };
+            }
+        }
+    } catch (e) { }
+    try {
+        const cardStored = localStorage.getItem('reels_card_templates');
+        if (cardStored) {
+            const templates = JSON.parse(cardStored);
+            if (templates[presetName]) {
+                return { kind: 'card', template: templates[presetName] };
+            }
+        }
+    } catch (e) { }
+    return null;
+}
+
+const RBT_OVERLAY_PRESET_TEXT_KEYS = new Set([
+    'title_text', 'body_text', 'footer_text', 'content', 'scroll_title',
+    'title_styled_ranges', 'body_styled_ranges', 'footer_styled_ranges',
+    'scroll_title_styled_ranges', 'scroll_styled_ranges',
+]);
+
+const RBT_OVERLAY_PRESET_RUNTIME_KEYS = new Set([
+    'id', '_img', '_imgLoaded', '_templateName', '_selected', '_exporting',
+    '_exportDuration', '_renderedW', '_renderedH', '_renderedY',
+]);
+
+function _overlayPresetValueEqual(a, b) {
+    if (a === b) return true;
+    if (a == null && b == null) return true;
+    if (typeof a === 'number' || typeof b === 'number') {
+        const na = Number(a);
+        const nb = Number(b);
+        return Number.isFinite(na) && Number.isFinite(nb) && Math.abs(na - nb) < 0.0001;
+    }
+    return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function _overlayMatchesPresetLayer(actual, presetLayer) {
+    if (!actual || !presetLayer) return false;
+    if ((actual.type || '') !== (presetLayer.type || '')) return false;
+    const preserveText = !presetLayer.fixed_text;
+    for (const [key, expected] of Object.entries(presetLayer)) {
+        if (RBT_OVERLAY_PRESET_RUNTIME_KEYS.has(key)) continue;
+        if (preserveText && RBT_OVERLAY_PRESET_TEXT_KEYS.has(key)) continue;
+        if (!_overlayPresetValueEqual(actual[key], expected)) return false;
+    }
+    return true;
+}
+
+function _verifyOverlayGroupPresetApplied(task, presetName) {
+    const def = _getOverlayPresetDefinition(presetName);
+    if (!def) return { ok: false, reason: '找不到预设' };
+    if (!task || task._overlayPresetName !== presetName) {
+        return { ok: false, reason: '任务未记录目标预设名' };
+    }
+
+    const overlays = Array.isArray(task.overlays) ? task.overlays : [];
+    if (def.kind === 'group') {
+        if (overlays.length < def.layers.length) {
+            return { ok: false, reason: `覆层数量不足：${overlays.length}/${def.layers.length}` };
+        }
+        for (let i = 0; i < def.layers.length; i++) {
+            if (!_overlayMatchesPresetLayer(overlays[i], def.layers[i])) {
+                return { ok: false, reason: `第 ${i + 1} 层与预设不一致` };
+            }
+        }
+        return { ok: true };
+    }
+
+    const cardOv = overlays.find(o => o && (o.type === 'textcard' || !o.type || o.type === ''));
+    if (!cardOv) return { ok: false, reason: '未找到文字卡片覆层' };
+    const keepKeys = new Set(['id', 'type', 'title_text', 'body_text', 'footer_text', 'start', 'end']);
+    for (const [key, expected] of Object.entries(def.template)) {
+        if (keepKeys.has(key)) continue;
+        if (!_overlayPresetValueEqual(cardOv[key], expected)) {
+            return { ok: false, reason: `文字卡片字段 ${key} 未应用` };
+        }
+    }
+    return { ok: true };
+}
+
+function _promptOverlayPresetOptions(presetName, tasks, callback) {
+    let presetHasScroll = false;
+    try {
+        const groupStored = localStorage.getItem('reels_overlay_group_presets');
+        if (groupStored) {
+            const presets = JSON.parse(groupStored);
+            if (presets[presetName] && Array.isArray(presets[presetName])) {
+                presetHasScroll = presets[presetName].some(o => o.type === 'scroll');
+            }
+        }
+    } catch(e) {}
+    
+    let taskHasScrollText = false;
+    for (const task of tasks) {
+        if (task.overlays) {
+            const scrollOv = task.overlays.find(o => o && o.type === 'scroll');
+            if (scrollOv) {
+                if ((scrollOv.scroll_title || '').trim() || (scrollOv.content || '').trim()) {
+                    taskHasScrollText = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    let addScroll = false;
+    let clearText = false;
+
+    // Use setTimeout so the UI dropdown can close before the blocking alert/confirm appears
+    setTimeout(() => {
+        if (taskHasScrollText) {
+            if (!presetHasScroll) {
+                if (confirm(`当前预设【${presetName}】不包含滚动字幕，但您已经填写了滚动文案。\n\n是否清空您现有的滚动文案？\n(点“确定”清空，点“取消”保留您的文案)`)) {
+                    clearText = true;
+                }
+            } else {
+                if (confirm(`当前预设【${presetName}】自带了滚动字幕样式和默认文案。\n\n是否使用预设的默认文案并清空您的原有文案？\n(点“取消”将强行保留您自己的文案)`)) {
+                    clearText = true;
+                }
+            }
+        }
+        callback({ addScroll, clearText });
+    }, 10);
+}
+
+function _applyAndVerifyOverlayGroupPresetToTask(task, presetName, opts = { addScroll: false, clearText: false }) {
+    _applyOverlayGroupPresetToTask(task, presetName, opts);
+    let result = _verifyOverlayGroupPresetApplied(task, presetName);
+    if (!result.ok) {
+        console.warn('[BatchTable] 覆层预设校验失败，重试一次:', presetName, result.reason);
+        _applyOverlayGroupPresetToTask(task, presetName, opts);
+        result = _verifyOverlayGroupPresetApplied(task, presetName);
+    }
+    return result;
+}
+
+function _applyOverlayGroupPresetToTask(task, presetName, opts = { addScroll: false, clearText: false }) {
     try {
         // Try group presets first
         const groupStored = localStorage.getItem('reels_overlay_group_presets');
@@ -6856,59 +7094,127 @@ function _applyOverlayGroupPresetToTask(task, presetName) {
             if (presets[presetName] && Array.isArray(presets[presetName])) {
                 const layers = presets[presetName];
                 const oldOverlays = task.overlays || [];
-                const remainingOverlays = [...oldOverlays];
+                const textDonors = [...oldOverlays]; // 仅用于提取文本内容
                 
+                // 构建预设覆层，仅迁移文本内容
                 const newOverlays = layers.map(layerData => {
                     const clone = JSON.parse(JSON.stringify(layerData));
                     clone.id = 'ov_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
                     
                     if (!clone.fixed_text) {
-                        const matchIdx = remainingOverlays.findIndex(o => o.type === clone.type);
+                        // 从旧覆层中按类型匹配，提取文本内容
+                        const matchIdx = textDonors.findIndex(o => o.type === clone.type);
                         if (matchIdx !== -1) {
-                            const old = remainingOverlays.splice(matchIdx, 1)[0];
+                            const old = textDonors.splice(matchIdx, 1)[0];
                             if (old.title_text) clone.title_text = old.title_text;
                             if (old.body_text) clone.body_text = old.body_text;
                             if (old.footer_text) clone.footer_text = old.footer_text;
-                            if (old.content) clone.content = old.content;
-                            if (old.scroll_title) clone.scroll_title = old.scroll_title;
+                            
+                            if (clone.type === 'scroll' && opts.clearText) {
+                                clone.scroll_title = '';
+                                clone.content = '';
+                            } else {
+                                if (old.content) clone.content = old.content;
+                                if (old.scroll_title) clone.scroll_title = old.scroll_title;
+                            }
+                        } else if (clone.type === 'scroll' && opts.clearText) {
+                            clone.scroll_title = '';
+                            clone.content = '';
                         }
-                    } else {
-                        const matchIdx = remainingOverlays.findIndex(o => o.type === clone.type);
-                        if (matchIdx !== -1) remainingOverlays.splice(matchIdx, 1);
+                    } else if (clone.type === 'scroll' && opts.clearText) {
+                        // 如果预设自带文本但用户要求清空
+                        clone.scroll_title = '';
+                        clone.content = '';
                     }
                     return clone;
                 });
                 
-                task.overlays = [...remainingOverlays, ...newOverlays];
+                // ── 保留预设中没有的覆层类型（如用户独立设置的 scroll、image 等）──
+                const presetTypes = new Set(newOverlays.map(o => o.type));
+                const survivingOverlays = oldOverlays.filter(o => o && o.type && !presetTypes.has(o.type));
+                
+                if (opts.clearText) {
+                    survivingOverlays.forEach(o => {
+                        if (o.type === 'scroll') {
+                            o.scroll_title = '';
+                            o.content = '';
+                        }
+                    });
+                }
+                
+                if (!presetTypes.has('scroll') && opts.addScroll) {
+                    const hasScroll = survivingOverlays.some(o => o.type === 'scroll');
+                    if (!hasScroll) {
+                        const ReelsOverlay = window.ReelsOverlay;
+                        if (ReelsOverlay) {
+                            survivingOverlays.push(ReelsOverlay.createScrollOverlay({ start: 0, end: 9999 }));
+                        } else {
+                            survivingOverlays.push({ type: 'scroll', scroll_title: '', content: '', start: 0, end: 9999 });
+                        }
+                    }
+                }
+                
+                task.overlays = [...newOverlays, ...survivingOverlays];
                 task._overlayPresetName = presetName;
-                return;
+                return true;
             }
         }
+
         // Fallback: single card template
         const cardStored = localStorage.getItem('reels_card_templates');
         if (cardStored) {
             const templates = JSON.parse(cardStored);
             const tpl = templates[presetName];
             if (tpl) {
-                if (!task.overlays || !task.overlays[0]) {
+                if (!task.overlays) task.overlays = [];
+                // 找到现有的 textcard 覆层，或创建一个新的（不覆盖其它类型覆层）
+                let cardOv = task.overlays.find(o => o && (o.type === 'textcard' || !o.type || o.type === ''));
+                if (!cardOv) {
                     const ReelsOverlay = window.ReelsOverlay;
                     if (ReelsOverlay) {
-                        task.overlays = [ReelsOverlay.createTextCardOverlay({
+                        cardOv = ReelsOverlay.createTextCardOverlay({
                             title_text: '', body_text: '',
                             start: 0, end: 9999,
-                        })];
+                        });
+                        task.overlays.unshift(cardOv); // 插入到数组开头，保留后面的 scroll 等覆层
                     }
                 }
-                if (task.overlays && task.overlays[0]) {
+                if (cardOv) {
                     const keepKeys = ['id', 'type', 'title_text', 'body_text', 'start', 'end'];
                     for (const [k, v] of Object.entries(tpl)) {
-                        if (!keepKeys.includes(k)) task.overlays[0][k] = v;
+                        if (!keepKeys.includes(k)) cardOv[k] = v;
                     }
                 }
+                
+                if (opts.clearText) {
+                    task.overlays.forEach(o => {
+                        if (o && o.type === 'scroll') {
+                            o.scroll_title = '';
+                            o.content = '';
+                        }
+                    });
+                }
+                
+                if (opts.addScroll) {
+                    const hasScroll = task.overlays.some(o => o && o.type === 'scroll');
+                    if (!hasScroll) {
+                        const ReelsOverlay = window.ReelsOverlay;
+                        if (ReelsOverlay) {
+                            task.overlays.push(ReelsOverlay.createScrollOverlay({ start: 0, end: 9999 }));
+                        } else {
+                            task.overlays.push({ type: 'scroll', scroll_title: '', content: '', start: 0, end: 9999 });
+                        }
+                    }
+                }
+                
                 task._overlayPresetName = presetName;
+                return true;
             }
         }
-    } catch (e) { }
+    } catch (e) {
+        console.warn('[BatchTable] 应用覆层预设失败:', presetName, e);
+    }
+    return false;
 }
 
 function _batchAddEmptyRow() {
@@ -7243,10 +7549,10 @@ function _applyAiPresetBatch() {
     dialog.style.cssText = 'background:#1a1a2e;border:1px solid #444;border-radius:12px;padding:24px;min-width:420px;max-width:520px;color:#eee;font-size:13px;box-shadow:0 12px 40px rgba(0,0,0,0.8);';
 
     const presetNames = Object.keys(presets);
-    const optionsHtml = presetNames.map(n => `<option value="${_escHtml(n)}">${_escHtml(n)}</option>`).join('');
+    const optionsHtml = _renderTaskPresetOptions(presetNames, '');
 
-    const stplOptionsHtml = subtitlePresets.map(n => `<option value="${_escHtml(n)}">${_escHtml(n)}</option>`).join('');
-    const ctplOptionsHtml = cardTemplates.map(t => `<option value="${_escHtml(t.name)}">${_escHtml(t.name)} (${t.count}层)</option>`).join('');
+    const stplOptionsHtml = _renderSubtitlePresetOptions(subtitlePresets, '');
+    const ctplOptionsHtml = _renderOverlayPresetOptions(cardTemplates, '');
 
     dialog.innerHTML = `
         <h3 style="margin:0 0 16px;font-size:16px;color:#a78bfa;">📝 任务预设管理</h3>
@@ -7364,7 +7670,21 @@ async function _openAISettingsModal() {
         
         <div style="margin-bottom:12px;">
             <label style="display:block;font-size:12px;color:#ccc;margin-bottom:6px;">API Keys (每行一个)</label>
-            <textarea id="_ai-keys" rows="4" style="width:100%;box-sizing:border-box;padding:8px;background:#222;color:#fff;border:1px solid #555;border-radius:6px;font-size:12px;font-family:monospace;resize:vertical;" placeholder="AIzaSy..."></textarea>
+            <textarea id="_ai-keys" rows="4" style="width:100%;box-sizing:border-box;padding:8px;background:#222;color:#fff;border:1px solid #555;border-radius:6px;font-size:12px;font-family:monospace;resize:vertical;" placeholder="每行一个 API Key&#10;支持 AIzaSy... (旧格式) 和 AQ... (新格式)"></textarea>
+        </div>
+
+        <div style="margin-bottom:12px;">
+            <label style="display:block;font-size:12px;color:#ccc;margin-bottom:6px;">模型选择</label>
+            <select id="_ai-model" style="width:100%;padding:8px;background:#222;color:#fff;border:1px solid #555;border-radius:6px;font-size:13px;cursor:pointer;">
+                <option value="gemini-2.5-flash">⚡ gemini-2.5-flash (GA·快速)</option>
+                <option value="gemini-2.5-flash-lite">⚡ gemini-2.5-flash-lite (GA·最快最省)</option>
+                <option value="gemini-2.5-pro">🧠 gemini-2.5-pro (GA·强推理)</option>
+                <option value="gemini-3-flash-preview">gemini-3-flash-preview (Preview)</option>
+                <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview (Preview·最新)</option>
+                <option value="gemini-3.1-flash-lite-preview" selected>gemini-3.1-flash-lite-preview (Preview·Lite⚡·默认)</option>
+                <option value="gemma-4-31b-it">💎 Gemma 4 31B (Dense·256K·30RPM)</option>
+                <option value="gemma-4-26b-it">💎 Gemma 4 26B MoE (256K·30RPM)</option>
+            </select>
         </div>
         
         <div style="margin-bottom:16px;">
@@ -7407,6 +7727,7 @@ async function _openAISettingsModal() {
         const data = await resp.json();
         if (data) {
             dialog.querySelector('#_ai-keys').value = (data.keys || []).join('\\n');
+            if (data.model) dialog.querySelector('#_ai-model').value = data.model;
             if (data.prompt) dialog.querySelector('#_ai-prompt').value = data.prompt;
             if (data.lineBreakMode === 'script') {
                 dialog.querySelector('input[name="_ai-lb-mode"][value="script"]').checked = true;
@@ -7430,8 +7751,10 @@ async function _openAISettingsModal() {
         const keyLines = dialog.querySelector('#_ai-keys').value.split('\\n').map(s => s.trim()).filter(s => s);
         const promptRaw = dialog.querySelector('#_ai-prompt').value; // let it be empty if space only
         const lbMode = dialog.querySelector('input[name="_ai-lb-mode"]:checked')?.value || 'ai';
+        const selectedModel = dialog.querySelector('#_ai-model').value;
         const payload = {
             keys: keyLines,
+            model: selectedModel,
             prompt: promptRaw || null,
             lineBreakMode: lbMode,
             lbMaxChars: parseInt(dialog.querySelector('#_ai-lb-max-chars').value) || 16

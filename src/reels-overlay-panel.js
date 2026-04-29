@@ -338,7 +338,8 @@ class ReelsOverlayPanel {
                             <option value="center">居中</option><option value="left">左对齐</option><option value="right">右对齐</option>
                         </select>
                         <label>行距</label><input type="number" id="rop-scroll-linespacing" class="rop-input" min="0" max="50" step="1" value="6">
-                        <label>文本宽度</label><input type="number" id="rop-scroll-textw" class="rop-input" min="100" max="1920" step="10" value="900">
+                        <label>文本宽度</label>
+                        <div class="rop-slider-combo"><input type="range" id="rop-scroll-textw" class="rop-range" min="100" max="1920" step="10" value="900"><input type="number" class="rop-num-readout" data-link="rop-scroll-textw" min="100" max="1920" step="10" value="900"></div>
                         <div style="grid-column: span 2; font-size:11px; color:var(--accent); margin-top:6px; margin-bottom:2px; border-bottom: 1px solid var(--border-color); padding-bottom: 4px;">正文特效</div>
                         <label>描边颜色</label><input type="color" id="rop-scroll-stroke-color" class="rop-color" value="#000000">
                         <label>描边宽度</label><input type="number" id="rop-scroll-stroke-width" class="rop-input" min="0" max="20" step="0.5" value="0">
@@ -949,6 +950,10 @@ class ReelsOverlayPanel {
             'rop-scroll-content',
             'rop-scroll-title', 'rop-scroll-title-fontsize', 'rop-scroll-title-color',
             'rop-scroll-title-weight', 'rop-scroll-title-gap', 'rop-scroll-title-fixed',
+            'rop-scroll-title-uppercase', 'rop-scroll-title-letterspacing',
+            'rop-scroll-title-stroke-color', 'rop-scroll-title-stroke-width',
+            'rop-scroll-title-shadow', 'rop-scroll-title-shadow-color',
+            'rop-scroll-title-shadow-blur', 'rop-scroll-title-shadow-x', 'rop-scroll-title-shadow-y',
             'rop-scroll-font', 'rop-scroll-fontsize',
             'rop-scroll-color', 'rop-scroll-bold', 'rop-scroll-weight',
             'rop-scroll-align', 'rop-scroll-linespacing', 'rop-scroll-textw',
@@ -1215,7 +1220,8 @@ class ReelsOverlayPanel {
         if (!ReelsOverlay) return;
         const ov = ReelsOverlay.createTextCardOverlay({
             title_text: 'IN MARCH, READ THIS JUST ONCE AND IT WILL COME TO PASS IMMEDIATELY',
-            body_text: 'Lord, in the name of Jesus, March has begun. I rebuke every spiritual curse, evil eye, jealousy, sickness, and confusion coming against me and my family! I cut off every hidden opening and destroy every trap set by the enemy.\nI declare: the precious blood of Jesus covers my spouse, my children, and everyone I love. Angels guard every door and window—the enemy cannot come near, not even one step! Darkness cannot enter.\nLord, bring breakthrough to everyone who writes "Amen" and render every curse powerless!',
+            body_text: 'Lord, in the name of Jesus, March has begun. I rebuke every spiritual curse, evil eye, jealousy, sickness, and confusion coming against me and my family! I cut off every hidden opening and destroy every trap set by the enemy.',
+            footer_text: 'I declare: the precious blood of Jesus covers my spouse, my children, and everyone I love. Angels guard every door and window—the enemy cannot come near, not even one step! Darkness cannot enter.\nLord, bring breakthrough to everyone who writes "Amen" and render every curse powerless!',
             x: ROP_TEXTCARD_DEFAULT_TRANSFORM.x,
             y: ROP_TEXTCARD_DEFAULT_TRANSFORM.y,
             w: ROP_TEXTCARD_DEFAULT_TRANSFORM.w,
@@ -3021,7 +3027,7 @@ class ReelsOverlayPanel {
         return new Promise((resolve) => {
             const overlay = document.createElement('div');
             overlay.style.cssText = [
-                'position:fixed', 'inset:0', 'z-index:99999',
+                'position:fixed', 'inset:0', 'z-index:999999',
                 'background:rgba(0,0,0,0.6)',
                 'display:flex', 'align-items:center', 'justify-content:center',
             ].join(';');
@@ -3054,6 +3060,11 @@ class ReelsOverlayPanel {
             const cancelBtn = box.querySelector('.rop-tpl-cancel');
             input.value = defaultName || '';
 
+            // 防止外层事件监听器抢焦点
+            input.addEventListener('mousedown', (e) => e.stopPropagation());
+            input.addEventListener('click', (e) => e.stopPropagation());
+            box.addEventListener('mousedown', (e) => e.stopPropagation());
+
             const close = (val) => {
                 if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
                 resolve(val);
@@ -3066,7 +3077,9 @@ class ReelsOverlayPanel {
                 if (e.key === 'Enter') close((input.value || '').trim() || null);
                 if (e.key === 'Escape') close(null);
             });
-            setTimeout(() => input.focus(), 30);
+            // 多次尝试 focus 确保 Electron 渲染完成后能获得焦点
+            setTimeout(() => input.focus(), 50);
+            setTimeout(() => { if (document.activeElement !== input) input.focus(); }, 150);
         });
     }
 
@@ -3184,15 +3197,32 @@ class ReelsOverlayPanel {
         if (!select) return;
         const current = select.value;
         const presets = this._getOverlayGroupPresets();
-        select.innerHTML = '<option value="">-- 选择预设 --</option>';
+        
+        // 尝试合并代码内置的预设 (防止 localStorage 未初始化)
+        if (window.REELS_BUILTIN_OVERLAY_GROUP_PRESETS) {
+            for (const [k, v] of Object.entries(window.REELS_BUILTIN_OVERLAY_GROUP_PRESETS)) {
+                if (!presets[k]) presets[k] = v;
+            }
+        }
+
+        let customHtml = '';
+        let builtInHtml = '';
+        const builtInKeys = window.REELS_BUILTIN_OVERLAY_GROUP_PRESETS ? Object.keys(window.REELS_BUILTIN_OVERLAY_GROUP_PRESETS) : [];
+
         for (const name of Object.keys(presets)) {
             const layers = presets[name];
             const count = Array.isArray(layers) ? layers.length : 0;
-            const opt = document.createElement('option');
-            opt.value = name;
-            opt.textContent = `${name} (${count}层)`;
-            select.appendChild(opt);
+            const isBuiltin = builtInKeys.includes(name);
+            const optHtml = `<option value="${name}">${name} (${count}层)</option>`;
+            if (isBuiltin) builtInHtml += optHtml;
+            else customHtml += optHtml;
         }
+
+        let finalHtml = '<option value="">-- 选择预设 --</option>';
+        if (customHtml) finalHtml += `<optgroup label="我的预设">${customHtml}</optgroup>`;
+        if (builtInHtml) finalHtml += `<optgroup label="内置预设">${builtInHtml}</optgroup>`;
+        
+        select.innerHTML = finalHtml;
         if (current && presets[current]) select.value = current;
     }
 
@@ -3290,10 +3320,9 @@ class ReelsOverlayPanel {
 
         // Refresh UI
         this._selectedOv = mgr.overlays[0] || null;
-        this._refreshOverlayList();
+        this._refreshList();
         if (this._selectedOv) this._syncFromOverlay(this._selectedOv);
         if (this.videoCanvas) this.videoCanvas.render();
-        alert(`✅ 已加载预设 "${name}" (${layers.length} 层)`);
     }
 
     _deleteOverlayGroupPreset() {

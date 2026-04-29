@@ -179,7 +179,7 @@ class ReelsTimelineEditor {
             return;
         }
         const clips = segments.map((seg, i) => {
-            const fullText = seg.text || seg.content || '';
+            const fullText = seg.edited_text || seg.text || seg.content || '';
             return {
                 start: seg.start || 0,
                 end: seg.end || 0,

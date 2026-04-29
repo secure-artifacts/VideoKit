@@ -1,6 +1,5 @@
 /**
- * 设置和文件管理服务
- * 替代 Python server.py 中的设置存储和文件操作
+ * Settings and file management service
  */
 const fs = require('fs');
 const path = require('path');
@@ -9,13 +8,8 @@ const crypto = require('crypto');
 const { exec } = require('child_process');
 const archiver = require('archiver');
 
-// ==================== JSON 设置文件管理 ====================
+// ==================== JSON Settings ====================
 
-/**
- * 获取可写的 backend 数据目录
- * - 开发模式：项目根目录下的 backend/
- * - 打包模式：用户数据目录下的 backend/（可写）
- */
 function getBackendDir() {
     let isPackaged = false;
     try {
@@ -26,10 +20,8 @@ function getBackendDir() {
     if (isPackaged) {
         const { app } = require('electron');
         const userDataBackend = path.join(app.getPath('userData'), 'backend');
-        // 首次运行时，从打包资源中复制种子 JSON 文件
         if (!fs.existsSync(userDataBackend)) {
             fs.mkdirSync(userDataBackend, { recursive: true });
-            // 尝试从 extraResources 复制初始配置
             const resourceBackend = path.join(process.resourcesPath, 'backend');
             if (fs.existsSync(resourceBackend)) {
                 const jsonFiles = fs.readdirSync(resourceBackend).filter(f => f.endsWith('.json'));
@@ -45,10 +37,6 @@ function getBackendDir() {
     return path.join(__dirname, '..', '..', 'backend');
 }
 
-/**
- * 获取安全的临时文件目录（app-scoped，非共享 /tmp）
- * 用于替代 os.tmpdir() 以避免 CWE-377 不安全临时文件问题
- */
 function getSecureTmpDir(subDir) {
     let baseDir;
     try {
@@ -62,9 +50,6 @@ function getSecureTmpDir(subDir) {
     return dir;
 }
 
-/**
- * 生成安全的临时文件路径
- */
 function secureTmpFile(prefix, ext) {
     const dir = getSecureTmpDir();
     return path.join(dir, `${prefix}_${crypto.randomUUID()}${ext || ''}`);
@@ -86,65 +71,11 @@ function loadGladiaKeys() { return readJSON(getGladiaKeysPath()) || { keys: [] }
 function saveGladiaKeys(data) { writeJSON(getGladiaKeysPath(), data); }
 
 // Gemini Keys
-const DEFAULT_GEMINI_PROMPT = `你是一个专业的配音文案标注专家，专门为 ElevenLabs 配音软件准备文案。
-
-【核心用途】
-用于 ElevenLabs 配音。场景：祷告 / 宣告 / 属灵鼓励 / 短视频旁白
-
-【情感标签规则（最重要）】
-✅ 只使用情感/语气标签（如 [calm] [reverent] [faith-filled] [pause]）
-❌ 不要使用 emoji
-❌ 不要解释标签含义
-标签要求：克制、稳定、不浮夸、不戏剧化
-
-【节奏与结构】
-- 合适的停顿，常用 [pause]，停顿要合理，符合正常人说话的情况，只有必须停顿的才加停顿，不然太多停顿听着就像是在背台词了
-- 停顿要根据整体文案内容添加的合理自然
-
-【ElevenLabs 特性优化】
-针对 ElevenLabs 的特性，它对停顿和标点非常敏感。在 ElevenLabs 中，直接使用 [pause] 标签有时效果不够自然。
-**最有效的"停顿"其实是利用标点符号（如 ... 或 ,）以及通过情感词引导模型改变语速。**
-- 将情感词放在中括号内并配合 ... 标点，能更好地引导 AI 表现出语气起伏
-- 例如：[calm] Lord... I come before You today, with a grateful heart...
-
-【语气取向】
-根据文案内容，偏向：力量感、祷告感、安抚感、权柄但不咆哮
-避免：情绪炸裂、表演感、过度煽动
-
-【内容处理原则】
-❌ 不改原文意思
-❌ 不擅自删句
-❌ 不加新神学内容
-
-【输出要求 - 分两部分】
-你需要输出两个结果，用 ||| 分隔：
-1. 加标签结果：带情感标签的完整文案（用于 ElevenLabs 配音）
-2. 断句结果：根据标签合理断行后的文案（用于字幕显示）
-
-断行规则：
-- 断句合理，符合语言习惯
-- 每行不超过 4 个单词，便于字幕显示
-- 也不要太短（至少有完整的意思单元）
-- 在 [pause] 标签处自然断行
-- 断句结果不包含情感标签，只保留纯文本
-- ⚠️ 断句结果不包含省略号（...），省略号仅用于配音的加标签结果
-
-输出格式示例：
-[calm] Lord... I come before You today, with a grateful heart...
-|||
-Lord,
-I come before You today,
-with a grateful heart.
-
-【批量处理输出规则】
-你需要处理多条文案，每条以 [编号] 开头。
-对于每条文案，输出格式为：[编号] 加标签结果|||断句结果
-⚠️ 断句结果中的换行用 \\n 表示（字面的反斜杠n），不要真正换行，保持每条结果在同一行。
-每条结果占一行。`;
+const DEFAULT_GEMINI_PROMPT = "ElevenLabs 配音文案格式化助手 — 为祷告/宣告/属灵鼓励/短视频旁白文案添加情感标签、拆句断行、排节奏，可直接复制粘贴用于 ElevenLabs 生成配音\n\n## 核心用途\n用于 ElevenLabs 配音\n场景：祷告 / 宣告 / 属灵鼓励 / 短视频旁白\n需要可直接复制粘贴使用\n\n## 情感标签（最重要）\n✅ 只用情感 / 语气标签（如 [calm] [reverent] [faith-filled]）\n❌ 不要 emoji\n❌ 不要解释标签含义\n标签要：克制、稳定、不浮夸、不戏剧化\n\n## 节奏与结构\n每段都有清晰停顿\n常用：[pause]\n适合：跟读、默读、夜间 / 安静场景\n长文也要分层，不能一口气读完\n\n## 语气取向\n偏向：祷告感、安抚感、权柄但不咆哮\n避免：情绪炸裂、表演感、过度煽动\n\n## 内容处理原则\n❌ 不改原文意思\n❌ 不擅自删句\n❌ 不加新神学内容\n❌ 不删除标题\n对于文案中关于上帝的单词、代词都要标准的首字母大写（如 God / He / Him / His / Lord / Father）\n只做三件事：拆句断行、排节奏、加合适的情感标签\n\n## 输出要求 - 分两部分\n你需要输出两个结果，用 ||| 分隔：\n1. 加标签结果：带情感标签的完整文案（用于 ElevenLabs 配音）\n2. 断句结果：根据标签合理断行后的文案（用于字幕显示）\n\n断行规则：\n- 断句合理，符合语言习惯\n- 每行不超过 4 个单词，便于字幕显示\n- 也不要太短（至少有完整的意思单元）\n- 在 [pause] 标签处自然断行\n- 断句结果不包含情感标签，只保留纯文本\n- ⚠️ 断句结果不包含省略号（...），省略号仅用于配音的加标签结果\n\n输出格式示例：\n[calm] Lord... I come before You today, with a grateful heart...\n|||\nLord,\nI come before You today,\nwith a grateful heart.\n\n## 批量处理输出规则\n你需要处理多条文案，每条以 [编号] 开头。\n对于每条文案，输出格式为：[编号] 加标签结果|||断句结果\n⚠️ 断句结果中的换行用 \\\\n 表示（字面的反斜杠n），不要真正换行，保持每条结果在同一行。\n每条结果占一行。";
 
 function getGeminiKeysPath() { return path.join(getBackendDir(), 'gemini_keys.json'); }
-function loadGeminiKeys() { 
-    const data = readJSON(getGeminiKeysPath()) || { keys: [] }; 
+function loadGeminiKeys() {
+    const data = readJSON(getGeminiKeysPath()) || { keys: [] };
     if (!data.prompt || !data.prompt.trim()) {
         data.prompt = DEFAULT_GEMINI_PROMPT;
     }
@@ -172,18 +103,17 @@ function saveElevenLabsSettings(inputData) {
     if (typeof keys === 'string') keys = [keys];
     if (keys.length === 0 && inputData.api_key) keys = [inputData.api_key];
     keys = keys.filter(k => typeof k === 'string' && k.trim());
-    
-    // Retain full existing state and overlay new changes
-    const payload = { 
+
+    const payload = {
         ...existingData,
-        api_key: keys[0] || '', 
-        api_keys: keys 
+        api_key: keys[0] || '',
+        api_keys: keys
     };
-    
+
     if (inputData.use_web_token !== undefined) {
         payload.use_web_token = !!inputData.use_web_token;
     }
-    
+
     writeJSON(getElevenLabsSettingsPath(), payload);
     return payload;
 }
@@ -206,7 +136,7 @@ function getReplaceRulesPath() { return path.join(getBackendDir(), 'replace_rule
 function loadReplaceRules() { return readJSON(getReplaceRulesPath()) || { rules: [] }; }
 function saveReplaceRules(data) { writeJSON(getReplaceRulesPath(), data); }
 
-// ==================== 文件操作 ====================
+// ==================== File Operations ====================
 
 function openFolder(folderPath) {
     let expandedPath = folderPath;
@@ -217,11 +147,10 @@ function openFolder(folderPath) {
     }
 
     if (!fs.existsSync(expandedPath)) {
-        // 尝试创建目录
         try {
             fs.mkdirSync(expandedPath, { recursive: true });
         } catch {
-            throw new Error(`路径不存在且创建失败: ${expandedPath}`);
+            throw new Error('路径不存在且创建失败: ' + expandedPath);
         }
     }
 
@@ -237,13 +166,13 @@ function openFolder(folderPath) {
 
     return new Promise((resolve, reject) => {
         exec(cmd, (err) => {
-            if (err) reject(new Error(`打开文件夹失败: ${err.message}`));
+            if (err) reject(new Error('打开文件夹失败: ' + err.message));
             else resolve({ message: '已打开' });
         });
     });
 }
 
-// Upload 目录
+// Upload directory
 const UPLOAD_DIR = path.join(getBackendDir(), 'uploads');
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
@@ -269,7 +198,7 @@ function createZip(files, outputPath) {
     });
 }
 
-// ==================== 语言配置 ====================
+// ==================== Language Config ====================
 
 const LANGUAGES = {
     en: { name: 'en', display: '英文', gladia: 'english' },

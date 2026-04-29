@@ -24,6 +24,7 @@
     "pack:all": "npm run build && electron-builder --mac --arm64 --x64 --win --x64 --linux --x64"
   },
   "dependencies": {
+    "@google/genai": "^1.50.1",
     "archiver": "^7.0.1",
     "axios": "^1.15.0",
     "diff-match-patch": "^1.0.5",
@@ -71,7 +72,8 @@
             "!**/__pycache__/**",
             "!*.py",
             "!elevenlabs_settings.json",
-            "!gladia_keys.json"
+            "!gladia_keys.json",
+            "!gemini_keys.json"
           ]
         },
         {
@@ -107,7 +109,8 @@
             "!**/__pycache__/**",
             "!*.py",
             "!elevenlabs_settings.json",
-            "!gladia_keys.json"
+            "!gladia_keys.json",
+            "!gemini_keys.json"
           ]
         },
         {
@@ -169,7 +172,8 @@
             "!**/__pycache__/**",
             "!*.py",
             "!elevenlabs_settings.json",
-            "!gladia_keys.json"
+            "!gladia_keys.json",
+            "!gemini_keys.json"
           ]
         },
         {
