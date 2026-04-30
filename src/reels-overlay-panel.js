@@ -331,6 +331,8 @@ class ReelsOverlayPanel {
                         </div>
                         <label>标题字号</label><input type="number" id="rop-scroll-title-fontsize" class="rop-input" min="8" max="300" value="56">
                         <label>标题颜色</label><input type="color" id="rop-scroll-title-color" class="rop-color" value="#ffffff">
+                        <label>标题字体</label>
+                        <select id="rop-scroll-title-font" class="rop-select"></select>
                         <label>标题字重</label>
                         <select id="rop-scroll-title-weight" class="rop-select">
                             <option value="400">Regular</option><option value="500">Medium</option>
@@ -339,6 +341,14 @@ class ReelsOverlayPanel {
                         </select>
                         <label>标题大写</label><input type="checkbox" id="rop-scroll-title-uppercase" checked>
                         <label>字间距</label><input type="number" id="rop-scroll-title-letterspacing" class="rop-input" min="-20" max="100" value="0">
+                        <label>标题对齐</label>
+                        <select id="rop-scroll-title-align" class="rop-select">
+                            <option value="">跟随正文</option><option value="center">居中</option><option value="left">左对齐</option><option value="right">右对齐</option>
+                        </select>
+                        <label>标题行距</label><input type="number" id="rop-scroll-title-linespacing" class="rop-input" min="0" max="50" step="1" value="6">
+                        <label>标题文本宽度</label>
+                        <div class="rop-slider-combo"><input type="range" id="rop-scroll-title-textw" class="rop-range" min="0" max="1920" step="10" value="0"><input type="number" class="rop-num-readout" data-link="rop-scroll-title-textw" min="0" max="1920" step="10" value="0"></div>
+                        <span style="grid-column: span 2; font-size:10px; color:var(--text-muted);">标题文本宽度=0 表示跟随正文宽度</span>
                         <label>标题间距</label><input type="number" id="rop-scroll-title-gap" class="rop-input" min="0" max="200" step="5" value="20">
                         <div style="grid-column: span 2; font-size:11px; color:var(--accent); margin-top:6px; margin-bottom:2px; border-bottom: 1px solid var(--border-color); padding-bottom: 4px;">标题特效</div>
                         <label>描边颜色</label><input type="color" id="rop-scroll-title-stroke-color" class="rop-color" value="#000000">
@@ -391,6 +401,8 @@ class ReelsOverlayPanel {
                         <button id="rop-scroll-show-end" class="btn btn-secondary" style="float:right;padding:1px 8px;font-size:11px;border-radius:4px;">👁 显示终点</button>
                     </div>
                     <div class="rop-grid">
+                        <label title="整体水平位置（裁切区+文字一起移动）" style="font-weight:bold;color:#FF6B35;">整体X</label><input type="number" id="rop-scroll-offset-x" class="rop-input" step="10" value="0">
+                        <label title="整体垂直位置（裁切区+文字一起移动）" style="font-weight:bold;color:#FF6B35;">整体Y</label><input type="number" id="rop-scroll-offset-y" class="rop-input" step="10" value="0">
                         <label>开始(s)</label><input type="number" id="rop-scroll-start-time" class="rop-input" step="0.1" min="0">
                         <label>结束(s)</label><input type="number" id="rop-scroll-end-time" class="rop-input" step="0.1" min="0">
                         <label title="文字开始向上滚动时的初始Y坐标">起始Y</label><input type="number" id="rop-scroll-from-y" class="rop-input" step="10" value="960">
@@ -952,6 +964,7 @@ class ReelsOverlayPanel {
             fm.refreshFontSelect('rop-body-font', 'Arial');
             fm.refreshFontSelect('rop-footer-font', 'Arial');
             fm.refreshFontSelect('rop-scroll-font', 'Arial');
+            fm.refreshFontSelect('rop-scroll-title-font', 'Arial');
             if (fm && typeof fm.loadGoogleFont === 'function') {
                 fm.loadGoogleFont('Crimson Pro').catch(() => { });
             }
@@ -1000,8 +1013,9 @@ class ReelsOverlayPanel {
             // Scroll fields
             'rop-scroll-content',
             'rop-scroll-title', 'rop-scroll-title-fontsize', 'rop-scroll-title-color',
-            'rop-scroll-title-weight', 'rop-scroll-title-gap', 'rop-scroll-title-fixed',
+            'rop-scroll-title-font', 'rop-scroll-title-weight', 'rop-scroll-title-gap', 'rop-scroll-title-fixed',
             'rop-scroll-title-uppercase', 'rop-scroll-title-letterspacing',
+            'rop-scroll-title-align', 'rop-scroll-title-linespacing', 'rop-scroll-title-textw',
             'rop-scroll-title-stroke-color', 'rop-scroll-title-stroke-width',
             'rop-scroll-title-shadow', 'rop-scroll-title-shadow-color',
             'rop-scroll-title-shadow-blur', 'rop-scroll-title-shadow-x', 'rop-scroll-title-shadow-y',
@@ -1011,6 +1025,7 @@ class ReelsOverlayPanel {
             'rop-scroll-stroke-color', 'rop-scroll-stroke-width',
             'rop-scroll-shadow', 'rop-scroll-shadow-color', 'rop-scroll-shadow-blur',
             'rop-scroll-from-y', 'rop-scroll-to-y', 'rop-scroll-from-x', 'rop-scroll-to-x',
+            'rop-scroll-offset-x', 'rop-scroll-offset-y',
             'rop-scroll-final-y', 'rop-scroll-start-offset',
             'rop-scroll-start-time', 'rop-scroll-end-time',
             'rop-scroll-speed',
@@ -1131,6 +1146,7 @@ class ReelsOverlayPanel {
             ['rop-body-font', 'rop-body-weight'],
             ['rop-footer-font', 'rop-footer-weight'],
             ['rop-scroll-font', 'rop-scroll-weight'],
+            ['rop-scroll-title-font', 'rop-scroll-title-weight'],
         ];
         for (const [fontId, weightId] of fontWeightPairs) {
             const fontEl = this.container.querySelector('#' + fontId);
@@ -1246,6 +1262,7 @@ class ReelsOverlayPanel {
                 if (this._get('rop-body-font')) this._refreshWeightOptions('rop-body-weight', this._get('rop-body-font'));
                 if (this._get('rop-footer-font')) this._refreshWeightOptions('rop-footer-weight', this._get('rop-footer-font'));
                 if (this._get('rop-scroll-font')) this._refreshWeightOptions('rop-scroll-weight', this._get('rop-scroll-font'));
+                if (this._get('rop-scroll-title-font')) this._refreshWeightOptions('rop-scroll-title-weight', this._get('rop-scroll-title-font'));
 
                 // 3. Now apply weights safely
                 this.container.querySelectorAll('.rop-defaultable').forEach(el => {
@@ -2435,9 +2452,14 @@ class ReelsOverlayPanel {
             this._val('rop-scroll-title', ov.scroll_title || '');
             this._val('rop-scroll-title-fontsize', ov.scroll_title_fontsize ?? 56);
             this._val('rop-scroll-title-color', ov.scroll_title_color || ov.color || '#ffffff');
+            this._val('rop-scroll-title-font', ov.scroll_title_font_family || '');
+            this._refreshWeightOptions('rop-scroll-title-weight', ov.scroll_title_font_family || ov.font_family || 'Arial');
             this._val('rop-scroll-title-weight', ov.scroll_title_font_weight ?? 700);
             this._val('rop-scroll-title-uppercase', ov.scroll_title_uppercase !== false);
             this._val('rop-scroll-title-letterspacing', ov.scroll_title_letter_spacing || 0);
+            this._val('rop-scroll-title-align', ov.scroll_title_align || '');
+            this._val('rop-scroll-title-linespacing', ov.scroll_title_line_spacing ?? 6);
+            this._val('rop-scroll-title-textw', ov.scroll_title_text_width ?? 0);
             this._val('rop-scroll-title-gap', ov.scroll_title_gap ?? 20);
             this._val('rop-scroll-title-fixed', ov.scroll_title_fixed !== false);
             this._val('rop-scroll-title-stroke-color', ov.scroll_title_stroke_color || '#000000');
@@ -2471,6 +2493,9 @@ class ReelsOverlayPanel {
             this._val('rop-scroll-from-y', ov.scroll_from_y ?? 960);
             this._val('rop-scroll-to-y', ov.scroll_to_y ?? -200);
             this._val('rop-scroll-from-x', ov.scroll_from_x ?? 90);
+            // 整体偏移
+            this._val('rop-scroll-offset-x', ov.scroll_offset_x ?? 0);
+            this._val('rop-scroll-offset-y', ov.scroll_offset_y ?? 0);
             // scroll_speed 已移除，速度由 距离÷时间 自动决定
             this._val('rop-scroll-feather-top', ov.feather_top ?? 80);
             this._val('rop-scroll-feather-bottom', ov.feather_bottom ?? 80);
@@ -2781,11 +2806,15 @@ class ReelsOverlayPanel {
             if (newScrollTitle !== ov.scroll_title) ov.scroll_title_styled_ranges = null;
             ov.scroll_title = newScrollTitle;
             ov.scroll_title_fontsize = this._get('rop-scroll-title-fontsize') || 56;
+            ov.scroll_title_font_family = this._get('rop-scroll-title-font') || '';
             ov.scroll_title_font_weight = this._get('rop-scroll-title-weight') || 700;
             ov.scroll_title_bold = (ov.scroll_title_font_weight >= 600);
             ov.scroll_title_color = this._get('rop-scroll-title-color') || '';
             ov.scroll_title_uppercase = this._get('rop-scroll-title-uppercase');
             ov.scroll_title_letter_spacing = this._get('rop-scroll-title-letterspacing');
+            ov.scroll_title_align = this._get('rop-scroll-title-align') || '';
+            ov.scroll_title_line_spacing = this._get('rop-scroll-title-linespacing') ?? 6;
+            ov.scroll_title_text_width = this._get('rop-scroll-title-textw') ?? 0;
             ov.scroll_title_gap = this._get('rop-scroll-title-gap') ?? 20;
             ov.scroll_title_fixed = this._get('rop-scroll-title-fixed');
             ov.scroll_title_stroke_color = this._get('rop-scroll-title-stroke-color');
@@ -2820,6 +2849,9 @@ class ReelsOverlayPanel {
             ov.scroll_to_y = this._get('rop-scroll-to-y') ?? -200;
             ov.scroll_from_x = this._get('rop-scroll-from-x');
             ov.scroll_to_x = ov.scroll_from_x;  // X stays the same
+            // 整体偏移
+            ov.scroll_offset_x = this._get('rop-scroll-offset-x') ?? 0;
+            ov.scroll_offset_y = this._get('rop-scroll-offset-y') ?? 0;
             ov.scroll_speed = 1;  // 固定为1，速度由 距离÷时间 自动决定
             ov.feather_top = this._get('rop-scroll-feather-top');
             ov.feather_bottom = this._get('rop-scroll-feather-bottom');

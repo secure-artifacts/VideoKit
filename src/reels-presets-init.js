@@ -1467,16 +1467,16 @@ const REELS_BUILTIN_OVERLAY_GROUP_PRESETS = {
 window.REELS_BUILTIN_OVERLAY_GROUP_PRESETS = REELS_BUILTIN_OVERLAY_GROUP_PRESETS;
 
 function initBuiltinPresets() {
-    if (!window.ReelsStyleEngine) return;
-    const current = ReelsStyleEngine.loadSubtitlePresets();
-    const presets = current.presets || {};
-    let added = false;
-    for (const [name, style] of Object.entries(REELS_BUILTIN_PRESETS)) {
-        // 始终用最新的内置预设覆盖（保证迁移更新生效）
-        ReelsStyleEngine.saveNamedSubtitlePreset(name, style);
-        if (!presets[name]) added = true;
+    if (!window.ReelsStyleEngine) {
+        console.warn('[PresetsInit] ReelsStyleEngine 未加载，预设初始化跳过');
+        return;
     }
-    if (added && typeof _reelsRefreshPresetList === 'function') {
+    // REELS_BUILTIN_PRESETS 现在通过 window.REELS_BUILTIN_PRESETS 在 loadSubtitlePresets 中内存合并
+    // 无需写入 localStorage，避免 Windows file:// 下 localStorage 不稳定的问题
+    const data = ReelsStyleEngine.loadSubtitlePresets();
+    const count = Object.keys(data.presets || {}).length;
+    console.log(`[PresetsInit] 预设加载完成: ${count} 个预设 (内置+用户)`);
+    if (typeof _reelsRefreshPresetList === 'function') {
         _reelsRefreshPresetList();
     }
 }

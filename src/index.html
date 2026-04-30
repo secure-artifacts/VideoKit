@@ -3214,6 +3214,12 @@
                         style="width: 36px; height: 28px; border: none; cursor: pointer;"
                         onchange="reelsUpdatePreview()">
                     </div>
+                    <div style="display: flex; align-items: center; gap: 4px;">
+                      <label>透明:</label>
+                      <input type="range" id="reels-high-bg-opacity-range" min="0" max="255" value="200" style="width: 50px;" oninput="document.getElementById('reels-high-bg-opacity').value=this.value; reelsUpdatePreview()">
+                      <input type="number" id="reels-high-bg-opacity" class="input input-small" value="200" min="0" max="255"
+                        style="width: 45px;" oninput="document.getElementById('reels-high-bg-opacity-range').value=this.value; reelsUpdatePreview()">
+                    </div>
                     <label class="checkbox-label"><input type="checkbox" id="reels-dyn-anim"
                         onchange="reelsUpdatePreview()"><span>弹力动画</span></label>
                     <div style="display: flex; align-items: center; gap: 4px;">
@@ -4924,6 +4930,7 @@ THE HOLY	This is no coincidence...</div>
   <script src="reels-fcpxml-export.js"></script>
   <script src="reels-export-engine.js"></script>
   <script src="reels-timeline.js"></script>
+  <script src="fonts-metadata.js"></script>
   <script src="reels-font-manager.js"></script>
   <script src="reels-project.js"></script>
   <script src="reels-templates.js"></script>

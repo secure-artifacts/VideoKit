@@ -1548,7 +1548,7 @@ function _readStyleFromUI() {
         // Dynamic box
         dynamic_box: chk('reels-dynamic-box'),
         color_high_bg: val('reels-high-bg-color') || '#FFD700',
-        opacity_high_bg: 200,
+        opacity_high_bg: num('reels-high-bg-opacity', 200),
         dyn_box_anim: chk('reels-dyn-anim'),
         dyn_box_anim_overshoot: 1.3,
         dyn_box_anim_duration: 0.15,
@@ -1865,6 +1865,8 @@ function _writeStyleToUI(style) {
     set('reels-box-transition-color', style.box_transition_color_to || '#FF6600');
     setChk('reels-dynamic-box', style.dynamic_box);
     set('reels-high-bg-color', style.color_high_bg || '#FFD700');
+    set('reels-high-bg-opacity', style.opacity_high_bg ?? 200);
+    { const el = document.getElementById('reels-high-bg-opacity-range'); if (el) el.value = style.opacity_high_bg ?? 200; }
     setChk('reels-dyn-anim', style.dyn_box_anim);
     set('reels-high-padding', style.high_padding || 4);
     set('reels-dyn-radius', style.dynamic_radius || 6);
@@ -5016,7 +5018,7 @@ function reelsImportPresets() {
             if (window.ReelsStyleEngine) {
                 const result = ReelsStyleEngine.importSubtitlePresets(ev.target.result);
                 _reelsRefreshPresetList();
-                alert(`导入完成：新增 ${result.added.length} 个，冲突 ${result.conflicts.length} 个，跳过 ${result.skipped.length} 个`);
+                alert(`导入完成：新增 ${result.added.length} 个，覆盖 ${result.conflicts.length} 个，跳过 ${result.skipped.length} 个`);
             }
         };
         reader.readAsText(file);

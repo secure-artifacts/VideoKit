@@ -300,7 +300,7 @@ function extractStyleKeys(obj) {
 // ───────────────────────────────────────────────────────
 
 const PRESET_STORAGE_KEY = 'reels_subtitle_presets';
-const MAX_PRESETS = 50;
+const MAX_PRESETS = 200;
 
 const BUILTIN_PRESETS = {
     // ── 爆贴底框系列 ──
@@ -348,8 +348,8 @@ const PRESET_CATEGORIES = {
     '📝 基础字幕': ['默认白字','黄字黑边 (经典)','上滑入场','左滑入场','黑底白字 (新闻)'],
     '🎤 卡拉OK高亮': ['卡拉OK高亮','节奏逐词','闪光高亮','黑边_粉红高亮','黑边_薄荷高亮','黑边_电蓝高亮','极简纯文+电光青高亮','重金大字+强对比排版'],
     '🔥 逐词动态': ['逐个大小出字-55','逐个大小出字-45','逐个出字+红色动画','逐个出字大小-爆贴','蓝底白字+动感回弹','紫色动态底框','逐字放大','逐词弹出(随机大小)','逐词弹出(随机回弹)','Hormozi 风格字幕'],
-    '✨ 特殊动画': ['打字机模式','逐行出现','悬浮漂移','霓虹多层描边','滚动歌词_粉高亮'],
-    '💫 阴影发光': ['阴影沉浸式','软阴影_青字高亮','硬阴影_黄字高亮','圣光降临','纯白发光字','粉红发光字'],
+    '✨ 特殊动画': ['打字机模式','逐行出现','悬浮漂移','霓虹多层描边','滚动歌词_粉高亮','圣光降临','阴影沉浸式'],
+    '💫 阴影发光': ['软阴影_青字高亮','硬阴影_黄字高亮','纯白发光字','粉红发光字'],
 };
 
 function getPresetsByCategory() {
@@ -380,13 +380,17 @@ function getPresetsByCategory() {
 function _loadPresetsFromStorage() {
     try {
         const raw = localStorage.getItem(PRESET_STORAGE_KEY);
-        if (!raw) return { default: {}, presets: {} };
+        if (!raw) {
+            console.warn('[StyleEngine] localStorage 中无预设数据 (key:', PRESET_STORAGE_KEY, ')');
+            return { default: {}, presets: {} };
+        }
         const data = JSON.parse(raw);
         if (typeof data !== 'object') return { default: {}, presets: {} };
         data.default = data.default || {};
         data.presets = data.presets || {};
         return data;
     } catch (e) {
+        console.error('[StyleEngine] 读取预设失败:', e);
         return { default: {}, presets: {} };
     }
 }
@@ -407,9 +411,15 @@ function loadSubtitlePresets() {
     const data = _loadPresetsFromStorage();
     data.default = extractStyleKeys(data.default);
     const presets = {};
-    // 加载内置预设
+    // 加载内置预设（style-engine 自带）
     for (const [name, style] of Object.entries(BUILTIN_PRESETS)) {
         presets[name] = extractStyleKeys(style);
+    }
+    // 加载 presets-init.js 中的内置预设（如果已注册到 window）
+    if (typeof window !== 'undefined' && window.REELS_BUILTIN_PRESETS) {
+        for (const [name, style] of Object.entries(window.REELS_BUILTIN_PRESETS)) {
+            presets[name] = extractStyleKeys(style);
+        }
     }
     // 加载用户预设 (覆盖同名内置预设)
     for (const [name, style] of Object.entries(data.presets || {})) {
@@ -466,7 +476,10 @@ function applySubtitlePreset(name) {
 }
 
 function exportSubtitlePresets() {
-    return JSON.stringify(loadSubtitlePresets(), null, 2);
+    // 只导出用户自定义预设（排除内置预设），避免导入时产生大量冲突
+    const data = _loadPresetsFromStorage();
+    const userPresets = data.presets || {};
+    return JSON.stringify({ default: data.default || {}, presets: userPresets }, null, 2);
 }
 
 function importSubtitlePresets(jsonString) {
@@ -479,12 +492,21 @@ function importSubtitlePresets(jsonString) {
             data.default = extractStyleKeys(incoming.default);
         }
         const presets = data.presets || {};
+        // 收集内置预设名，导入时跳过纯内置预设（避免污染用户存储）
+        const builtinNames = new Set(Object.keys(BUILTIN_PRESETS));
         for (const [name, style] of Object.entries(incoming.presets || {})) {
+            // 如果是内置预设且本地没有用户覆盖版本，跳过
+            if (builtinNames.has(name) && !(name in presets)) {
+                result.skipped.push(name);
+                continue;
+            }
             if (Object.keys(presets).length >= MAX_PRESETS && !(name in presets)) {
                 result.skipped.push(name);
                 continue;
             }
             if (name in presets) {
+                // 同名预设：覆盖而非跳过
+                presets[name] = extractStyleKeys(style);
                 result.conflicts.push(name);
                 continue;
             }
@@ -493,7 +515,9 @@ function importSubtitlePresets(jsonString) {
         }
         data.presets = presets;
         _savePresetsToStorage(data);
-    } catch (e) { /* ignore */ }
+    } catch (e) {
+        console.error('[StyleEngine] 导入预设失败:', e);
+    }
     return result;
 }
 

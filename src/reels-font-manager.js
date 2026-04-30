@@ -475,7 +475,10 @@ class ReelsFontManager {
      * 获取所有可用字体列表。
      */
     getAllFonts() {
-        const fonts = new Set([...this._allowedFonts, ...this._customFonts]);
+        const fonts = new Set([...this._allowedFonts, ...GOOGLE_FONTS, ...this._customFonts]);
+        if (this._googleFontsFull) {
+            for (const font of this._googleFontsFull) fonts.add(font);
+        }
         return Array.from(fonts).sort();
     }
 
@@ -539,6 +542,88 @@ class ReelsFontManager {
 
     getFontWeightOptions(fontFamily) {
         return this.getFontWeightEntries(fontFamily, 'normal').map(x => x.value);
+    }
+
+    _ensureFontMetadataIndex() {
+        if (this._fontMetadataIndex) return this._fontMetadataIndex;
+        const index = new Map();
+        const fonts = window.FONTS_METADATA && Array.isArray(window.FONTS_METADATA.fonts)
+            ? window.FONTS_METADATA.fonts
+            : [];
+        for (const meta of fonts) {
+            if (meta && meta.family) index.set(meta.family.toLowerCase(), meta);
+        }
+        this._fontMetadataIndex = index;
+        return index;
+    }
+
+    _getFontMetadata(fontName) {
+        if (!fontName) return {};
+        const exact = this._ensureFontMetadataIndex().get(String(fontName).toLowerCase());
+        if (exact) return exact;
+        return this._inferFontMetadata(fontName);
+    }
+
+    _inferFontMetadata(fontName) {
+        const name = String(fontName || '');
+        const lower = name.toLowerCase();
+        let category = 'sans';
+        if (lower.includes('serif') || ['georgia', 'times new roman', 'lora', 'merriweather', 'garamond', 'baskerville', 'bodoni', 'prata', 'cardo', 'literata'].some(x => lower.includes(x))) category = 'serif';
+        if (lower.includes('mono') || lower.includes('code') || lower.includes('console') || lower.includes('courier')) category = 'mono';
+        if (lower.includes('script') || lower.includes('hand') || lower.includes('cursive') || ['pacifico', 'lobster', 'caveat', 'kalam', 'satisfy'].some(x => lower.includes(x))) category = 'script';
+        if (['anton', 'bebas', 'display', 'black', 'condensed', 'poster', 'bungee', 'orbitron', 'righteous', 'fatface', 'slab', 'impact'].some(x => lower.includes(x))) category = 'display';
+        if (/[\u4e00-\u9fff]/.test(name) || lower.includes('noto sans sc') || lower.includes('noto serif sc') || lower.includes('kaiti') || lower.includes('heiti') || lower.includes('song') || lower.includes('wenkai')) category = 'cjk';
+
+        const regions = [];
+        if (lower.includes('arabic') || ['cairo', 'tajawal', 'amiri', 'almarai', 'kufi', 'naskh'].some(x => lower.includes(x))) regions.push('arabic');
+        if (lower.includes('tagalog')) regions.push('philippines');
+        if (category === 'cjk') regions.push('cjk');
+        if (['pt ', 'fira', 'ubuntu', 'manrope', 'literata', 'ysabeau', 'cormorant', 'alegreya'].some(x => lower.includes(x))) regions.push('europe');
+        if (regions.length === 0) regions.push('us', 'europe');
+
+        const useCases = [];
+        if (category === 'sans') useCases.push('subtitle', 'tech');
+        if (category === 'serif') useCases.push('luxury', 'narrative');
+        if (category === 'display') useCases.push('viral', 'poster');
+        if (category === 'script') useCases.push('kids', 'lifestyle');
+        if (category === 'mono') useCases.push('tech', 'game');
+        if (category === 'cjk') useCases.push('subtitle', 'documentary');
+
+        return {
+            family: name,
+            category,
+            regions: Array.from(new Set(regions)),
+            useCases: Array.from(new Set(useCases)),
+            popularity: 55,
+            aliases: [],
+            inferred: true,
+        };
+    }
+
+    _escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>"']/g, ch => ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;',
+        }[ch]));
+    }
+
+    _getFontSource(font, groups = {}) {
+        if (groups.custom && groups.custom.includes(font)) return 'custom';
+        if (groups.embedded && groups.embedded.includes(font)) return 'embedded';
+        if (groups.system && groups.system.includes(font)) return 'system';
+        return 'google';
+    }
+
+    _sourceLabel(source) {
+        return {
+            google: 'Google',
+            system: '系统',
+            embedded: '内置',
+            custom: '上传',
+        }[source] || source || '字体';
     }
 
     /**
@@ -667,61 +752,241 @@ class ReelsFontManager {
         const style = document.createElement('style');
         style.id = 'font-picker-css';
         style.textContent = `
+            /* Wrapper Button replacing select */
             .fp-wrap { position:relative; display:inline-block; }
-            .fp-wrap .fp-hidden-select { position:absolute; opacity:0; pointer-events:none; width:0; height:0; }
-            .fp-input {
-                width:100%; box-sizing:border-box;
-                padding:4px 24px 4px 8px; border:1px solid var(--border-color, #555);
-                border-radius:4px; font-size:12px; cursor:text;
+            .fp-hidden-select { display:none !important; }
+            .fp-btn {
+                width:100%; box-sizing:border-box; text-align:left;
+                padding:6px 24px 6px 12px; border:1px solid var(--border-color, #555);
+                border-radius:6px; font-size:13px; cursor:pointer;
                 background:var(--bg-input, #1e1e2e); color:var(--text-primary, #eee);
-                outline:none; text-overflow:ellipsis;
+                white-space:nowrap; overflow:hidden; text-overflow:ellipsis; position:relative;
+                height: 30px; line-height: 16px;
             }
-            .fp-input:hover { border-color:var(--accent, #4c9eff); }
-            .fp-input:focus { border-color:var(--accent, #4c9eff); }
-            .fp-input::placeholder { color:var(--text-muted, #888); }
-            .fp-arrow {
-                position:absolute; right:6px; top:50%; transform:translateY(-50%);
-                pointer-events:none; font-size:10px; color:var(--text-muted, #888);
+            .fp-btn:hover { border-color:var(--accent, #4c9eff); }
+            .fp-btn::after {
+                content: '▼'; position:absolute; right:8px; top:50%; transform:translateY(-50%);
+                font-size:10px; color:var(--text-muted, #888);
             }
-            .fp-dropdown {
-                display:none; position:absolute; left:0; top:100%; z-index:99999;
-                width:100%; min-width:220px; max-width:min(320px, 92vw); max-height:420px; overflow-y:auto;
-                background:var(--bg-secondary, #1e1e2e); border:1px solid var(--border-color, #555);
-                border-radius:6px; box-shadow:0 8px 24px rgba(0,0,0,0.4);
-                margin-top:2px; padding:4px 0;
+            
+            /* Advanced Modal */
+            .fp-modal-overlay {
+                position:fixed; top:0; left:0; width:100vw; height:100vh;
+                background:rgba(0,0,0,0.6); backdrop-filter:blur(4px);
+                z-index:999999; display:flex; justify-content:center; align-items:center;
+                opacity:0; pointer-events:none; transition:opacity 0.2s;
             }
-            .fp-dropdown.fp-open { display:block; }
-            .fp-group-label {
-                padding:4px 10px; font-size:11px; font-weight:600;
-                color:var(--text-muted, #aaa); background:var(--bg-hover, rgba(255,255,255,0.04));
-                position:sticky; top:0; z-index:1;
+            .fp-modal-overlay.fp-open { opacity:1; pointer-events:auto; }
+            
+            .fp-modal {
+                width:1120px; max-width:96vw; height:680px; max-height:92vh;
+                background:#1e1e2e; border-radius:8px; box-shadow:0 20px 50px rgba(0,0,0,0.5);
+                display:flex; overflow:hidden; border:1px solid #333;
             }
-            .fp-item {
-                padding:5px 12px; font-size:12px; cursor:pointer;
-                color:var(--text-primary, #eee); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+            
+            /* Sidebar */
+            .fp-sidebar {
+                width:210px; background:rgba(255,255,255,0.03); border-right:1px solid #333;
+                padding:16px 0; overflow-y:auto; display:flex; flex-direction:column;
             }
-            .fp-item:hover, .fp-item.fp-active { background:var(--accent, #4c9eff); color:#fff; }
-            .fp-no-results { padding:12px; text-align:center; font-size:12px; color:var(--text-muted, #888); }
-            .fp-count { font-size:10px; color:var(--text-muted, #888); margin-left:4px; }
-            .fp-tip {
-                padding:6px 10px; font-size:11px; color:var(--text-muted, #888);
-                border-bottom:1px solid var(--border-color, #444);
+            .fp-side-title {
+                font-size:11px; font-weight:bold; color:#888; text-transform:uppercase;
+                margin:16px 16px 8px 16px; letter-spacing:1px;
             }
+            .fp-side-title:first-child { margin-top:0; }
+            .fp-side-item {
+                padding:8px 16px; font-size:13px; color:#ccc; cursor:pointer;
+                display:flex; align-items:center; gap:8px;
+            }
+            .fp-side-item:hover { background:rgba(255,255,255,0.08); color:#fff; }
+            .fp-side-item.fp-active { background:rgba(76, 158, 255, 0.15); color:#4c9eff; border-right:3px solid #4c9eff; }
+            
+            /* Main Content */
+            .fp-main { flex:1; display:flex; flex-direction:column; background:#181825; }
+            .fp-content { flex:1; min-height:0; display:flex; }
+            .fp-results { flex:1; min-width:0; display:flex; flex-direction:column; }
+            
+            /* Header */
+            .fp-header {
+                padding:16px; border-bottom:1px solid #333; display:flex; gap:16px; align-items:center;
+            }
+            .fp-search-box {
+                flex:1; position:relative;
+            }
+            .fp-search-input {
+                width:100%; padding:8px 12px 8px 32px; background:#11111b; border:1px solid #333;
+                border-radius:8px; color:#fff; font-size:13px; outline:none;
+            }
+            .fp-search-input:focus { border-color:#4c9eff; }
+            .fp-search-icon {
+                position:absolute; left:12px; top:50%; transform:translateY(-50%); color:#888;
+            }
+            .fp-preview-input {
+                width:200px; padding:8px 12px; background:#11111b; border:1px solid #333;
+                border-radius:6px; color:#fff; font-size:13px; outline:none;
+            }
+            .fp-preview-field { width:220px; display:flex; flex-direction:column; gap:4px; }
+            .fp-preview-field .fp-preview-input { width:100%; }
+            .fp-preview-hint { font-size:10px; color:#7d879a; line-height:1; }
+            .fp-global-toggle {
+                height:34px; padding:0 12px; border:1px solid #333; border-radius:8px;
+                background:#11111b; color:#aab4c8; cursor:pointer; font-size:12px;
+                white-space:nowrap;
+            }
+            .fp-global-toggle.fp-active-filter {
+                border-color:#60d394; background:rgba(96,211,148,0.12); color:#d8ffe8;
+            }
+            .fp-close-btn {
+                background:none; border:none; color:#888; font-size:20px; cursor:pointer; padding:0 8px;
+            }
+            .fp-close-btn:hover { color:#fff; }
+            
+            /* Top Recommendations */
+            .fp-reco-area {
+                padding:12px 16px; border-bottom:1px solid #333; background:#1e1e2e;
+            }
+            .fp-reco-title { font-size:11px; color:#888; margin-bottom:8px; }
+            .fp-reco-tags { display:flex; gap:8px; flex-wrap:wrap; }
+            .fp-reco-tag {
+                padding:4px 10px; background:#2a2a3e; border-radius:8px; font-size:12px;
+                color:#ccc; cursor:pointer; border:1px solid transparent;
+            }
+            .fp-reco-tag:hover, .fp-reco-tag.fp-active-filter { background:#3a3a4e; color:#fff; border-color:#4c9eff; }
+            .fp-candidate-area {
+                display:none; padding:10px 16px; border-bottom:1px solid #333; background:#171724;
+            }
+            .fp-candidate-area.fp-show { display:block; }
+            .fp-candidate-title { font-size:11px; color:#8f97aa; margin-bottom:8px; }
+            .fp-candidate-list { display:flex; gap:8px; flex-wrap:wrap; }
+            .fp-candidate-chip {
+                display:inline-flex; align-items:center; gap:6px; max-width:180px; height:28px;
+                padding:0 8px; border:1px solid #333; border-radius:6px; background:#11111b;
+                color:#dce3f2; cursor:pointer; font-size:12px;
+            }
+            .fp-candidate-chip.fp-active-filter { border-color:#4c9eff; background:#243b5f; color:#fff; }
+            .fp-candidate-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+            .fp-candidate-remove {
+                border:none; background:transparent; color:#8f97aa; cursor:pointer; padding:0; font-size:13px;
+            }
+            .fp-candidate-remove:hover { color:#fff; }
+            
+            /* Grid */
+            .fp-grid-wrap { flex:1; overflow-y:auto; padding:16px; }
+            .fp-grid {
+                display:grid; grid-template-columns:repeat(auto-fill, minmax(240px, 1fr)); gap:12px;
+            }
+            
+            /* Cards */
+            .fp-card {
+                background:#1e1e2e; border:1px solid #333; border-radius:8px; padding:14px;
+                cursor:pointer; transition:all 0.2s ease; position:relative; overflow:hidden;
+                min-height:168px; display:flex; flex-direction:column;
+            }
+            .fp-card:hover, .fp-card.fp-selected { border-color:#4c9eff; box-shadow:0 8px 16px rgba(0,0,0,0.3); }
+            .fp-card.fp-selected { background:#202844; }
+            .fp-card.fp-current { border-color:#60d394; }
+            .fp-card-head { display:flex; justify-content:space-between; align-items:flex-start; gap:8px; margin-bottom:10px; min-height:28px; }
+            .fp-card-name { font-size:20px; color:#fff; line-height:1.15; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
+            .fp-card-preview {
+                font-size:14px; color:#aaa; line-height:1.35; min-height:54px; max-height:64px;
+                overflow:hidden; display:flex; flex-direction:column; justify-content:center; margin-bottom:10px;
+            }
+            .fp-card-preview-cn { font-size:12px; color:#8f97aa; line-height:1.35; margin-top:5px; }
+            .fp-current-badge {
+                display:inline-flex; align-items:center; height:18px; padding:0 5px; border-radius:4px;
+                background:rgba(96,211,148,0.12); color:#60d394; border:1px solid rgba(96,211,148,0.35);
+                font-size:10px; font-weight:700; white-space:nowrap;
+            }
+            .fp-share-badge {
+                display:inline-flex; align-items:center; height:18px; padding:0 5px; border-radius:4px;
+                font-size:10px; font-weight:700; white-space:nowrap;
+            }
+            .fp-share-badge.fp-portable {
+                color:#60d394; background:rgba(96,211,148,0.12); border:1px solid rgba(96,211,148,0.32);
+            }
+            .fp-share-badge.fp-local-only {
+                color:#f9e2af; background:rgba(249,226,175,0.1); border:1px solid rgba(249,226,175,0.3);
+            }
+            .fp-share-badge.fp-font-file {
+                color:#fab387; background:rgba(250,179,135,0.1); border:1px solid rgba(250,179,135,0.32);
+            }
+            .fp-add-candidate-btn {
+                height:24px; padding:0 8px; border:1px solid #444; border-radius:5px;
+                background:#171724; color:#b8c0d4; cursor:pointer; font-size:11px; white-space:nowrap;
+            }
+            .fp-add-candidate-btn:hover { border-color:#4c9eff; color:#fff; }
+            .fp-add-candidate-btn.fp-added { border-color:#60d394; color:#60d394; background:rgba(96,211,148,0.08); }
+            
+            /* Tags */
+            .fp-card-footer { display:flex; justify-content:space-between; align-items:flex-end; gap:8px; margin-top:auto; }
+            .fp-card-tags { display:flex; gap:5px; flex-wrap:wrap; max-height:42px; overflow:hidden; min-width:0; }
+            .fp-card-tag {
+                font-size:10px; padding:2px 5px; border-radius:4px;
+                background:rgba(255,255,255,0.05); color:#888; text-transform:uppercase;
+            }
+            .fp-tag-serif { color:#cba6f7; background:rgba(203,166,247,0.1); }
+            .fp-tag-sans { color:#89b4fa; background:rgba(137,180,250,0.1); }
+            .fp-tag-display { color:#f38ba8; background:rgba(243,139,168,0.1); }
+            .fp-tag-viral { color:#f9e2af; background:rgba(249,226,175,0.1); border:1px solid rgba(249,226,175,0.3); }
+            .fp-tag-script { color:#fab387; background:rgba(250,179,135,0.1); }
+            .fp-tag-mono { color:#94e2d5; background:rgba(148,226,213,0.1); }
+            .fp-tag-cjk { color:#a6e3a1; background:rgba(166,227,161,0.1); }
+            
+            /* Inspector */
+            .fp-inspector {
+                width:304px; border-left:1px solid #333; background:#151521;
+                padding:14px; display:flex; flex-direction:column; gap:10px; overflow-y:auto;
+            }
+            .fp-ins-title { font-size:12px; color:#8f97aa; font-weight:700; }
+            .fp-current-line {
+                display:flex; align-items:center; gap:8px; padding:8px 10px; background:#10101a;
+                border:1px solid #303044; border-radius:6px; font-size:12px; color:#b8c0d4;
+            }
+            .fp-current-font { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:#fff; }
+            .fp-compare-tabs { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+            .fp-compare-btn {
+                height:30px; border:1px solid #333; border-radius:6px; background:#11111b; color:#9aa3b8;
+                cursor:pointer; font-size:12px;
+            }
+            .fp-compare-btn.fp-active-filter { border-color:#4c9eff; background:#243b5f; color:#fff; }
+            .fp-ins-name { font-size:20px; color:#fff; line-height:1.15; word-break:break-word; max-height:48px; overflow:hidden; }
+            .fp-video-preview {
+                aspect-ratio:9 / 16; width:100%; min-height:260px; max-height:330px; background:#0a0a12;
+                border:1px solid #303044; border-radius:8px; position:relative; overflow:hidden;
+            }
+            .fp-video-preview::before {
+                content:''; position:absolute; inset:0;
+                background:linear-gradient(180deg, #20202d 0%, #101018 52%, #050509 100%);
+            }
+            .fp-preview-subtitle {
+                position:absolute; left:18px; right:18px; bottom:42px; text-align:center;
+                font-size:22px; line-height:1.08; color:#fff; font-weight:700;
+                text-shadow:0 2px 8px rgba(0,0,0,0.8);
+            }
+            .fp-preview-subtitle-cn {
+                display:block; margin-top:8px; font-size:15px; color:#f0f3ff;
+            }
+            .fp-ins-tags { display:flex; gap:5px; flex-wrap:wrap; max-height:44px; overflow:hidden; }
+            .fp-control-row { display:flex; align-items:center; gap:8px; }
+            .fp-control-row label { width:48px; font-size:12px; color:#8f97aa; }
+            .fp-control-row select, .fp-control-row button {
+                flex:1; height:30px; background:#11111b; color:#eee; border:1px solid #333; border-radius:6px;
+            }
+            .fp-control-row button.fp-active-filter { border-color:#4c9eff; color:#fff; background:#243b5f; }
+            .fp-apply-main {
+                height:36px; border:none; border-radius:6px; background:#4c9eff; color:#fff;
+                font-weight:700; cursor:pointer;
+            }
+            .fp-apply-main:hover { background:#6aaeff; }
         `;
         document.head.appendChild(style);
     }
 
-    /**
-     * 为指定 <select> 构建可搜索的下拉框。
-     */
     _buildFontPicker(select, groups, groupDefs, displayNames) {
-        // 如果已有 wrapper，更新数据而不是重建整个 DOM
         let wrap = select.parentElement;
         if (!wrap || !wrap.classList.contains('fp-wrap')) {
-            // 首次：创建 wrapper
             wrap = document.createElement('div');
             wrap.className = 'fp-wrap';
-            // 继承原 select 宽度
             const sw = select.style.width || select.style.minWidth;
             if (sw) wrap.style.width = sw;
             wrap.style.minWidth = select.style.minWidth || '120px';
@@ -731,169 +996,541 @@ class ReelsFontManager {
             select.classList.add('fp-hidden-select');
             wrap.appendChild(select);
 
-            // 搜索输入框
-            const input = document.createElement('input');
-            input.type = 'text';
-            input.className = 'fp-input';
-            input.placeholder = '搜索字体...';
-            input.autocomplete = 'off';
-            input.spellcheck = false;
-            wrap.insertBefore(input, select);
-
-            // 下拉箭头
-            const arrow = document.createElement('span');
-            arrow.className = 'fp-arrow';
-            arrow.textContent = '▼';
-            wrap.insertBefore(arrow, select);
-
-            // 下拉面板
-            const dropdown = document.createElement('div');
-            dropdown.className = 'fp-dropdown';
-            wrap.appendChild(dropdown);
+            const btn = document.createElement('div');
+            btn.className = 'fp-btn';
+            wrap.insertBefore(btn, select);
+            
+            btn.addEventListener('click', () => {
+                this._openAdvancedFontPicker(select, displayNames, groups);
+            });
         }
-
-        const input = wrap.querySelector('.fp-input');
-        const dropdown = wrap.querySelector('.fp-dropdown');
-
-        // 把当前选中值显示在输入框里
+        
+        const btn = wrap.querySelector('.fp-btn');
         const currentFont = select.value || DEFAULT_FONT_FAMILY;
-        input.value = displayNames[currentFont] || currentFont;
+        btn.textContent = displayNames[currentFont] || currentFont;
+        btn.style.fontFamily = `"${currentFont}", sans-serif`;
+    }
 
-        // 存储数据到 wrapper 以供搜索/筛选使用
-        wrap._fpData = { groups, groupDefs, displayNames, selectEl: select };
-
-        // ── 事件绑定（只绑一次）──
-        if (!wrap._fpBound) {
-            wrap._fpBound = true;
-            const self = this;
-
-            const enterSearchMode = () => {
-                input.value = '';
-                input.placeholder = '输入字体名搜索...';
-                _renderDropdown('');
-                dropdown.classList.add('fp-open');
-            };
-
-            const restoreCurrentValue = () => {
-                const d = wrap._fpData;
-                const cv = d.selectEl.value;
-                input.value = d.displayNames[cv] || cv;
-                input.placeholder = '搜索字体...';
-            };
-
-            // 点击输入框 → 进入搜索模式
-            input.addEventListener('focus', enterSearchMode);
-            input.addEventListener('click', enterSearchMode);
-
-            // 输入搜索
-            input.addEventListener('input', () => {
-                _renderDropdown(input.value.trim());
-            });
-
-            // 键盘导航
-            input.addEventListener('keydown', (e) => {
-                const items = dropdown.querySelectorAll('.fp-item');
-                let active = dropdown.querySelector('.fp-item.fp-active');
-                let idx = active ? Array.from(items).indexOf(active) : -1;
-
-                if (e.key === 'ArrowDown') {
-                    e.preventDefault();
-                    if (idx < items.length - 1) idx++;
-                    items.forEach(i => i.classList.remove('fp-active'));
-                    if (items[idx]) { items[idx].classList.add('fp-active'); items[idx].scrollIntoView({ block: 'nearest' }); }
-                } else if (e.key === 'ArrowUp') {
-                    e.preventDefault();
-                    if (idx > 0) idx--;
-                    items.forEach(i => i.classList.remove('fp-active'));
-                    if (items[idx]) { items[idx].classList.add('fp-active'); items[idx].scrollIntoView({ block: 'nearest' }); }
-                } else if (e.key === 'Enter') {
-                    e.preventDefault();
-                    if (active) active.click();
-                } else if (e.key === 'Escape') {
-                    dropdown.classList.remove('fp-open');
-                    restoreCurrentValue();
-                    input.blur();
-                }
-            });
-
-            // 点击外部关闭
-            document.addEventListener('mousedown', (e) => {
-                if (!wrap.contains(e.target)) {
-                    dropdown.classList.remove('fp-open');
-                    restoreCurrentValue();
-                }
-            });
-
-            function _renderDropdown(query) {
-                const d = wrap._fpData;
-                const q = query.toLowerCase();
-                dropdown.innerHTML = '';
-                let totalShown = 0;
-                const MAX_PER_GROUP = q ? 300 : 150; // 默认多展示，搜索时尽量给足结果
-
-                const tip = document.createElement('div');
-                tip.className = 'fp-tip';
-                tip.textContent = q
-                    ? `搜索: ${query}`
-                    : '输入字体名即可搜索，支持系统字体、内置字体和 Google 字体';
-                dropdown.appendChild(tip);
-
-                for (const { key, label } of d.groupDefs) {
-                    const list = d.groups[key];
-                    if (!list || list.length === 0) continue;
-
-                    const filtered = q
-                        ? list.filter(f => {
-                            const display = d.displayNames[f] || f;
-                            return f.toLowerCase().includes(q) || display.toLowerCase().includes(q);
-                        })
-                        : list;
-
-                    if (filtered.length === 0) continue;
-
-                    const groupLabel = document.createElement('div');
-                    groupLabel.className = 'fp-group-label';
-                    groupLabel.textContent = `${label} (${filtered.length})`;
-                    dropdown.appendChild(groupLabel);
-
-                    const shown = filtered.slice(0, MAX_PER_GROUP);
-                    for (const font of shown) {
-                        const item = document.createElement('div');
-                        item.className = 'fp-item';
-                        item.textContent = d.displayNames[font] || font;
-                        item.dataset.value = font;
-                        item.style.fontFamily = `"${font}", sans-serif`;
-                        item.addEventListener('click', () => {
-                            d.selectEl.value = font;
-                            input.value = d.displayNames[font] || font;
-                            dropdown.classList.remove('fp-open');
-                            // 触发 change 事件
-                            d.selectEl.dispatchEvent(new Event('change', { bubbles: true }));
-                            // 按需加载 Google 字体
-                            self.loadGoogleFont(font).catch(() => {});
-                        });
-                        dropdown.appendChild(item);
-                        totalShown++;
-                    }
-
-                    if (filtered.length > MAX_PER_GROUP) {
-                        const more = document.createElement('div');
-                        more.className = 'fp-no-results';
-                        more.textContent = `还有 ${filtered.length - MAX_PER_GROUP} 个，请输入关键词筛选...`;
-                        dropdown.appendChild(more);
-                    }
-                }
-
-                if (totalShown === 0) {
-                    const noRes = document.createElement('div');
-                    noRes.className = 'fp-no-results';
-                    noRes.textContent = `未找到 "${query}" 相关字体`;
-                    dropdown.appendChild(noRes);
-                }
-            }
-        } else {
-            // 数据已更新，无需重新绑定事件
+    _openAdvancedFontPicker(selectEl, displayNames, groups) {
+        if (!this._advModal) {
+            this._advModal = this._createAdvancedModal();
         }
+        this._advModal.show(selectEl, displayNames, groups);
+    }
+
+    _createAdvancedModal() {
+        const overlay = document.createElement('div');
+        overlay.className = 'fp-modal-overlay';
+        
+        const modal = document.createElement('div');
+        modal.className = 'fp-modal';
+        
+        const sidebar = document.createElement('div');
+        sidebar.className = 'fp-sidebar';
+        sidebar.innerHTML = `
+            <div class="fp-side-title">推荐</div>
+            <div class="fp-side-item fp-active" data-cat="all">🌟 所有字体</div>
+            <div class="fp-side-item" data-cat="trending">🔥 热门精选</div>
+            <div class="fp-side-item" data-cat="recent">🕘 最近使用</div>
+            <div class="fp-side-item" data-cat="favorites">❤️ 我的收藏</div>
+            
+            <div class="fp-side-title">风格</div>
+            <div class="fp-side-item" data-cat="sans">Aa 无衬线 (Sans)</div>
+            <div class="fp-side-item" data-cat="serif">Aa 衬线 (Serif)</div>
+            <div class="fp-side-item" data-cat="display">Ab 展示体 (Display)</div>
+            <div class="fp-side-item" data-cat="script">✍️ 手写 (Script)</div>
+            <div class="fp-side-item" data-cat="mono">_ 等宽 (Mono)</div>
+            <div class="fp-side-item" data-cat="cjk">🌏 中文/日韩 (CJK)</div>
+            
+            <div class="fp-side-title">地域 / 语种</div>
+            <div class="fp-side-item" data-reg="us">🇺🇸 美国常用</div>
+            <div class="fp-side-item" data-reg="uk">🇬🇧 英国高级</div>
+            <div class="fp-side-item" data-reg="europe">🇪🇺 欧洲现代</div>
+            <div class="fp-side-item" data-reg="philippines">🇵🇭 菲律宾/东南亚</div>
+            <div class="fp-side-item" data-reg="arabic">العربية 阿拉伯/中东</div>
+            
+            <div class="fp-side-title">来源</div>
+            <div class="fp-side-item" data-source="portable">✅ 可分享字体</div>
+            <div class="fp-side-item" data-source="google">🌐 Google 免费</div>
+            <div class="fp-side-item" data-source="system">💻 系统与自带</div>
+            <div class="fp-side-item" data-source="custom">📤 我的上传</div>
+        `;
+        
+        const main = document.createElement('div');
+        main.className = 'fp-main';
+        main.innerHTML = `
+            <div class="fp-header">
+                <div class="fp-search-box">
+                    <span class="fp-search-icon">🔍</span>
+                    <input type="text" class="fp-search-input" placeholder="智能搜索：如 '短视频', '高级', '英式'...">
+                </div>
+                <div class="fp-preview-field">
+                    <input type="text" class="fp-preview-input" placeholder="输入预览文字..." value="Make it unforgettable">
+                    <div class="fp-preview-hint">预览文字，不会写入字幕</div>
+                </div>
+                <button type="button" class="fp-global-toggle fp-active-filter" title="打开后，任何分类都只显示适合分享预设的字体">仅可分享</button>
+                <button class="fp-close-btn">×</button>
+            </div>
+            <div class="fp-reco-area">
+                <div class="fp-reco-title">🎯 高命中率预设</div>
+                <div class="fp-reco-tags">
+                    <div class="fp-reco-tag" data-use="viral">短视频爆款</div>
+                    <div class="fp-reco-tag" data-use="subtitle">字幕清晰</div>
+                    <div class="fp-reco-tag" data-use="luxury">高级品牌感</div>
+                    <div class="fp-reco-tag" data-use="news">新闻纪录片</div>
+                    <div class="fp-reco-tag" data-use="tech">科技感</div>
+                    <div class="fp-reco-tag" data-use="kids">儿童轻松</div>
+                </div>
+            </div>
+            <div class="fp-candidate-area">
+                <div class="fp-candidate-title">候选对比：点击字体名快速切换预览</div>
+                <div class="fp-candidate-list"></div>
+            </div>
+            <div class="fp-content">
+                <div class="fp-results">
+                    <div class="fp-grid-wrap">
+                        <div class="fp-grid"></div>
+                    </div>
+                </div>
+                <div class="fp-inspector">
+                    <div class="fp-ins-title">当前预览</div>
+                    <div class="fp-current-line">
+                        <span>正在使用</span>
+                        <span class="fp-current-font">Arial</span>
+                    </div>
+                    <div class="fp-compare-tabs">
+                        <button type="button" class="fp-compare-btn" data-mode="current">看当前</button>
+                        <button type="button" class="fp-compare-btn fp-active-filter" data-mode="candidate">看候选</button>
+                    </div>
+                    <div class="fp-ins-name">Inter</div>
+                    <div class="fp-video-preview">
+                        <div class="fp-preview-subtitle">
+                            Make it unforgettable
+                            <span class="fp-preview-subtitle-cn">高级字幕预览</span>
+                        </div>
+                    </div>
+                    <div class="fp-ins-tags"></div>
+                    <div class="fp-control-row">
+                        <label>字重</label>
+                        <select class="fp-weight-select">
+                            <option value="400">Regular</option>
+                            <option value="700">Bold</option>
+                            <option value="900">Black</option>
+                        </select>
+                    </div>
+                    <div class="fp-control-row">
+                        <label>样式</label>
+                        <button type="button" class="fp-italic-toggle">斜体预览</button>
+                    </div>
+                    <button type="button" class="fp-apply-main">应用字体</button>
+                </div>
+            </div>
+        `;
+        
+        modal.appendChild(sidebar);
+        modal.appendChild(main);
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+        
+        const grid = main.querySelector('.fp-grid');
+        const searchInput = main.querySelector('.fp-search-input');
+        const previewInput = main.querySelector('.fp-preview-input');
+        const closeBtn = main.querySelector('.fp-close-btn');
+        const portableToggle = main.querySelector('.fp-global-toggle');
+        const sideItems = sidebar.querySelectorAll('.fp-side-item');
+        const recoTags = main.querySelectorAll('.fp-reco-tag');
+        const candidateArea = main.querySelector('.fp-candidate-area');
+        const candidateListEl = main.querySelector('.fp-candidate-list');
+        const inspectorName = main.querySelector('.fp-ins-name');
+        const inspectorTags = main.querySelector('.fp-ins-tags');
+        const inspectorSubtitle = main.querySelector('.fp-preview-subtitle');
+        const weightSelect = main.querySelector('.fp-weight-select');
+        const italicToggle = main.querySelector('.fp-italic-toggle');
+        const applyMainBtn = main.querySelector('.fp-apply-main');
+        const currentFontLabel = main.querySelector('.fp-current-font');
+        const compareButtons = main.querySelectorAll('.fp-compare-btn');
+        
+        let currentSelect = null;
+        let currentDisplayNames = {};
+        let currentGroups = {};
+        let activeCategory = 'all';
+        let activeRegion = null;
+        let activeSource = null;
+        let activeUseCase = null;
+        let portableOnly = true;
+        let currentFont = DEFAULT_FONT_FAMILY;
+        let selectedFont = DEFAULT_FONT_FAMILY;
+        let candidateFonts = [];
+        let previewMode = 'candidate';
+        let selectedItalic = false;
+        
+        const self = this;
+        
+        const getMetadata = (fontName) => self._getFontMetadata(fontName);
+        
+        const getFavorites = () => JSON.parse(localStorage.getItem('fp_favorites') || '[]');
+        const toggleFavorite = (font) => {
+            let favs = getFavorites();
+            if (favs.includes(font)) favs = favs.filter(f => f !== font);
+            else favs.push(font);
+            localStorage.setItem('fp_favorites', JSON.stringify(favs));
+            renderGrid();
+        };
+        
+        const getRecents = () => JSON.parse(localStorage.getItem('fp_recents') || '[]');
+        const addRecent = (font) => {
+            let recs = getRecents().filter(f => f !== font);
+            recs.unshift(font);
+            if (recs.length > 20) recs = recs.slice(0, 20);
+            localStorage.setItem('fp_recents', JSON.stringify(recs));
+        };
+
+        const renderCandidates = () => {
+            candidateArea.classList.toggle('fp-show', candidateFonts.length > 0);
+            candidateListEl.innerHTML = '';
+            for (const font of candidateFonts) {
+                const chip = document.createElement('button');
+                chip.type = 'button';
+                chip.className = `fp-candidate-chip${font === selectedFont ? ' fp-active-filter' : ''}`;
+                chip.style.fontFamily = `"${font}", sans-serif`;
+                chip.innerHTML = `
+                    <span class="fp-candidate-name">${self._escapeHtml(currentDisplayNames[font] || font)}</span>
+                    <span class="fp-candidate-remove" title="移出候选">×</span>
+                `;
+                chip.addEventListener('click', () => selectFont(font));
+                chip.querySelector('.fp-candidate-remove').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    candidateFonts = candidateFonts.filter(f => f !== font);
+                    if (selectedFont === font) {
+                        selectedFont = candidateFonts[0] || currentFont || DEFAULT_FONT_FAMILY;
+                        previewMode = selectedFont === currentFont ? 'current' : 'candidate';
+                        renderInspector();
+                    }
+                    renderCandidates();
+                    renderGrid();
+                });
+                candidateListEl.appendChild(chip);
+            }
+        };
+
+        const addCandidate = (font) => {
+            if (!font) return;
+            candidateFonts = candidateFonts.filter(f => f !== font);
+            candidateFonts.unshift(font);
+            if (candidateFonts.length > 8) candidateFonts = candidateFonts.slice(0, 8);
+            selectFont(font);
+            renderCandidates();
+            renderGrid();
+        };
+
+        const getRelatedWeightSelect = () => {
+            if (!currentSelect || !currentSelect.id) return null;
+            const map = {
+                'rop-font': 'rop-font-weight',
+                'rop-title-font': 'rop-title-weight',
+                'rop-body-font': 'rop-body-weight',
+                'rop-footer-font': 'rop-footer-weight',
+                'rop-scroll-title-font': 'rop-scroll-title-weight',
+                'rop-scroll-font': 'rop-scroll-weight',
+            };
+            const id = map[currentSelect.id];
+            return id ? document.getElementById(id) : null;
+        };
+        
+        const applyFont = (font) => {
+            if (currentSelect) {
+                currentSelect.value = font;
+                currentSelect.dispatchEvent(new Event('change', { bubbles: true }));
+                const relatedWeight = getRelatedWeightSelect();
+                if (relatedWeight && weightSelect.value) {
+                    relatedWeight.value = weightSelect.value;
+                    relatedWeight.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+                const btn = currentSelect.parentElement.querySelector('.fp-btn');
+                if (btn) {
+                    btn.textContent = currentDisplayNames[font] || font;
+                    btn.style.fontFamily = `"${font}", sans-serif`;
+                }
+                self.loadGoogleFont(font).catch(() => {});
+            }
+            addRecent(font);
+            closeModal();
+        };
+
+        const renderInspector = () => {
+            const font = previewMode === 'current'
+                ? (currentFont || DEFAULT_FONT_FAMILY)
+                : (selectedFont || DEFAULT_FONT_FAMILY);
+            const meta = getMetadata(font);
+            const source = self._getFontSource(font, currentGroups);
+            const displayName = currentDisplayNames[font] || font;
+            const previewText = self._escapeHtml(previewInput.value || 'Make it unforgettable');
+            inspectorName.textContent = displayName;
+            inspectorName.style.fontFamily = `"${font}", sans-serif`;
+            inspectorSubtitle.style.fontFamily = `"${font}", sans-serif`;
+            inspectorSubtitle.innerHTML = `${previewText}<span class="fp-preview-subtitle-cn">高级字幕预览</span>`;
+
+            const tags = [
+                font === currentFont ? '正在使用' : '候选',
+                meta.category ? meta.category.toUpperCase() : null,
+                self._sourceLabel(source),
+                ...(meta.regions || []).slice(0, 2),
+                ...(meta.useCases || []).slice(0, 2),
+            ].filter(Boolean);
+            inspectorTags.innerHTML = tags.map(tag => `<span class="fp-card-tag">${self._escapeHtml(tag)}</span>`).join('');
+
+            const weights = self.getFontWeightEntries(font, 'normal');
+            const currentWeight = weightSelect.value || '700';
+            weightSelect.innerHTML = weights.map(w => `<option value="${self._escapeHtml(w.value)}">${self._escapeHtml(w.label)} ${self._escapeHtml(w.value)}</option>`).join('');
+            weightSelect.value = weights.some(w => w.value === currentWeight) ? currentWeight : (weights.find(w => w.value === '700')?.value || weights[0]?.value || '400');
+            inspectorSubtitle.style.fontWeight = weightSelect.value || '700';
+            inspectorSubtitle.style.fontStyle = selectedItalic ? 'italic' : 'normal';
+            currentFontLabel.textContent = currentDisplayNames[currentFont] || currentFont || DEFAULT_FONT_FAMILY;
+            currentFontLabel.style.fontFamily = `"${currentFont || DEFAULT_FONT_FAMILY}", sans-serif`;
+            compareButtons.forEach(btn => btn.classList.toggle('fp-active-filter', btn.dataset.mode === previewMode));
+            applyMainBtn.textContent = selectedFont === currentFont ? '已是当前字体' : '应用候选字体';
+            applyMainBtn.disabled = selectedFont === currentFont;
+            applyMainBtn.style.opacity = selectedFont === currentFont ? '0.55' : '1';
+            renderCandidates();
+        };
+
+        const selectFont = (font) => {
+            selectedFont = font || DEFAULT_FONT_FAMILY;
+            previewMode = 'candidate';
+            self.loadGoogleFont(selectedFont).catch(() => {});
+            renderInspector();
+            grid.querySelectorAll('.fp-card').forEach(card => {
+                card.classList.toggle('fp-selected', card.dataset.font === selectedFont);
+            });
+            renderCandidates();
+        };
+        
+        const renderGrid = () => {
+            grid.innerHTML = '';
+            const query = searchInput.value.toLowerCase().trim();
+            const previewText = previewInput.value || 'Make it unforgettable';
+            const favs = getFavorites();
+            const recs = getRecents();
+            
+            let allFonts = [];
+            if (currentGroups.system) allFonts.push(...currentGroups.system);
+            if (currentGroups.google) allFonts.push(...currentGroups.google);
+            if (currentGroups.embedded) allFonts.push(...currentGroups.embedded);
+            if (currentGroups.custom) allFonts.push(...currentGroups.custom);
+            allFonts = [...new Set(allFonts)];
+            
+            const filtered = allFonts.filter(font => {
+                const meta = getMetadata(font);
+                const displayName = currentDisplayNames[font] || font;
+                
+                if (query) {
+                    const matchName = font.toLowerCase().includes(query) || displayName.toLowerCase().includes(query);
+                    const matchAlias = meta.aliases && meta.aliases.some(a => a.toLowerCase().includes(query));
+                    const matchTags = meta.useCases && meta.useCases.some(u => u.toLowerCase().includes(query));
+                    const matchRegion = meta.regions && meta.regions.some(r => r.toLowerCase().includes(query));
+                    const matchCategory = meta.category && meta.category.toLowerCase().includes(query);
+                    if (!matchName && !matchAlias && !matchTags && !matchRegion && !matchCategory) return false;
+                }
+                
+                if (activeCategory === 'favorites') {
+                    if (!favs.includes(font)) return false;
+                } else if (activeCategory === 'recent') {
+                    if (!recs.includes(font)) return false;
+                } else if (activeCategory !== 'all' && activeCategory !== 'trending') {
+                    if (meta.category !== activeCategory) {
+                        if (!meta.category && activeCategory === 'sans' && font.toLowerCase().includes('sans')) return true;
+                        if (!meta.category && activeCategory === 'serif' && font.toLowerCase().includes('serif')) return true;
+                        if (!meta.category && activeCategory === 'mono' && font.toLowerCase().includes('mono')) return true;
+                        if (!meta.category && activeCategory === 'cjk' && font.match(/[\u4e00-\u9fa5]/)) return true;
+                        return false;
+                    }
+                }
+                
+                if (activeCategory === 'trending' && (!meta.popularity || meta.popularity < 90)) return false;
+                if (activeRegion && (!meta.regions || !meta.regions.includes(activeRegion))) return false;
+                if (activeUseCase && (!meta.useCases || !meta.useCases.includes(activeUseCase))) return false;
+                
+                if (activeSource === 'system' && !currentGroups.system.includes(font) && !currentGroups.embedded.includes(font)) return false;
+                if (activeSource === 'google' && !currentGroups.google.includes(font)) return false;
+                if (activeSource === 'portable' && !currentGroups.google.includes(font) && !currentGroups.embedded.includes(font)) return false;
+                if (activeSource === 'custom' && !currentGroups.custom.includes(font)) return false;
+                if (portableOnly && !currentGroups.google.includes(font) && !currentGroups.embedded.includes(font)) return false;
+                
+                return true;
+            });
+            
+            filtered.sort((a, b) => {
+                if (activeCategory === 'recent') {
+                    return recs.indexOf(a) - recs.indexOf(b);
+                }
+                const mA = getMetadata(a).popularity || 50;
+                const mB = getMetadata(b).popularity || 50;
+                return mB - mA;
+            });
+            
+            const toRender = filtered.slice(0, 150);
+            
+            for (const font of toRender) {
+                const meta = getMetadata(font);
+                const isFav = favs.includes(font);
+                const source = self._getFontSource(font, currentGroups);
+                
+                const isCurrentFont = font === currentFont;
+                const isCandidate = candidateFonts.includes(font);
+                const card = document.createElement('div');
+                card.className = `fp-card${font === selectedFont ? ' fp-selected' : ''}${isCurrentFont ? ' fp-current' : ''}`;
+                card.dataset.font = font;
+                
+                let tagsHtml = '';
+                if (meta.category) {
+                    tagsHtml += `<span class="fp-card-tag fp-tag-${self._escapeHtml(meta.category)}">${self._escapeHtml(meta.category.toUpperCase())}</span>`;
+                }
+                if (meta.useCases && meta.useCases.includes('viral')) tagsHtml += `<span class="fp-card-tag fp-tag-viral">🔥 爆款</span>`;
+                else if (meta.popularity >= 95) tagsHtml += `<span class="fp-card-tag">⭐ 热门</span>`;
+                
+                if (meta.aliases && meta.aliases[0]) tagsHtml += `<span class="fp-card-tag">${self._escapeHtml(meta.aliases[0])}</span>`;
+                if (isCurrentFont) tagsHtml += `<span class="fp-current-badge">正在使用</span>`;
+                if (source === 'google' || source === 'embedded') {
+                    tagsHtml += `<span class="fp-share-badge fp-portable">可分享</span>`;
+                } else if (source === 'custom') {
+                    tagsHtml += `<span class="fp-share-badge fp-font-file">需字体文件</span>`;
+                } else {
+                    tagsHtml += `<span class="fp-share-badge fp-local-only">本机字体</span>`;
+                }
+                tagsHtml += `<span class="fp-card-tag" style="background:rgba(255,255,255,0.1);">${self._escapeHtml(self._sourceLabel(source))}</span>`;
+                const safeFont = self._escapeHtml(font);
+                const safeName = self._escapeHtml(currentDisplayNames[font] || font);
+                const safePreview = self._escapeHtml(previewText);
+                
+                card.innerHTML = `
+                    <div class="fp-card-head">
+                        <div class="fp-card-name" style="font-family: '${safeFont}', sans-serif;" title="${safeFont}">${safeName}</div>
+                        <button class="fp-fav-btn" style="background:none; border:none; cursor:pointer; font-size:16px; color:${isFav ? '#f38ba8' : '#555'};" title="收藏">
+                            ${isFav ? '❤️' : '♡'}
+                        </button>
+                    </div>
+                    <div class="fp-card-preview" style="font-family: '${safeFont}', sans-serif;">
+                        ${safePreview}
+                        <div class="fp-card-preview-cn">高级字幕预览</div>
+                    </div>
+                    <div class="fp-card-footer">
+                        <div class="fp-card-tags">${tagsHtml}</div>
+                        <div style="display:flex; gap:6px; flex-shrink:0;">
+                            <button class="fp-add-candidate-btn${isCandidate ? ' fp-added' : ''}" type="button">${isCandidate ? '已候选' : '+候选'}</button>
+                            <button class="fp-apply-btn" style="padding:4px 10px; background:#4c9eff; color:#fff; border:none; border-radius:4px; font-size:12px; cursor:pointer;">应用</button>
+                        </div>
+                    </div>
+                `;
+                
+                card.querySelector('.fp-fav-btn').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    toggleFavorite(font);
+                });
+                
+                card.querySelector('.fp-apply-btn').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    applyFont(font);
+                });
+                card.querySelector('.fp-add-candidate-btn').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    addCandidate(font);
+                });
+                
+                card.addEventListener('click', () => selectFont(font));
+                
+                grid.appendChild(card);
+            }
+            
+            if (filtered.length === 0) grid.innerHTML = '<div style="color:#888; padding:20px;">未找到匹配的字体。</div>';
+        };
+        
+        const closeModal = () => overlay.classList.remove('fp-open');
+        closeBtn.addEventListener('click', closeModal);
+        overlay.addEventListener('mousedown', e => { if (e.target === overlay) closeModal(); });
+        
+        searchInput.addEventListener('input', renderGrid);
+        previewInput.addEventListener('input', () => {
+            renderGrid();
+            renderInspector();
+        });
+        weightSelect.addEventListener('change', renderInspector);
+        compareButtons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                previewMode = btn.dataset.mode || 'candidate';
+                renderInspector();
+            });
+        });
+        italicToggle.addEventListener('click', () => {
+            selectedItalic = !selectedItalic;
+            italicToggle.classList.toggle('fp-active-filter', selectedItalic);
+            renderInspector();
+        });
+        applyMainBtn.addEventListener('click', () => applyFont(selectedFont));
+        portableToggle.addEventListener('click', () => {
+            portableOnly = !portableOnly;
+            portableToggle.classList.toggle('fp-active-filter', portableOnly);
+            portableToggle.textContent = portableOnly ? '仅可分享' : '全部来源';
+            renderGrid();
+        });
+        
+        sideItems.forEach(item => {
+            item.addEventListener('click', () => {
+                sideItems.forEach(i => i.classList.remove('fp-active'));
+                item.classList.add('fp-active');
+                activeCategory = item.dataset.cat || 'all';
+                activeRegion = item.dataset.reg || null;
+                activeSource = item.dataset.source || null;
+                if (activeSource === 'portable') portableOnly = true;
+                if (activeSource === 'system' || activeSource === 'custom') portableOnly = false;
+                portableToggle.classList.toggle('fp-active-filter', portableOnly);
+                portableToggle.textContent = portableOnly ? '仅可分享' : '全部来源';
+                activeUseCase = null;
+                recoTags.forEach(t => t.classList.remove('fp-active-filter'));
+                searchInput.value = '';
+                renderGrid();
+            });
+        });
+        
+        recoTags.forEach(tag => {
+            tag.addEventListener('click', () => {
+                const nextUse = tag.dataset.use;
+                activeUseCase = activeUseCase === nextUse ? null : nextUse;
+                recoTags.forEach(t => t.classList.toggle('fp-active-filter', t === tag && activeUseCase === nextUse));
+                sideItems.forEach(i => i.classList.remove('fp-active'));
+                document.querySelector('.fp-side-item[data-cat="all"]').classList.add('fp-active');
+                activeCategory = 'all'; activeRegion = null; activeSource = null;
+                searchInput.value = '';
+                renderGrid();
+            });
+        });
+        
+        return {
+            show: (selectEl, displayNames, groups) => {
+                currentSelect = selectEl;
+                currentDisplayNames = displayNames;
+                currentGroups = groups;
+                currentFont = selectEl.value || DEFAULT_FONT_FAMILY;
+                selectedFont = currentFont;
+                candidateFonts = currentFont ? [currentFont] : [];
+                previewMode = 'candidate';
+                activeCategory = 'all';
+                activeRegion = null;
+                activeSource = null;
+                activeUseCase = null;
+                selectedItalic = false;
+                portableOnly = true;
+                portableToggle.classList.add('fp-active-filter');
+                portableToggle.textContent = '仅可分享';
+                searchInput.value = '';
+                sideItems.forEach(i => i.classList.toggle('fp-active', i.dataset.cat === 'all'));
+                recoTags.forEach(t => t.classList.remove('fp-active-filter'));
+                overlay.classList.add('fp-open');
+                renderInspector();
+                renderCandidates();
+                renderGrid();
+                searchInput.focus();
+            }
+        };
     }
 }
 
