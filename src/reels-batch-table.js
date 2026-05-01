@@ -40,6 +40,7 @@ const _batchTableState = {
     // ── 工程管理 ──
     projectDir: '',
     projectName: 'UntitledProject.json',
+    openSnapshotTasks: null,
 };
 
 // ── 标签页辅助 ──
@@ -123,8 +124,64 @@ function _initBatchTable() {
 // 3. Toggle visibility
 // ═══════════════════════════════════════════════════════
 
-function reelsToggleBatchTable() {
+function _cloneBatchTasks(tasks) {
+    try {
+        return JSON.parse(JSON.stringify(_serializeTasks(tasks || [])));
+    } catch (e) {
+        console.warn('[BatchTable] clone tasks failed:', e);
+        return [];
+    }
+}
+
+function _batchTasksSnapshot(tasks) {
+    try {
+        return JSON.stringify(_serializeTasks(tasks || []));
+    } catch (e) {
+        console.warn('[BatchTable] snapshot failed:', e);
+        return '[]';
+    }
+}
+
+function _getProjectedBatchTasksSnapshot() {
+    const state = window._reelsState;
+    if (!state) return '[]';
+    const originalState = window._reelsState;
+    const projectedState = {
+        ...state,
+        tasks: _cloneBatchTasks(state.tasks),
+    };
+    try {
+        window._reelsState = projectedState;
+        _applyBatchTableChanges(projectedState, { renderTaskList: false });
+        return _batchTasksSnapshot(projectedState.tasks);
+    } catch (e) {
+        console.warn('[BatchTable] projected snapshot failed:', e);
+        return _batchTasksSnapshot(state.tasks);
+    } finally {
+        window._reelsState = originalState;
+    }
+}
+
+function _restoreBatchTableOpenSnapshot() {
+    const state = window._reelsState;
+    if (!state || !_batchTableState.openSnapshotTasks) return;
+    try {
+        state.tasks = JSON.parse(_batchTableState.openSnapshotTasks);
+        if (state.selectedIdx >= state.tasks.length) state.selectedIdx = state.tasks.length - 1;
+        if (state.selectedIdx < 0 && state.tasks.length > 0) state.selectedIdx = 0;
+        const tab = typeof _getActiveTab === 'function' ? _getActiveTab() : null;
+        if (tab) tab.tasks = _cloneBatchTasks(state.tasks);
+        if (typeof _renderTaskList === 'function') _renderTaskList();
+        _syncSelectedTaskOverlayMgrIfNeeded(state.selectedIdx);
+        if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
+    } catch (e) {
+        console.warn('[BatchTable] restore open snapshot failed:', e);
+    }
+}
+
+function reelsToggleBatchTable(options = {}) {
     if (!_batchTableState.container) _initBatchTable();
+    const saveOnClose = options.saveOnClose !== false;
     _batchTableState.visible = !_batchTableState.visible;
     if (_batchTableState.visible) {
         // DEBUG
@@ -132,12 +189,28 @@ function reelsToggleBatchTable() {
         console.log('[BatchTable.toggle] 打开表格，当前 tasks:', _dbg.join(', '));
         // Sync current tasks into active tab on open
         _syncTasksToActiveTab();
+        _batchTableState.openSnapshotTasks = _batchTasksSnapshot(window._reelsState?.tasks || []);
+        _skipNextApply = true;
         _renderBatchTable();
         _batchTableState.container.style.display = 'flex';
     } else {
-        // 关闭时先保存输入框中的值到 task
-        _applyBatchTableChanges();
-        console.log('[BatchTable.toggle] 关闭表格，已保存 changes');
+        if (saveOnClose) {
+            _applyBatchTableChanges();
+            _batchTableState.openSnapshotTasks = _batchTasksSnapshot(window._reelsState?.tasks || []);
+            console.log('[BatchTable.toggle] 关闭表格，已保存 changes');
+        } else {
+            const originalSnapshot = _batchTableState.openSnapshotTasks;
+            const projectedSnapshot = _getProjectedBatchTasksSnapshot();
+            if (originalSnapshot && projectedSnapshot !== originalSnapshot) {
+                const discard = confirm('批量表格里有未应用的修改，确定放弃并关闭吗？');
+                if (!discard) {
+                    _batchTableState.visible = true;
+                    return;
+                }
+            }
+            _restoreBatchTableOpenSnapshot();
+            console.log('[BatchTable.toggle] 关闭表格，已放弃 changes');
+        }
         _batchTableState.container.style.display = 'none';
     }
 }
@@ -868,25 +941,41 @@ function _renderBatchTable() {
     }
 }
 
+function _isBatchWritableOverlay(ov) {
+    return !!(ov && !ov.fixed_text);
+}
+
+function _findBatchTextCardOverlay(task) {
+    return (task.overlays || []).find(o => (
+        o && _isBatchWritableOverlay(o) && (o.type === 'textcard' || !o.type || o.type === '')
+    ));
+}
+
+function _findBatchScrollOverlay(task) {
+    return (task.overlays || []).find(o => o && _isBatchWritableOverlay(o) && o.type === 'scroll');
+}
+
 function _applyOverlayField(task, fieldCategory, str) {
     if (!task.overlays) task.overlays = [];
     if (fieldCategory.startsWith('scroll_')) {
-        let ov = task.overlays.find(o => o && o.type === 'scroll');
+        let ov = _findBatchScrollOverlay(task);
         if (!ov) {
             ov = window.ReelsOverlay ? window.ReelsOverlay.createScrollOverlay({ start: 0, end: 9999 }) : { scroll_title:'', content:'', type: 'scroll' };
             ov.scroll_title = '';
             ov.content = '';
+            ov.fixed_text = false;
             task.overlays.push(ov);
         }
         if (fieldCategory === 'scroll_title') ov.scroll_title = str;
         if (fieldCategory === 'scroll_body') ov.content = str;
     } else if (fieldCategory.startsWith('overlay_')) {
-        let ov = task.overlays.find(o => o && (o.type === 'textcard' || !o.type || o.type === ''));
+        let ov = _findBatchTextCardOverlay(task);
         if (!ov) {
             ov = window.ReelsOverlay ? window.ReelsOverlay.createTextCardOverlay({ start: 0, end: 9999 }) : { title_text:'', body_text:'', footer_text:'', type: 'textcard' };
             ov.title_text = '';
             ov.body_text = '';
             ov.footer_text = '';
+            ov.fixed_text = false;
             task.overlays.push(ov);
         }
         if (fieldCategory === 'overlay_title') ov.title_text = str;
@@ -918,12 +1007,12 @@ function _syncSelectedTaskOverlayMgrIfNeeded(taskIdx) {
 
 function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
     // 提取覆层信息
-    const ov = (task.overlays || []).find(o => o && (o.type === 'textcard' || !o.type || o.type === ''));
+    const ov = _findBatchTextCardOverlay(task);
     const title = ov ? (ov.title_text || '') : '';
     const body = ov ? (ov.body_text || '') : '';
     const footer = ov ? (ov.footer_text || '') : '';
     // 滚动字幕覆层信息
-    const scrollOv = (task.overlays || []).find(o => o && o.type === 'scroll');
+    const scrollOv = _findBatchScrollOverlay(task);
     const scrollTitle = scrollOv ? (scrollOv.scroll_title || '') : '';
     const scrollBody = scrollOv ? (scrollOv.content || '') : '';
     const bgName = _shortName(task.bgPath || task.videoPath || '');
@@ -1142,7 +1231,7 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
                     <div class="rbt-scale-display">🔉 ${task.bgVideoVolume != null ? task.bgVideoVolume : '—'}%</div>
                     <div class="rbt-scale-controls" style="flex-direction:row; inset:0;">
                         <span style="font-size:10px;color:#888;white-space:nowrap;">🔉</span>
-                        <input type="range" class="rbt-bgvol-slider" data-idx="${idx}" min="0" max="200" value="${task.bgVideoVolume != null ? task.bgVideoVolume : 5}"
+                        <input type="range" class="rbt-bgvol-slider" data-idx="${idx}" min="0" max="200" value="${task.bgVideoVolume != null ? task.bgVideoVolume : 100}"
                                style="flex:1; min-width:0; height:12px; accent-color:#4fc3f7;" title="背景视频音量（留空=跟随全局设置）">
                         <span class="rbt-bgvol-label" style="font-size:10px;color:#888;min-width:28px;text-align:right;">${task.bgVideoVolume != null ? task.bgVideoVolume + '%' : '全局'}</span>
                     </div>
@@ -1364,10 +1453,11 @@ function _bindBatchTableEvents() {
     });
 
     // Close
-    container.querySelector('#rbt-close-btn')?.addEventListener('click', () => reelsToggleBatchTable());
+    container.querySelector('#rbt-close-btn')?.addEventListener('click', () => reelsToggleBatchTable({ saveOnClose: false }));
     container.querySelector('#rbt-apply-btn')?.addEventListener('click', () => {
         _applyBatchTableChanges();
-        reelsToggleBatchTable();
+        _batchTableState.openSnapshotTasks = _batchTasksSnapshot(window._reelsState?.tasks || []);
+        reelsToggleBatchTable({ saveOnClose: false });
     });
 
     // ── Language searchable picker ──
@@ -1683,9 +1773,10 @@ function _bindBatchTableEvents() {
                     const presetData = presets[selOvlTpl];
                     if (presetData && Array.isArray(presetData)) {
                         const newOvls = presetData.map(o => JSON.parse(JSON.stringify(o)));
-                        const oldTextOvl = task.cover.overlays.find(o => o.type === 'textcard' || o.type === 'scroll') || {title_text: task.title || ''};
+                        const oldTextOvl = task.cover.overlays.find(o => !o.fixed_text && (o.type === 'textcard' || o.type === 'scroll')) || {title_text: task.title || ''};
                         const title = oldTextOvl.title_text || '';
                         for (const ov of newOvls) {
+                            if (ov.fixed_text) continue;
                             if (ov.type === 'textcard') { ov.title_text = title; } 
                             else if (ov.type === 'scroll') { ov.content = title; }
                         }
@@ -2795,6 +2886,7 @@ function _bindBatchTableEvents() {
             case 'overlay':
                 if (task.overlays && task.overlays.length > 0) {
                     for (const ov of task.overlays) {
+                        if (ov.fixed_text) continue;
                         ov.title_text = '';
                         ov.body_text = '';
                         ov.footer_text = '';
@@ -2805,27 +2897,27 @@ function _bindBatchTableEvents() {
                 break;
             case 'overlay_title':
                 if (task.overlays && task.overlays.length > 0) {
-                    for (const ov of task.overlays) ov.title_text = '';
+                    for (const ov of task.overlays) if (!ov.fixed_text) ov.title_text = '';
                 }
                 break;
             case 'overlay_body':
                 if (task.overlays && task.overlays.length > 0) {
-                    for (const ov of task.overlays) ov.body_text = '';
+                    for (const ov of task.overlays) if (!ov.fixed_text) ov.body_text = '';
                 }
                 break;
             case 'overlay_footer':
                 if (task.overlays && task.overlays.length > 0) {
-                    for (const ov of task.overlays) ov.footer_text = '';
+                    for (const ov of task.overlays) if (!ov.fixed_text) ov.footer_text = '';
                 }
                 break;
             case 'scroll_title':
                 if (task.overlays && task.overlays.length > 0) {
-                    for (const ov of task.overlays) ov.scroll_title = '';
+                    for (const ov of task.overlays) if (!ov.fixed_text) ov.scroll_title = '';
                 }
                 break;
             case 'scroll_body':
                 if (task.overlays && task.overlays.length > 0) {
-                    for (const ov of task.overlays) ov.content = '';
+                    for (const ov of task.overlays) if (!ov.fixed_text) ov.content = '';
                 }
                 break;
             case 'exportName':
@@ -4305,11 +4397,12 @@ function _showDiffModal(origText, newText, field, taskIdx) {
 // 6. Apply changes from table → tasks
 // ═══════════════════════════════════════════════════════
 
-function _applyBatchTableChanges() {
+function _applyBatchTableChanges(stateOverride = null, options = {}) {
     const container = _batchTableState.container;
     if (!container) return;
-    const state = window._reelsState;
+    const state = stateOverride || window._reelsState;
     if (!state) return;
+    const renderTaskList = options.renderTaskList !== false;
 
     const titleInputs = container.querySelectorAll('.rbt-title-input');
     const bodyInputs = container.querySelectorAll('.rbt-body-input');
@@ -4320,7 +4413,7 @@ function _applyBatchTableChanges() {
         const idx = parseInt(el.dataset.idx);
         const task = state.tasks[idx];
         if (!task) return;
-        if (el.value.trim() === '' && (!task.overlays || !task.overlays.find(o => o && (o.type === 'textcard' || !o.type || o.type === '')))) return;
+        if (el.value.trim() === '' && !_findBatchTextCardOverlay(task)) return;
         _applyOverlayField(task, 'overlay_title', el.value);
     });
 
@@ -4328,7 +4421,7 @@ function _applyBatchTableChanges() {
         const idx = parseInt(el.dataset.idx);
         const task = state.tasks[idx];
         if (!task) return;
-        if (el.value.trim() === '' && (!task.overlays || !task.overlays.find(o => o && (o.type === 'textcard' || !o.type || o.type === '')))) return;
+        if (el.value.trim() === '' && !_findBatchTextCardOverlay(task)) return;
         _applyOverlayField(task, 'overlay_body', el.value);
     });
 
@@ -4336,7 +4429,7 @@ function _applyBatchTableChanges() {
         const idx = parseInt(el.dataset.idx);
         const task = state.tasks[idx];
         if (!task) return;
-        if (el.value.trim() === '' && (!task.overlays || !task.overlays.find(o => o && (o.type === 'textcard' || !o.type || o.type === '')))) return;
+        if (el.value.trim() === '' && !_findBatchTextCardOverlay(task)) return;
         _applyOverlayField(task, 'overlay_footer', el.value);
     });
 
@@ -4349,13 +4442,14 @@ function _applyBatchTableChanges() {
         const task = state.tasks[idx];
         if (!task) return;
         const val = el.value.trim();
-        let scrollOv = (task.overlays || []).find(o => o && o.type === 'scroll');
+        let scrollOv = _findBatchScrollOverlay(task);
         if (!scrollOv && val) {
             const ReelsOverlay = window.ReelsOverlay;
             if (ReelsOverlay) {
                 scrollOv = ReelsOverlay.createScrollOverlay({
                     scroll_title: val, content: '', start: 0, end: 9999,
                 });
+                scrollOv.fixed_text = false;
 
                 if (!task.overlays) task.overlays = [];
                 task.overlays.push(scrollOv);
@@ -4370,13 +4464,14 @@ function _applyBatchTableChanges() {
         const task = state.tasks[idx];
         if (!task) return;
         const val = el.value.trim();
-        let scrollOv = (task.overlays || []).find(o => o && o.type === 'scroll');
+        let scrollOv = _findBatchScrollOverlay(task);
         if (!scrollOv && val) {
             const ReelsOverlay = window.ReelsOverlay;
             if (ReelsOverlay) {
                 scrollOv = ReelsOverlay.createScrollOverlay({
                     scroll_title: '', content: val, start: 0, end: 9999,
                 });
+                scrollOv.fixed_text = false;
                 if (!task.overlays) task.overlays = [];
                 task.overlays.push(scrollOv);
             }
@@ -4793,7 +4888,7 @@ async function _batchPasteScrollFromSheet() {
         let entryIdx = 0;
         for (let i = 0; i < state.tasks.length && entryIdx < entries.length; i++) {
             const task = state.tasks[i];
-            const scrollOv = (task.overlays || []).find(o => o && o.type === 'scroll');
+            const scrollOv = _findBatchScrollOverlay(task);
             const isEmpty = !scrollOv || (!(scrollOv.scroll_title || '').trim() && !(scrollOv.content || '').trim());
             if (isEmpty) {
                 _setTaskScrollText(task, entries[entryIdx].title, entries[entryIdx].body, ReelsOverlay);
@@ -6524,16 +6619,19 @@ async function _batchPasteAiScript() {
 // ── 辅助：设置一行的文案 ──
 function _setTaskText(task, title, body, ReelsOverlay, footer) {
     if (!task.overlays) task.overlays = [];
-    if (!task.overlays[0]) {
-        task.overlays[0] = ReelsOverlay.createTextCardOverlay({
+    let ov = _findBatchTextCardOverlay(task);
+    if (!ov) {
+        ov = ReelsOverlay.createTextCardOverlay({
             title_text: '', body_text: '', footer_text: '',
             start: 0, end: 9999,
         });
+        ov.fixed_text = false;
+        task.overlays.push(ov);
     }
-    task.overlays[0].title_text = title;
-    task.overlays[0].body_text = body;
+    ov.title_text = title;
+    ov.body_text = body;
     if (footer !== undefined && footer !== '') {
-        task.overlays[0].footer_text = footer;
+        ov.footer_text = footer;
     }
 }
 
@@ -6559,12 +6657,13 @@ function _createNewTextRow(state, title, body, ReelsOverlay, footer) {
 // ── 辅助：设置滚动字幕文案 ──
 function _setTaskScrollText(task, title, body, ReelsOverlay) {
     if (!task.overlays) task.overlays = [];
-    let scrollOv = task.overlays.find(o => o && o.type === 'scroll');
+    let scrollOv = _findBatchScrollOverlay(task);
     if (!scrollOv) {
         scrollOv = ReelsOverlay.createScrollOverlay({
             scroll_title: title, content: body,
             start: 0, end: 9999,
         });
+        scrollOv.fixed_text = false;
         task.overlays.push(scrollOv);
     } else {
         scrollOv.scroll_title = title;
@@ -7039,7 +7138,7 @@ function _promptOverlayPresetOptions(presetName, tasks, callback) {
     let taskHasScrollText = false;
     for (const task of tasks) {
         if (task.overlays) {
-            const scrollOv = task.overlays.find(o => o && o.type === 'scroll');
+            const scrollOv = _findBatchScrollOverlay(task);
             if (scrollOv) {
                 if ((scrollOv.scroll_title || '').trim() || (scrollOv.content || '').trim()) {
                     taskHasScrollText = true;
@@ -7089,16 +7188,16 @@ function _applyOverlayGroupPresetToTask(task, presetName, opts = { addScroll: fa
             if (presets[presetName] && Array.isArray(presets[presetName])) {
                 const layers = presets[presetName];
                 const oldOverlays = task.overlays || [];
-                const textDonors = [...oldOverlays]; // 仅用于提取文本内容
+                const textDonors = oldOverlays.filter(o => o && !o.fixed_text); // 仅用于提取批量表格文案
                 
                 // 构建预设覆层，仅迁移文本内容
                 const newOverlays = layers.map(layerData => {
                     const clone = JSON.parse(JSON.stringify(layerData));
                     clone.id = 'ov_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
                     
-                    // 从旧覆层中按类型匹配，迁移用户已填写的文本内容
-                    // fixed_text 仅控制「是否使用预设默认文案」，不阻止用户已有文案的迁移
-                    const matchIdx = textDonors.findIndex(o => o.type === clone.type);
+                    // 从旧覆层中按类型匹配，迁移批量表格文案。
+                    // fixed_text 层使用预设自带文案，不消费表格文案。
+                    const matchIdx = clone.fixed_text ? -1 : textDonors.findIndex(o => o.type === clone.type);
                     if (matchIdx !== -1) {
                         const old = textDonors.splice(matchIdx, 1)[0];
                         
@@ -7107,7 +7206,7 @@ function _applyOverlayGroupPresetToTask(task, presetName, opts = { addScroll: fa
                             if (opts.clearText) {
                                 clone.scroll_title = '';
                                 clone.content = '';
-                            } else {
+                            } else if (!clone.fixed_text) {
                                 // 用户旧文案优先（非 null/undefined 就保留，包括空字符串）
                                 if (old.scroll_title != null) clone.scroll_title = old.scroll_title;
                                 if (old.content != null) clone.content = old.content;
@@ -7174,7 +7273,7 @@ function _applyOverlayGroupPresetToTask(task, presetName, opts = { addScroll: fa
             if (tpl) {
                 if (!task.overlays) task.overlays = [];
                 // 找到现有的 textcard 覆层，或创建一个新的（不覆盖其它类型覆层）
-                let cardOv = task.overlays.find(o => o && (o.type === 'textcard' || !o.type || o.type === ''));
+                let cardOv = _findBatchTextCardOverlay(task);
                 if (!cardOv) {
                     const ReelsOverlay = window.ReelsOverlay;
                     if (ReelsOverlay) {
@@ -7182,6 +7281,7 @@ function _applyOverlayGroupPresetToTask(task, presetName, opts = { addScroll: fa
                             title_text: '', body_text: '',
                             start: 0, end: 9999,
                         });
+                        cardOv.fixed_text = false;
                         task.overlays.unshift(cardOv); // 插入到数组开头，保留后面的 scroll 等覆层
                     }
                 }
@@ -7194,7 +7294,7 @@ function _applyOverlayGroupPresetToTask(task, presetName, opts = { addScroll: fa
                 
                 if (opts.clearText) {
                     task.overlays.forEach(o => {
-                        if (o && o.type === 'scroll') {
+                        if (o && !o.fixed_text && o.type === 'scroll') {
                             o.scroll_title = '';
                             o.content = '';
                         }
@@ -8548,10 +8648,16 @@ async function _batchAlignAllTasks(overrideForce = false) {
     const getSourceText = (t) => {
         if (textSourceCol === 'ttsText') return t.ttsText || '';
         if (textSourceCol === 'txtContent') return t.txtContent || '';
-        if (textSourceCol === 'overlay_title') return (t.overlays && t.overlays[0]) ? t.overlays[0].title_text || '' : '';
-        if (textSourceCol === 'overlay_body') return (t.overlays && t.overlays[0]) ? t.overlays[0].body_text || '' : '';
+        if (textSourceCol === 'overlay_title') {
+            const ov = _findBatchTextCardOverlay(t);
+            return ov ? ov.title_text || '' : '';
+        }
+        if (textSourceCol === 'overlay_body') {
+            const ov = _findBatchTextCardOverlay(t);
+            return ov ? ov.body_text || '' : '';
+        }
         if (textSourceCol === 'scroll_body') {
-            const sov = (t.overlays || []).find(o => o && o.type === 'scroll');
+            const sov = _findBatchScrollOverlay(t);
             return sov ? sov.content || '' : '';
         }
         return '';

@@ -2615,8 +2615,10 @@ function _reelsSyncWatermarkFromUI() {
         wm.fontSize = parseInt(row.querySelector('.wm-fontsize')?.value) || 20;
         wm.color = row.querySelector('.wm-color')?.value || '#FFFFFF';
         wm.bgColor = row.querySelector('.wm-bgcolor')?.value || '#000000';
-        wm.bgOpacity = parseFloat(row.querySelector('.wm-bgopacity')?.value) / 100 || 0.5;
-        wm.textOpacity = parseFloat(row.querySelector('.wm-textopacity')?.value) / 100 || 1.0;
+        const rawBgOp = parseFloat(row.querySelector('.wm-bgopacity')?.value);
+        wm.bgOpacity = Number.isFinite(rawBgOp) ? rawBgOp / 100 : 0.5;
+        const rawTextOp = parseFloat(row.querySelector('.wm-textopacity')?.value);
+        wm.textOpacity = Number.isFinite(rawTextOp) ? rawTextOp / 100 : 1.0;
         wm.position = row.querySelector('.wm-position')?.value || 'top-right';
         wm.enabled = row.querySelector('.wm-enabled')?.checked ?? true;
     });
@@ -2641,9 +2643,9 @@ function _reelsRefreshWatermarkUI() {
             <input class="wm-text input" value="${(wm.text || '').replace(/"/g, '&quot;')}" style="width:150px;font-size:11px;padding:4px 6px;" oninput="_reelsSyncWatermarkFromUI()">
             <label style="display:flex;align-items:center;gap:2px;">字号:<input class="wm-fontsize input input-small" type="number" value="${wm.fontSize || 20}" min="8" max="80" style="width:48px;font-size:11px;padding:3px;" oninput="_reelsSyncWatermarkFromUI()"></label>
             <label style="display:flex;align-items:center;gap:2px;">字色:<input class="wm-color" type="color" value="${wm.color || '#FFFFFF'}" style="width:24px;height:20px;border:none;cursor:pointer;" oninput="_reelsSyncWatermarkFromUI()"></label>
-            <label style="display:flex;align-items:center;gap:2px;">字透明:<input class="wm-textopacity input input-small" type="number" value="${Math.round((wm.textOpacity ?? 1.0) * 100)}" min="0" max="100" style="width:42px;font-size:11px;padding:3px;" oninput="_reelsSyncWatermarkFromUI()">%</label>
+            <label style="display:flex;align-items:center;gap:2px;">字透明:<input type="range" class="wm-textopacity-slider" min="0" max="100" value="${Math.round((wm.textOpacity ?? 1.0) * 100)}" style="width:60px;height:14px;accent-color:#4fc3f7;vertical-align:middle;" oninput="this.parentElement.querySelector('.wm-textopacity').value=this.value;_reelsSyncWatermarkFromUI()"><input class="wm-textopacity input input-small" type="number" value="${Math.round((wm.textOpacity ?? 1.0) * 100)}" min="0" max="100" style="width:38px;font-size:10px;padding:2px;text-align:center;" oninput="this.parentElement.querySelector('.wm-textopacity-slider').value=this.value;_reelsSyncWatermarkFromUI()">%</label>
             <label style="display:flex;align-items:center;gap:2px;">底色:<input class="wm-bgcolor" type="color" value="${wm.bgColor || '#000000'}" style="width:24px;height:20px;border:none;cursor:pointer;" oninput="_reelsSyncWatermarkFromUI()"></label>
-            <label style="display:flex;align-items:center;gap:2px;">底透明:<input class="wm-bgopacity input input-small" type="number" value="${Math.round((wm.bgOpacity ?? 0.5) * 100)}" min="0" max="100" style="width:42px;font-size:11px;padding:3px;" oninput="_reelsSyncWatermarkFromUI()">%</label>
+            <label style="display:flex;align-items:center;gap:2px;">底透明:<input type="range" class="wm-bgopacity-slider" min="0" max="100" value="${Math.round((wm.bgOpacity ?? 0.5) * 100)}" style="width:60px;height:14px;accent-color:#9b59b6;vertical-align:middle;" oninput="this.parentElement.querySelector('.wm-bgopacity').value=this.value;_reelsSyncWatermarkFromUI()"><input class="wm-bgopacity input input-small" type="number" value="${Math.round((wm.bgOpacity ?? 0.5) * 100)}" min="0" max="100" style="width:38px;font-size:10px;padding:2px;text-align:center;" oninput="this.parentElement.querySelector('.wm-bgopacity-slider').value=this.value;_reelsSyncWatermarkFromUI()">%</label>
             <select class="wm-position select" style="width:70px;font-size:11px;padding:3px;" onchange="_reelsSyncWatermarkFromUI()">${posOptions.replace(`value="${wm.position || 'top-right'}"`, `value="${wm.position || 'top-right'}" selected`)}</select>
             <button class="btn btn-secondary" style="font-size:10px;padding:2px 6px;color:#f87171;" onclick="reelsRemoveWatermark(${i})">✕</button>
         </div>
@@ -2951,9 +2953,9 @@ function _getPreviewLoopFadeConfig() {
 
 function _getPreviewAudioMixConfig() {
     let voiceVolume = parseFloat((document.getElementById('reels-voice-volume') || {}).value || '100');
-    let bgVolume = parseFloat((document.getElementById('reels-bg-volume') || {}).value || '5');
+    let bgVolume = parseFloat((document.getElementById('reels-bg-volume') || {}).value || '100');
     if (!Number.isFinite(voiceVolume)) voiceVolume = 100;
-    if (!Number.isFinite(bgVolume)) bgVolume = 10;
+    if (!Number.isFinite(bgVolume)) bgVolume = 100;
     voiceVolume = Math.max(0, Math.min(200, voiceVolume));
     bgVolume = Math.max(0, Math.min(200, bgVolume));
     return { voiceGain: voiceVolume / 100, bgGain: bgVolume / 100 };
@@ -5385,9 +5387,9 @@ async function reelsStartExport() {
     const useKaraoke = document.getElementById('reels-karaoke-hl');
     const karaokeHL = useKaraoke ? useKaraoke.checked : false;
     let voiceVolume = parseFloat((document.getElementById('reels-voice-volume') || {}).value || '100');
-    let bgVolume = parseFloat((document.getElementById('reels-bg-volume') || {}).value || '5');
+    let bgVolume = parseFloat((document.getElementById('reels-bg-volume') || {}).value || '100');
     if (!Number.isFinite(voiceVolume)) voiceVolume = 100;
-    if (!Number.isFinite(bgVolume)) bgVolume = 5;
+    if (!Number.isFinite(bgVolume)) bgVolume = 100;
     voiceVolume = Math.max(0, Math.min(200, voiceVolume));
     bgVolume = Math.max(0, Math.min(200, bgVolume));
     const loopFadeEl = document.getElementById('reels-loop-fade');
@@ -6172,7 +6174,7 @@ function collectCurrentProjectState() {
         quality: (document.getElementById('reels-quality') || {}).value || 'medium',
         suffix: (document.getElementById('reels-suffix') || {}).value || '_subtitled',
         voiceVolume: parseFloat((document.getElementById('reels-voice-volume') || {}).value || '100') || 100,
-        bgVolume: parseFloat((document.getElementById('reels-bg-volume') || {}).value || '5') || 5,
+        bgVolume: parseFloat((document.getElementById('reels-bg-volume') || {}).value || '100') || 100,
         useGPU: (document.getElementById('reels-use-gpu') || {}).checked || false,
         useMemoryDecoder: (document.getElementById('reels-use-memory-decoder') || {}).checked || false,
         previewLoop: (document.getElementById('reels-preview-loop') || {}).checked !== false,
@@ -6201,6 +6203,17 @@ function collectCurrentProjectState() {
 function applyRestoredProject(result) {
     if (!result) return;
 
+    // ── 先清空覆层编辑器，防止旧覆层被 reelsSelectTask 写入新任务 ──
+    if (_reelsState.overlayProxy && _reelsState.overlayProxy.overlayMgr) {
+        _reelsState.overlayProxy.overlayMgr.overlays = [];
+    }
+    if (_reelsState.overlayPanel) {
+        _reelsState.overlayPanel.deselectOverlay();
+        _reelsState.overlayPanel._refreshList();
+    }
+    _reelsState._coverEditMode = false;
+    _reelsState.selectedIdx = -1; // 标记为无选中，防止 reelsSelectTask 回写
+
     // 恢复任务
     _reelsState.tasks = Array.isArray(result.tasks) ? result.tasks : [];
     _reelsState.selectedIdx = _reelsState.tasks.length > 0
@@ -6213,7 +6226,13 @@ function applyRestoredProject(result) {
     // in the table as well as in the Reels task list.
     if (typeof _batchTableState !== 'undefined' && typeof _getActiveTab === 'function') {
         const tab = _getActiveTab();
-        if (tab) tab.tasks = _reelsState.tasks.map(t => ({ ...t }));
+        if (tab) {
+            try {
+                tab.tasks = JSON.parse(JSON.stringify(_reelsState.tasks));
+            } catch (_) {
+                tab.tasks = _reelsState.tasks.map(t => ({ ...t }));
+            }
+        }
     }
 
     // 恢复样式
@@ -6255,11 +6274,21 @@ function applyRestoredProject(result) {
     if (styleToShow) _writeStyleToUI(styleToShow);
 
     if (selectedTask) {
-        reelsSelectTask(_reelsState.selectedIdx);
+        // 必须先重置 selectedIdx=-1，否则 reelsSelectTask 的 "保存上一个任务覆层"
+        // 逻辑会把空的 overlayMgr 内容写入刚加载的模板任务
+        const targetIdx = _reelsState.selectedIdx;
+        _reelsState.selectedIdx = -1;
+        reelsSelectTask(targetIdx);
     } else {
         _renderTaskList();
     }
-    if (typeof _renderBatchTable === 'function') _renderBatchTable();
+    if (typeof _renderBatchTable === 'function') {
+        // Loading a template/project replaces state from JSON. The batch table may
+        // still contain stale DOM inputs from the previous project, so skip its
+        // automatic DOM -> task sync for this first redraw.
+        if (typeof _skipNextApply !== 'undefined') _skipNextApply = true;
+        _renderBatchTable();
+    }
     _applyPreviewAudioMix();
     reelsUpdatePreview();
 
@@ -6281,7 +6310,7 @@ function reelsSaveProject() {
         quality: (document.getElementById('reels-quality') || {}).value || 'medium',
         suffix: (document.getElementById('reels-suffix') || {}).value || '_subtitled',
         voiceVolume: parseFloat((document.getElementById('reels-voice-volume') || {}).value || '100') || 100,
-        bgVolume: parseFloat((document.getElementById('reels-bg-volume') || {}).value || '5') || 5,
+        bgVolume: parseFloat((document.getElementById('reels-bg-volume') || {}).value || '100') || 100,
         useGPU: (document.getElementById('reels-use-gpu') || {}).checked || false,
         useMemoryDecoder: (document.getElementById('reels-use-memory-decoder') || {}).checked || false,
         previewLoop: (document.getElementById('reels-preview-loop') || {}).checked !== false,

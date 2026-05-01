@@ -77,7 +77,7 @@ class ReelsOverlayPanel {
                 <div id="rop-fixed-text-group" class="rop-group" style="display:none;">
                     <div style="display:flex;align-items:center;gap:8px;">
                         <input type="checkbox" id="rop-fixed-text" style="width:16px;height:16px;cursor:pointer;">
-                        <label for="rop-fixed-text" style="font-size:12px;color:var(--text-secondary);cursor:pointer;">固定文案 <span style="color:var(--text-muted);font-size:11px;">— 勾选后文案随预设保存/加载</span></label>
+                        <label for="rop-fixed-text" style="font-size:12px;color:var(--text-secondary);cursor:pointer;">固定文案 <span style="color:var(--text-muted);font-size:11px;">— 勾选后文案随预设保存/加载，批量表格不会覆盖</span></label>
                     </div>
                 </div>
 
@@ -3450,6 +3450,7 @@ class ReelsOverlayPanel {
                 delete clone.title_text;
                 delete clone.body_text;
                 delete clone.footer_text;
+                if (clone.type === 'scroll') delete clone.scroll_title;
                 if (clone.type === 'text' || clone.type === 'scroll') delete clone.content;
             }
             // 预设始终存储全程标志，不保留固定时长
@@ -3487,11 +3488,80 @@ class ReelsOverlayPanel {
 
         // Confirm if there are existing overlays
         if (mgr.overlays.length > 0) {
-            if (!confirm(`当前有 ${mgr.overlays.length} 个覆层，加载预设将替换全部。继续？`)) return;
+            if (!confirm(`当前有 ${mgr.overlays.length} 个覆层，加载预设将替换样式与层结构，但会尽量保留现有文案。继续？`)) return;
         }
 
-        // Save existing overlays' text before clearing
-        const oldOverlays = [...mgr.overlays];
+        // Save existing text before clearing. Older logic only copied by index,
+        // which erased copy whenever preset layer order/count/type changed.
+        const oldTextByIndex = [...mgr.overlays];
+        const oldTextByType = new Map();
+        const usedOldText = new Set();
+        const collectText = (ov) => {
+            if (!ov || typeof ov !== 'object') return null;
+            const data = {};
+            let hasText = false;
+            for (const key of ['title_text', 'body_text', 'footer_text', 'content', 'scroll_title']) {
+                if (typeof ov[key] === 'string' && ov[key].length > 0) {
+                    data[key] = ov[key];
+                    hasText = true;
+                }
+            }
+            return hasText ? data : null;
+        };
+        for (const ov of oldTextByIndex) {
+            const data = collectText(ov);
+            if (!data) continue;
+            const key = ov.type || 'unknown';
+            if (!oldTextByType.has(key)) oldTextByType.set(key, []);
+            oldTextByType.get(key).push({ ov, data });
+        }
+        const nextTextFor = (type) => {
+            const typed = oldTextByType.get(type);
+            while (typed && typed.length) {
+                const item = typed.shift();
+                if (!usedOldText.has(item.ov)) {
+                    usedOldText.add(item.ov);
+                    return item.data;
+                }
+            }
+            for (const arr of oldTextByType.values()) {
+                while (arr.length) {
+                    const item = arr.shift();
+                    if (!usedOldText.has(item.ov)) {
+                        usedOldText.add(item.ov);
+                        return item.data;
+                    }
+                }
+            }
+            return null;
+        };
+        const applyText = (ov, textData) => {
+            if (!ov || !textData) return false;
+            let applied = false;
+            for (const [key, value] of Object.entries(textData)) {
+                if (typeof value === 'string' && value.length > 0) {
+                    ov[key] = value;
+                    applied = true;
+                }
+            }
+            return applied;
+        };
+        const layerNeedsText = (ov) => {
+            if (!ov || ov.fixed_text) return false;
+            return ov.type === 'text' || ov.type === 'textcard' || ov.type === 'scroll';
+        };
+        const layerHasText = (ov) => !!collectText(ov);
+        const layerLabel = (ov, idx) => {
+            const typeLabel = ov.type === 'scroll'
+                ? '滚动覆层'
+                : ov.type === 'textcard'
+                    ? '文字卡片'
+                    : ov.type === 'text'
+                        ? '文本覆层'
+                        : '覆层';
+            return `${idx + 1}.${typeLabel}`;
+        };
+        const missingTextLayers = [];
 
         // Clear existing
         mgr.overlays = [];
@@ -3504,14 +3574,15 @@ class ReelsOverlayPanel {
             // 强制全程：兼容旧预设中存储的固定时长
             clone.start = 0;
             clone.end = 9999;
-            // For non-fixed layers, preserve text from corresponding old overlay
+            // For non-fixed layers, preserve text from corresponding old overlay.
+            // Prefer same index, then same type, then any remaining text layer.
             if (!clone.fixed_text) {
-                const old = oldOverlays[i];
-                if (old) {
-                    if (old.title_text) clone.title_text = old.title_text;
-                    if (old.body_text) clone.body_text = old.body_text;
-                    if (old.footer_text) clone.footer_text = old.footer_text;
-                    if (old.content && (clone.type === 'text' || clone.type === 'scroll')) clone.content = old.content;
+                const indexedSource = oldTextByIndex[i];
+                const indexedText = usedOldText.has(indexedSource) ? null : collectText(indexedSource);
+                if (indexedText) usedOldText.add(indexedSource);
+                applyText(clone, indexedText || nextTextFor(clone.type));
+                if (layerNeedsText(clone) && !layerHasText(clone)) {
+                    missingTextLayers.push(layerLabel(clone, i));
                 }
             }
             // Fixed layers already have text from preset — use as-is
@@ -3523,6 +3594,9 @@ class ReelsOverlayPanel {
         this._refreshList();
         if (this._selectedOv) this._syncFromOverlay(this._selectedOv);
         if (this.videoCanvas) this.videoCanvas.render();
+        if (missingTextLayers.length > 0) {
+            alert(`预设已加载，但以下覆层没有对应文案，请手动填写：\n${missingTextLayers.join('\n')}`);
+        }
     }
 
     _deleteOverlayGroupPreset() {

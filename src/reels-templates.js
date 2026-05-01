@@ -331,10 +331,37 @@ async function _loadTemplateInCurrentWindow(templateId) {
         const tplData = result.data || result;
 
         if (tplData.projectData && typeof ReelsProject !== 'undefined') {
+            // ── 诊断日志：模板加载数据追踪 ──
+            const rawTasks = tplData.projectData.tasks || [];
+            console.log(`[Template] 📦 原始模板数据: ${rawTasks.length} 个任务`);
+            rawTasks.forEach((t, i) => {
+                const ovCount = (t.overlays || []).length;
+                const segCount = (t.segments || []).length;
+                const coverOvCount = (t.cover?.overlays || []).length;
+                console.log(`  [${i}] overlays=${ovCount}, segments=${segCount}, cover.overlays=${coverOvCount}, txtContent=${(t.txtContent || '').slice(0, 30)}`);
+            });
+
             const restored = ReelsProject.applyProjectData(tplData.projectData);
+
+            console.log(`[Template] 🔄 反序列化后: ${restored.tasks.length} 个任务`);
+            restored.tasks.forEach((t, i) => {
+                const ovCount = (t.overlays || []).length;
+                const segCount = (t.segments || []).length;
+                const coverOvCount = (t.cover?.overlays || []).length;
+                console.log(`  [${i}] overlays=${ovCount}, segments=${segCount}, cover.overlays=${coverOvCount}`);
+            });
+
             if (typeof applyRestoredProject === 'function') {
                 applyRestoredProject(restored);
             }
+
+            console.log(`[Template] ✅ applyRestoredProject 完成后:`);
+            (_reelsState?.tasks || []).forEach((t, i) => {
+                const ovCount = (t.overlays || []).length;
+                const segCount = (t.segments || []).length;
+                const coverOvCount = (t.cover?.overlays || []).length;
+                console.log(`  [${i}] overlays=${ovCount}, segments=${segCount}, cover.overlays=${coverOvCount}`);
+            });
             _setCurrentTemplateContext(tplData.id || templateId, tplData.name || '');
             if (typeof showToast === 'function') showToast(`模板「${tplData.name}」已加载`, 'success');
 
