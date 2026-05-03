@@ -198,6 +198,9 @@ function reelsToggleBatchTable(options = {}) {
             _applyBatchTableChanges();
             _batchTableState.openSnapshotTasks = _batchTasksSnapshot(window._reelsState?.tasks || []);
             console.log('[BatchTable.toggle] 关闭表格，已保存 changes');
+            if (window._reelsState && window._reelsState.selectedIdx >= 0 && typeof reelsSelectTask === 'function') {
+                reelsSelectTask(window._reelsState.selectedIdx);
+            }
         } else {
             const originalSnapshot = _batchTableState.openSnapshotTasks;
             const projectedSnapshot = _getProjectedBatchTasksSnapshot();
@@ -443,7 +446,7 @@ function _renderBatchTable() {
         _skipNextApply = false;
     } else if (!_isRenderingBatchTable) {
         _isRenderingBatchTable = true;
-        try { _applyBatchTableChanges(); } catch(e) { console.warn('[BatchTable] applyChanges error:', e); }
+        try { _applyBatchTableChanges(); } catch (e) { console.warn('[BatchTable] applyChanges error:', e); }
         _isRenderingBatchTable = false;
     }
 
@@ -460,6 +463,7 @@ function _renderBatchTable() {
     _batchAutoSave();
     const tasks = state.tasks || [];
     const activeTab = _getActiveTab();
+    const exportNamingMode = localStorage.getItem('reels_naming_mode') || 'text';
 
     // 获取已保存的卡片模板列表
     const cardTemplates = _getOverlayGroupPresetList();
@@ -599,6 +603,14 @@ function _renderBatchTable() {
                         <button id="rbt-open-media-pool-btn" class="rbt-btn" style="background:${_batchTableState.mediaPoolOpen ? 'rgba(50,70,160,0.6)' : 'rgba(40,60,120,0.6)'}; color:#9bb0ff; border:1px solid rgba(80,120,220,0.3); font-size:11px; padding:2px 8px;">${_batchTableState.mediaPoolOpen ? '收起素材池' : '打开素材池'}</button>
                         <button class="rbt-btn" id="rbt-cycle-fill-btn" style="background:rgba(255,255,255,0.05); color:#ccc; border:1px solid rgba(255,255,255,0.1); padding:2px 8px; font-size:11px;" title="打开素材循环填充面板">素材使用设置</button>
                         <span style="color:rgba(255,255,255,0.2);margin:0 2px;">|</span>
+                        <span style="font-size:11px;color:#888;">导出命名规则</span>
+                        <select id="reels-naming-mode" class="rbt-select" style="width:150px;height:24px;font-size:11px;padding:0 4px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);color:#ccc;" title="自定义命名使用每行“导出命名”列；该列为空时会继续按默认回退规则生成">
+                            <option value="custom" ${exportNamingMode === 'custom' ? 'selected' : ''}>自定义命名</option>
+                            <option value="text" ${exportNamingMode === 'text' ? 'selected' : ''}>默认文案</option>
+                            <option value="background" ${exportNamingMode === 'background' ? 'selected' : ''}>背景素材名</option>
+                            <option value="card" ${exportNamingMode === 'card' ? 'selected' : ''}>默认 Card 名</option>
+                        </select>
+                        <span style="color:rgba(255,255,255,0.2);margin:0 2px;">|</span>
                         <button class="rbt-btn" id="rbt-paste-txtcontent" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;" title="从剪贴板粘贴到人声字幕列">人声对齐字幕（断行后）</button>
                         <button class="rbt-btn" id="rbt-paste-btn" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;" title="从 Google 表格粘贴覆层文案(支持标题/内容/结尾多列格式)">粘贴覆层文案</button>
                         <button class="rbt-btn" id="rbt-paste-scroll-btn" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;" title="从 Google 表格批量粘贴滚动字幕">粘贴滚动字幕</button>
@@ -669,6 +681,7 @@ function _renderBatchTable() {
                         </div>
                         <button class="rbt-btn" id="rbt-align-all-btn" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;">一键对齐字幕</button>
                         <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#999;cursor:pointer;"><input type="checkbox" id="rbt-force-realign" style="margin:0;transform:scale(0.8);"> 强制覆盖已对齐任务</label>
+                        <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#999;cursor:pointer;" title="在没有人声文案的情况下，仅根据AI语音识别直接生成字幕"><input type="checkbox" id="rbt-allow-blind" style="margin:0;transform:scale(0.8);"> 允许无文案盲转</label>
                     </div>
 
                     <!-- === 7. 终极任务执行台 (Execution Block) === -->
@@ -703,6 +716,7 @@ function _renderBatchTable() {
                             <option value="">覆层预设...</option>${batchCardOpts}
                         </select>
                         <button class="rbt-btn" id="rbt-apply-batch-card" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;">应用</button>
+                        <button class="rbt-btn" id="rbt-gallery-batch-btn" style="padding:2px 8px;font-size:11px;background:rgba(123,139,239,0.2);border:1px solid rgba(123,139,239,0.4);color:#7b8bef;" title="打开预设可视化图库">图库...</button>
                         <button class="rbt-btn" id="rbt-import-card-preset-btn" style="padding:2px 6px;font-size:10px;background:rgba(100,100,255,0.1);border:1px solid rgba(100,100,255,0.2);color:#8b8bfa;" title="导入覆层预设 JSON 文件">📥</button>
                         <span id="rbt-selected-count" style="margin-left:auto;font-size:11px;color:#aaa;"></span>
                     </div>
@@ -960,7 +974,7 @@ function _applyOverlayField(task, fieldCategory, str) {
     if (fieldCategory.startsWith('scroll_')) {
         let ov = _findBatchScrollOverlay(task);
         if (!ov) {
-            ov = window.ReelsOverlay ? window.ReelsOverlay.createScrollOverlay({ start: 0, end: 9999 }) : { scroll_title:'', content:'', type: 'scroll' };
+            ov = window.ReelsOverlay ? window.ReelsOverlay.createScrollOverlay({ start: 0, end: 9999 }) : { scroll_title: '', content: '', type: 'scroll' };
             ov.scroll_title = '';
             ov.content = '';
             ov.fixed_text = false;
@@ -971,7 +985,7 @@ function _applyOverlayField(task, fieldCategory, str) {
     } else if (fieldCategory.startsWith('overlay_')) {
         let ov = _findBatchTextCardOverlay(task);
         if (!ov) {
-            ov = window.ReelsOverlay ? window.ReelsOverlay.createTextCardOverlay({ start: 0, end: 9999 }) : { title_text:'', body_text:'', footer_text:'', type: 'textcard' };
+            ov = window.ReelsOverlay ? window.ReelsOverlay.createTextCardOverlay({ start: 0, end: 9999 }) : { title_text: '', body_text: '', footer_text: '', type: 'textcard' };
             ov.title_text = '';
             ov.body_text = '';
             ov.footer_text = '';
@@ -985,7 +999,7 @@ function _applyOverlayField(task, fieldCategory, str) {
         if (!task.cover) task.cover = { enabled: true, overlays: [] };
         let ov = (task.cover.overlays && task.cover.overlays.length > 0) ? task.cover.overlays[0] : null;
         if (!ov) {
-            ov = window.ReelsOverlay ? window.ReelsOverlay.createTextCardOverlay({ start: 0, end: 9999 }) : { title_text:'', body_text:'', footer_text:'', type: 'textcard' };
+            ov = window.ReelsOverlay ? window.ReelsOverlay.createTextCardOverlay({ start: 0, end: 9999 }) : { title_text: '', body_text: '', footer_text: '', type: 'textcard' };
             task.cover.overlays = [ov];
         }
         ov.title_text = str;
@@ -1030,7 +1044,7 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
 
     if (bgMode === 'multi' && bgClipPool.length > 0) {
         // 多素材模式 — 显示素材池信息
-        const transLabel = {none:'硬切', crossfade:'交叉淡化', fade_black:'黑场过渡', fade_white:'白场过渡', slide_left:'左滑', slide_right:'右滑', wipe:'擦除'}[task.bgTransition || 'crossfade'] || '交叉淡化';
+        const transLabel = { none: '硬切', crossfade: '交叉淡化', fade_black: '黑场过渡', fade_white: '白场过渡', slide_left: '左滑', slide_right: '右滑', wipe: '擦除' }[task.bgTransition || 'crossfade'] || '交叉淡化';
         const thumbs = bgClipPool.slice(0, 3).map(p => {
             const url = window.electronAPI && window.electronAPI.toFileUrl ? window.electronAPI.toFileUrl(p) : `file://${p}`;
             const isImg = /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(p);
@@ -1078,10 +1092,10 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
         const hIsImg = /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(task.hookFile);
         const hUrlObj = window.electronAPI && window.electronAPI.toFileUrl ? window.electronAPI.toFileUrl(task.hookFile) : `file://${task.hookFile}`;
         hookContent = `<div class="rbt-hook-set" style="display:flex;align-items:center;gap:4px;cursor:pointer;" title="双击重新配置\n${_escHtml(task.hookFile)}">
-                            ${hIsImg ? 
-                                `<img class="rbt-thumb-previewable" src="${_escHtml(hUrlObj)}" style="width:28px;height:28px;object-fit:cover;border-radius:3px;flex-shrink:0;cursor:zoom-in;">` :
-                                `<video class="rbt-thumb-previewable" src="${_escHtml(hUrlObj)}#t=0.5" preload="metadata" style="width:28px;height:28px;object-fit:cover;border-radius:3px;flex-shrink:0;background:#111;cursor:zoom-in;"></video>`
-                            }
+                            ${hIsImg ?
+                `<img class="rbt-thumb-previewable" src="${_escHtml(hUrlObj)}" style="width:28px;height:28px;object-fit:cover;border-radius:3px;flex-shrink:0;cursor:zoom-in;">` :
+                `<video class="rbt-thumb-previewable" src="${_escHtml(hUrlObj)}#t=0.5" preload="metadata" style="width:28px;height:28px;object-fit:cover;border-radius:3px;flex-shrink:0;background:#111;cursor:zoom-in;"></video>`
+            }
                             <div style="flex:1;display:flex;flex-direction:column;min-width:0;line-height:1.2;">
                               <span class="rbt-file-name" style="font-size:10px;word-break:break-all;">${_escHtml(hookName)}</span>
                               <span style="font-size:9px;color:#a0d0ff;zoom:0.9;">${task.hookTransition && task.hookTransition !== 'none' ? `✨${task.hookTransition}(${task.hookTransDuration || 0.5}s)` : '⚡硬切'} | ${task.hookSpeed ? task.hookSpeed + 'x' : '1x'} <span style="color:#666;margin-left:2px;">(双击设置)</span></span>
@@ -1122,17 +1136,17 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
     let coverContent = '';
     if (coverEnabled) {
         if (coverBgPath) {
-             const cIsImg = /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(coverBgPath);
-             const cUrlObj = window.electronAPI && window.electronAPI.toFileUrl ? window.electronAPI.toFileUrl(coverBgPath) : `file://${coverBgPath}`;
-             coverContent = `<div class="rbt-cover-set" style="display:flex;align-items:center;gap:4px;cursor:pointer;" title="双击配置封面">
-                                 ${cIsImg ? 
-                                     `<img class="rbt-thumb-previewable" src="${_escHtml(cUrlObj)}" style="width:28px;height:28px;object-fit:cover;border-radius:3px;flex-shrink:0;">` :
-                                     `<video class="rbt-thumb-previewable" src="${_escHtml(cUrlObj)}#t=0.5" style="width:28px;height:28px;object-fit:cover;border-radius:3px;flex-shrink:0;background:#111;"></video>`
-                                 }
+            const cIsImg = /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(coverBgPath);
+            const cUrlObj = window.electronAPI && window.electronAPI.toFileUrl ? window.electronAPI.toFileUrl(coverBgPath) : `file://${coverBgPath}`;
+            coverContent = `<div class="rbt-cover-set" style="display:flex;align-items:center;gap:4px;cursor:pointer;" title="双击配置封面">
+                                 ${cIsImg ?
+                    `<img class="rbt-thumb-previewable" src="${_escHtml(cUrlObj)}" style="width:28px;height:28px;object-fit:cover;border-radius:3px;flex-shrink:0;">` :
+                    `<video class="rbt-thumb-previewable" src="${_escHtml(cUrlObj)}#t=0.5" style="width:28px;height:28px;object-fit:cover;border-radius:3px;flex-shrink:0;background:#111;"></video>`
+                }
                                  <div style="flex:1;min-width:0;font-size:9px;color:#ffd700;line-height:1.1;">✨封面开启<br>已设底图</div>
                             </div>`;
         } else {
-             coverContent = `<div class="rbt-cover-set" style="cursor:pointer;color:#ffd700;font-size:10px;line-height:1.2;" title="双击配置封面"><span style="display:inline-block;background:rgba(255,215,0,0.15);padding:2px 4px;border-radius:2px;border:1px solid rgba(255,215,0,0.3);">✨封面开启<br><span style="font-size:8px;color:#aaa;">(取第1帧)</span></span></div>`;
+            coverContent = `<div class="rbt-cover-set" style="cursor:pointer;color:#ffd700;font-size:10px;line-height:1.2;" title="双击配置封面"><span style="display:inline-block;background:rgba(255,215,0,0.15);padding:2px 4px;border-radius:2px;border:1px solid rgba(255,215,0,0.3);">✨封面开启<br><span style="font-size:8px;color:#aaa;">(取第1帧)</span></span></div>`;
         }
     } else {
         coverContent = `<div class="rbt-cover-set" style="cursor:pointer;color:#888;font-size:10px;display:flex;align-items:center;" title="双击添加封面"><span class="rbt-file-name" style="width:100%;"><span class="rbt-placeholder">拖拽/双击</span></span></div>`;
@@ -1172,7 +1186,7 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
             </td>
             <td class="rbt-col-exportname">
                 <input type="text" class="rbt-textarea rbt-exportname-input" data-idx="${idx}" 
-                    value="${_escHtml(task.exportName || '')}" placeholder="自动提取文案前50字" style="width:100px;font-size:11px;" title="留空则默认使用文案的前50个字符作为导出名字">
+                    value="${_escHtml(task.exportName || '')}" placeholder="留空按命名规则" style="width:100px;font-size:11px;" title="手动输入时优先使用；留空则按底部导出设置里的命名规则生成">
             </td>
             <td class="rbt-col-cover-media rbt-droppable" data-field="cover_media">
                 <div style="display:flex;align-items:center;gap:2px;">
@@ -1231,7 +1245,7 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
                     <div class="rbt-scale-display">🔉 ${task.bgVideoVolume != null ? task.bgVideoVolume : '—'}%</div>
                     <div class="rbt-scale-controls" style="flex-direction:row; inset:0;">
                         <span style="font-size:10px;color:#888;white-space:nowrap;">🔉</span>
-                        <input type="range" class="rbt-bgvol-slider" data-idx="${idx}" min="0" max="200" value="${task.bgVideoVolume != null ? task.bgVideoVolume : 100}"
+                        <input type="range" class="rbt-bgvol-slider" data-idx="${idx}" data-is-null="${task.bgVideoVolume == null ? 'true' : 'false'}" min="0" max="200" value="${task.bgVideoVolume != null ? task.bgVideoVolume : 100}"
                                style="flex:1; min-width:0; height:12px; accent-color:#4fc3f7;" title="背景视频音量（留空=跟随全局设置）">
                         <span class="rbt-bgvol-label" style="font-size:10px;color:#888;min-width:28px;text-align:right;">${task.bgVideoVolume != null ? task.bgVideoVolume + '%' : '全局'}</span>
                     </div>
@@ -1239,34 +1253,34 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
             </td>
             <td class="rbt-col-contentvideo rbt-droppable" data-field="contentvideo">
                 ${(() => {
-                    const cvPath = task.contentVideoPath || '';
-                    const cvName = _shortName(cvPath);
-                    let cvContent = cvName || '<span class="rbt-placeholder">拖拽/双击</span>';
-                    if (cvPath) {
-                        const isImg = /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(cvPath);
-                        const cvUrl = window.electronAPI && window.electronAPI.toFileUrl ? window.electronAPI.toFileUrl(cvPath) : `file://${cvPath}`;
-                        cvContent = `<div style="display:flex;align-items:center;gap:6px;">
+            const cvPath = task.contentVideoPath || '';
+            const cvName = _shortName(cvPath);
+            let cvContent = cvName || '<span class="rbt-placeholder">拖拽/双击</span>';
+            if (cvPath) {
+                const isImg = /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(cvPath);
+                const cvUrl = window.electronAPI && window.electronAPI.toFileUrl ? window.electronAPI.toFileUrl(cvPath) : `file://${cvPath}`;
+                cvContent = `<div style="display:flex;align-items:center;gap:6px;">
                             ${isImg
-                                ? `<img class="rbt-thumb-previewable" src="${_escHtml(cvUrl)}" style="width:32px;height:32px;object-fit:cover;border-radius:4px;flex-shrink:0;cursor:zoom-in;">`
-                                : `<video class="rbt-thumb-previewable" src="${_escHtml(cvUrl)}#t=1" preload="metadata" style="width:32px;height:32px;object-fit:cover;border-radius:4px;flex-shrink:0;background:#000;cursor:zoom-in;"></video>`}
+                        ? `<img class="rbt-thumb-previewable" src="${_escHtml(cvUrl)}" style="width:32px;height:32px;object-fit:cover;border-radius:4px;flex-shrink:0;cursor:zoom-in;">`
+                        : `<video class="rbt-thumb-previewable" src="${_escHtml(cvUrl)}#t=1" preload="metadata" style="width:32px;height:32px;object-fit:cover;border-radius:4px;flex-shrink:0;background:#000;cursor:zoom-in;"></video>`}
                             <span class="rbt-file-name" style="flex:1;font-size:10px;word-break:break-all;" title="${_escHtml(cvPath)}">${_escHtml(cvName)}</span>
                         </div>`;
-                    }
-                    return `<div style="display:flex;align-items:center;gap:2px;">
+            }
+            return `<div style="display:flex;align-items:center;gap:2px;">
                         <div style="flex:1;min-width:0;overflow:hidden;">${cvContent}</div>
                         ${cvPath ? `<button class="rbt-field-clear" data-idx="${idx}" data-field="contentvideo" title="清除内容视频">✕</button>` : ''}
                     </div>`;
-                })()}
+        })()}
             </td>
             <td class="rbt-col-cvtrim">
                 <div class="rbt-cv-trim-cell" data-idx="${idx}" style="cursor:pointer;font-size:10px;padding:2px 4px;border-radius:4px;text-align:center;
                     ${task.contentVideoTrimStart != null || task.contentVideoTrimEnd != null
-                        ? 'background:rgba(76,158,255,0.15);color:#4c9eff;border:1px solid rgba(76,158,255,0.3);'
-                        : 'color:#666;border:1px dashed #333;'}"
+            ? 'background:rgba(76,158,255,0.15);color:#4c9eff;border:1px solid rgba(76,158,255,0.3);'
+            : 'color:#666;border:1px dashed #333;'}"
                     title="双击设置裁切区间">
                     ${task.contentVideoTrimStart != null || task.contentVideoTrimEnd != null
-                        ? `✂️ ${task.contentVideoTrimStart != null ? Number(task.contentVideoTrimStart).toFixed(1) : '0'}s → ${task.contentVideoTrimEnd != null ? Number(task.contentVideoTrimEnd).toFixed(1) : '尾'}`
-                        : '全段'}
+            ? `✂️ ${task.contentVideoTrimStart != null ? Number(task.contentVideoTrimStart).toFixed(1) : '0'}s → ${task.contentVideoTrimEnd != null ? Number(task.contentVideoTrimEnd).toFixed(1) : '尾'}`
+            : '全段'}
                 </div>
             </td>
             <td class="rbt-col-cvscale">
@@ -1369,7 +1383,7 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
                     ${task.txtContent && !task.srtPath ? `<button class="rbt-field-clear" data-idx="${idx}" data-field="txt" title="清除文案" style="position:absolute;top:2px;right:2px;">✕</button>` : ''}
                 </div>
                 <div style="display:flex;align-items:center;gap:4px;margin-top:2px;min-height:14px;">
-                    <span style="font-size:10px;color:${task.aligned ? '#4ade80' : task.txtContent && !task.srtPath ? '#facc15' : '#666'};">${task.aligned ? '✅ 已对齐' : task.txtContent && !task.srtPath ? '⏳ 待对齐' : ''}</span>
+                    <span style="font-size:10px;color:${task.aligned ? '#4ade80' : task.txtContent && !task.srtPath ? '#facc15' : '#666'};" title="${task.alignedAt ? '对齐时间: ' + task.alignedAt + (task.alignSource === 'gladia_fresh' ? ' (重新转录)' : task.alignSource === 'gladia_cache' ? ' (缓存转录)' : '') : ''}">${task.aligned ? ('✅ 已对齐' + (task.alignSource === 'gladia_fresh' ? ' 🎙️' : task.alignSource === 'gladia_cache' ? ' 📦' : '') + (task.alignedAt ? ' <span style="color:#888;font-size:9px;">' + task.alignedAt + '</span>' : '')) : task.txtContent && !task.srtPath ? '⏳ 待对齐' : ''}</span>
                     ${task.aiTextDiffWarning ? `<div class="diff-warning-badge" style="margin-top:6px;font-size:12px;color:#ef4444;font-weight:bold;text-align:right;">⚠️词汇变动警告 <span class="diff-modal-btn" data-field="txt" data-idx="${idx}" style="color:#3b82f6;cursor:pointer;margin-left:8px;text-decoration:underline;">[🔍比对]</span></div>` : ''}
                 </div>
             </td>
@@ -1454,10 +1468,16 @@ function _bindBatchTableEvents() {
 
     // Close
     container.querySelector('#rbt-close-btn')?.addEventListener('click', () => reelsToggleBatchTable({ saveOnClose: false }));
+    container.querySelector('#reels-naming-mode')?.addEventListener('change', (e) => {
+        localStorage.setItem('reels_naming_mode', e.target.value || 'text');
+    });
     container.querySelector('#rbt-apply-btn')?.addEventListener('click', () => {
         _applyBatchTableChanges();
         _batchTableState.openSnapshotTasks = _batchTasksSnapshot(window._reelsState?.tasks || []);
         reelsToggleBatchTable({ saveOnClose: false });
+        if (window._reelsState && window._reelsState.selectedIdx >= 0 && typeof reelsSelectTask === 'function') {
+            reelsSelectTask(window._reelsState.selectedIdx);
+        }
     });
 
     // ── Language searchable picker ──
@@ -1493,7 +1513,7 @@ function _bindBatchTableEvents() {
             }
         });
     }
-    
+
     // ══ Global Hover Preview ══
     let hoverTooltip = container.querySelector('#rbt-hover-preview-tooltip');
     if (!hoverTooltip) {
@@ -1502,7 +1522,7 @@ function _bindBatchTableEvents() {
         hoverTooltip.style.cssText = 'position:fixed; z-index:999999; display:none; background:#000; border:1px solid #48548a; border-radius:8px; box-shadow:0 12px 40px rgba(0,0,0,0.8); overflow:hidden; pointer-events:none;';
         document.body.appendChild(hoverTooltip); // attach to body to prevent clipping
     }
-    
+
     let previewTimeout;
     container.addEventListener('mouseover', (e) => {
         const target = e.target;
@@ -1511,39 +1531,39 @@ function _bindBatchTableEvents() {
             previewTimeout = setTimeout(() => {
                 const src = target.getAttribute('src');
                 if (!src) return;
-                
+
                 const isVideo = target.tagName === 'VIDEO';
                 const pureSrc = src.split('#')[0]; // strip hash
-                
+
                 const rect = target.getBoundingClientRect();
-                
+
                 if (isVideo) {
                     hoverTooltip.innerHTML = `<video src="${_escHtml(pureSrc)}" autoplay loop muted style="max-width:360px; max-height:360px; display:block; object-fit:contain; background:#000;"></video>`;
                 } else {
                     hoverTooltip.innerHTML = `<img src="${_escHtml(pureSrc)}" style="max-width:360px; max-height:360px; display:block; object-fit:contain; background:#111;">`;
                 }
-                
+
                 hoverTooltip.style.display = 'block';
-                
+
                 let top = rect.top - 10;
                 let left = rect.right + 15;
-                
+
                 // Keep tooltip on screen
                 if (top + 360 > window.innerHeight) {
                     top = window.innerHeight - 380;
                 }
                 if (left + 360 > window.innerWidth) {
-                    left = rect.left - 380; 
+                    left = rect.left - 380;
                 }
-                
+
                 hoverTooltip.style.top = `${Math.max(10, top)}px`;
                 hoverTooltip.style.left = `${Math.max(10, left)}px`;
-                
+
                 if (isVideo) {
                     const v = hoverTooltip.querySelector('video');
                     if (v) {
                         v.playbackRate = 1.5;
-                        v.play().catch(()=>{});
+                        v.play().catch(() => { });
                     }
                 }
             }, 300);
@@ -1607,7 +1627,7 @@ function _bindBatchTableEvents() {
         container.querySelector('#rbt-hook-select-btn')?.addEventListener('click', () => {
             container.querySelector('#rbt-hook-file-input')?.click();
         });
-        
+
         container.querySelector('#rbt-hook-file-input')?.addEventListener('change', (e) => {
             const file = e.target.files[0];
             if (!file) return;
@@ -1616,7 +1636,7 @@ function _bindBatchTableEvents() {
             _updateHookPreview();
             e.target.value = '';
         });
-        
+
         container.querySelector('#rbt-hook-start')?.addEventListener('input', () => {
             const videoPreview = container.querySelector('#rbt-hook-preview-video');
             const startInput = container.querySelector('#rbt-hook-start');
@@ -1700,6 +1720,7 @@ function _bindBatchTableEvents() {
             if (shouldRefreshPreview) {
                 reelsSelectTask(selectedIdx);
             }
+            if (typeof window.reelsSaveHistory === 'function') window.reelsSaveHistory();
         });
     }
 
@@ -1718,7 +1739,7 @@ function _bindBatchTableEvents() {
 
         // 取背景图按钮
         container.querySelector('#rbt-cover-bg-btn')?.addEventListener('click', () => {
-             container.querySelector('#rbt-cover-file-input')?.click();
+            container.querySelector('#rbt-cover-file-input')?.click();
         });
         container.querySelector('#rbt-cover-file-input')?.addEventListener('change', (e) => {
             if (e.target.files && e.target.files.length > 0) {
@@ -1729,7 +1750,7 @@ function _bindBatchTableEvents() {
                     filePath = e.target.files[0].path;
                 }
                 container.querySelector('#rbt-cover-bg-path').value = filePath;
-                
+
                 // 更新预览
                 const isImg = /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(filePath);
                 const url = window.electronAPI && window.electronAPI.toFileUrl ? window.electronAPI.toFileUrl(filePath) : `file://${filePath}`;
@@ -1765,19 +1786,23 @@ function _bindBatchTableEvents() {
                 task.cover.bgPath = coverBgPath;
                 task.cover.duration = coverDuration;
                 if (!task.cover.overlays) task.cover.overlays = [];
-                
+
                 const selOvlTpl = container.querySelector('#rbt-cover-overlay-sel')?.value || '';
                 if (selOvlTpl && window.ReelsOverlay) {
                     let presets = {};
-                    try { presets = JSON.parse(localStorage.getItem('reels_overlay_group_presets') || '{}'); } catch(e) {}
+                    try { presets = JSON.parse(localStorage.getItem('reels_overlay_group_presets') || '{}'); } catch (e) { }
+                    if (window.REELS_BUILTIN_OVERLAY_GROUP_PRESETS) {
+                        presets = { ...window.REELS_BUILTIN_OVERLAY_GROUP_PRESETS, ...presets };
+                    }
                     const presetData = presets[selOvlTpl];
-                    if (presetData && Array.isArray(presetData)) {
-                        const newOvls = presetData.map(o => JSON.parse(JSON.stringify(o)));
-                        const oldTextOvl = task.cover.overlays.find(o => !o.fixed_text && (o.type === 'textcard' || o.type === 'scroll')) || {title_text: task.title || ''};
+                    const layers = Array.isArray(presetData) ? presetData : presetData?.layers;
+                    if (layers && Array.isArray(layers)) {
+                        const newOvls = layers.map(o => JSON.parse(JSON.stringify(o)));
+                        const oldTextOvl = task.cover.overlays.find(o => !o.fixed_text && (o.type === 'textcard' || o.type === 'scroll')) || { title_text: task.title || '' };
                         const title = oldTextOvl.title_text || '';
                         for (const ov of newOvls) {
                             if (ov.fixed_text) continue;
-                            if (ov.type === 'textcard') { ov.title_text = title; } 
+                            if (ov.type === 'textcard') { ov.title_text = title; }
                             else if (ov.type === 'scroll') { ov.content = title; }
                         }
                         task.cover.overlays = newOvls;
@@ -1799,111 +1824,112 @@ function _bindBatchTableEvents() {
             if (shouldRefreshPreview) {
                 reelsSelectTask(selectedIdx);
             }
+            if (typeof window.reelsSaveHistory === 'function') window.reelsSaveHistory();
         });
 
         // 绑定批量应用按钮
         container.querySelector('#rbt-cover-batch-apply')?.addEventListener('click', () => {
-             const idxStr = coverModal.dataset.editIdx;
-             if (!idxStr) return;
-             // First trigger single save to apply current UI values to the current task
-             container.querySelector('#rbt-cover-save').click();
-             
-             const idx = parseInt(idxStr);
-             const sourceTask = window._reelsState.tasks[idx];
-             if (!sourceTask || !sourceTask.cover) return;
+            const idxStr = coverModal.dataset.editIdx;
+            if (!idxStr) return;
+            // First trigger single save to apply current UI values to the current task
+            container.querySelector('#rbt-cover-save').click();
 
-             for (let i = 0; i < window._reelsState.tasks.length; i++) {
-                 if (i === idx) continue;
-                 const t = window._reelsState.tasks[i];
-                 t.cover = JSON.parse(JSON.stringify(sourceTask.cover));
-                 // Inherit local title logic
-                 const tTitle = t.title || t.baseName || '';
-                 const ovs = t.cover.overlays || [];
-                 for (const ov of ovs) {
-                     if (ov.type === 'textcard') { ov.title_text = tTitle; } 
-                     else if (ov.type === 'scroll') { ov.content = tTitle; }
-                 }
-             }
-             if (typeof showToast === 'function') showToast('已将该封面配置应用到全部行！', 'success');
-             _renderBatchTable();
+            const idx = parseInt(idxStr);
+            const sourceTask = window._reelsState.tasks[idx];
+            if (!sourceTask || !sourceTask.cover) return;
+
+            for (let i = 0; i < window._reelsState.tasks.length; i++) {
+                if (i === idx) continue;
+                const t = window._reelsState.tasks[i];
+                t.cover = JSON.parse(JSON.stringify(sourceTask.cover));
+                // Inherit local title logic
+                const tTitle = t.title || t.baseName || '';
+                const ovs = t.cover.overlays || [];
+                for (const ov of ovs) {
+                    if (ov.type === 'textcard') { ov.title_text = tTitle; }
+                    else if (ov.type === 'scroll') { ov.content = tTitle; }
+                }
+            }
+            if (typeof showToast === 'function') showToast('已将该封面配置应用到全部行！', 'success');
+            _renderBatchTable();
         });
 
         // Cover Preset Handlers
         const presetSel = container.querySelector('#rbt-cover-preset-sel');
         container.querySelector('#rbt-cover-preset-save')?.addEventListener('click', async () => {
-             const pname = await _showInputDialog('保存封面预设', '请输入预设名称 (例如: 蓝底黄字模版)');
-             if (!pname) return;
-             const newP = {
-                  enabled: container.querySelector('#rbt-cover-enabled').checked,
-                  exportSeparate: container.querySelector('#rbt-cover-export-separate').checked,
-                  bgPath: container.querySelector('#rbt-cover-bg-path').value.trim(),
-                  duration: parseFloat(container.querySelector('#rbt-cover-duration').value) || 0,
-                  overlayTpl: container.querySelector('#rbt-cover-overlay-sel')?.value || ''
-             };
-             let pStore = {};
-             try { pStore = JSON.parse(localStorage.getItem('videokit_cover_presets') || '{}'); } catch(e){}
-             pStore[pname] = newP;
-             localStorage.setItem('videokit_cover_presets', JSON.stringify(pStore));
-             if (typeof showToast === 'function') showToast('预设已保存！', 'success');
-             if (typeof _openCoverModal === 'function') _openCoverModal(parseInt(coverModal.dataset.editIdx));
-             if(presetSel) presetSel.value = pname;
+            const pname = await _showInputDialog('保存封面预设', '请输入预设名称 (例如: 蓝底黄字模版)');
+            if (!pname) return;
+            const newP = {
+                enabled: container.querySelector('#rbt-cover-enabled').checked,
+                exportSeparate: container.querySelector('#rbt-cover-export-separate').checked,
+                bgPath: container.querySelector('#rbt-cover-bg-path').value.trim(),
+                duration: parseFloat(container.querySelector('#rbt-cover-duration').value) || 0,
+                overlayTpl: container.querySelector('#rbt-cover-overlay-sel')?.value || ''
+            };
+            let pStore = {};
+            try { pStore = JSON.parse(localStorage.getItem('videokit_cover_presets') || '{}'); } catch (e) { }
+            pStore[pname] = newP;
+            localStorage.setItem('videokit_cover_presets', JSON.stringify(pStore));
+            if (typeof showToast === 'function') showToast('预设已保存！', 'success');
+            if (typeof _openCoverModal === 'function') _openCoverModal(parseInt(coverModal.dataset.editIdx));
+            if (presetSel) presetSel.value = pname;
         });
 
         container.querySelector('#rbt-cover-preset-del')?.addEventListener('click', () => {
-             if(!presetSel) return;
-             const pname = presetSel.value;
-             if (!pname) return alert('请先在下拉框选择一个已有预设名称');
-             let pStore = {};
-             try { pStore = JSON.parse(localStorage.getItem('videokit_cover_presets') || '{}'); } catch(e){}
-             delete pStore[pname];
-             localStorage.setItem('videokit_cover_presets', JSON.stringify(pStore));
-             presetSel.value = '';
-             if (typeof showToast === 'function') showToast('预设已删除！', 'success');
-             if (typeof _openCoverModal === 'function') _openCoverModal(parseInt(coverModal.dataset.editIdx));
+            if (!presetSel) return;
+            const pname = presetSel.value;
+            if (!pname) return alert('请先在下拉框选择一个已有预设名称');
+            let pStore = {};
+            try { pStore = JSON.parse(localStorage.getItem('videokit_cover_presets') || '{}'); } catch (e) { }
+            delete pStore[pname];
+            localStorage.setItem('videokit_cover_presets', JSON.stringify(pStore));
+            presetSel.value = '';
+            if (typeof showToast === 'function') showToast('预设已删除！', 'success');
+            if (typeof _openCoverModal === 'function') _openCoverModal(parseInt(coverModal.dataset.editIdx));
         });
 
         presetSel?.addEventListener('change', () => {
-             const pname = presetSel.value;
-             if (!pname) return;
-             let pStore = {};
-             try { pStore = JSON.parse(localStorage.getItem('videokit_cover_presets') || '{}'); } catch(e){}
-             const p = pStore[pname];
-             if (p) {
-                 container.querySelector('#rbt-cover-enabled').checked = p.enabled;
-                 container.querySelector('#rbt-cover-export-separate').checked = p.exportSeparate;
-                 container.querySelector('#rbt-cover-bg-path').value = p.bgPath || '';
-                 container.querySelector('#rbt-cover-duration').value = p.duration || 0;
-                 if (container.querySelector('#rbt-cover-overlay-sel')) container.querySelector('#rbt-cover-overlay-sel').value = p.overlayTpl || '';
-                 
-                 const prevImg = container.querySelector('#rbt-cover-preview-img');
-                 const hint = container.querySelector('#rbt-cover-preview-hint');
-                 if (p.bgPath && prevImg && hint) {
-                     const url = window.electronAPI && window.electronAPI.toFileUrl ? window.electronAPI.toFileUrl(p.bgPath) : `file://${p.bgPath}`;
-                     prevImg.src = url;
-                     prevImg.style.display = 'block';
-                     hint.style.display = 'none';
-                 } else if (prevImg && hint) {
-                     prevImg.style.display = 'none';
-                     hint.style.display = 'block';
-                 }
-             }
+            const pname = presetSel.value;
+            if (!pname) return;
+            let pStore = {};
+            try { pStore = JSON.parse(localStorage.getItem('videokit_cover_presets') || '{}'); } catch (e) { }
+            const p = pStore[pname];
+            if (p) {
+                container.querySelector('#rbt-cover-enabled').checked = p.enabled;
+                container.querySelector('#rbt-cover-export-separate').checked = p.exportSeparate;
+                container.querySelector('#rbt-cover-bg-path').value = p.bgPath || '';
+                container.querySelector('#rbt-cover-duration').value = p.duration || 0;
+                if (container.querySelector('#rbt-cover-overlay-sel')) container.querySelector('#rbt-cover-overlay-sel').value = p.overlayTpl || '';
+
+                const prevImg = container.querySelector('#rbt-cover-preview-img');
+                const hint = container.querySelector('#rbt-cover-preview-hint');
+                if (p.bgPath && prevImg && hint) {
+                    const url = window.electronAPI && window.electronAPI.toFileUrl ? window.electronAPI.toFileUrl(p.bgPath) : `file://${p.bgPath}`;
+                    prevImg.src = url;
+                    prevImg.style.display = 'block';
+                    hint.style.display = 'none';
+                } else if (prevImg && hint) {
+                    prevImg.style.display = 'none';
+                    hint.style.display = 'block';
+                }
+            }
         });
 
         // 绑定编辑覆层卡的拉起
         container.querySelector('#rbt-cover-edit-overlay-btn')?.addEventListener('click', () => {
-             const idxStr = coverModal.dataset.editIdx;
-             if (!idxStr) return;
-             const idx = parseInt(idxStr);
-             const task = window._reelsState.tasks[idx];
-             if (!task) return;
-             
-             // 先强制把当前的UI设定落盘保存一下
-             container.querySelector('#rbt-cover-save').click();
-             
-             // 虽然刚才click关掉了modal，但不影响后续开Edit
-             if (typeof reelsToggleCoverEditMode === 'function') {
-                 reelsToggleCoverEditMode(true);
-             }
+            const idxStr = coverModal.dataset.editIdx;
+            if (!idxStr) return;
+            const idx = parseInt(idxStr);
+            const task = window._reelsState.tasks[idx];
+            if (!task) return;
+
+            // 先强制把当前的UI设定落盘保存一下
+            container.querySelector('#rbt-cover-save').click();
+
+            // 虽然刚才click关掉了modal，但不影响后续开Edit
+            if (typeof reelsToggleCoverEditMode === 'function') {
+                reelsToggleCoverEditMode(true);
+            }
         });
     }
 
@@ -1960,7 +1986,7 @@ function _bindBatchTableEvents() {
     const subTplTrigger = container.querySelector('#rbt-sub-tpl-trigger');
     const subTplSelect = container.querySelector('#rbt-batch-sub-tpl');
     const subTplLabel = container.querySelector('#rbt-sub-tpl-label');
-    
+
     if (subTplTrigger) {
         subTplTrigger.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -1979,9 +2005,9 @@ function _bindBatchTableEvents() {
         if (!val) { alert('请先选择覆层预设'); return; }
         const indices = _getSelectedIndices();
         if (indices.length === 0) { alert('请先勾选需要批量设置的行'); return; }
-        
+
         const tasksToApply = indices.map(idx => window._reelsState.tasks[idx]).filter(Boolean);
-        
+
         _promptOverlayPresetOptions(val, tasksToApply, (opts) => {
             const failedRows = [];
             for (const idx of indices) {
@@ -1994,11 +2020,46 @@ function _bindBatchTableEvents() {
             }
             _skipNextApply = true;
             _renderBatchTable();
+            if (window._reelsState && window._reelsState.selectedIdx >= 0 && typeof reelsSelectTask === 'function') {
+                reelsSelectTask(window._reelsState.selectedIdx);
+            }
             if (failedRows.length > 0) {
                 alert(`⚠️ 覆层预设「${val}」有 ${failedRows.length}/${indices.length} 行未通过校验：\n${failedRows.slice(0, 8).join('\n')}${failedRows.length > 8 ? '\n...' : ''}`);
             } else {
                 alert(`✅ 已校验：覆层预设「${val}」已应用到 ${indices.length} 行`);
             }
+        });
+    });
+
+    container.querySelector('#rbt-gallery-batch-btn')?.addEventListener('click', () => {
+        const indices = _getSelectedIndices();
+        if (indices.length === 0) { alert('请先勾选需要批量设置的行'); return; }
+
+        if (!window.ReelsOverlayPanel) { alert('系统未加载预设库面板模块'); return; }
+        const panel = new window.ReelsOverlayPanel(document.createElement('div'), null);
+        panel._showPresetGallery((presetName, presetData, mode) => {
+            const tasksToApply = indices.map(idx => window._reelsState.tasks[idx]).filter(Boolean);
+            _promptOverlayPresetOptions(presetName, tasksToApply, (opts) => {
+                const failedRows = [];
+                for (const idx of indices) {
+                    const task = window._reelsState.tasks[idx];
+                    if (task) {
+                        task._overlayPresetName = presetName;
+                        const result = _applyAndVerifyOverlayGroupPresetToTask(task, presetName, opts);
+                        if (!result.ok) failedRows.push(`${idx + 1}行(${result.reason})`);
+                    }
+                }
+                _skipNextApply = true;
+                _renderBatchTable();
+                if (window._reelsState && window._reelsState.selectedIdx >= 0 && typeof reelsSelectTask === 'function') {
+                    reelsSelectTask(window._reelsState.selectedIdx);
+                }
+                if (failedRows.length > 0) {
+                    alert(`⚠️ 覆层预设「${presetName}」有 ${failedRows.length}/${indices.length} 行未通过校验：\n${failedRows.slice(0, 8).join('\n')}${failedRows.length > 8 ? '\n...' : ''}`);
+                } else {
+                    alert(`✅ 已校验：覆层预设「${presetName}」已应用到 ${indices.length} 行`);
+                }
+            });
         });
     });
 
@@ -2075,10 +2136,10 @@ function _bindBatchTableEvents() {
         const indices = _getSelectedIndices();
         const tasks = window._reelsState?.tasks || [];
         if (tasks.length === 0) return alert('❌ 当前表格为空，无法执行！');
-        
+
         const targetIdxs = indices.length > 0 ? indices : tasks.map((_, i) => i);
         const validIdxs = targetIdxs.filter(i => tasks[i].aiScript && tasks[i].aiScript.trim().length > 0);
-        
+
         let msg = `即将开始【批量 AI 处理文案】操作：\n\n`;
         msg += `【预期处理数据清单】\n`;
         msg += `· 目标范围：${indices.length > 0 ? `已选中的 ${indices.length} 行` : `全部 ${tasks.length} 行`}\n`;
@@ -2086,20 +2147,20 @@ function _bindBatchTableEvents() {
         if (validIdxs.length > 0) msg += `· 对应行号：[ ${validIdxs.map(i => i + 1).join(', ')} ]\n\n`;
         else msg += `\n⚠️ 警告：当前目标中没有任何行填写了「🧠 AI 原文案」，执行将失败！\n\n`;
         msg += `【处理规则】\n1. 读取有效行的「🧠 AI 原文案」。\n2. 使用选择的「Prompt指令预设」调用模型。\n3. 结果自动填入「🤖 TTS文案」列。\n\n是否确认开始执行此操作？`;
-        
+
         if (!confirm(msg)) return;
         _ensureAIColumnsVisible();
         _runGeminiBatchProcessing();
     });
-    
+
     container.querySelector('#rbt-ai-tts-all-btn')?.addEventListener('click', () => {
         const indices = _getSelectedIndices();
         const tasks = window._reelsState?.tasks || [];
         if (tasks.length === 0) return alert('❌ 当前表格为空，无法执行！');
-        
+
         const targetIdxs = indices.length > 0 ? indices : tasks.map((_, i) => i);
         const validIdxs = targetIdxs.filter(i => tasks[i].ttsText && tasks[i].ttsText.trim().length > 0);
-        
+
         let msg = `即将开始【分步配音字幕】操作：\n\n`;
         msg += `【预期处理数据清单】\n`;
         msg += `· 目标范围：${indices.length > 0 ? `已选中的 ${indices.length} 行` : `全部 ${tasks.length} 行`}\n`;
@@ -2107,7 +2168,7 @@ function _bindBatchTableEvents() {
         if (validIdxs.length > 0) msg += `· 对应行号：[ ${validIdxs.map(i => i + 1).join(', ')} ]\n\n`;
         else msg += `\n⚠️ 警告：当前目标中没有任何行填写了「🤖 TTS文案」，执行将失败！\n\n`;
         msg += `【处理规则】\n1. 读取有效行的「🤖 TTS文案」。\n2. 依据当前配置的「发音人」合成音频。\n3. 生成完毕后本地持久化保存至该任务。\n\n是否确认开始执行？`;
-        
+
         if (!confirm(msg)) return;
         _ensureAIColumnsVisible();
         _runTTSBatchProcessing();
@@ -2125,11 +2186,11 @@ function _bindBatchTableEvents() {
         const indices = _getSelectedIndices();
         const tasks = window._reelsState?.tasks || [];
         if (tasks.length === 0) return alert('❌ 当前表格为空，无法执行！');
-        
+
         const targetIdxs = indices.length > 0 ? indices : tasks.map((_, i) => i);
         const aiValid = targetIdxs.filter(i => tasks[i].aiScript && tasks[i].aiScript.trim().length > 0);
         const hasTxtContent = targetIdxs.some(i => tasks[i].txtContent && tasks[i].txtContent.trim().length > 0);
-        
+
         let msg = `即将开始【🚀 自动全家桶 (AI改写 + 配音 + 字幕对齐)】操作：\n\n`;
         msg += `【预期处理数据清单】\n`;
         msg += `· 目标范围：${indices.length > 0 ? `已选中的 ${indices.length} 行` : `全部 ${tasks.length} 行`}\n`;
@@ -2142,25 +2203,25 @@ function _bindBatchTableEvents() {
         msg += `③ 配音 + 「人声字幕」→ Gladia 转录对齐 → 生成 SRT 时间轴\n\n`;
         if (!hasTxtContent) msg += `💡 提示：「人声字幕」列暂无内容，第③步将跳过（可先在AI Prompt中配置断句输出）\n\n`;
         msg += `是否确认开启一条龙处理流程？`;
-        
+
         if (!confirm(msg)) return;
-        
+
         _ensureAIColumnsVisible();
         // Step 1: Run Gemini AI Script processing
         showToast('🚀 全家桶 Step 1/3：AI 文案处理中...', 'info');
         const aiSuccess = await _runGeminiBatchProcessing();
         if (!aiSuccess) return; // Halt if AI step was aborted or failed
-        
+
         // Wait briefly for UI to render
         await new Promise(resolve => setTimeout(resolve, 500));
-        
+
         // Step 2: Run TTS Generation
         showToast('🚀 全家桶 Step 2/3：TTS 配音生成中...', 'info');
         await _runTTSBatchProcessing();
-        
+
         // Wait briefly for TTS results to settle
         await new Promise(resolve => setTimeout(resolve, 500));
-        
+
         // Step 3: Run Subtitle Alignment (only if there are tasks with txtContent + audio)
         const tasksWithTextAndAudio = targetIdxs.filter(idx => {
             const t = tasks[idx];
@@ -2208,7 +2269,7 @@ function _bindBatchTableEvents() {
                     // data 应该是 { presetName: { overlays: [...] }, ... } 格式
                     const key = 'reels_overlay_group_presets';
                     let existing = {};
-                    try { existing = JSON.parse(localStorage.getItem(key) || '{}'); } catch (ex) {}
+                    try { existing = JSON.parse(localStorage.getItem(key) || '{}'); } catch (ex) { }
                     let added = 0, skipped = 0;
                     for (const [name, val] of Object.entries(data)) {
                         if (existing[name]) { skipped++; continue; }
@@ -2242,7 +2303,7 @@ function _bindBatchTableEvents() {
                     const data = JSON.parse(ev.target.result);
                     const key = 'rbt_task_presets';
                     let existing = {};
-                    try { existing = JSON.parse(localStorage.getItem(key) || '{}'); } catch (ex) {}
+                    try { existing = JSON.parse(localStorage.getItem(key) || '{}'); } catch (ex) { }
                     let added = 0, skipped = 0;
                     for (const [name, val] of Object.entries(data)) {
                         if (existing[name]) { skipped++; continue; }
@@ -2585,7 +2646,7 @@ function _bindBatchTableEvents() {
 
         // 使用 TSV 引号解析器，正确处理 Google Sheets 单元格内的换行
         const tsvRows = _parseBatchTSV(pastedData);
-        
+
         const startIdx = parseInt(target.dataset.idx, 10);
         if (isNaN(startIdx)) return;
 
@@ -2602,10 +2663,10 @@ function _bindBatchTableEvents() {
         else if (target.dataset.field) fieldCategory = target.dataset.field;
 
         let maxCols = Math.max(...tsvRows.map(r => r.length));
-        while(maxCols > 1) {
+        while (maxCols > 1) {
             let hasData = false;
-            for (let r=0; r<tsvRows.length; r++) {
-                if (tsvRows[r][maxCols-1] && tsvRows[r][maxCols-1].trim() !== '') {
+            for (let r = 0; r < tsvRows.length; r++) {
+                if (tsvRows[r][maxCols - 1] && tsvRows[r][maxCols - 1].trim() !== '') {
                     hasData = true; break;
                 }
             }
@@ -2654,17 +2715,17 @@ function _bindBatchTableEvents() {
         _dragCounter++;
         _showDropOverlay();
     });
-    panel.addEventListener('dragleave', (e) => { 
-        e.preventDefault(); 
+    panel.addEventListener('dragleave', (e) => {
+        e.preventDefault();
         if (e.target.classList && e.target.classList.contains('rbt-droppable')) {
             e.target.classList.remove('rbt-drag-over');
         }
-        _dragCounter--; 
-        if (_dragCounter <= 0) { 
-            _dragCounter = 0; 
-            _hideDropOverlay(); 
+        _dragCounter--;
+        if (_dragCounter <= 0) {
+            _dragCounter = 0;
+            _hideDropOverlay();
             panel.querySelectorAll('.rbt-droppable.rbt-drag-over').forEach(c => c.classList.remove('rbt-drag-over'));
-        } 
+        }
     });
     panel.addEventListener('dragover', (e) => {
         e.preventDefault();
@@ -2672,7 +2733,7 @@ function _bindBatchTableEvents() {
         if (e.target.closest && e.target.closest('#rbt-media-sidebar')) return;
         // 内部行拖拽时不覆盖 dropEffect
         if (_dragSrcIdx == null) e.dataTransfer.dropEffect = 'copy';
-        
+
         // Highlight logic for specific droppable columns
         const cell = e.target.closest('.rbt-droppable');
         panel.querySelectorAll('.rbt-droppable.rbt-drag-over').forEach(c => {
@@ -2695,7 +2756,7 @@ function _bindBatchTableEvents() {
             const rowEl = e.target.closest('.rbt-row');
             if (!rowEl) return;
             const taskIdx = parseInt(rowEl.dataset.idx);
-            
+
             const dropCell = e.target.closest('.rbt-droppable');
             const targetField = dropCell ? dropCell.dataset.field : null;
 
@@ -2720,7 +2781,7 @@ function _bindBatchTableEvents() {
                 else if (item.ext === 'srt') { task.srtPath = item.path; }
                 else if (item.ext === 'txt') { task.txtContent = ''; task.txtPath = item.path; }
                 else { task.bgPath = item.path; task.videoPath = item.path; }
-                
+
                 _renderBatchTable();
                 if (typeof showToast === 'function') showToast(`✅ 已将素材 ${item.name} 分配到第 ${taskIdx + 1} 行`, 'success');
             }
@@ -2744,7 +2805,7 @@ function _bindBatchTableEvents() {
                 if (task) {
                     let filePath = files[0].path;
                     if (!filePath && window.electronAPI && window.electronAPI.getFilePath) {
-                        try { filePath = window.electronAPI.getFilePath(files[0]); } catch (_) {}
+                        try { filePath = window.electronAPI.getFilePath(files[0]); } catch (_) { }
                     }
                     filePath = filePath || files[0].name;
                     if (!task.cover) task.cover = {};
@@ -2974,7 +3035,7 @@ function _bindBatchTableEvents() {
         const fieldLabel = labelMap[field] || '该列';
         if (!confirm(`确定清空${label}的${fieldLabel}？`)) return;
         for (const idx of indices) _clearTaskField(state.tasks[idx], field);
-        
+
         const scrollWrap = container.querySelector('.rbt-table-wrap');
         const scrollTop = scrollWrap ? scrollWrap.scrollTop : 0;
         const scrollLeft = scrollWrap ? scrollWrap.scrollLeft : 0;
@@ -2985,7 +3046,7 @@ function _bindBatchTableEvents() {
             newScrollWrap.scrollTop = scrollTop;
             newScrollWrap.scrollLeft = scrollLeft;
         }
-        
+
         if (typeof showToast === 'function') showToast(`✅ 已清空${label}的${fieldLabel}`, 'success');
     });
 
@@ -3007,10 +3068,10 @@ function _bindBatchTableEvents() {
 
         const tsvRows = _parseBatchTSV(raw);
         let maxCols = Math.max(...tsvRows.map(r => r.length));
-        while(maxCols > 1) {
+        while (maxCols > 1) {
             let hasData = false;
-            for (let r=0; r<tsvRows.length; r++) {
-                if (tsvRows[r][maxCols-1] && tsvRows[r][maxCols-1].trim() !== '') { hasData = true; break; }
+            for (let r = 0; r < tsvRows.length; r++) {
+                if (tsvRows[r][maxCols - 1] && tsvRows[r][maxCols - 1].trim() !== '') { hasData = true; break; }
             }
             if (hasData) break;
             maxCols--;
@@ -3080,10 +3141,10 @@ function _bindBatchTableEvents() {
         const scrollWrap = container.querySelector('.rbt-table-wrap');
         const scrollTop = scrollWrap ? scrollWrap.scrollTop : 0;
         const scrollLeft = scrollWrap ? scrollWrap.scrollLeft : 0;
-        
+
         _skipNextApply = true; // 粘贴已直接写入 state，跳过 DOM→state 同步
         _renderBatchTable();
-        
+
         const newScrollWrap = container.querySelector('.rbt-table-wrap');
         if (newScrollWrap) {
             newScrollWrap.scrollTop = scrollTop;
@@ -3122,12 +3183,12 @@ function _bindBatchTableEvents() {
 
             // 按列类型过滤匹配的文件扩展名
             const extMap = {
-                bg:    new Set(['mp4','mov','mkv','avi','wmv','flv','webm','jpg','jpeg','png','webp','gif','bmp']),
-                audio: new Set(['mp3','wav','m4a','aac','flac','ogg','wma','mp4','mov']),
-                srt:   new Set(['srt']),
-                bgm:   new Set(['mp3','wav','m4a','aac','flac','ogg']),
-                pip:   new Set(['jpg','jpeg','png','webp','gif','bmp','svg']),
-                contentvideo: new Set(['mp4','mov','mkv','avi','wmv','flv','webm']),
+                bg: new Set(['mp4', 'mov', 'mkv', 'avi', 'wmv', 'flv', 'webm', 'jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp']),
+                audio: new Set(['mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg', 'wma', 'mp4', 'mov']),
+                srt: new Set(['srt']),
+                bgm: new Set(['mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg']),
+                pip: new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'svg']),
+                contentvideo: new Set(['mp4', 'mov', 'mkv', 'avi', 'wmv', 'flv', 'webm']),
             };
             const validExts = extMap[colType] || extMap.bg;
 
@@ -3279,7 +3340,7 @@ function _bindBatchTableEvents() {
             tbody2.querySelectorAll('.rbt-drag-over-row').forEach(r => r.classList.remove('rbt-drag-over-row'));
             // If dragging from media pool, panel's drop handler will catch it, do not reorder rows here
             if (_dragSrcIdx == null) return;
-            
+
             e.preventDefault();
             const row = e.target.closest('.rbt-row');
             if (!row || _dragSrcIdx == null) return;
@@ -3297,6 +3358,7 @@ function _bindBatchTableEvents() {
             _renderBatchTable();
             const scrollWrap2 = container.querySelector('.rbt-table-wrap');
             if (scrollWrap2) scrollWrap2.scrollTop = scrollTop;
+            if (typeof window.reelsSaveHistory === 'function') window.reelsSaveHistory();
             if (typeof showToast === 'function') showToast(`已移动到第 ${dstIdx + 1} 行`, 'info');
         });
     }
@@ -3327,6 +3389,8 @@ function _bindBatchTableEvents() {
             if (e.target.classList.contains('rbt-bgm-vol')) {
                 const label = e.target.parentElement.querySelector('.rbt-bgm-vol-label');
                 if (label) label.textContent = e.target.value + '%';
+                const display = e.target.closest('td')?.querySelector('.rbt-scale-display');
+                if (display) display.textContent = '🎵 Vol: ' + e.target.value + '%';
                 // Sync volume to task for real-time preview
                 const idx = parseInt(e.target.dataset.idx);
                 const task = window._reelsState && window._reelsState.tasks[idx];
@@ -3342,6 +3406,9 @@ function _bindBatchTableEvents() {
             if (e.target.classList.contains('rbt-bgvol-slider')) {
                 const label = e.target.parentElement.querySelector('.rbt-bgvol-label');
                 if (label) label.textContent = e.target.value + '%';
+                const display = e.target.closest('td')?.querySelector('.rbt-scale-display');
+                if (display) display.textContent = '🔉 ' + e.target.value + '%';
+                e.target.dataset.isNull = 'false'; // USER INTERACTED!
                 const idx = parseInt(e.target.dataset.idx);
                 const task = window._reelsState && window._reelsState.tasks[idx];
                 if (task) {
@@ -3352,46 +3419,58 @@ function _bindBatchTableEvents() {
             if (e.target.classList.contains('rbt-bgscale-slider')) {
                 const numInput = e.target.parentElement.querySelector('.rbt-bgscale-input');
                 if (numInput) numInput.value = e.target.value;
+                const display = e.target.closest('td')?.querySelector('.rbt-scale-display');
+                if (display) display.textContent = e.target.value + '%';
                 const idx = parseInt(e.target.dataset.idx);
                 const task = window._reelsState && window._reelsState.tasks[idx];
-                if (task) { task.bgScale = parseInt(e.target.value) || 100; console.log(`[Scale] row${idx} bgScale=${task.bgScale}`); }
+                if (task) { task.bgScale = parseInt(e.target.value) || 100; }
             }
             if (e.target.classList.contains('rbt-bgscale-input')) {
                 const slider = e.target.closest('td').querySelector('.rbt-bgscale-slider');
                 if (slider) slider.value = e.target.value;
+                const display = e.target.closest('td')?.querySelector('.rbt-scale-display');
+                if (display) display.textContent = e.target.value + '%';
                 const idx = parseInt(e.target.dataset.idx);
                 const task = window._reelsState && window._reelsState.tasks[idx];
-                if (task) { task.bgScale = parseInt(e.target.value) || 100; console.log(`[Scale] row${idx} bgScale=${task.bgScale}`); }
+                if (task) { task.bgScale = parseInt(e.target.value) || 100; }
             }
             // ── 背景时长缩放 slider↔input 同步 ──
             if (e.target.classList.contains('rbt-bgdurscale-slider')) {
                 const numInput = e.target.parentElement.querySelector('.rbt-bgdurscale-input');
                 if (numInput) numInput.value = e.target.value;
+                const display = e.target.closest('td')?.querySelector('.rbt-scale-display');
+                if (display) display.textContent = e.target.value + '%';
                 const idx = parseInt(e.target.dataset.idx);
                 const task = window._reelsState && window._reelsState.tasks[idx];
-                if (task) { task.bgDurScale = parseInt(e.target.value) || 100; console.log(`[Scale] row${idx} bgDurScale=${task.bgDurScale}`); }
+                if (task) { task.bgDurScale = parseInt(e.target.value) || 100; }
             }
             if (e.target.classList.contains('rbt-bgdurscale-input')) {
                 const slider = e.target.closest('td').querySelector('.rbt-bgdurscale-slider');
                 if (slider) slider.value = e.target.value;
+                const display = e.target.closest('td')?.querySelector('.rbt-scale-display');
+                if (display) display.textContent = e.target.value + '%';
                 const idx = parseInt(e.target.dataset.idx);
                 const task = window._reelsState && window._reelsState.tasks[idx];
-                if (task) { task.bgDurScale = parseInt(e.target.value) || 100; console.log(`[Scale] row${idx} bgDurScale=${task.bgDurScale}`); }
+                if (task) { task.bgDurScale = parseInt(e.target.value) || 100; }
             }
             // ── 音频变速 slider↔input 同步 ──
             if (e.target.classList.contains('rbt-audiodurscale-slider')) {
                 const numInput = e.target.parentElement.querySelector('.rbt-audiodurscale-input');
                 if (numInput) numInput.value = e.target.value;
+                const display = e.target.closest('td')?.querySelector('.rbt-scale-display');
+                if (display) display.textContent = e.target.value + '%';
                 const idx = parseInt(e.target.dataset.idx);
                 const task = window._reelsState && window._reelsState.tasks[idx];
-                if (task) { task.audioDurScale = parseInt(e.target.value) || 100; console.log(`[Scale] row${idx} audioDurScale=${task.audioDurScale}`); }
+                if (task) { task.audioDurScale = parseInt(e.target.value) || 100; }
             }
             if (e.target.classList.contains('rbt-audiodurscale-input')) {
                 const slider = e.target.closest('td').querySelector('.rbt-audiodurscale-slider');
                 if (slider) slider.value = e.target.value;
+                const display = e.target.closest('td')?.querySelector('.rbt-scale-display');
+                if (display) display.textContent = e.target.value + '%';
                 const idx = parseInt(e.target.dataset.idx);
                 const task = window._reelsState && window._reelsState.tasks[idx];
-                if (task) { task.audioDurScale = parseInt(e.target.value) || 100; console.log(`[Scale] row${idx} audioDurScale=${task.audioDurScale}`); }
+                if (task) { task.audioDurScale = parseInt(e.target.value) || 100; }
             }
             if (e.target.classList.contains('rbt-tts-text-input')) {
                 const idx = parseInt(e.target.dataset.idx);
@@ -3410,21 +3489,21 @@ function _bindBatchTableEvents() {
                     if (e.target.classList.contains('rbt-ai-script-input')) task.aiScript = e.target.value;
                     if (e.target.classList.contains('rbt-txtcontent-input')) task.txtContent = e.target.value;
                     if (e.target.classList.contains('rbt-tts-text-input')) task.ttsText = e.target.value;
-                    
+
                     const normalizeText = (str) => {
                         let s = (str || '');
-                        s = s.replace(/\[.*?\]/g, ''); 
-                        s = s.replace(/<.*?>/g, ''); 
+                        s = s.replace(/\[.*?\]/g, '');
+                        s = s.replace(/<.*?>/g, '');
                         return s.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '').toLowerCase();
                     };
                     const origNorm = normalizeText(task.aiScript);
-                    
+
                     const isDiffTxt = (origNorm !== normalizeText(task.txtContent)) && (task.txtContent && task.txtContent.trim().length > 0) && (task.aiScript && task.aiScript.trim().length > 0);
                     task.aiTextDiffWarning = !!isDiffTxt;
-                    
+
                     const isDiffTts = (origNorm !== normalizeText(task.ttsText)) && (task.ttsText && task.ttsText.trim().length > 0) && (task.aiScript && task.aiScript.trim().length > 0);
                     task.aiTtsDiffWarning = !!isDiffTts;
-                    
+
                     // 实时更新UI报警状态
                     const row = e.target.closest('tr.rbt-row');
                     if (row) {
@@ -3447,7 +3526,7 @@ function _bindBatchTableEvents() {
                         } else if (!isDiffTxt && tagSpan) {
                             tagSpan.remove();
                         }
-                        
+
                         const ttsArea = row.querySelector('.rbt-tts-text-input');
                         if (ttsArea) {
                             if (isDiffTts) {
@@ -3460,7 +3539,7 @@ function _bindBatchTableEvents() {
                                 ttsArea.title = '双击放大编辑';
                             }
                         }
-                        
+
                         const tagSpanTts = row.querySelector('.rbt-col-tts_text .diff-warning-badge');
                         if (isDiffTts && !tagSpanTts) {
                             const wrapperTts = row.querySelector('.rbt-col-tts_text > div');
@@ -3546,6 +3625,7 @@ function _bindBatchTableEvents() {
                     delete copy._bgThumb;
                     window._reelsState.tasks.splice(idx + 1, 0, copy);
                     _renderBatchTable();
+                    if (typeof window.reelsSaveHistory === 'function') window.reelsSaveHistory();
                 }
                 return;
             }
@@ -3555,6 +3635,7 @@ function _bindBatchTableEvents() {
                 const idx = parseInt(delBtn.dataset.idx);
                 window._reelsState.tasks.splice(idx, 1);
                 _renderBatchTable();
+                if (typeof window.reelsSaveHistory === 'function') window.reelsSaveHistory();
                 return;
             }
             // 模板选择器触发
@@ -3595,12 +3676,12 @@ function _bindBatchTableEvents() {
                             task.cover.bgPath = '';
                         }
                         break;
-                    case 'hook': 
-                        task.hookFile = ''; 
+                    case 'hook':
+                        task.hookFile = '';
                         task.hookTrimStart = null;
                         task.hookTrimEnd = null;
-                        task.hookSpeed = 1; 
-                        task.hookTransition = 'none'; 
+                        task.hookSpeed = 1;
+                        task.hookTransition = 'none';
                         task.hookTransDuration = 0.5;
                         if (!task.hook) task.hook = {};
                         task.hook.enabled = false;
@@ -3614,9 +3695,9 @@ function _bindBatchTableEvents() {
                     case 'srt': task.srtPath = ''; task.aligned = false; task.segments = []; break;
                     case 'txt': task.txtContent = ''; task.aligned = false; task.segments = []; break;
                     case 'ai_script': task.aiScript = ''; break;
-                    case 'bgm': task.bgmPath = ''; break;
                 }
                 _renderBatchTable();
+                if (typeof window.reelsSaveHistory === 'function') window.reelsSaveHistory();
                 return;
             }
             // SRT Edit button
@@ -3641,15 +3722,15 @@ function _bindBatchTableEvents() {
                 e.stopPropagation();
                 const src = playBtn.dataset.src;
                 if (!src) return;
-                
+
                 if (!window._rbtGlobalAudio) {
                     window._rbtGlobalAudio = new Audio();
                 }
-                
+
                 const isPlayingThis = (playBtn.textContent === '⏸️');
                 // 重置所有播放按钮图标
                 document.querySelectorAll('.rbt-table-play-btn').forEach(btn => btn.textContent = '▶️');
-                
+
                 if (isPlayingThis) {
                     window._rbtGlobalAudio.pause();
                     window._rbtGlobalAudio.currentTime = 0;
@@ -3725,10 +3806,10 @@ function _showMultiColumnPasteModal(tsvRows, startIdx, initialFieldCategory = nu
         wrap = document.createElement('div');
         wrap.id = 'rbt-multicol-paste-modal';
         wrap.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:99999;background:rgba(0,0,0,0.85);display:none;align-items:center;justify-content:center;backdrop-filter:blur(4px);';
-        
+
         const content = document.createElement('div');
         content.style.cssText = 'width:90%;max-width:900px;background:#181818;border:1px solid var(--border-color);border-radius:12px;padding:24px;display:flex;flex-direction:column;gap:16px;box-shadow:0 12px 32px rgba(0,0,0,0.8);max-height:85vh;';
-        
+
         const header = document.createElement('div');
         header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #333;padding-bottom:12px;';
         header.innerHTML = '<h3 style="margin:0;color:var(--accent);font-size:18px;">📊 多列数据粘贴向导</h3>';
@@ -3737,39 +3818,39 @@ function _showMultiColumnPasteModal(tsvRows, startIdx, initialFieldCategory = nu
         closeBtn.style.cssText = 'background:transparent;border:none;color:#aaa;font-size:20px;cursor:pointer;padding:4px;';
         closeBtn.onclick = () => { wrap.style.display = 'none'; };
         header.appendChild(closeBtn);
-        
+
         const bodyContent = document.createElement('div');
         bodyContent.id = 'rbt-multicol-body';
         bodyContent.style.cssText = 'overflow-y:auto;display:flex;flex-direction:column;gap:12px;padding-right:8px;';
-        
+
         const footer = document.createElement('div');
         footer.style.cssText = 'display:flex;justify-content:flex-end;gap:12px;align-items:center;border-top:1px solid #333;padding-top:16px;margin-top:8px;';
-        
+
         const hint = document.createElement('span');
         hint.id = 'rbt-multicol-hint';
         hint.style.cssText = 'color:#aaa;font-size:13px;flex:1;';
-        
+
         const cancelBtn = document.createElement('button');
         cancelBtn.innerText = '取消';
         cancelBtn.style.cssText = 'padding:8px 20px;background:#333;color:#ccc;border:1px solid #444;border-radius:6px;cursor:pointer;font-size:14px;';
         cancelBtn.onclick = () => { wrap.style.display = 'none'; };
-        
+
         const exeBtn = document.createElement('button');
         exeBtn.innerText = '✅ 确认导入';
         exeBtn.id = 'rbt-multicol-exec';
         exeBtn.style.cssText = 'padding:8px 24px;background:var(--accent);color:#000;border:none;border-radius:6px;cursor:pointer;font-size:14px;font-weight:bold;';
-        
+
         footer.appendChild(hint);
         footer.appendChild(cancelBtn);
         footer.appendChild(exeBtn);
-        
+
         content.appendChild(header);
         content.appendChild(bodyContent);
         content.appendChild(footer);
         wrap.appendChild(content);
         document.body.appendChild(wrap);
     }
-    
+
     const FIELD_OPTS = [
         { v: '', l: '-- 不导入 (忽略) --' },
         { v: 'exportName', l: '📝 导出命名' },
@@ -3784,12 +3865,12 @@ function _showMultiColumnPasteModal(tsvRows, startIdx, initialFieldCategory = nu
         { v: 'scroll_title', l: '⏫ 滚动标题' },
         { v: 'scroll_body', l: '⏫ 滚动内容' }
     ];
-    
+
     let maxCols = Math.max(...tsvRows.map(r => r.length));
-    while(maxCols > 1) {
+    while (maxCols > 1) {
         let hasData = false;
-        for (let r=0; r<tsvRows.length; r++) {
-            if (tsvRows[r][maxCols-1] && tsvRows[r][maxCols-1].trim() !== '') {
+        for (let r = 0; r < tsvRows.length; r++) {
+            if (tsvRows[r][maxCols - 1] && tsvRows[r][maxCols - 1].trim() !== '') {
                 hasData = true; break;
             }
         }
@@ -3799,14 +3880,14 @@ function _showMultiColumnPasteModal(tsvRows, startIdx, initialFieldCategory = nu
 
     const validRowsCount = tsvRows.filter(r => r.some(c => c && c.trim().length > 0)).length;
     document.getElementById('rbt-multicol-hint').innerText = `已检测到 ${maxCols} 列，共包含 ${validRowsCount} 行有效数据。`;
-    
+
     const bodyStr = [];
     bodyStr.push(`<div style="display:grid;grid-template-columns:80px 180px 1fr;gap:12px;font-weight:bold;color:#888;padding-bottom:8px;border-bottom:1px solid #333;">
         <div>来源列</div>
         <div>目标列选择</div>
         <div>预览该列前3行数据</div>
     </div>`);
-    
+
     for (let c = 0; c < maxCols; c++) {
         const previewItems = [];
         for (let r = 0; r < Math.min(3, tsvRows.length); r++) {
@@ -3815,7 +3896,7 @@ function _showMultiColumnPasteModal(tsvRows, startIdx, initialFieldCategory = nu
         }
         let previewStr = previewItems.join('<br/><span style="color:#555;">---</span><br/>');
         if (!previewStr) previewStr = '<i style="color:#666">（空数据）</i>';
-        
+
         let selectHtml = `<select class="rbt-multicol-select" data-col="${c}" style="width:100%;padding:8px;background:#222;color:#eee;border:1px solid #444;border-radius:4px;outline:none;font-size:13px;">`;
         for (const opt of FIELD_OPTS) {
             let selected = '';
@@ -3823,26 +3904,26 @@ function _showMultiColumnPasteModal(tsvRows, startIdx, initialFieldCategory = nu
             selectHtml += `<option value="${opt.v}" ${selected}>${opt.l}</option>`;
         }
         selectHtml += `</select>`;
-        
+
         bodyStr.push(`<div style="display:grid;grid-template-columns:80px 180px 1fr;gap:12px;align-items:start;background:#1e1e1e;padding:12px;border-radius:6px;">
             <div style="font-size:16px;color:#ccc;font-weight:bold;padding-top:6px;">列 ${c + 1}</div>
             <div>${selectHtml}</div>
             <div style="font-size:12px;color:#999;line-height:1.4;background:#111;padding:8px;border-radius:4px;max-height:80px;overflow:hidden;text-overflow:ellipsis;">${previewStr}</div>
         </div>`);
     }
-    
+
     document.getElementById('rbt-multicol-body').innerHTML = bodyStr.join('');
-    
+
     const exeBtn = document.getElementById('rbt-multicol-exec');
     exeBtn.onclick = () => {
         const selects = document.querySelectorAll('.rbt-multicol-select');
         const mapping = [];
         selects.forEach(s => mapping.push(s.value));
-        
+
         _execMultiColumnPaste(tsvRows, startIdx, mapping, maxCols);
         wrap.style.display = 'none';
     };
-    
+
     wrap.style.display = 'flex';
 }
 
@@ -3850,15 +3931,15 @@ function _execMultiColumnPaste(tsvRows, startIdx, colMappings, maxCols) {
     const state = window._reelsState;
     const container = _batchTableState.container;
     if (!state || !container) return;
-    
+
     const validRows = tsvRows.filter(r => {
-        for(let i=0; i<maxCols; i++){
-            if(r[i] && r[i].trim().length > 0) return true;
+        for (let i = 0; i < maxCols; i++) {
+            if (r[i] && r[i].trim().length > 0) return true;
         }
         return false;
     });
     if (validRows.length === 0) return;
-    
+
     let overflown = validRows.length - (state.tasks.length - startIdx);
     if (overflown > 0) {
         if (!confirm(`剪贴板包含 ${validRows.length} 行数据，当前表格剩余空间不足。\n是否自动创建 ${overflown} 行新任务并继续向下填充？`)) {
@@ -3881,22 +3962,22 @@ function _execMultiColumnPaste(tsvRows, startIdx, colMappings, maxCols) {
             }
         }
     }
-    
+
     let filled = 0;
-    for (let rIdx=0; rIdx < validRows.length; rIdx++) {
+    for (let rIdx = 0; rIdx < validRows.length; rIdx++) {
         const rowData = validRows[rIdx];
         const taskIdx = startIdx + rIdx;
         if (taskIdx >= state.tasks.length) break;
-        
+
         const task = state.tasks[taskIdx];
         let rowModified = false;
-        
+
         for (let cIdx = 0; cIdx < maxCols; cIdx++) {
             const fieldCategory = colMappings[cIdx];
             if (!fieldCategory) continue;
-            
+
             let str = (rowData[cIdx] || '').trim();
-            
+
             if (fieldCategory === 'aiScript') task.aiScript = str;
             else if (fieldCategory === 'ttsText') task.ttsText = str;
             else if (fieldCategory === 'txtContent') { task.txtContent = str; task.aligned = false; }
@@ -3912,23 +3993,25 @@ function _execMultiColumnPaste(tsvRows, startIdx, colMappings, maxCols) {
             }
             rowModified = true;
         }
-        if(rowModified) filled++;
+        if (rowModified) filled++;
     }
-    
-    
+
+
     const scrollWrap = container.querySelector('.rbt-table-wrap');
     const scrollTop = scrollWrap ? scrollWrap.scrollTop : 0;
     const scrollLeft = scrollWrap ? scrollWrap.scrollLeft : 0;
-    
+
     _skipNextApply = true; // 粘贴已直接写入 state，跳过 DOM→state 同步
     _renderBatchTable();
-    
+
     const newScrollWrap = container.querySelector('.rbt-table-wrap');
     if (newScrollWrap) {
         newScrollWrap.scrollTop = scrollTop;
         newScrollWrap.scrollLeft = scrollLeft;
     }
-    
+
+    if (typeof window.reelsSaveHistory === 'function') window.reelsSaveHistory();
+
     if (typeof showToast === 'function') {
         showToast(`✅ 多列粘贴成功：影响了 ${filled} 行。`, 'success');
     }
@@ -3960,56 +4043,56 @@ async function _showSrtFileEditorModal(idx) {
         editorWrap = document.createElement('div');
         editorWrap.id = 'rbt-srt-editor-modal';
         editorWrap.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:99999;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);';
-        
+
         const modalContent = document.createElement('div');
         modalContent.style.cssText = 'width:80%;max-width:800px;background:#181818;border:1px solid var(--border-color);border-radius:12px;padding:20px;display:flex;flex-direction:column;gap:16px;box-shadow:0 12px 32px rgba(0,0,0,0.8);';
-        
+
         const header = document.createElement('div');
         header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;';
-        
+
         const title = document.createElement('h3');
         title.id = 'rbt-srt-editor-title';
         title.style.cssText = 'margin:0;color:#ff9800;font-size:16px;display:flex;align-items:center;gap:8px;';
-        
+
         const closeBtn = document.createElement('button');
         closeBtn.innerHTML = '✕';
         closeBtn.style.cssText = 'background:transparent;border:none;color:#aaa;font-size:18px;cursor:pointer;padding:4px;';
         closeBtn.onclick = () => { editorWrap.remove(); };
-        
+
         header.appendChild(title);
         header.appendChild(closeBtn);
-        
+
         const ta = document.createElement('textarea');
         ta.id = 'rbt-srt-editor-textarea';
         ta.style.cssText = 'width:100%;height:450px;background:#111;color:#eee;border:1px solid #333;border-radius:6px;padding:12px;font-size:14px;line-height:1.6;box-sizing:border-box;font-family:monospace;resize:vertical;';
-        
+
         const footer = document.createElement('div');
         footer.style.cssText = 'display:flex;justify-content:flex-end;gap:12px;align-items:center;';
-        
+
         const hint = document.createElement('span');
         hint.style.cssText = 'color:#666;font-size:12px;flex:1;';
         hint.innerText = '小提示：直接修改文字即可。请不要破坏原有的时间轴格式。按 Esc 键退出，Ctrl+Enter 保存。';
-        
+
         const cancelBtn = document.createElement('button');
         cancelBtn.innerText = '取消 (Esc)';
         cancelBtn.style.cssText = 'padding:8px 20px;background:#333;color:#ccc;border:1px solid #444;border-radius:6px;cursor:pointer;font-size:13px;';
         cancelBtn.onclick = () => { editorWrap.remove(); };
-        
+
         const saveBtn = document.createElement('button');
         saveBtn.innerText = '保存到源文件 (Ctrl+Enter)';
         saveBtn.id = 'rbt-srt-editor-save';
         saveBtn.style.cssText = 'padding:8px 24px;background:#ff9800;color:#000;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:bold;';
-        
+
         footer.appendChild(hint);
         footer.appendChild(cancelBtn);
         footer.appendChild(saveBtn);
-        
+
         modalContent.appendChild(header);
         modalContent.appendChild(ta);
         modalContent.appendChild(footer);
         editorWrap.appendChild(modalContent);
         document.body.appendChild(editorWrap);
-        
+
         ta.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
                 e.preventDefault();
@@ -4020,7 +4103,7 @@ async function _showSrtFileEditorModal(idx) {
                 saveBtn.click();
             }
         });
-        
+
         modalContent.addEventListener('click', (e) => e.stopPropagation());
         editorWrap.addEventListener('click', () => { editorWrap.remove(); });
     } else {
@@ -4030,20 +4113,20 @@ async function _showSrtFileEditorModal(idx) {
     document.getElementById('rbt-srt-editor-title').innerHTML = `📝 修改外部 SRT 字幕 <span style="font-size:11px;color:#aaa;font-weight:400;margin-left:8px;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${task.srtPath}</span>`;
     const textarea = document.getElementById('rbt-srt-editor-textarea');
     textarea.value = srtContent;
-    
+
     document.getElementById('rbt-srt-editor-save').onclick = async () => {
         const newText = textarea.value;
         try {
             await window.electronAPI.writeFileText(task.srtPath, newText);
             editorWrap.remove();
-            
+
             // Show a tiny success toast
             const toast = document.createElement('div');
             toast.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#2e7d32;color:#fff;padding:8px 16px;border-radius:20px;box-shadow:0 4px 12px rgba(0,0,0,0.5);z-index:999999;font-size:13px;font-weight:bold;animation:rbt-fade-in-out 2s forwards;';
             toast.innerText = '✅ SRT 原文件已保存';
             document.body.appendChild(toast);
             setTimeout(() => toast.remove(), 2500);
-            
+
             _renderBatchTable();
         } catch (e) {
             alert('保存修改失败:\n' + e.message);
@@ -4057,57 +4140,57 @@ function _showTextEditorModal(textareaEl) {
         editorWrap = document.createElement('div');
         editorWrap.id = 'rbt-text-editor-modal';
         editorWrap.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:99999;background:rgba(0,0,0,0.85);display:none;align-items:center;justify-content:center;backdrop-filter:blur(4px);';
-        
+
         const modalContent = document.createElement('div');
         modalContent.style.cssText = 'width:80%;max-width:800px;background:#181818;border:1px solid var(--border-color);border-radius:12px;padding:20px;display:flex;flex-direction:column;gap:16px;box-shadow:0 12px 32px rgba(0,0,0,0.8);';
-        
+
         const header = document.createElement('div');
         header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;';
-        
+
         const title = document.createElement('h3');
         title.id = 'rbt-text-editor-title';
         title.style.cssText = 'margin:0;color:var(--accent);font-size:16px;';
         title.innerText = '大屏幕文案编辑';
-        
+
         const closeBtn = document.createElement('button');
         closeBtn.innerHTML = '✕';
         closeBtn.style.cssText = 'background:transparent;border:none;color:#aaa;font-size:18px;cursor:pointer;padding:4px;';
         closeBtn.onclick = () => { editorWrap.style.display = 'none'; };
-        
+
         header.appendChild(title);
         header.appendChild(closeBtn);
-        
+
         const ta = document.createElement('textarea');
         ta.id = 'rbt-text-editor-textarea';
         ta.style.cssText = 'width:100%;height:450px;background:#111;color:#eee;border:1px solid #333;border-radius:6px;padding:12px;font-size:14px;line-height:1.6;box-sizing:border-box;font-family:monospace;resize:vertical;';
-        
+
         const footer = document.createElement('div');
         footer.style.cssText = 'display:flex;justify-content:flex-end;gap:12px;align-items:center;';
-        
+
         const hint = document.createElement('span');
         hint.style.cssText = 'color:#666;font-size:12px;flex:1;';
         hint.innerText = '小提示：按 Esc 键可退出，Ctrl+Enter 可快速保存';
-        
+
         const cancelBtn = document.createElement('button');
         cancelBtn.innerText = '取消 (Esc)';
         cancelBtn.style.cssText = 'padding:8px 20px;background:#333;color:#ccc;border:1px solid #444;border-radius:6px;cursor:pointer;font-size:13px;';
         cancelBtn.onclick = () => { editorWrap.style.display = 'none'; };
-        
+
         const saveBtn = document.createElement('button');
         saveBtn.innerText = '保存内容 (Ctrl+Enter)';
         saveBtn.id = 'rbt-text-editor-save';
         saveBtn.style.cssText = 'padding:8px 24px;background:var(--accent);color:#000;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:bold;';
-        
+
         footer.appendChild(hint);
         footer.appendChild(cancelBtn);
         footer.appendChild(saveBtn);
-        
+
         modalContent.appendChild(header);
         modalContent.appendChild(ta);
         modalContent.appendChild(footer);
         editorWrap.appendChild(modalContent);
         document.body.appendChild(editorWrap);
-        
+
         ta.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
                 e.preventDefault();
@@ -4118,7 +4201,7 @@ function _showTextEditorModal(textareaEl) {
                 saveBtn.click();
             }
         });
-        
+
         // Block clicks from closing modal if clicking inside model content
         modalContent.addEventListener('click', (e) => e.stopPropagation());
         // Close modal if clicking outside
@@ -4128,7 +4211,7 @@ function _showTextEditorModal(textareaEl) {
     const modalTitle = document.getElementById('rbt-text-editor-title');
     const modalTa = document.getElementById('rbt-text-editor-textarea');
     const saveBtn = document.getElementById('rbt-text-editor-save');
-    
+
     let titleStr = "大屏幕文案编辑";
     if (textareaEl.classList.contains('rbt-txtcontent-input')) titleStr = "编辑【人声字幕】";
     else if (textareaEl.classList.contains('rbt-title-input')) titleStr = "编辑【覆层标题】";
@@ -4138,13 +4221,13 @@ function _showTextEditorModal(textareaEl) {
     else if (textareaEl.classList.contains('rbt-scroll-body-input')) titleStr = "编辑【滚动内容】";
     else if (textareaEl.classList.contains('rbt-ai-script-input')) titleStr = "编辑【AI 原文案】";
     modalTitle.innerText = titleStr;
-    
+
     modalTa.value = textareaEl.value;
     editorWrap.style.display = 'flex';
     modalTa.focus();
     // highlight text gently
     modalTa.setSelectionRange(modalTa.value.length, modalTa.value.length);
-    
+
     saveBtn.onclick = () => {
         textareaEl.value = modalTa.value;
         // manually dispatch events so batch system picks it up immediately
@@ -4163,21 +4246,21 @@ function _showDiffModal(origText, newText, field, taskIdx) {
         document.body.appendChild(wrap);
     }
     wrap.innerHTML = '';
-    
+
     // Simple block tokenization
     const tokenize = str => str.split(/([a-zA-Z]+|[\u4e00-\u9fa5]|\s+|\[.*?\]|<.*?>)/).filter(Boolean);
     const a = tokenize(origText || '');
     const b = tokenize(newText || '');
-    
+
     // To prevent JS out of memory or stack error for giant blocks
     let diffTokens = [];
     if (a.length > 3000 || b.length > 3000) {
-        diffTokens = [{val: '\n⚠️ 文本太长，无法进行高亮对比。请直接肉眼比对以下结果：\n\n【当前文本】\n' + newText + '\n\n【AI 原文案】\n' + origText, type: 'del'}];
+        diffTokens = [{ val: '\n⚠️ 文本太长，无法进行高亮对比。请直接肉眼比对以下结果：\n\n【当前文本】\n' + newText + '\n\n【AI 原文案】\n' + origText, type: 'del' }];
     } else {
         const m = a.length, n = b.length;
         const dp = Array(m + 1);
         for (let i = 0; i <= m; i++) dp[i] = new Int32Array(n + 1);
-        
+
         for (let i = 1; i <= m; i++) {
             for (let j = 1; j <= n; j++) {
                 if (a[i - 1].toLowerCase() === b[j - 1].toLowerCase()) {
@@ -4187,7 +4270,7 @@ function _showDiffModal(origText, newText, field, taskIdx) {
                 }
             }
         }
-        
+
         let i = m, j = n;
         while (i > 0 || j > 0) {
             if (i > 0 && j > 0 && a[i - 1].toLowerCase() === b[j - 1].toLowerCase()) {
@@ -4202,7 +4285,7 @@ function _showDiffModal(origText, newText, field, taskIdx) {
             }
         }
     }
-    
+
     // Initialize interaction state
     diffTokens.forEach(t => {
         if (t.type === 'eq') {
@@ -4215,7 +4298,7 @@ function _showDiffModal(origText, newText, field, taskIdx) {
             // AI deleted this from original text.
             // Punctuation, spaces, and tags from the original MUST be preserved automatically!
             if (/^[^a-zA-Z0-9\u4e00-\u9fa5]+$/.test(t.val)) {
-                t.inResult = true; 
+                t.inResult = true;
             } else {
                 t.inResult = false; // Real deleted words default to dropped, must click to restore.
             }
@@ -4224,7 +4307,7 @@ function _showDiffModal(origText, newText, field, taskIdx) {
 
     const body = document.createElement('div');
     body.style.cssText = 'flex:1;overflow-y:auto;line-height:1.6;font-size:15px;white-space:pre-wrap;font-family:monospace;padding:12px;background:#111;border-radius:6px;border:1px solid #333;';
-    
+
     function renderDiff() {
         let html = '';
         diffTokens.forEach((t, i) => {
@@ -4232,37 +4315,37 @@ function _showDiffModal(origText, newText, field, taskIdx) {
                 html += _escHtml(t.val);
             } else if (t.type === 'add') {
                 if (/^\[.*?\]$|^<.*?>$/.test(t.val)) {
-                   html += `<span style="color:#aaa;" title="已保留您手动添加的标签">${_escHtml(t.val)}</span>`;
+                    html += `<span style="color:#aaa;" title="已保留您手动添加的标签">${_escHtml(t.val)}</span>`;
                 } else if (/(^\s+$)/.test(t.val)) {
-                   html += t.val; 
+                    html += t.val;
                 } else if (/^[^a-zA-Z0-9\u4e00-\u9fa5]+$/.test(t.val)) {
-                   html += `<span style="color:#aaa;" title="已保留您手动修改的标点">${_escHtml(t.val)}</span>`;
+                    html += `<span style="color:#aaa;" title="已保留您手动修改的标点">${_escHtml(t.val)}</span>`;
                 } else {
-                   if (t.inResult) {
-                       html += `<span class="rbt-diff-tok" data-idx="${i}" style="cursor:pointer;background:rgba(74,222,128,0.3);color:#4ade80;text-decoration:underline;" title="点击抛弃该词 (恢复原文)">${_escHtml(t.val)}</span>`;
-                   } else {
-                       html += `<span class="rbt-diff-tok" data-idx="${i}" style="cursor:pointer;background:rgba(0,0,0,0.5);color:#555;text-decoration:line-through;" title="重新选中此词">${_escHtml(t.val)}</span>`;
-                   }
+                    if (t.inResult) {
+                        html += `<span class="rbt-diff-tok" data-idx="${i}" style="cursor:pointer;background:rgba(74,222,128,0.3);color:#4ade80;text-decoration:underline;" title="点击抛弃该词 (恢复原文)">${_escHtml(t.val)}</span>`;
+                    } else {
+                        html += `<span class="rbt-diff-tok" data-idx="${i}" style="cursor:pointer;background:rgba(0,0,0,0.5);color:#555;text-decoration:line-through;" title="重新选中此词">${_escHtml(t.val)}</span>`;
+                    }
                 }
             } else if (t.type === 'del') {
                 if (/^\[.*?\]$|^<.*?>$/.test(t.val)) {
-                   html += `<span style="color:#aaa;" title="已自动保留该原文标签">${_escHtml(t.val)}</span>`;
+                    html += `<span style="color:#aaa;" title="已自动保留该原文标签">${_escHtml(t.val)}</span>`;
                 } else if (/(^\s+$)/.test(t.val)) {
-                   html += t.val; 
+                    html += t.val;
                 } else if (/^[^a-zA-Z0-9\u4e00-\u9fa5]+$/.test(t.val)) {
-                   html += `<span style="color:#aaa;">${_escHtml(t.val)}</span>`;
+                    html += `<span style="color:#aaa;">${_escHtml(t.val)}</span>`;
                 } else {
-                   if (!t.inResult) {
-                       html += `<span class="rbt-diff-tok" data-idx="${i}" style="cursor:pointer;background:rgba(239,68,68,0.3);color:#ef4444;text-decoration:line-through;" title="点击恢复此词">${_escHtml(t.val)}</span>`;
-                   } else {
-                       html += `<span class="rbt-diff-tok" data-idx="${i}" style="cursor:pointer;background:rgba(234,179,8,0.3);color:#eab308;border-bottom:2px solid #eab308;" title="取消恢复">${_escHtml(t.val)}</span>`;
-                   }
+                    if (!t.inResult) {
+                        html += `<span class="rbt-diff-tok" data-idx="${i}" style="cursor:pointer;background:rgba(239,68,68,0.3);color:#ef4444;text-decoration:line-through;" title="点击恢复此词">${_escHtml(t.val)}</span>`;
+                    } else {
+                        html += `<span class="rbt-diff-tok" data-idx="${i}" style="cursor:pointer;background:rgba(234,179,8,0.3);color:#eab308;border-bottom:2px solid #eab308;" title="取消恢复">${_escHtml(t.val)}</span>`;
+                    }
                 }
             }
         });
         body.innerHTML = html.replace(/\n/g, '<br/>');
     }
-    
+
     body.addEventListener('click', e => {
         const span = e.target.closest('.rbt-diff-tok');
         if (span) {
@@ -4271,20 +4354,20 @@ function _showDiffModal(origText, newText, field, taskIdx) {
             t.inResult = !t.inResult;
             // auto-restore surrounding whitespace if restoring a deleted word
             if (t.inResult && t.type === 'del') {
-                if (idx > 0 && /(^\s+$)/.test(diffTokens[idx-1].val) && diffTokens[idx-1].type === 'del') {
-                    diffTokens[idx-1].inResult = true;
+                if (idx > 0 && /(^\s+$)/.test(diffTokens[idx - 1].val) && diffTokens[idx - 1].type === 'del') {
+                    diffTokens[idx - 1].inResult = true;
                 }
-                if (idx < diffTokens.length - 1 && /(^\s+$)/.test(diffTokens[idx+1].val) && diffTokens[idx+1].type === 'del') {
-                    diffTokens[idx+1].inResult = true;
+                if (idx < diffTokens.length - 1 && /(^\s+$)/.test(diffTokens[idx + 1].val) && diffTokens[idx + 1].type === 'del') {
+                    diffTokens[idx + 1].inResult = true;
                 }
             }
             // auto-reject surrounding whitespace if rejecting an added word
             if (!t.inResult && t.type === 'add') {
-                if (idx > 0 && /(^\s+$)/.test(diffTokens[idx-1].val) && diffTokens[idx-1].type === 'add') {
-                    diffTokens[idx-1].inResult = false;
+                if (idx > 0 && /(^\s+$)/.test(diffTokens[idx - 1].val) && diffTokens[idx - 1].type === 'add') {
+                    diffTokens[idx - 1].inResult = false;
                 }
-                if (idx < diffTokens.length - 1 && /(^\s+$)/.test(diffTokens[idx+1].val) && diffTokens[idx+1].type === 'add') {
-                    diffTokens[idx+1].inResult = false;
+                if (idx < diffTokens.length - 1 && /(^\s+$)/.test(diffTokens[idx + 1].val) && diffTokens[idx + 1].type === 'add') {
+                    diffTokens[idx + 1].inResult = false;
                 }
             }
             renderDiff();
@@ -4295,12 +4378,12 @@ function _showDiffModal(origText, newText, field, taskIdx) {
 
     const modalContent = document.createElement('div');
     modalContent.style.cssText = 'width:80%;max-width:800px;background:#181818;border:1px solid var(--border-color);border-radius:12px;padding:20px;display:flex;flex-direction:column;gap:16px;box-shadow:0 12px 32px rgba(0,0,0,0.8);color:#eee;max-height:80vh;';
-    
+
     const header = document.createElement('div');
     header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #333;padding-bottom:10px;';
     header.innerHTML = `<h3 style="margin:0;color:#ffb74d;">🔍 原文比对 (文本篡改高亮)</h3>
                         <button id="rbt-diff-close" style="background:transparent;border:none;color:#aaa;font-size:18px;cursor:pointer;">✕</button>`;
-    
+
     const hint = document.createElement('div');
     hint.style.cssText = 'font-size:12px;color:#888;display:flex;gap:16px;align-items:center;';
     hint.innerHTML = `
@@ -4315,17 +4398,17 @@ function _showDiffModal(origText, newText, field, taskIdx) {
         <button id="rbt-diff-restore" style="padding:10px 24px;background:#374151;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:bold;font-size:14px;">🔄 强制还原为原文</button>
         <button id="rbt-diff-apply" style="padding:10px 24px;background:#3b82f6;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:bold;font-size:14px;box-shadow:0 4px 12px rgba(59,130,246,0.4);">✅ 应用并覆盖到表格</button>
     `;
-    
+
     modalContent.appendChild(header);
     modalContent.appendChild(hint);
     modalContent.appendChild(body);
     modalContent.appendChild(footer);
     wrap.appendChild(modalContent);
-    
+
     wrap.style.display = 'flex';
-    
+
     wrap.querySelector('#rbt-diff-close').onclick = () => wrap.style.display = 'none';
-    
+
     wrap.querySelector('#rbt-diff-restore').onclick = () => {
         const task = window._reelsState.tasks[taskIdx];
         if (!task || !task.aiScript) return;
@@ -4337,8 +4420,8 @@ function _showDiffModal(origText, newText, field, taskIdx) {
                 const ta = tr.querySelector('.rbt-txtcontent-input');
                 if (ta) {
                     ta.value = finalText;
-                    ta.dispatchEvent(new Event('input', {bubbles: true}));
-                    ta.dispatchEvent(new Event('change', {bubbles: true}));
+                    ta.dispatchEvent(new Event('input', { bubbles: true }));
+                    ta.dispatchEvent(new Event('change', { bubbles: true }));
                 }
             }
         } else if (field === 'tts') {
@@ -4348,17 +4431,17 @@ function _showDiffModal(origText, newText, field, taskIdx) {
                 const ta = tr.querySelector('.rbt-tts-text-input');
                 if (ta) {
                     ta.value = finalText;
-                    ta.dispatchEvent(new Event('input', {bubbles: true}));
-                    ta.dispatchEvent(new Event('change', {bubbles: true}));
+                    ta.dispatchEvent(new Event('input', { bubbles: true }));
+                    ta.dispatchEvent(new Event('change', { bubbles: true }));
                 }
             }
         }
         wrap.style.display = 'none';
-        
+
         // Full reset of table row to ensure absolutely zero weird state bugs
         if (typeof _renderBatchTable === 'function') setTimeout(_renderBatchTable, 50);
     };
-    
+
     wrap.querySelector('#rbt-diff-apply').onclick = () => {
         const finalText = diffTokens.filter(t => t.inResult).map(t => t.val).join('');
         const task = window._reelsState.tasks[taskIdx];
@@ -4369,8 +4452,8 @@ function _showDiffModal(origText, newText, field, taskIdx) {
                 const ta = tr.querySelector('.rbt-txtcontent-input');
                 if (ta) {
                     ta.value = finalText;
-                    ta.dispatchEvent(new Event('input', {bubbles: true}));
-                    ta.dispatchEvent(new Event('change', {bubbles: true}));
+                    ta.dispatchEvent(new Event('input', { bubbles: true }));
+                    ta.dispatchEvent(new Event('change', { bubbles: true }));
                 }
             }
         } else if (field === 'tts' && task) {
@@ -4380,16 +4463,16 @@ function _showDiffModal(origText, newText, field, taskIdx) {
                 const ta = tr.querySelector('.rbt-tts-text-input');
                 if (ta) {
                     ta.value = finalText;
-                    ta.dispatchEvent(new Event('input', {bubbles: true}));
-                    ta.dispatchEvent(new Event('change', {bubbles: true}));
+                    ta.dispatchEvent(new Event('input', { bubbles: true }));
+                    ta.dispatchEvent(new Event('change', { bubbles: true }));
                 }
             }
         }
         wrap.style.display = 'none';
-        
+
         if (typeof _renderBatchTable === 'function') setTimeout(_renderBatchTable, 50);
     };
-    
+
     wrap.onclick = (e) => { if (e.target === wrap) wrap.style.display = 'none'; };
 }
 
@@ -4487,7 +4570,7 @@ function _applyBatchTableChanges(stateOverride = null, options = {}) {
         const task = state.tasks[idx];
         if (!task) return;
         if (!task.cover) return; // 只当封面启用或创建时绑定
-        
+
         const overlays = task.cover.overlays || [];
         if (overlays.length > 0) {
             overlays[0].title_text = el.value;
@@ -4608,7 +4691,11 @@ function _applyBatchTableChanges(stateOverride = null, options = {}) {
         const idx = parseInt(el.dataset.idx);
         const task = state.tasks[idx];
         if (!task) return;
-        task.bgVideoVolume = parseInt(el.value);
+        if (el.dataset.isNull === 'true') {
+            delete task.bgVideoVolume;
+        } else {
+            task.bgVideoVolume = parseInt(el.value);
+        }
     });
 
     // 刷新任务列表
@@ -4971,7 +5058,7 @@ function _getColVisStorageKey() {
 function _getColVisibility() {
     const key = _getColVisStorageKey();
     // 一次性迁移：将旧存储的列设置重置为全显示（版本号升级触发）
-    const RESET_VERSION = 'v3-add-cover-export';
+    const RESET_VERSION = 'v4-export-naming-rules';
     const resetKey = key + '-reset-version';
     if (localStorage.getItem(resetKey) !== RESET_VERSION) {
         localStorage.removeItem(key);
@@ -5055,7 +5142,7 @@ function _buildPresetStyledItemHTML(name, presetsMap) {
         const bgC = m.color_bg || m.bg_color || '#000000';
         const useBg = m.use_box || m.bg_enabled || false;
         const bgR = Math.round((m.box_radius || m.bg_radius || 8) * 0.4);
-        
+
         let ts = 'none';
         if (useStk && bw > 0) {
             const s = Math.max(1, Math.round(bw * 0.5));
@@ -5065,7 +5152,7 @@ function _buildPresetStyledItemHTML(name, presetsMap) {
             const extra = `2px 2px ${m.shadow_blur}px ${m.color_shadow || '#000'}`;
             ts = ts === 'none' ? extra : ts + ', ' + extra;
         }
-        
+
         let bgCss = '';
         if (useBg) {
             const bgGradCols = m.bg_gradient_colors || [];
@@ -5077,22 +5164,22 @@ function _buildPresetStyledItemHTML(name, presetsMap) {
             // Fix text alignment: apply negative left margin to offset the left padding
             bgCss += `border-radius:${bgR}px;padding:2px 8px;margin-left:-8px;`;
         }
-        
+
         const fw = m.bold || m.font_weight >= 700 ? 'bold' : 'normal';
         const fsStyle = m.italic ? 'font-style:italic;' : '';
         const ffStyle = m.font_family ? `font-family:"${m.font_family}",sans-serif;` : '';
         const ttStyle = m.text_transform ? `text-transform:${m.text_transform};` : '';
         const lsStyle = m.letter_spacing ? `letter-spacing:${m.letter_spacing}px;` : '';
-        
+
         const eName = _escHtml(name);
-        
+
         // Accurate Preview for Karaoke/Dynamic Box
         let htmlName = '';
         if (m.karaoke_highlight || m.dynamic_box) {
             let splitIdx = eName.lastIndexOf('_');
             if (splitIdx === -1) splitIdx = eName.lastIndexOf('+');
             if (splitIdx === -1) splitIdx = eName.lastIndexOf('-');
-            
+
             let part1, part2;
             if (splitIdx !== -1 && splitIdx < eName.length - 1) {
                 part1 = eName.substring(0, splitIdx + 1); // includes delimiter
@@ -5102,7 +5189,7 @@ function _buildPresetStyledItemHTML(name, presetsMap) {
                 part1 = eName.substring(0, Math.max(0, len - 3));
                 part2 = eName.substring(Math.max(0, len - 3));
             }
-            
+
             let highStyle = `color:${m.color_high || tc};`;
             if (m.dynamic_box) {
                 const dynBg = m.color_high_bg || '#FFD700';
@@ -5119,7 +5206,7 @@ function _buildPresetStyledItemHTML(name, presetsMap) {
                 ${htmlName}
             </span>
         </div>`;
-    } catch(e) {
+    } catch (e) {
         return `<div class="rbt-sub-styled-item" data-val="${_escHtml(name)}" style="padding:5px 18px;cursor:pointer;border-bottom:1px solid #2a2a3e;color:#ccc;font-size:13px;">${_escHtml(name)}</div>`;
     }
 }
@@ -5150,7 +5237,7 @@ function _openStyledPresetPicker(anchorEl, currentVal, onSelect) {
             presetsMap = data.presets || {};
             names = Object.keys(presetsMap);
         }
-    } catch(e) { }
+    } catch (e) { }
 
     if (names.length === 0) {
         alert('暂无字幕预设。请在字幕面板中保存预设后再使用。');
@@ -5311,65 +5398,65 @@ function _showColumnSettingsPopup(anchor) {
     // Position near anchor
     const rect = anchor.getBoundingClientRect();
     const maxHeight = Math.max(200, window.innerHeight - rect.bottom - 16);
-    
+
     popup.style.cssText = `position:fixed;z-index:100000;background:#141420;border:1px solid #2a2a4a;border-radius:10px;padding:16px;min-width:320px;max-width:380px;box-shadow:0 12px 40px rgba(0,0,0,0.7);` +
-                          `top:${rect.bottom + 4}px;right:${window.innerWidth - rect.right}px;max-height:${maxHeight}px;overflow-y:auto;`;
+        `top:${rect.bottom + 4}px;right:${window.innerWidth - rect.right}px;max-height:${maxHeight}px;overflow-y:auto;`;
 
     // ── 预设方案定义 ──
     const presets = [
         {
             name: '🎥 HeyGen匹配字幕',
             desc: '背景视频 + 根据背景素材声音对齐字幕',
-            cols: ['bg','bgscale','bgdurscale','srt','txtcontent','dur','tpl','exportname']
+            cols: ['bg', 'bgscale', 'bgdurscale', 'srt', 'txtcontent', 'dur', 'tpl', 'exportname']
         },
         {
             name: '🎨 无字幕动画Reels',
             desc: '背景素材 + 覆层(标题/内容/结尾) + 图像覆层 + 配乐',
-            cols: ['bg','bgscale','bgdurscale','bgm','title','body','footer','dur','tpl','exportname']
+            cols: ['bg', 'bgscale', 'bgdurscale', 'bgm', 'title', 'body', 'footer', 'dur', 'tpl', 'exportname']
         },
         {
             name: '📝 动态字幕(手动)',
             desc: '背景素材 + 手动提供人声音频/SRT/对齐字幕 + 配乐',
-            cols: ['bg','bgscale','bgdurscale','audio','audiodurscale','bgm','srt','txtcontent','dur','tpl','exportname']
+            cols: ['bg', 'bgscale', 'bgdurscale', 'audio', 'audiodurscale', 'bgm', 'srt', 'txtcontent', 'dur', 'tpl', 'exportname']
         },
         {
             name: '🤖 动态字幕(AI自动)',
             desc: '背景素材 + AI文案→TTS→字幕 全自动流水线 + 配乐',
-            cols: ['bg','bgscale','bgdurscale','ai_script','tts_text','tts_voice','audio','audiodurscale','bgm','srt','txtcontent','dur','tpl','exportname']
+            cols: ['bg', 'bgscale', 'bgdurscale', 'ai_script', 'tts_text', 'tts_voice', 'audio', 'audiodurscale', 'bgm', 'srt', 'txtcontent', 'dur', 'tpl', 'exportname']
         },
         {
             name: '🔄 滚动字幕(手动)',
             desc: '背景素材 + 手动提供人声音频 + 滚动标题/内容 + 配乐',
-            cols: ['bg','bgscale','bgdurscale','audio','audiodurscale','bgm','scroll-title','scroll-body','dur','tpl','exportname']
+            cols: ['bg', 'bgscale', 'bgdurscale', 'audio', 'audiodurscale', 'bgm', 'scroll-title', 'scroll-body', 'dur', 'tpl', 'exportname']
         },
         {
             name: '🔄 滚动字幕(AI自动)',
             desc: '背景素材 + AI文案→TTS→人声 + 滚动标题/内容 + 配乐',
-            cols: ['bg','bgscale','bgdurscale','ai_script','tts_text','tts_voice','audio','audiodurscale','bgm','scroll-title','scroll-body','dur','tpl','exportname']
+            cols: ['bg', 'bgscale', 'bgdurscale', 'ai_script', 'tts_text', 'tts_voice', 'audio', 'audiodurscale', 'bgm', 'scroll-title', 'scroll-body', 'dur', 'tpl', 'exportname']
         },
         {
             name: '✂️ 达芬奇剪辑',
             desc: '背景 + 内容视频(裁切/缩放/位置/音量) + 覆层文案 + 配乐',
-            cols: ['bg','bgscale','bgdurscale','contentvideo','cvtrim','cvscale','cvpos','cvvol','bgm','title','body','footer','dur','tpl','exportname']
+            cols: ['bg', 'bgscale', 'bgdurscale', 'contentvideo', 'cvtrim', 'cvscale', 'cvpos', 'cvvol', 'bgm', 'title', 'body', 'footer', 'dur', 'tpl', 'exportname']
         },
         {
             name: '🎙 加Hook版口播',
             desc: 'Hook + 封面 + 背景 + 全套人声/字幕 + 配乐',
-            cols: ['hook','cover-media','cover-text','bg','bgscale','bgdurscale','ai_script','tts_text','tts_voice','audio','audiodurscale','bgm','srt','txtcontent','dur','tpl','exportname']
+            cols: ['hook', 'cover-media', 'cover-text', 'bg', 'bgscale', 'bgdurscale', 'ai_script', 'tts_text', 'tts_voice', 'audio', 'audiodurscale', 'bgm', 'srt', 'txtcontent', 'dur', 'tpl', 'exportname']
         }
     ];
 
     // ── 列分类 ──
     const colGroups = [
-        { label: '封面', keys: ['cover-media','cover-text'] },
-        { label: '素材 & 背景', keys: ['hook','bg','bgscale','bgdurscale','pip'] },
-        { label: '🎬 内容视频', keys: ['contentvideo','cvtrim','cvscale','cvpos','cvvol'] },
-        { label: 'AI 配音与文案', keys: ['ai_script','tts_text','tts_voice'] },
-        { label: '音频', keys: ['audio','audiodurscale','bgm'] },
-        { label: '字幕 & 文本', keys: ['srt','txtcontent'] },
-        { label: '覆层文案', keys: ['title','body','footer'] },
-        { label: '滚动字幕', keys: ['scroll-title','scroll-body'] },
-        { label: '其他', keys: ['dur','tpl','exportname'] },
+        { label: '封面', keys: ['cover-media', 'cover-text'] },
+        { label: '素材 & 背景', keys: ['hook', 'bg', 'bgscale', 'bgdurscale', 'pip'] },
+        { label: '🎬 内容视频', keys: ['contentvideo', 'cvtrim', 'cvscale', 'cvpos', 'cvvol'] },
+        { label: 'AI 配音与文案', keys: ['ai_script', 'tts_text', 'tts_voice'] },
+        { label: '音频', keys: ['audio', 'audiodurscale', 'bgm'] },
+        { label: '字幕 & 文本', keys: ['srt', 'txtcontent'] },
+        { label: '覆层文案', keys: ['title', 'body', 'footer'] },
+        { label: '滚动字幕', keys: ['scroll-title', 'scroll-body'] },
+        { label: '其他', keys: ['dur', 'tpl', 'exportname'] },
     ];
 
     // Build column label map
@@ -5418,7 +5505,7 @@ function _showColumnSettingsPopup(anchor) {
 
     // ── custom presets ──
     const CUSTOM_PRESET_KEY = 'rbt-col-custom-presets';
-    const _loadCustomPresets = () => { try { return JSON.parse(localStorage.getItem(CUSTOM_PRESET_KEY) || '{}'); } catch(e) { return {}; } };
+    const _loadCustomPresets = () => { try { return JSON.parse(localStorage.getItem(CUSTOM_PRESET_KEY) || '{}'); } catch (e) { return {}; } };
     const _saveCustomPresets = (p) => localStorage.setItem(CUSTOM_PRESET_KEY, JSON.stringify(p));
 
     const customPresets = _loadCustomPresets();
@@ -5545,7 +5632,7 @@ function _showColumnSettingsPopup(anchor) {
         input.focus();
 
         const closePrompt = () => overlay.remove();
-        
+
         const confirmSave = () => {
             const name = input.value;
             if (!name || !name.trim()) {
@@ -5564,9 +5651,9 @@ function _showColumnSettingsPopup(anchor) {
 
         overlay.querySelector('#_col-preset-cancel').onclick = closePrompt;
         overlay.querySelector('#_col-preset-confirm').onclick = confirmSave;
-        input.onkeydown = (e) => { 
-            if (e.key === 'Enter') confirmSave(); 
-            if (e.key === 'Escape') closePrompt(); 
+        input.onkeydown = (e) => {
+            if (e.key === 'Enter') confirmSave();
+            if (e.key === 'Escape') closePrompt();
         };
     });
 
@@ -5610,7 +5697,7 @@ function _showColumnSettingsPopup(anchor) {
         const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
-        a.download = `列显示预设_${new Date().toISOString().slice(0,10)}.json`;
+        a.download = `列显示预设_${new Date().toISOString().slice(0, 10)}.json`;
         a.click();
         URL.revokeObjectURL(a.href);
         if (typeof showToast === 'function') showToast('📤 列配置已导出', 'success');
@@ -6392,7 +6479,7 @@ async function _batchPasteTTSContent() {
                 let ttsText = row[0] || '';
                 let txtContent = row.length >= 2 ? row[1] || '' : '';
                 let voiceId = row.length >= 3 ? row[2] || '' : '';
-                
+
                 if (ttsText.trim()) task.ttsText = ttsText.trim();
                 if (txtContent.trim()) { task.txtContent = txtContent.trim(); task.aligned = false; }
                 if (voiceId.trim()) task.ttsVoiceId = voiceId.trim();
@@ -6763,9 +6850,9 @@ function _showSplitPromptDialog(messageText) {
     return new Promise(resolve => {
         const overlay = document.createElement('div');
         overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:10001;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(3px);';
-        
+
         const htmlMessage = messageText.replace(/\\n/g, '<br>');
-        
+
         overlay.innerHTML = `
             <div style="background:#1e1e1e;border-radius:12px;padding:24px;width:400px;color:#ddd;box-shadow:0 10px 30px rgba(0,0,0,0.5);border:1px solid #333;">
                 <h3 style="margin:0 0 16px;color:#a78bfa;font-size:16px;">🪄 智能分段提取</h3>
@@ -6789,15 +6876,15 @@ function _showSplitPromptDialog(messageText) {
         `;
         document.body.appendChild(overlay);
         const close = v => { document.body.removeChild(overlay); resolve(v); };
-        
+
         overlay.querySelector('#rbt-split-cancel').onclick = () => close(null);
-        
+
         overlay.querySelectorAll('.rbt-split-btn').forEach(btn => {
-             btn.onmouseenter = () => btn.style.background = '#32324a';
-             btn.onmouseleave = () => btn.style.background = '#2a2a3a';
-             btn.onclick = () => close(btn.dataset.val);
+            btn.onmouseenter = () => btn.style.background = '#32324a';
+            btn.onmouseleave = () => btn.style.background = '#2a2a3a';
+            btn.onclick = () => close(btn.dataset.val);
         });
-        
+
         overlay.addEventListener('click', e => { if (e.target === overlay) close(null); });
     });
 }
@@ -6806,7 +6893,7 @@ function _showBatchEditDialog(badRows, minLines, totalRows) {
     return new Promise(resolve => {
         const overlay = document.createElement('div');
         overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:10002;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(5px);';
-        
+
         let boxesHtml = '';
         for (let idx = 0; idx < badRows.length; idx++) {
             const r = badRows[idx];
@@ -6843,7 +6930,7 @@ function _showBatchEditDialog(badRows, minLines, totalRows) {
             </div>
         `;
         document.body.appendChild(overlay);
-        
+
         let activeEditIndex = -1;
         const largeEditOverlay = document.createElement('div');
         largeEditOverlay.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.9);z-index:10;display:none;flex-direction:column;padding:40px;border-radius:12px;';
@@ -6856,9 +6943,9 @@ function _showBatchEditDialog(badRows, minLines, totalRows) {
             </div>
         `;
         overlay.querySelector('div').appendChild(largeEditOverlay);
-        
+
         const largeArea = largeEditOverlay.querySelector('#rbt-large-edit-area');
-        
+
         const displays = overlay.querySelectorAll('.rbt-box-display');
         displays.forEach(disp => {
             disp.addEventListener('dblclick', () => {
@@ -6871,11 +6958,11 @@ function _showBatchEditDialog(badRows, minLines, totalRows) {
                 badRows[disp.dataset.i].text = disp.value;
             });
         });
-        
+
         largeEditOverlay.querySelector('#rbt-large-edit-cancel').onclick = () => {
             largeEditOverlay.style.display = 'none';
         };
-        
+
         largeEditOverlay.querySelector('#rbt-large-edit-ok').onclick = () => {
             if (activeEditIndex >= 0) {
                 badRows[activeEditIndex].text = largeArea.value;
@@ -6889,9 +6976,9 @@ function _showBatchEditDialog(badRows, minLines, totalRows) {
         };
 
         const close = (val) => { document.body.removeChild(overlay); resolve(val); };
-        
+
         overlay.querySelector('#rbt-batch-edit-cancel').onclick = () => close(null);
-        
+
         overlay.querySelector('#rbt-batch-edit-ok').onclick = () => {
             const skips = overlay.querySelectorAll('.rbt-skip-chk');
             const disps = overlay.querySelectorAll('.rbt-box-display');
@@ -6951,7 +7038,7 @@ function _renderSubtitlePresetOptions(subtitlePresets, selectedValue = '') {
     const builtinNames = window.REELS_BUILTIN_PRESETS ? Object.keys(window.REELS_BUILTIN_PRESETS) : [];
     const builtins = subtitlePresets.filter(t => builtinNames.includes(t));
     const customs = subtitlePresets.filter(t => !builtinNames.includes(t));
-    
+
     let html = '';
     if (customs.length > 0) {
         html += `<optgroup label="我的预设">` + customs.map(t => `<option value="${_escHtml(t)}" ${selectedValue === t ? 'selected' : ''}>${_escHtml(t)}</option>`).join('') + `</optgroup>`;
@@ -6966,7 +7053,7 @@ function _renderOverlayPresetOptions(cardTemplates, selectedValue = '') {
     const builtinNames = window.REELS_BUILTIN_OVERLAY_GROUP_PRESETS ? Object.keys(window.REELS_BUILTIN_OVERLAY_GROUP_PRESETS) : [];
     const builtins = cardTemplates.filter(t => builtinNames.includes(t.name));
     const customs = cardTemplates.filter(t => !builtinNames.includes(t.name));
-    
+
     let html = '';
     if (customs.length > 0) {
         html += `<optgroup label="我的预设">` + customs.map(t => `<option value="${_escHtml(t.name)}" ${selectedValue === t.name ? 'selected' : ''}>${_escHtml(t.name)} (${t.count}层)</option>`).join('') + `</optgroup>`;
@@ -7005,15 +7092,15 @@ function _getOverlayGroupPresetList() {
     // 1. 获取覆层组预设
     try {
         const stored = localStorage.getItem('reels_overlay_group_presets');
-        const obj = stored ? JSON.parse(stored) : {};
+        let obj = stored ? JSON.parse(stored) : {};
         // 确保内置预设始终存在
         if (window.REELS_BUILTIN_OVERLAY_GROUP_PRESETS) {
-            for (const [k, v] of Object.entries(window.REELS_BUILTIN_OVERLAY_GROUP_PRESETS)) {
-                if (!obj[k]) obj[k] = v;
-            }
+            obj = { ...window.REELS_BUILTIN_OVERLAY_GROUP_PRESETS, ...obj };
         }
         for (const name of Object.keys(obj)) {
-            list.push({ name, count: Array.isArray(obj[name]) ? obj[name].length : 0 });
+            const data = obj[name];
+            const layers = Array.isArray(data) ? data : data?.layers;
+            list.push({ name, count: Array.isArray(layers) ? layers.length : 0 });
             seen.add(name);
         }
     } catch (e) { }
@@ -7038,10 +7125,15 @@ function _getOverlayGroupPresetList() {
 function _getOverlayPresetDefinition(presetName) {
     try {
         const groupStored = localStorage.getItem('reels_overlay_group_presets');
-        if (groupStored) {
-            const presets = JSON.parse(groupStored);
-            if (Array.isArray(presets[presetName])) {
-                return { kind: 'group', layers: presets[presetName] };
+        let presets = groupStored ? JSON.parse(groupStored) : {};
+        if (window.REELS_BUILTIN_OVERLAY_GROUP_PRESETS) {
+            presets = { ...window.REELS_BUILTIN_OVERLAY_GROUP_PRESETS, ...presets };
+        }
+        if (presets[presetName]) {
+            const data = presets[presetName];
+            const layers = Array.isArray(data) ? data : data?.layers;
+            if (Array.isArray(layers)) {
+                return { kind: 'group', layers: layers };
             }
         }
     } catch (e) { }
@@ -7126,15 +7218,22 @@ function _verifyOverlayGroupPresetApplied(task, presetName) {
 function _promptOverlayPresetOptions(presetName, tasks, callback) {
     let presetHasScroll = false;
     try {
+        let presets = {};
         const groupStored = localStorage.getItem('reels_overlay_group_presets');
-        if (groupStored) {
-            const presets = JSON.parse(groupStored);
-            if (presets[presetName] && Array.isArray(presets[presetName])) {
-                presetHasScroll = presets[presetName].some(o => o.type === 'scroll');
+        if (groupStored) presets = JSON.parse(groupStored);
+        if (window.REELS_BUILTIN_OVERLAY_GROUP_PRESETS) {
+            presets = { ...window.REELS_BUILTIN_OVERLAY_GROUP_PRESETS, ...presets };
+        }
+
+        const data = presets[presetName];
+        if (data) {
+            const layers = Array.isArray(data) ? data : data.layers;
+            if (Array.isArray(layers)) {
+                presetHasScroll = layers.some(o => o.type === 'scroll');
             }
         }
-    } catch(e) {}
-    
+    } catch (e) { }
+
     let taskHasScrollText = false;
     for (const task of tasks) {
         if (task.overlays) {
@@ -7182,25 +7281,31 @@ function _applyAndVerifyOverlayGroupPresetToTask(task, presetName, opts = { addS
 function _applyOverlayGroupPresetToTask(task, presetName, opts = { addScroll: false, clearText: false }) {
     try {
         // Try group presets first
+        let presets = {};
         const groupStored = localStorage.getItem('reels_overlay_group_presets');
-        if (groupStored) {
-            const presets = JSON.parse(groupStored);
-            if (presets[presetName] && Array.isArray(presets[presetName])) {
-                const layers = presets[presetName];
+        if (groupStored) presets = JSON.parse(groupStored);
+        if (window.REELS_BUILTIN_OVERLAY_GROUP_PRESETS) {
+            presets = { ...window.REELS_BUILTIN_OVERLAY_GROUP_PRESETS, ...presets };
+        }
+
+        const data = presets[presetName];
+        if (data) {
+            const layers = Array.isArray(data) ? data : data.layers;
+            if (Array.isArray(layers)) {
                 const oldOverlays = task.overlays || [];
                 const textDonors = oldOverlays.filter(o => o && !o.fixed_text); // 仅用于提取批量表格文案
-                
+
                 // 构建预设覆层，仅迁移文本内容
                 const newOverlays = layers.map(layerData => {
                     const clone = JSON.parse(JSON.stringify(layerData));
                     clone.id = 'ov_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
-                    
+
                     // 从旧覆层中按类型匹配，迁移批量表格文案。
                     // fixed_text 层使用预设自带文案，不消费表格文案。
                     const matchIdx = clone.fixed_text ? -1 : textDonors.findIndex(o => o.type === clone.type);
                     if (matchIdx !== -1) {
                         const old = textDonors.splice(matchIdx, 1)[0];
-                        
+
                         if (clone.type === 'scroll') {
                             // ── 滚动字幕：迁移 scroll_title / content ──
                             if (opts.clearText) {
@@ -7233,11 +7338,11 @@ function _applyOverlayGroupPresetToTask(task, presetName, opts = { addScroll: fa
                     }
                     return clone;
                 });
-                
+
                 // ── 保留预设中没有的覆层类型（如用户独立设置的 scroll、image 等）──
                 const presetTypes = new Set(newOverlays.map(o => o.type));
                 const survivingOverlays = oldOverlays.filter(o => o && o.type && !presetTypes.has(o.type));
-                
+
                 if (opts.clearText) {
                     survivingOverlays.forEach(o => {
                         if (o.type === 'scroll') {
@@ -7246,7 +7351,7 @@ function _applyOverlayGroupPresetToTask(task, presetName, opts = { addScroll: fa
                         }
                     });
                 }
-                
+
                 if (!presetTypes.has('scroll') && opts.addScroll) {
                     const hasScroll = survivingOverlays.some(o => o.type === 'scroll');
                     if (!hasScroll) {
@@ -7258,7 +7363,7 @@ function _applyOverlayGroupPresetToTask(task, presetName, opts = { addScroll: fa
                         }
                     }
                 }
-                
+
                 task.overlays = [...newOverlays, ...survivingOverlays];
                 task._overlayPresetName = presetName;
                 return true;
@@ -7291,7 +7396,7 @@ function _applyOverlayGroupPresetToTask(task, presetName, opts = { addScroll: fa
                         if (!keepKeys.includes(k)) cardOv[k] = v;
                     }
                 }
-                
+
                 if (opts.clearText) {
                     task.overlays.forEach(o => {
                         if (o && !o.fixed_text && o.type === 'scroll') {
@@ -7300,7 +7405,7 @@ function _applyOverlayGroupPresetToTask(task, presetName, opts = { addScroll: fa
                         }
                     });
                 }
-                
+
                 if (opts.addScroll) {
                     const hasScroll = task.overlays.some(o => o && o.type === 'scroll');
                     if (!hasScroll) {
@@ -7312,7 +7417,7 @@ function _applyOverlayGroupPresetToTask(task, presetName, opts = { addScroll: fa
                         }
                     }
                 }
-                
+
                 task._overlayPresetName = presetName;
                 return true;
             }
@@ -7349,26 +7454,26 @@ let _rbtVoiceCache = null;
 async function _rbtLoadVoiceList() {
     const inputEl = document.getElementById('rbt-tts-default-voice');
     if (!inputEl) return;
-    
+
     // 记录当前选择
     const prevValue = inputEl.value || localStorage.getItem('rbt_tts_voice') || '';
-    
+
     inputEl.placeholder = '加载中...';
-    
+
     try {
         // 如果有缓存，先用缓存
         if (_rbtVoiceCache && _rbtVoiceCache.length > 0) {
             _populateVoiceSelect(inputEl, _rbtVoiceCache, prevValue);
             return;
         }
-        
+
         const response = await apiFetch(`${API_BASE}/elevenlabs/voices`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({})
         });
         const data = await response.json();
-        
+
         if (data.voices && data.voices.length > 0) {
             _rbtVoiceCache = data.voices;
             _populateVoiceSelect(inputEl, data.voices, prevValue);
@@ -7396,12 +7501,12 @@ function _populateVoiceSelect(inputEl, voices, prevValue) {
         opt.textContent = `${v.name}`;
         datalist.appendChild(opt);
     }
-    
+
     // 持久化选择
     inputEl.addEventListener('change', () => {
         localStorage.setItem('rbt_tts_voice', inputEl.value.trim());
     });
-    
+
     // 恢复上次选择
     if (prevValue && inputEl.value !== prevValue) {
         inputEl.value = prevValue;
@@ -7414,13 +7519,13 @@ function _populateVoiceSelect(inputEl, voices, prevValue) {
 
 async function _runSingleTTS(idx) {
     // 先同步 DOM 输入框的值到 state
-    try { _applyBatchTableChanges(); } catch(e) {}
+    try { _applyBatchTableChanges(); } catch (e) { }
     const state = window._reelsState;
     if (!state || !state.tasks[idx]) return;
     const task = state.tasks[idx];
-    
+
     if (!task.ttsText) {
-        alert(`第 ${idx+1} 行缺少 TTS文案，无法生成配音。`);
+        alert(`第 ${idx + 1} 行缺少 TTS文案，无法生成配音。`);
         return;
     }
     const defaultVoice = document.getElementById('rbt-tts-default-voice')?.value || 'pNInz6obpgDQGcFmaJcg';
@@ -7430,7 +7535,7 @@ async function _runSingleTTS(idx) {
     task.status = 'generating';
     _skipNextApply = true;
     _renderBatchTable();
-    
+
     try {
         const response = await apiFetch(`${API_BASE}/elevenlabs/tts-workflow`, {
             method: 'POST',
@@ -7446,12 +7551,12 @@ async function _runSingleTTS(idx) {
                 export_mp4: false,
                 export_fcpxml: false,
                 seamless_fcpxml: true,
-                output_dir: '' 
+                output_dir: ''
             })
         });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || '生成失败');
-        
+
         task.audioPath = data.audio_path;
         if (data.srt_path) {
             task.srtPath = data.srt_path;
@@ -7462,7 +7567,7 @@ async function _runSingleTTS(idx) {
         task.status = 'success';
         _skipNextApply = true;
         _renderBatchTable();
-        
+
         // 5秒后清除成功状态，恢复原样
         setTimeout(() => {
             if (task.status === 'success') {
@@ -7470,7 +7575,7 @@ async function _runSingleTTS(idx) {
                 _renderBatchTable();
             }
         }, 5000);
-        
+
         return true;
     } catch (e) {
         task.status = 'error';
@@ -7483,16 +7588,16 @@ async function _runSingleTTS(idx) {
 
 async function _runTTSBatchProcessing() {
     // 先同步 DOM 输入框的值到 state，确保能读到用户填入的数据
-    try { _applyBatchTableChanges(); } catch(e) {}
+    try { _applyBatchTableChanges(); } catch (e) { }
     const indices = _getSelectedIndices();
     const tasks = window._reelsState?.tasks || [];
     if (tasks.length === 0) {
         alert('❌ 任务拒绝执行\n\n【原因】：当前表格完全为空。\n【操作】：请先新建任务行，或从上方导入媒体/通过链接粘贴数据。');
         return false;
     }
-    
+
     const targetIdxs = indices.length > 0 ? indices : tasks.map((_, i) => i);
-    
+
     // Validate if there's actually anything to TTS
     const hasTtsText = targetIdxs.some(idx => tasks[idx].ttsText && tasks[idx].ttsText.trim().length > 0);
     if (!hasTtsText) {
@@ -7505,7 +7610,7 @@ async function _runTTSBatchProcessing() {
     if (hasExistingAudio) {
         forceOverwrite = confirm('⚠️ 检测到目标中存在【已经生成过配音】的行。\n\n▶ 点击【确定】则强制重新生成，覆盖它们的原配音和原对齐。\n▶ 点击【取消】则保护它们，仅对还没生成的空白行进行生成。\n\n是否强行覆盖重造已有音频？');
     }
-    
+
     let success = 0;
     let failed = 0;
     for (const idx of targetIdxs) {
@@ -7517,7 +7622,7 @@ async function _runTTSBatchProcessing() {
             else failed++;
         }
     }
-    
+
     if (failed > 0) {
         showToast(`批量配音结束：处理 ${success} 行，失败 ${failed} 行，请查看具体报错！`, 'error', 5000);
     } else if (success > 0) {
@@ -7529,7 +7634,7 @@ async function _runTTSBatchProcessing() {
 
 async function _runGeminiBatchProcessing() {
     // 先同步 DOM 输入框的值到 state，确保能读到用户填入的数据
-    try { _applyBatchTableChanges(); } catch(e) {}
+    try { _applyBatchTableChanges(); } catch (e) { }
     const indices = _getSelectedIndices();
     const tasks = window._reelsState?.tasks || [];
     if (tasks.length === 0) {
@@ -7537,9 +7642,9 @@ async function _runGeminiBatchProcessing() {
         return false;
     }
     const targetIdxs = indices.length > 0 ? indices : tasks.map((_, i) => i);
-    
+
     showToast(`正在使用 AI 处理 ${targetIdxs.length} 行文案...`, 'info');
-    
+
     try {
         const payload = targetIdxs.map(idx => ({
             idx: idx,
@@ -7569,17 +7674,17 @@ async function _runGeminiBatchProcessing() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ scripts: payload })
         });
-        
+
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || 'AI处理请求失败');
-        
+
         console.log('[AI文案] API 响应数据:', JSON.stringify(data).slice(0, 500));
         console.log('[AI文案] results 类型:', typeof data.results, '长度:', Array.isArray(data.results) ? data.results.length : 'N/A');
-        
+
         let count = 0;
         if (data.results && Array.isArray(data.results)) {
             for (const res of data.results) {
-                console.log(`[AI文案] 结果项 idx=${res.idx}, tts_text=${(res.tts_text||'').slice(0,50)}...`);
+                console.log(`[AI文案] 结果项 idx=${res.idx}, tts_text=${(res.tts_text || '').slice(0, 50)}...`);
                 const task = tasks[res.idx];
                 if (task) {
                     if (task.ttsText !== res.tts_text) {
@@ -7604,18 +7709,18 @@ async function _runGeminiBatchProcessing() {
                         return s.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '').toLowerCase();
                     };
                     const origNorm = normalizeText(task.aiScript);
-                    
+
                     const newNorm = normalizeText(res.display_text);
                     task.aiTextDiffWarning = (origNorm !== newNorm);
-                    
+
                     const ttsNorm = normalizeText(res.tts_text);
                     task.aiTtsDiffWarning = (origNorm !== ttsNorm);
-                    
+
                     if (task.aiTextDiffWarning || task.aiTtsDiffWarning) {
                         console.warn(`[AI文案] 警告！任务 ${res.idx} 存在字符篡改`);
                     }
                     // -------------------------------------------------------------------------
-                    
+
                     count++;
                 } else {
                     console.warn(`[AI文案] 找不到 idx=${res.idx} 对应的任务 (tasks.length=${tasks.length})`);
@@ -7626,7 +7731,7 @@ async function _runGeminiBatchProcessing() {
         }
         _skipNextApply = true; // AI 结果已直接写入 state
         _renderBatchTable();
-        
+
         if (count === 0 && payload.length > 0) {
             alert(`⚠️ AI 处理完成但未能解析出结果\n\n发送了 ${payload.length} 条原文案，但模型返回的内容无法正确解析为 TTS 文案。\n\n可能原因：\n1. 模型输出格式异常（未按 [编号] 格式返回）\n2. API 返回了空内容\n\n请打开开发者工具 (Ctrl+Shift+I) 查看控制台日志，搜索 "[AI文案]" 获取详细信息。`);
             showToast(`⚠️ AI处理完成但解析结果为 0 条 (期望 ${payload.length} 条)`, 'error');
@@ -7643,7 +7748,7 @@ async function _runGeminiBatchProcessing() {
 function _applyAiPresetBatch() {
     const STORAGE_KEY = 'rbt_task_presets';
     let presets = {};
-    try { presets = JSON.parse(localStorage.getItem(STORAGE_KEY) || localStorage.getItem('rbt_ai_presets') || '{}'); } catch(e) {}
+    try { presets = JSON.parse(localStorage.getItem(STORAGE_KEY) || localStorage.getItem('rbt_ai_presets') || '{}'); } catch (e) { }
 
     // 动态获取可用的预设列表
     const subtitlePresets = typeof _getSubtitlePresetList === 'function' ? _getSubtitlePresetList() : [];
@@ -8059,9 +8164,9 @@ function _updateHookPreview() {
     const videoPreview = container.querySelector('#rbt-hook-preview-video');
     const imgPreview = container.querySelector('#rbt-hook-preview-img');
     const startInput = container.querySelector('#rbt-hook-start');
-    
+
     if (!pathInput || !previewContainer || !videoPreview || !imgPreview) return;
-    
+
     const filePath = pathInput.value.trim();
     if (!filePath) {
         previewContainer.style.display = 'none';
@@ -8069,13 +8174,13 @@ function _updateHookPreview() {
         imgPreview.src = '';
         return;
     }
-    
+
     previewContainer.style.display = 'block';
     const fileUrl = (window.electronAPI && window.electronAPI.toFileUrl)
         ? window.electronAPI.toFileUrl(filePath)
         : 'file://' + filePath;
     const ext = filePath.split('.').pop().toLowerCase();
-    
+
     if (['mp4', 'webm', 'ogg', 'mov', 'mkv'].includes(ext)) {
         imgPreview.style.display = 'none';
         videoPreview.style.display = 'block';
@@ -8153,7 +8258,10 @@ function _openCoverModal(idx) {
         overlaySel.innerHTML = '<option value="">-- 使用独立卡片配置 --</option>';
         if (window.ReelsOverlay) {
             let presets = {};
-            try { presets = JSON.parse(localStorage.getItem('reels_overlay_group_presets') || '{}'); } catch(e) {}
+            try { presets = JSON.parse(localStorage.getItem('reels_overlay_group_presets') || '{}'); } catch (e) { }
+            if (window.REELS_BUILTIN_OVERLAY_GROUP_PRESETS) {
+                presets = { ...window.REELS_BUILTIN_OVERLAY_GROUP_PRESETS, ...presets };
+            }
             for (const key of Object.keys(presets)) {
                 const option = document.createElement('option');
                 option.value = key; option.textContent = key;
@@ -8167,7 +8275,7 @@ function _openCoverModal(idx) {
     const presetSel = container.querySelector('#rbt-cover-preset-sel');
     if (presetSel) {
         let savedPresets = {};
-        try { savedPresets = JSON.parse(localStorage.getItem('videokit_cover_presets') || '{}'); } catch(e){}
+        try { savedPresets = JSON.parse(localStorage.getItem('videokit_cover_presets') || '{}'); } catch (e) { }
         presetSel.innerHTML = '<option value="">---预设---</option>';
         for (const key of Object.keys(savedPresets)) {
             const option = document.createElement('option');
@@ -8236,9 +8344,15 @@ function _assignFileToTask(task, file, field) {
         if (task.hookTransition == null) task.hookTransition = 'none';
         if (task.hookTransDuration == null) task.hookTransDuration = 0.5;
     } else if (field === 'bg') {
+        // Revoke old blob URL to free memory and prevent stale references
+        if (task.bgSrcUrl && task.bgSrcUrl.startsWith('blob:')) {
+            try { URL.revokeObjectURL(task.bgSrcUrl); } catch (_) { }
+        }
         task.bgPath = filePath;
         task.videoPath = filePath;
-        try { task.bgSrcUrl = URL.createObjectURL(file); } catch (e) { }
+        // Clear stale blob/srcUrl — force preview to use native file path
+        task.bgSrcUrl = null;
+        task.srcUrl = null;
     } else if (field === 'audio') {
         task.audioPath = filePath;
     } else if (field === 'srt') {
@@ -8365,6 +8479,9 @@ async function _batchAssignFiles(files, field) {
     _skipNextApply = true;
     _renderBatchTable();
     if (typeof _renderTaskList === 'function') _renderTaskList();
+    if (window._reelsState && window._reelsState.selectedIdx >= 0 && typeof reelsSelectTask === 'function') {
+        reelsSelectTask(window._reelsState.selectedIdx);
+    }
 }
 
 /**
@@ -8485,15 +8602,19 @@ function _assignSingleFile(idx, field, file) {
     console.log(`[BatchTable] _assignSingleFile idx=${idx} field=${field} filePath=${filePath} file.name=${file.name}`);
 
     if (field === 'bg') {
+        if (task.bgSrcUrl && task.bgSrcUrl.startsWith('blob:')) {
+            try { URL.revokeObjectURL(task.bgSrcUrl); } catch (_) { }
+        }
         task.bgPath = filePath;
         task.videoPath = filePath;
-        try { task.bgSrcUrl = URL.createObjectURL(file); } catch (e) { }
+        task.bgSrcUrl = null;
+        task.srcUrl = null;
     } else if (field === 'audio') {
         task.audioPath = filePath;
     } else if (field === 'srt') {
         task.srtPath = filePath;
         _readSrtFileToTask(task, file);
-        console.log(`[BatchTable] After _readSrtFileToTask: segments.length=${(task.segments||[]).length}`);
+        console.log(`[BatchTable] After _readSrtFileToTask: segments.length=${(task.segments || []).length}`);
     } else if (field === 'txt') {
         task.txtPath = filePath;
         _readTxtFileToTask(task, file);
@@ -8508,6 +8629,9 @@ function _assignSingleFile(idx, field, file) {
 
     _renderBatchTable();
     if (typeof _renderTaskList === 'function') _renderTaskList();
+    if (window._reelsState && window._reelsState.selectedIdx === idx && typeof reelsSelectTask === 'function') {
+        reelsSelectTask(idx);
+    }
 }
 
 /**
@@ -8633,6 +8757,57 @@ function _rbtSmartLineBreak(text, customMaxChars) {
 // 10. Batch Alignment (对齐字幕)
 // ═══════════════════════════════════════════════════════
 
+function _showMismatchDialog(taskName, mismatchData, sourceText) {
+    return new Promise((resolve) => {
+        // Create modal
+        const modal = document.createElement('div');
+        modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);display:flex;align-items:center;justify-content:center;z-index:99999;';
+
+        const content = document.createElement('div');
+        content.style.cssText = 'background:var(--bg-primary);width:600px;max-width:90%;border-radius:12px;padding:24px;border:1px solid rgba(255,255,255,0.1);box-shadow:0 10px 40px rgba(0,0,0,0.5);display:flex;flex-direction:column;gap:16px;';
+
+        const escapeHtml = (str) => {
+            return String(str).replace(/[&<>'"]/g, match => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[match]));
+        };
+
+        content.innerHTML = `
+            <div style="display:flex;align-items:center;gap:10px;">
+                <span style="font-size:24px;">⚠️</span>
+                <h3 style="margin:0;color:var(--text-primary);">文案匹配度警告 (匹配度: ${mismatchData.similarity}%)</h3>
+            </div>
+            <div style="font-size:14px;color:var(--text-muted);line-height:1.5;">
+                任务 <b style="color:var(--text-primary);">${escapeHtml(taskName)}</b> 提取到的声音与您提供的参考文案差异极大。<br/>
+                强行对齐将导致字幕时间轴严重错乱。
+            </div>
+            <div style="display:flex;gap:12px;margin-top:8px;">
+                <div style="flex:1;background:rgba(255,255,255,0.03);padding:12px;border-radius:8px;border:1px solid rgba(255,255,255,0.05);">
+                    <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;font-weight:bold;">📝 您提供的原文案</div>
+                    <div style="font-size:13px;color:var(--text-primary);max-height:150px;overflow-y:auto;line-height:1.5;white-space:pre-wrap;">${escapeHtml(sourceText || '')}</div>
+                </div>
+                <div style="flex:1;background:rgba(255,255,255,0.03);padding:12px;border-radius:8px;border:1px solid rgba(255,255,255,0.05);">
+                    <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;font-weight:bold;">🎙️ AI 实际识别到的声音</div>
+                    <div style="font-size:13px;color:var(--text-primary);max-height:150px;overflow-y:auto;line-height:1.5;white-space:pre-wrap;">${escapeHtml(mismatchData.recognized_text || '')}</div>
+                </div>
+            </div>
+            <div style="font-size:13px;color:var(--text-muted);margin-top:10px;">请选择如何处理此任务：</div>
+            <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px;">
+                <button id="mismatch-btn-force" class="btn btn-secondary" style="flex:1;">⚠️ 强制使用原文案</button>
+                <button id="mismatch-btn-skip" class="btn btn-secondary" style="flex:1;">⏭️ 跳过此任务</button>
+                <button id="mismatch-btn-use" class="btn btn-primary" style="flex:1.5;background:var(--accent-color);color:white;border:none;">🚀 使用识别文案 (推荐)</button>
+            </div>
+        `;
+
+        modal.appendChild(content);
+        document.body.appendChild(modal);
+
+        const cleanup = () => document.body.removeChild(modal);
+
+        modal.querySelector('#mismatch-btn-force').addEventListener('click', () => { cleanup(); resolve('FORCE'); });
+        modal.querySelector('#mismatch-btn-skip').addEventListener('click', () => { cleanup(); resolve('SKIP'); });
+        modal.querySelector('#mismatch-btn-use').addEventListener('click', () => { cleanup(); resolve('USE_RECOGNIZED'); });
+    });
+}
+
 async function _batchAlignAllTasks(overrideForce = false) {
     // 先同步表格输入到 task
     _applyBatchTableChanges();
@@ -8642,6 +8817,7 @@ async function _batchAlignAllTasks(overrideForce = false) {
 
     const alignSource = document.getElementById('rbt-align-source')?.value || 'audio';
     const forceRealign = document.getElementById('rbt-force-realign')?.checked || false;
+    const allowBlind = document.getElementById('rbt-allow-blind')?.checked || false;
 
     const textSourceCol = document.getElementById('rbt-align-txt-col')?.value || 'txtContent';
 
@@ -8663,10 +8839,10 @@ async function _batchAlignAllTasks(overrideForce = false) {
         return '';
     };
 
-    // 筛选需要对齐的任务: 选定的文本列有内容 + 有音频源 + (未对齐 或 强制)
+    // 筛选需要对齐的任务: 有音频源 + (选定的文本列有内容或允许盲转) + (未对齐 或 强制)
     const tasksToAlign = state.tasks.filter(t => {
         const text = getSourceText(t);
-        if (!text || !text.trim()) return false;
+        if ((!text || !text.trim()) && !allowBlind) return false;
         if (t.aligned && !forceRealign && !overrideForce) return false;
         const hasAudio = alignSource === 'video'
             ? (t.bgPath || t.videoPath)
@@ -8675,7 +8851,15 @@ async function _batchAlignAllTasks(overrideForce = false) {
     });
 
     if (tasksToAlign.length === 0) {
-        alert('没有需要对齐的任务。\n请确认：\n1. 人声字幕列有文案\n2. 有音频/视频文件\n3. 尚未对齐');
+        const alreadyAligned = state.tasks.filter(t => {
+            const text = getSourceText(t);
+            return text && text.trim() && t.aligned;
+        }).length;
+        if (alreadyAligned > 0) {
+            alert(`没有需要对齐的任务。\n\n📋 当前有 ${alreadyAligned} 个任务已对齐完成。\n\n💡 如需重新对齐，请勾选「强制覆盖已对齐任务」复选框后再点击对齐。`);
+        } else {
+            alert('没有需要对齐的任务。\n请确认：\n1. 人声字幕列有文案\n2. 有音频/视频文件\n3. 尚未对齐');
+        }
         return;
     }
 
@@ -8684,7 +8868,7 @@ async function _batchAlignAllTasks(overrideForce = false) {
         const settingsResp = await apiFetch('settings/gemini-keys');
         const settingsData = await settingsResp.json();
         if (settingsData && settingsData.lbMaxChars) lbMaxChars = settingsData.lbMaxChars;
-    } catch(e) {}
+    } catch (e) { }
 
     const progressEl = document.getElementById('rbt-align-progress');
     const alignBtn = document.getElementById('rbt-align-all-btn');
@@ -8692,12 +8876,14 @@ async function _batchAlignAllTasks(overrideForce = false) {
 
     let ok = 0, fail = 0;
     const failDetails = [];
+    let freshCount = 0, cacheCount = 0; // 追踪转录来源统计
     const language = document.getElementById('rbt-align-lang')?.value || '英语';
 
     for (let i = 0; i < tasksToAlign.length; i++) {
         const task = tasksToAlign[i];
         const taskName = task.baseName || task.fileName || `任务${i + 1}`;
-        if (progressEl) progressEl.textContent = `🔗 对齐 ${i + 1}/${tasksToAlign.length}: ${taskName}`;
+        const isForcedRedo = (task.aligned || overrideForce);
+        if (progressEl) progressEl.textContent = `🔗 对齐 ${i + 1}/${tasksToAlign.length}: ${taskName}${isForcedRedo ? ' (强制重新)' : ''}`;
 
         try {
             // 确定音频路径
@@ -8708,29 +8894,69 @@ async function _batchAlignAllTasks(overrideForce = false) {
             if (!audioPath) throw new Error('没有音频文件');
 
             // 自动断行文案
-            const sourceText = _rbtSmartLineBreak(getSourceText(task), lbMaxChars);
+            let sourceText = _rbtSmartLineBreak(getSourceText(task), lbMaxChars);
 
-            // 调用对齐API（使用 apiFetch + API_BASE）
-            const audioDir = audioPath.replace(/[\\/][^\\/]+$/, '');
-            const resp = await apiFetch(`${API_BASE}/subtitle/generate`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    audio_path: audioPath,
-                    source_text: sourceText,
-                    language: language,
-                    audio_cut_length: 5.0,
-                    output_dir: audioDir,
-                    force: (task.aligned || overrideForce) ? true : false,  // 已对齐过则强制重新转录
-                }),
-            });
+            let ignoreMismatch = false;
+            let retryAlign = true;
+            let resp = null;
 
-            if (!resp.ok) {
-                const err = await resp.json();
-                throw new Error(err.error || '对齐失败');
+            while (retryAlign) {
+                retryAlign = false;
+                // 调用对齐API（使用 apiFetch + API_BASE）
+                const audioDir = audioPath.replace(/[\\/][^\\/]+$/, '');
+                resp = await apiFetch(`${API_BASE}/subtitle/generate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        audio_path: audioPath,
+                        source_text: sourceText,
+                        language: language,
+                        audio_cut_length: 5.0,
+                        output_dir: audioDir,
+                        force: isForcedRedo ? true : false,  // 已对齐过则强制重新转录
+                        ignore_mismatch: ignoreMismatch
+                    }),
+                });
+
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    let errMsg = err.error || '对齐失败';
+
+                    if (errMsg.includes('"code":"TEXT_MISMATCH"')) {
+                        try {
+                            const mismatchData = JSON.parse(errMsg);
+                            const choice = await _showMismatchDialog(taskName, mismatchData, getSourceText(task));
+
+                            if (choice === 'USE_RECOGNIZED') {
+                                const newText = mismatchData.recognized_text;
+                                if (textSourceCol === 'txtContent') task.txtContent = newText;
+                                else if (textSourceCol === 'ttsText') task.ttsText = newText;
+                                // 自动断行以便传入对齐
+                                sourceText = _rbtSmartLineBreak(newText, lbMaxChars);
+                                ignoreMismatch = true;
+                                retryAlign = true;
+                                continue;
+                            } else if (choice === 'FORCE') {
+                                ignoreMismatch = true;
+                                retryAlign = true;
+                                continue;
+                            } else {
+                                throw new Error('用户跳过对齐 (匹配度过低)');
+                            }
+                        } catch (e) {
+                            if (e.message.includes('跳过')) throw e;
+                            // JSON解析失败或其他错误，走默认报错
+                        }
+                    }
+                    throw new Error(errMsg);
+                }
             }
 
             const data = await resp.json();
+
+            // 统计转录来源
+            if (data.transcription_source === 'gladia_fresh') freshCount++;
+            else if (data.transcription_source === 'gladia_cache') cacheCount++;
 
             // 保存 SRT 路径并解析 segments
             if (data.files && data.files.length > 0) {
@@ -8747,6 +8973,8 @@ async function _batchAlignAllTasks(overrideForce = false) {
             }
 
             task.aligned = true;
+            task.alignedAt = new Date().toLocaleString('zh-CN');
+            task.alignSource = data.transcription_source || 'unknown';
             ok++;
         } catch (err) {
             console.error('[BatchAlign] Failed:', taskName, err);
@@ -8767,10 +8995,16 @@ async function _batchAlignAllTasks(overrideForce = false) {
     _renderBatchTable();
     if (typeof _renderTaskList === 'function') _renderTaskList();
 
+    // 构建详细报告
+    const sourceDesc = [];
+    if (freshCount > 0) sourceDesc.push(`🎙️ 新转录 ${freshCount} 个`);
+    if (cacheCount > 0) sourceDesc.push(`📦 使用缓存 ${cacheCount} 个`);
+    const sourceInfo = sourceDesc.length > 0 ? `\n转录来源: ${sourceDesc.join(', ')}` : '';
+
     if (fail > 0) {
-        alert(`对齐完成 ${ok}/${tasksToAlign.length}\n\n失败:\n${failDetails.slice(0, 5).join('\n')}`);
+        alert(`对齐完成 ${ok}/${tasksToAlign.length}${sourceInfo}\n\n失败:\n${failDetails.slice(0, 5).join('\n')}`);
     } else {
-        alert(`✅ 字幕对齐完成 ${ok} 个任务\nSRT 文件已自动保存到音频文件所在目录`);
+        alert(`✅ 字幕对齐完成 ${ok} 个任务${sourceInfo}\nSRT 文件已自动保存到音频文件所在目录`);
     }
 }
 
@@ -8790,7 +9024,7 @@ function _updateBatchSelectCount() {
     const count = _batchTableState.selectedRows.size;
     if (el) el.textContent = count > 0 ? `已选 ${count} 行` : '';
     if (exportBtn) exportBtn.style.display = count > 0 ? '' : 'none';
-    
+
     const tasks = window._reelsState?.tasks || [];
     const allSelected = tasks.length > 0 && count === tasks.length;
     const sa = container.querySelector('#rbt-select-all');
@@ -9794,7 +10028,7 @@ async function _showProjectManager() {
                 return { path: f, filename: parts[parts.length - 1] };
             });
             // sort by filename or basic length
-            projects.sort((a,b) => a.filename.localeCompare(b.filename));
+            projects.sort((a, b) => a.filename.localeCompare(b.filename));
         } catch (e) {
             loadError = e.message;
         }
@@ -9889,7 +10123,7 @@ window._extLoadProject = async (pathStr) => {
     }
     try {
         const file = new File([content], _batchTableState.projectName || 'project.json', { type: 'application/json' });
-        
+
         // 我们利用现成的导入逻辑，稍微魔改下跳过 input.click
         // 因为现成的 _batchImportConfig 需要传入 file (FileReader)，它会确认。
         const data = JSON.parse(content);
@@ -9913,7 +10147,7 @@ window._extLoadProject = async (pathStr) => {
 
             const popup = document.getElementById('rbt-project-mgr-popup');
             if (popup) popup.remove();
-            
+
             const total = _batchTableState.tabs.reduce((s, t) => s + (t.tasks || []).length, 0);
             alert(`✅ 已成功加载工程！`);
         } else {
@@ -9933,7 +10167,7 @@ window._extLoadProject = async (pathStr) => {
  */
 function _collectPathsToCheck(tasks) {
     const FIELDS = ['bgPath', 'videoPath', 'audioPath', 'srtPath', 'txtPath', 'pipPath',
-                    'contentVideoPath', 'bgmPath', 'hookFile'];
+        'contentVideoPath', 'bgmPath', 'hookFile'];
     const entries = []; // { taskIdx, field, path, fileName }
 
     for (let i = 0; i < tasks.length; i++) {
@@ -10389,11 +10623,11 @@ function _showClipAbPasteModal() {
             <div style="display:flex;align-items:center;margin-bottom:6px;gap:16px;">
                  <label style="font-size:11px;color:#ccc;font-weight:600;">📹 视频覆层素材 (内容素材) 及 裁切/缩放设置：</label>
                  <label style="font-size:11px;color:#aaa;cursor:pointer;display:flex;align-items:center;gap:4px;">
-                     <input type="radio" name="clip_cv_mode" value="single" ${presetCvMode==='single'?'checked':''} style="accent-color:var(--accent);">
+                     <input type="radio" name="clip_cv_mode" value="single" ${presetCvMode === 'single' ? 'checked' : ''} style="accent-color:var(--accent);">
                      单视频使用同一素材 (名称列若填入 '00:10-00:20' 则自动应用为裁切入出点)
                  </label>
                  <label style="font-size:11px;color:#aaa;cursor:pointer;display:flex;align-items:center;gap:4px;">
-                     <input type="radio" name="clip_cv_mode" value="multi" ${presetCvMode==='multi'?'checked':''} style="accent-color:var(--accent);">
+                     <input type="radio" name="clip_cv_mode" value="multi" ${presetCvMode === 'multi' ? 'checked' : ''} style="accent-color:var(--accent);">
                      多视频素材夹 (每行按顺序指派)
                  </label>
             </div>
@@ -10449,10 +10683,10 @@ function _showClipAbPasteModal() {
 
     // ── 表格数据模型 ──
     let _tableData = []; // [{videoName, clipName, timeRange, aTitle, aBody, bTitle, bBody}]
-    const COL_KEYS = ['videoName','clipName','timeRange','aTitle','aBody','bTitle','bBody'];
+    const COL_KEYS = ['videoName', 'clipName', 'timeRange', 'aTitle', 'aBody', 'bTitle', 'bBody'];
 
     function _ensureMinRows(n) {
-        while (_tableData.length < n) _tableData.push({videoName:'',clipName:'',timeRange:'',aTitle:'',aBody:'',bTitle:'',bBody:''});
+        while (_tableData.length < n) _tableData.push({ videoName: '', clipName: '', timeRange: '', aTitle: '', aBody: '', bTitle: '', bBody: '' });
     }
     _ensureMinRows(5);
 
@@ -10572,7 +10806,7 @@ function _showClipAbPasteModal() {
     function _renderAbPreview() {
         const previewEl = overlay.querySelector('#rbt-clip-ab-preview');
         const dataRows = _tableData.filter(row => COL_KEYS.some(k => row[k]));
-        
+
         if (dataRows.length === 0) {
             previewEl.innerHTML = '<div style="color:#666;text-align:center;padding:20px;">等待粘贴数据...</div>';
             return;
@@ -10580,17 +10814,17 @@ function _showClipAbPasteModal() {
 
         let html = '<table style="width:100%;border-collapse:collapse;color:#ccc;table-layout:fixed;border-radius:4px;overflow:hidden;box-shadow:0 0 0 1px #333;">';
         html += '<tr style="background:#222;position:sticky;top:0;"><th style="padding:4px 6px;border-bottom:1px solid #444;width:35px;">版</th><th style="padding:4px 6px;border-bottom:1px solid #444;width:80px;">名称</th><th style="padding:4px 6px;border-bottom:1px solid #444;width:60px;">时间</th><th style="padding:4px 6px;border-bottom:1px solid #444;text-align:left;">文案内容</th></tr>';
-        
+
         for (let i = 0; i < Math.min(dataRows.length, 30); i++) {
             const row = dataRows[i];
-            const clipName = row.clipName || row.videoName || `clip_${i+1}`;
+            const clipName = row.clipName || row.videoName || `clip_${i + 1}`;
             const timeStr = row.timeRange ? `<span style="color:#888;">${_escHtml(row.timeRange)}</span>` : '';
-            
+
             let aTitle = row.aTitle ? `<strong style="color:#ccc;">${_escHtml(row.aTitle)}</strong>` : '';
             let aBody = row.aBody ? `<span style="color:#aaa;">${_escHtml(row.aBody)}</span>` : '';
             let bTitle = row.bTitle ? `<strong style="color:#ccc;">${_escHtml(row.bTitle)}</strong>` : '';
             let bBody = row.bBody ? `<span style="color:#aaa;">${_escHtml(row.bBody)}</span>` : '';
-            
+
             if (aTitle || aBody) {
                 html += `<tr style="background:#1a1a24;"><td style="padding:4px 6px;border-bottom:1px solid #2a2a3a;color:#a78bfa;font-weight:bold;text-align:center;">A</td><td style="padding:4px 6px;border-bottom:1px solid #2a2a3a;word-break:break-all;color:#ccc;">${_escHtml(clipName)}_A</td><td style="padding:4px 6px;border-bottom:1px solid #2a2a3a;">${timeStr}</td><td style="padding:4px 6px;border-bottom:1px solid #2a2a3a;word-break:break-word;">${[aTitle, aBody].filter(Boolean).join(' <span style="color:#555">|</span> ')}</td></tr>`;
             }
@@ -10621,7 +10855,7 @@ function _showClipAbPasteModal() {
 
     function setupFileSelectPath(id) {
         const input = overlay.querySelector('#' + id);
-        
+
         const triggerNativeDialog = async () => {
             if (window.require) {
                 try {
@@ -10651,7 +10885,7 @@ function _showClipAbPasteModal() {
                     const file = e.target.files[0];
                     let localPath = file.path;
                     if (!localPath && window.electronAPI && window.electronAPI.getFilePath) {
-                        try { localPath = window.electronAPI.getFilePath(file); } catch (_) {}
+                        try { localPath = window.electronAPI.getFilePath(file); } catch (_) { }
                     }
                     input.value = localPath || file.name;
                 }
@@ -10673,7 +10907,7 @@ function _showClipAbPasteModal() {
                 const file = e.dataTransfer.files[0];
                 let localPath = file.path;
                 if (!localPath && window.electronAPI && window.electronAPI.getFilePath) {
-                    try { localPath = window.electronAPI.getFilePath(file); } catch (_) {}
+                    try { localPath = window.electronAPI.getFilePath(file); } catch (_) { }
                 }
                 input.value = localPath || file.name;
             }
@@ -10681,10 +10915,10 @@ function _showClipAbPasteModal() {
     }
     setupFileSelectPath('rbt-clip-bg-a');
     setupFileSelectPath('rbt-clip-bg-b');
-    
+
     const cvInput = overlay.querySelector('#rbt-clip-cv-path');
     const cvModeRadios = overlay.querySelectorAll('input[name="clip_cv_mode"]');
-    
+
     function updateCvBtnLabel() {
         const isMulti = document.querySelector('input[name="clip_cv_mode"]:checked').value === 'multi';
         overlay.querySelector('#rbt-clip-cv-btn').textContent = isMulti ? '📁 选择文件夹' : '🎬 选择视频文件';
@@ -10694,7 +10928,7 @@ function _showClipAbPasteModal() {
 
     overlay.querySelector('#rbt-clip-cv-btn').addEventListener('click', async () => {
         const isMulti = document.querySelector('input[name="clip_cv_mode"]:checked').value === 'multi';
-        
+
         let handled = false;
         if (window.require) {
             try {
@@ -10775,14 +11009,14 @@ function _showClipAbPasteModal() {
         const cvMode = document.querySelector('input[name="clip_cv_mode"]:checked').value;
         const cvPath = overlay.querySelector('#rbt-clip-cv-path').value.trim();
         const cvScale = parseInt(overlay.querySelector('#rbt-clip-cv-scale').value, 10) || 100;
-        
+
         localStorage.setItem('rbt_clip_bg_preset_a', bgA);
         localStorage.setItem('rbt_clip_bg_preset_b', bgB);
         localStorage.setItem('rbt_clip_cv_mode', cvMode);
         localStorage.setItem('rbt_clip_cv_preset', cvPath);
 
         const state = window._reelsState;
-        
+
         // 解析多视频文件夹逻辑
         let cvFiles = [];
         if (cvMode === 'multi' && cvPath && window.require) {
@@ -10810,14 +11044,14 @@ function _showClipAbPasteModal() {
                 break;
             }
         }
-        
+
         // 时间解析 Helper
         function _parseTimeStr(str) {
             if (typeof window.parseBatchCutTime === 'function') return window.parseBatchCutTime(str);
             // 简单的回退解析 hh:mm:ss.ff
             const p = String(str).split(':');
-            if (p.length === 3) return parseFloat(p[0])*3600 + parseFloat(p[1])*60 + parseFloat(p[2]);
-            if (p.length === 2) return parseFloat(p[0])*60 + parseFloat(p[1]);
+            if (p.length === 3) return parseFloat(p[0]) * 3600 + parseFloat(p[1]) * 60 + parseFloat(p[2]);
+            if (p.length === 2) return parseFloat(p[0]) * 60 + parseFloat(p[1]);
             return parseFloat(p[0]) || null;
         }
 
@@ -10876,10 +11110,10 @@ function _showClipAbPasteModal() {
                 if (trimStart !== null) taskA.contentVideoTrimStart = trimStart;
                 if (trimEnd !== null) taskA.contentVideoTrimEnd = trimEnd;
             }
-            
+
             if (aTitle || aBody || aFooter) {
                 if (window.ReelsOverlay && window.ReelsOverlay.createTextCardOverlay) {
-                    taskA.overlays = [ window.ReelsOverlay.createTextCardOverlay({title_text: aTitle, body_text: aBody, footer_text: aFooter, start: 0, end: 9999}) ];
+                    taskA.overlays = [window.ReelsOverlay.createTextCardOverlay({ title_text: aTitle, body_text: aBody, footer_text: aFooter, start: 0, end: 9999 })];
                 } else {
                     taskA.overlays = [{ type: 'textcard', id: 'tc_' + Date.now() + '_a', title_text: aTitle, body_text: aBody, footer_text: aFooter, x: 85, y: 310, w: 910, h: 1300, start: 0, end: 9999 }];
                 }
@@ -10900,22 +11134,22 @@ function _showClipAbPasteModal() {
                     if (trimStart !== null) taskB.contentVideoTrimStart = trimStart;
                     if (trimEnd !== null) taskB.contentVideoTrimEnd = trimEnd;
                 }
-                
+
                 if (window.ReelsOverlay && window.ReelsOverlay.createTextCardOverlay) {
-                    taskB.overlays = [ window.ReelsOverlay.createTextCardOverlay({title_text: bTitle, body_text: bBody, footer_text: bFooter, start: 0, end: 9999}) ];
+                    taskB.overlays = [window.ReelsOverlay.createTextCardOverlay({ title_text: bTitle, body_text: bBody, footer_text: bFooter, start: 0, end: 9999 })];
                 } else {
                     taskB.overlays = [{ type: 'textcard', id: 'tc_' + Date.now() + '_b', title_text: bTitle, body_text: bBody, footer_text: bFooter, x: 85, y: 310, w: 910, h: 1300, start: 0, end: 9999 }];
                 }
                 state.tasks.push(taskB);
                 created++;
             }
-            
+
             validRowIndex++;
         }
 
         overlay.remove();
         _renderBatchTable();
-        
+
         setTimeout(() => {
             const scroller = document.querySelector('#rbt-tbody-wrapper') || document.querySelector('.rbt-table-container');
             if (scroller) scroller.scrollTop = scroller.scrollHeight;
@@ -10983,12 +11217,12 @@ function _bindMediaSidebarEvents(container) {
             poolEl.innerHTML = items.map((it) => {
                 const realIdx = allItems.indexOf(it);
                 const urlObj = window.electronAPI && window.electronAPI.toFileUrl ? window.electronAPI.toFileUrl(it.path) : `file://${it.path}`;
-                const thumbHtml = it.isImage 
-                    ? `<img class="rbt-thumb-previewable" src="${_escHtml(urlObj)}" style="width:20px;height:20px;object-fit:cover;border-radius:2px;">` 
-                    : it.isVideo 
-                        ? `<video class="rbt-thumb-previewable" src="${_escHtml(urlObj)}#t=1" style="width:20px;height:20px;object-fit:cover;border-radius:2px;background:#000;"></video>` 
+                const thumbHtml = it.isImage
+                    ? `<img class="rbt-thumb-previewable" src="${_escHtml(urlObj)}" style="width:20px;height:20px;object-fit:cover;border-radius:2px;">`
+                    : it.isVideo
+                        ? `<video class="rbt-thumb-previewable" src="${_escHtml(urlObj)}#t=1" style="width:20px;height:20px;object-fit:cover;border-radius:2px;background:#000;"></video>`
                         : (it.type === 'seq' ? '🎞️' : it.isAudio ? '🎙' : '📄');
-                        
+
                 return `
                 <div class="rbt-ms-item" data-idx="${realIdx}" draggable="true" style="display:flex; align-items:center; gap:6px; padding:4px 6px; border-radius:4px; background:#1a1a2e; margin-bottom:3px; font-size:11px; color:#ccc; cursor:grab; transition: background 0.2s;" title="${_escHtml(it.path || it.name)}">
                     <span style="flex-shrink:0;">${thumbHtml}</span>
@@ -11004,9 +11238,9 @@ function _bindMediaSidebarEvents(container) {
 
     const _classifyFile = (name) => {
         const ext = (name || '').split('.').pop().toLowerCase();
-        const videoExts = new Set(['mp4','mov','mkv','avi','wmv','flv','webm']);
-        const imageExts = new Set(['jpg','jpeg','png','webp','bmp','tiff']);
-        const audioExts = new Set(['mp3','wav','m4a','aac','flac','ogg','wma']);
+        const videoExts = new Set(['mp4', 'mov', 'mkv', 'avi', 'wmv', 'flv', 'webm']);
+        const imageExts = new Set(['jpg', 'jpeg', 'png', 'webp', 'bmp', 'tiff']);
+        const audioExts = new Set(['mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg', 'wma']);
         return {
             isVideo: videoExts.has(ext),
             isImage: imageExts.has(ext),
@@ -11047,7 +11281,7 @@ function _bindMediaSidebarEvents(container) {
                 const result = await dialog.showOpenDialog(getCurrentWindow(), {
                     title: '选择素材文件',
                     properties: ['openFile', 'multiSelections'],
-                    filters: [{ name: '媒体文件', extensions: ['mp4','mov','mkv','avi','wmv','flv','webm','jpg','jpeg','png','webp','bmp','tiff','mp3','wav','m4a','aac','flac','ogg','wma','srt','txt'] }]
+                    filters: [{ name: '媒体文件', extensions: ['mp4', 'mov', 'mkv', 'avi', 'wmv', 'flv', 'webm', 'jpg', 'jpeg', 'png', 'webp', 'bmp', 'tiff', 'mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg', 'wma', 'srt', 'txt'] }]
                 });
                 if (!result.canceled && result.filePaths?.length > 0) _addFilesByPath(result.filePaths);
                 return;

@@ -545,7 +545,8 @@ function audioSubtitleSearchDifferentStrong(
     generationSubtitleArray, generationSubtitleText,
     sourceTextWithInfo, translateTextDict,
     genMergeSrt, sourceUpOrder, exportFcpxml, seamlessFcpxml,
-    sourceSrtPath = null, fcpxmlPath = null
+    sourceSrtPath = null, fcpxmlPath = null,
+    ignoreMismatch = false
 ) {
     // 构建纯文本（不含结构信息）
     let sourceTextWithNoInfo = '';
@@ -573,6 +574,36 @@ function audioSubtitleSearchDifferentStrong(
     dmp.Diff_Timeout = 0;
     const diffs = dmp.diff_main(cleanedGenText, cleanedSourceText);
     dmp.diff_cleanupSemantic(diffs);
+
+    // === 文案匹配度检测 ===
+    if (!ignoreMismatch) {
+        let equalLen = 0;
+        for (const [op, text] of diffs) {
+            if (op === 0) equalLen += text.length;
+        }
+        const maxLen = Math.max(cleanedGenText.length, cleanedSourceText.length);
+        const similarity = maxLen === 0 ? 1 : equalLen / maxLen;
+
+        if (similarity < 0.60) {
+            // 构建带换行的原始识别文案，方便前端展示或替换
+            let recognizedText = '';
+            if (Array.isArray(generationSubtitleArray)) {
+                recognizedText = generationSubtitleArray.map(p => {
+                    if (p.text) return p.text;
+                    if (Array.isArray(p.words)) return p.words.map(w => w.word).join(' ');
+                    return '';
+                }).join('\n');
+            } else {
+                recognizedText = generationSubtitleText;
+            }
+
+            return JSON.stringify({
+                code: 'TEXT_MISMATCH',
+                similarity: Math.round(similarity * 100),
+                recognized_text: recognizedText
+            });
+        }
+    }
 
     return processDiffsWithAudioPositionsStrong({
         title: fileName,

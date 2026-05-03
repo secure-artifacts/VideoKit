@@ -10,6 +10,8 @@
  * 使用 Web Audio API 进行音频分析，Canvas 渲染频谱。
  */
 
+(() => {
+
 // ═══════════════════════════════════════════════════════
 // 1. Audio Spectrum Analyzer
 // ═══════════════════════════════════════════════════════
@@ -320,3 +322,5 @@ const ReelsAudioSpectrum = {
 
 if (typeof window !== 'undefined') window.ReelsAudioSpectrum = ReelsAudioSpectrum;
 if (typeof module !== 'undefined' && module.exports) module.exports = ReelsAudioSpectrum;
+
+})();

@@ -3095,7 +3095,16 @@ async function startGeneration() {
 
         if (!response.ok) {
             const error = await response.json();
-            throw new Error(error.error || '请求失败');
+            let errMsg = error.error || '请求失败';
+            
+            // 处理匹配度拦截
+            if (errMsg.includes('"code":"TEXT_MISMATCH"')) {
+                try {
+                    const mismatchData = JSON.parse(errMsg);
+                    errMsg = `⚠️ 文案匹配度警告！\n\nAI 实际听到的声音与您提供的文案匹配度仅有 ${mismatchData.similarity}%，强行对齐将导致错位。\n\n请修改原文案后再试，或在批量表格中使用此功能进行纠错。`;
+                } catch(e) {}
+            }
+            throw new Error(errMsg);
         }
 
         showToast('开始处理...', 'info');
@@ -7472,6 +7481,15 @@ let sceneFiles = [];         // [{path, name}]
 let sceneResults = {};       // { filePath: { data, segments } }
 let sceneOutputDir = '';
 
+function getSceneOutputFolderMode() {
+    return document.getElementById('scene-output-folder-mode')?.value || 'per_video';
+}
+
+function createSceneBatchName(kind = 'scenes') {
+    const stamp = new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14);
+    return `scene_batch_${kind}_${stamp}`;
+}
+
 // 初始化场景检测
 document.addEventListener('DOMContentLoaded', () => {
     const sceneInput = document.getElementById('scene-video-input');
@@ -7820,6 +7838,8 @@ async function exportSingleFile(idx) {
     }
 
     const outputDir = document.getElementById('media-output-path').value || '';
+    const folderMode = getSceneOutputFolderMode();
+    const batchName = folderMode === 'batch' ? createSceneBatchName('scenes') : '';
     const statusEl = document.getElementById('scene-export-text');
     const exportSection = document.getElementById('scene-export-status');
 
@@ -7833,7 +7853,9 @@ async function exportSingleFile(idx) {
             body: JSON.stringify({
                 file_path: file.path,
                 segments: selectedSegments,
-                output_dir: outputDir
+                output_dir: outputDir,
+                folder_mode: folderMode,
+                batch_name: batchName
             })
         });
 
@@ -7859,6 +7881,8 @@ async function exportAllScenes() {
     }
 
     const outputDir = document.getElementById('media-output-path').value || '';
+    const folderMode = getSceneOutputFolderMode();
+    const batchName = folderMode === 'batch' ? createSceneBatchName('scenes') : '';
     const statusEl = document.getElementById('scene-export-text');
     const progressEl = document.getElementById('scene-export-progress');
     const exportSection = document.getElementById('scene-export-status');
@@ -7879,7 +7903,9 @@ async function exportAllScenes() {
                 body: JSON.stringify({
                     file_path: file.path,
                     segments: result.segments,
-                    output_dir: outputDir
+                    output_dir: outputDir,
+                    folder_mode: folderMode,
+                    batch_name: batchName
                 })
             });
 
@@ -7956,6 +7982,8 @@ async function startSceneDetectFrames() {
     const imageFormat = document.getElementById('scene-frame-format').value;
     const quality = parseInt(document.getElementById('scene-frame-quality').value);
     const outputDir = document.getElementById('media-output-path')?.value || '';
+    const folderMode = getSceneOutputFolderMode();
+    const batchName = folderMode === 'batch' ? createSceneBatchName('keyframes') : '';
 
     let totalFrames = 0;
     let successCount = 0;
@@ -7988,7 +8016,9 @@ async function startSceneDetectFrames() {
                     frames_per_scene: framesPerScene,
                     format: imageFormat,
                     quality: quality,
-                    output_dir: outputDir || ''
+                    output_dir: outputDir || '',
+                    folder_mode: folderMode,
+                    batch_name: batchName
                 })
             });
 

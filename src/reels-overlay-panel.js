@@ -44,6 +44,7 @@ class ReelsOverlayPanel {
                     <div style="display:flex;gap:4px;align-items:center;">
                         <select id="rop-group-preset-select" class="rop-select" style="flex:1;"></select>
                         <button class="btn btn-secondary rop-btn" id="rop-group-preset-load" style="padding:2px 8px;">加载</button>
+                        <button class="btn btn-secondary rop-btn" id="rop-group-preset-gallery" style="padding:2px 8px;background:var(--accent-primary,#7b8bef);color:#fff;" title="打开可视化预设库">📂 预设库</button>
                     </div>
                     <div style="display:flex;gap:4px;margin-top:4px;">
                         <button class="btn btn-secondary rop-btn" id="rop-group-preset-save" style="flex:1;">保存</button>
@@ -205,6 +206,21 @@ class ReelsOverlayPanel {
                         <label>蒙版高度</label>
                         <div class="rop-slider-combo"><input type="range" id="rop-card-height" class="rop-range rop-defaultable" data-default="1300" min="0" max="1920" value="1300"><input type="number" class="rop-num-readout" data-link="rop-card-height" min="0" max="1920" value="1300"><button class="rop-reset-btn" data-target="rop-card-height" title="恢复默认">↺</button></div>
                         <label>全屏蒙版</label><input type="checkbox" id="rop-fullscreen-mask" class="rop-defaultable" data-default="false">
+                        
+                        <div style="grid-column: span 2; font-size:11px; color:var(--accent); margin-top:6px; margin-bottom:2px; border-bottom: 1px solid var(--border-color); padding-bottom: 4px;">背景羽化</div>
+                        <label>开启羽化</label><input type="checkbox" id="rop-card-feather-enabled" class="rop-defaultable" data-default="false">
+                        <label>羽化方向</label>
+                        <select id="rop-card-feather-dir" class="rop-select rop-defaultable" data-default="bottom">
+                            <option value="bottom">底部透明</option>
+                            <option value="top">顶部透明</option>
+                            <option value="left">左侧透明</option>
+                            <option value="right">右侧透明</option>
+                            <option value="radial">四周边缘透明</option>
+                        </select>
+                        <label>实体边界%</label>
+                        <div class="rop-slider-combo"><input type="range" id="rop-card-feather-start" class="rop-range rop-defaultable" data-default="50" min="0" max="100" value="50"><input type="number" class="rop-num-readout" data-link="rop-card-feather-start" min="0" max="100" value="50"><button class="rop-reset-btn" data-target="rop-card-feather-start" title="恢复默认">↺</button></div>
+                        <label>全透明边界%</label>
+                        <div class="rop-slider-combo"><input type="range" id="rop-card-feather-end" class="rop-range rop-defaultable" data-default="100" min="0" max="100" value="100"><input type="number" class="rop-num-readout" data-link="rop-card-feather-end" min="0" max="100" value="100"><button class="rop-reset-btn" data-target="rop-card-feather-end" title="恢复默认">↺</button></div>
                     </div>
 
                     <div class="rop-group-title" style="display:flex; align-items:center; gap:6px; margin-top:8px; margin-bottom:4px; padding-bottom:4px;">
@@ -855,6 +871,7 @@ class ReelsOverlayPanel {
         // Overlay group presets
         this.container.querySelector('#rop-group-preset-save')?.addEventListener('click', () => this._saveOverlayGroupPreset());
         this.container.querySelector('#rop-group-preset-load')?.addEventListener('click', () => this._loadOverlayGroupPreset());
+        this.container.querySelector('#rop-group-preset-gallery')?.addEventListener('click', () => this._showPresetGallery());
         this.container.querySelector('#rop-group-preset-del')?.addEventListener('click', () => this._deleteOverlayGroupPreset());
         this.container.querySelector('#rop-group-preset-import')?.addEventListener('click', () => this._importOverlayGroupPresets());
         this.container.querySelector('#rop-group-preset-export')?.addEventListener('click', () => this._exportOverlayGroupPresets());
@@ -981,7 +998,7 @@ class ReelsOverlayPanel {
             'rop-anim-dest-enabled', 'rop-anim-easing', 'rop-anim-timing-mode', 'rop-anim-duration', 'rop-anim-speed', 'rop-anim-start-x', 'rop-anim-start-y', 'rop-anim-end-x', 'rop-anim-end-y', 'rop-anim-start-scale', 'rop-anim-end-scale',
             // Text card fields
             'rop-card-enabled',
-            'rop-card-color', 'rop-card-opacity', 'rop-radius-all',
+            'rop-card-color', 'rop-card-opacity', 'rop-radius-all', 'rop-card-feather-enabled', 'rop-card-feather-dir', 'rop-card-feather-start', 'rop-card-feather-end',
             'rop-title-text', 'rop-title-font', 'rop-title-fontsize',
             'rop-title-color', 'rop-title-bold', 'rop-title-weight', 'rop-title-uppercase', 'rop-title-align', 'rop-title-valign',
             'rop-title-offset-x', 'rop-title-offset-y', 'rop-title-linespacing', 'rop-title-letterspacing',
@@ -2316,6 +2333,10 @@ class ReelsOverlayPanel {
             this._val('rop-card-enabled', ov.card_enabled ?? true);
             this._val('rop-card-color', ov.card_color || '#ffffff');
             this._val('rop-card-opacity', ov.card_opacity ?? 80);
+            this._val('rop-card-feather-enabled', ov.card_feather_enabled ?? false);
+            this._val('rop-card-feather-dir', ov.card_feather_dir || 'bottom');
+            this._val('rop-card-feather-start', ov.card_feather_start ?? 50);
+            this._val('rop-card-feather-end', ov.card_feather_end ?? 100);
             this._val('rop-radius-all', ov.radius_tl ?? 33);
             this._val('rop-title-text', ov.title_text || '');
             this._val('rop-title-font', ov.title_font_family || 'Crimson Pro');
@@ -2654,6 +2675,10 @@ class ReelsOverlayPanel {
             ov.card_enabled = this._get('rop-card-enabled');
             ov.card_color = this._get('rop-card-color');
             ov.card_opacity = this._get('rop-card-opacity');
+            ov.card_feather_enabled = this._get('rop-card-feather-enabled');
+            ov.card_feather_dir = this._get('rop-card-feather-dir');
+            ov.card_feather_start = this._get('rop-card-feather-start');
+            ov.card_feather_end = this._get('rop-card-feather-end');
             this._syncTextcardMaskEnabledUI();
             const radius = this._get('rop-radius-all');
             ov.radius_tl = radius;
@@ -3383,8 +3408,76 @@ class ReelsOverlayPanel {
 
     _getOverlayGroupPresets() {
         try {
-            return JSON.parse(localStorage.getItem('reels_overlay_group_presets') || '{}');
-        } catch (e) { return {}; }
+            const presets = JSON.parse(localStorage.getItem('reels_overlay_group_presets') || '{}');
+            let migrated = false;
+            for (const [name, data] of Object.entries(presets)) {
+                try {
+                    // 强制清空旧的缩略图缓存（只清空一次），以便应用英文占位符
+                    if (data && typeof data === 'object' && !Array.isArray(data)) {
+                        if (data.meta && !data.meta.en_thumb_migrated_v3) {
+                            delete data.thumbnail;
+                            data.meta.en_thumb_migrated_v3 = true;
+                            migrated = true;
+                        }
+                    }
+
+                    if (Array.isArray(data)) {
+                        presets[name] = this._migratePresetFormat(name, data);
+                        migrated = true;
+                    } else if (data && typeof data === 'object' && !data.layers && !data.meta && !data.id) {
+                        // Edge case: single object instead of array
+                        presets[name] = this._migratePresetFormat(name, [data]);
+                        migrated = true;
+                    }
+                } catch (err) {
+                    console.error(`[PresetMigration] Failed to migrate preset ${name}:`, err);
+                    delete presets[name]; // Remove corrupted preset so it doesn't break everything else
+                }
+            }
+            if (migrated) {
+                localStorage.setItem('reels_overlay_group_presets', JSON.stringify(presets));
+                console.log('[PresetMigration] 已将旧格式的自定义预设迁移至新可视化格式');
+            }
+            return presets;
+        } catch (e) {
+            console.error('[PresetMigration] JSON parse error:', e);
+            return {};
+        }
+    }
+
+    _migratePresetFormat(name, layers) {
+        if (!Array.isArray(layers)) layers = [];
+        // Filter out null/undefined layers
+        layers = layers.filter(l => l && typeof l === 'object');
+        
+        const textcards = layers.filter(l => l.type === 'textcard');
+        const scrolls = layers.filter(l => l.type === 'scroll');
+        const nonFixed = textcards.filter(l => !l.fixed_text);
+        
+        const batchColumns = [];
+        if (nonFixed.length > 0) {
+            batchColumns.push('覆层标题', '覆层内容');
+        }
+        if (scrolls.length > 0) {
+            batchColumns.push('滚动标题', '滚动内容');
+        }
+
+        return {
+            id: `preset_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,
+            name,
+            thumbnail: null,
+            layers: layers,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            meta: {
+                layerCount: layers.length,
+                hasFixedText: textcards.some(l => l.fixed_text),
+                hasScroll: scrolls.length > 0,
+                hasTextcard: textcards.length > 0,
+                needsBatchText: nonFixed.length > 0 || scrolls.length > 0,
+                batchColumns
+            }
+        };
     }
 
     _setOverlayGroupPresets(data) {
@@ -3398,10 +3491,12 @@ class ReelsOverlayPanel {
         const current = select.value;
         const presets = this._getOverlayGroupPresets();
         
-        // 尝试合并代码内置的预设 (防止 localStorage 未初始化)
+        // 尝试合并代码内置的预设 (防丢失)
         if (window.REELS_BUILTIN_OVERLAY_GROUP_PRESETS) {
             for (const [k, v] of Object.entries(window.REELS_BUILTIN_OVERLAY_GROUP_PRESETS)) {
-                if (!presets[k]) presets[k] = v;
+                if (!presets[k]) {
+                    presets[k] = Array.isArray(v) ? this._migratePresetFormat(k, v) : v;
+                }
             }
         }
 
@@ -3410,7 +3505,8 @@ class ReelsOverlayPanel {
         const builtInKeys = window.REELS_BUILTIN_OVERLAY_GROUP_PRESETS ? Object.keys(window.REELS_BUILTIN_OVERLAY_GROUP_PRESETS) : [];
 
         for (const name of Object.keys(presets)) {
-            const layers = presets[name];
+            const data = presets[name];
+            const layers = Array.isArray(data) ? data : data.layers;
             const count = Array.isArray(layers) ? layers.length : 0;
             const isBuiltin = builtInKeys.includes(name);
             const optHtml = `<option value="${name}">${name} (${count}层)</option>`;
@@ -3459,8 +3555,22 @@ class ReelsOverlayPanel {
             return clone;
         });
 
+        // 渲染缩略图
+        let thumbnail = null;
+        if (typeof PresetThumbRenderer !== 'undefined') {
+            try {
+                const renderer = new PresetThumbRenderer();
+                thumbnail = renderer.renderThumb(serialized);
+            } catch (err) {
+                console.warn('Failed to generate preset thumbnail:', err);
+            }
+        }
+
         const presets = this._getOverlayGroupPresets();
-        presets[name] = serialized;
+        const newPreset = this._migratePresetFormat(name, serialized);
+        if (thumbnail) newPreset.thumbnail = thumbnail;
+        
+        presets[name] = newPreset;
         this._setOverlayGroupPresets(presets);
         this._refreshOverlayGroupPresetSelect();
         const select = this.container.querySelector('#rop-group-preset-select');
@@ -3476,7 +3586,8 @@ class ReelsOverlayPanel {
         }
         const name = select.value;
         const presets = this._getOverlayGroupPresets();
-        const layers = presets[name];
+        const presetData = presets[name];
+        const layers = Array.isArray(presetData) ? presetData : (presetData?.layers || []);
         if (!Array.isArray(layers) || layers.length === 0) {
             alert('该预设为空或格式不正确');
             return;
@@ -3596,6 +3707,374 @@ class ReelsOverlayPanel {
         if (this.videoCanvas) this.videoCanvas.render();
         if (missingTextLayers.length > 0) {
             alert(`预设已加载，但以下覆层没有对应文案，请手动填写：\n${missingTextLayers.join('\n')}`);
+        }
+    }
+
+    _showPresetGallery(onSelectCallback) {
+        if (!onSelectCallback && (!this.videoCanvas || !this.videoCanvas.overlayMgr)) {
+            alert('没有可用的覆层管理器');
+            return;
+        }
+
+        const presets = this._getOverlayGroupPresets();
+        let builtInKeys = [];
+        if (window.REELS_BUILTIN_OVERLAY_GROUP_PRESETS) {
+            builtInKeys = Object.keys(window.REELS_BUILTIN_OVERLAY_GROUP_PRESETS);
+            for (const [k, v] of Object.entries(window.REELS_BUILTIN_OVERLAY_GROUP_PRESETS)) {
+                if (!presets[k]) presets[k] = Array.isArray(v) ? this._migratePresetFormat(k, v) : v;
+            }
+        }
+
+        const modal = document.createElement('div');
+        modal.className = 'rop-gallery-modal';
+        modal.innerHTML = `
+            <div class="rop-gallery-content">
+                <div class="rop-gallery-header">
+                    <h3>📂 覆层预设可视化图库</h3>
+                    <div class="rop-gallery-tabs">
+                        <button class="rop-gallery-tab active" data-filter="all">全部分组</button>
+                        <button class="rop-gallery-tab" data-filter="custom">我的预设</button>
+                        <button class="rop-gallery-tab" data-filter="builtin">内置预设</button>
+                    </div>
+                    <button class="rop-gallery-close">✕</button>
+                </div>
+                <div class="rop-gallery-main">
+                    <div class="rop-gallery-sidebar">
+                        <div class="rop-gallery-sidebar-list" id="rop-gallery-sidebar-list"></div>
+                    </div>
+                    <div class="rop-gallery-body">
+                        <div class="rop-gallery-grid" id="rop-gallery-grid"></div>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+
+        const closeBtn = modal.querySelector('.rop-gallery-close');
+        closeBtn.onclick = () => document.body.removeChild(modal);
+
+        const tabs = modal.querySelectorAll('.rop-gallery-tab');
+        tabs.forEach(t => t.onclick = (e) => {
+            tabs.forEach(btn => btn.classList.remove('active'));
+            t.classList.add('active');
+            const filter = t.getAttribute('data-filter');
+            modal.querySelectorAll('.rop-gallery-card').forEach(card => {
+                if (filter === 'all') card.style.display = '';
+                else if (filter === 'custom' && !card.classList.contains('builtin-card')) card.style.display = '';
+                else if (filter === 'builtin' && card.classList.contains('builtin-card')) card.style.display = '';
+                else card.style.display = 'none';
+            });
+            modal.querySelectorAll('.rop-gallery-sidebar-item').forEach(item => {
+                if (filter === 'all') item.style.display = '';
+                else if (filter === 'custom' && !item.classList.contains('builtin-item')) item.style.display = '';
+                else if (filter === 'builtin' && item.classList.contains('builtin-item')) item.style.display = '';
+                else item.style.display = 'none';
+            });
+        });
+
+        const grid = modal.querySelector('#rop-gallery-grid');
+        const sidebarList = modal.querySelector('#rop-gallery-sidebar-list');
+        
+        // 排序：自定义在前，内置在后
+        const sortedEntries = Object.entries(presets).sort(([nameA], [nameB]) => {
+            const isBuiltinA = builtInKeys.includes(nameA);
+            const isBuiltinB = builtInKeys.includes(nameB);
+            if (isBuiltinA && !isBuiltinB) return 1;
+            if (!isBuiltinA && isBuiltinB) return -1;
+            return 0;
+        });
+
+        for (const [name, data] of sortedEntries) {
+            const isBuiltin = builtInKeys.includes(name);
+            const layers = Array.isArray(data) ? data : data.layers;
+            const meta = data.meta || {};
+            
+            const cardId = `rop-gallery-card-${name.replace(/\W/g, '_')}`;
+            const card = document.createElement('div');
+            card.id = cardId;
+            card.className = `rop-gallery-card ${isBuiltin ? 'builtin-card' : 'custom-card'}`;
+            
+            const sideItem = document.createElement('div');
+            sideItem.className = `rop-gallery-sidebar-item ${isBuiltin ? 'builtin-item' : 'custom-item'}`;
+            sideItem.textContent = name;
+            sideItem.title = name;
+            sideItem.onclick = () => {
+                modal.querySelectorAll('.rop-gallery-sidebar-item').forEach(i => i.classList.remove('active'));
+                sideItem.classList.add('active');
+                card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                card.style.boxShadow = '0 0 0 2px var(--accent)';
+                card.style.transition = 'box-shadow 0.3s';
+                setTimeout(() => card.style.boxShadow = '', 1500);
+            };
+            sidebarList.appendChild(sideItem);
+            
+            let thumbUrl = data.thumbnail || '';
+            const imgHtml = thumbUrl ? `<img class="rop-gallery-thumb" src="${thumbUrl}" />` : `<div class="rop-gallery-thumb-placeholder" style="color:#666;">加载中...</div>`;
+
+            if (!thumbUrl && typeof PresetThumbRenderer !== 'undefined') {
+                try {
+                    const renderer = new PresetThumbRenderer();
+                    renderer.renderThumbAsync(layers).then(url => {
+                        if (!url) {
+                            const placeholder = card.querySelector('.rop-gallery-thumb-placeholder');
+                            if (placeholder) placeholder.textContent = '无预览 (受限)';
+                            return;
+                        }
+
+                        const imgEl = card.querySelector('.rop-gallery-thumb');
+                        if (imgEl) imgEl.src = url;
+                        else {
+                            const placeholder = card.querySelector('.rop-gallery-thumb-placeholder');
+                            if (placeholder) {
+                                const newImg = document.createElement('img');
+                                newImg.className = 'rop-gallery-thumb';
+                                newImg.src = url;
+                                placeholder.replaceWith(newImg);
+                            }
+                        }
+                        if (!isBuiltin) {
+                            data.thumbnail = url;
+                            this._setOverlayGroupPresets(presets);
+                        }
+                    }).catch(err => {
+                        console.error('Thumb async failed:', err);
+                        const placeholder = card.querySelector('.rop-gallery-thumb-placeholder');
+                        if (placeholder) placeholder.textContent = '渲染失败';
+                    });
+                } catch(e) { 
+                    console.warn('Thumb gen failed', e);
+                    const placeholder = card.querySelector('.rop-gallery-thumb-placeholder');
+                    if (placeholder) placeholder.textContent = '渲染失败';
+                }
+            }
+            const tags = [];
+            if (isBuiltin) tags.push(`<span class="rop-badge builtin">内置</span>`);
+            tags.push(`<span class="rop-badge count">${layers.length} 层</span>`);
+            if (meta.hasFixedText) tags.push(`<span class="rop-badge fixed">含固定文案</span>`);
+            if (meta.needsBatchText) tags.push(`<span class="rop-badge batch">需批量填充</span>`);
+
+            const hasTextLayers = layers.some(l => l.type === 'text' || l.type === 'textcard' || l.type === 'scroll');
+
+            let actionsHtml = '';
+            if (onSelectCallback) {
+                actionsHtml = `
+                    <div class="rop-gallery-actions" style="margin-top:auto;">
+                        <button class="rop-btn" data-mode="batch" style="width:100%;background:var(--accent,#7b8bef);color:#fff;">选用此预设</button>
+                    </div>
+                `;
+            } else if (!hasTextLayers) {
+                actionsHtml = `
+                    <div class="rop-gallery-actions">
+                        <button class="rop-btn keep" data-mode="keep" style="width:100%;" title="应用该预设，并保留你原有的文字覆层">应用预设 (保留原有文字)</button>
+                    </div>
+                `;
+            } else {
+                actionsHtml = `
+                    <div class="rop-gallery-actions">
+                        <button class="rop-btn keep" data-mode="keep" title="保留当前文案，仅套用样式">保留文案</button>
+                        <button class="rop-btn use" data-mode="use" title="使用预设自带文案">全用预设</button>
+                        <button class="rop-btn clear" data-mode="clear" title="清除预设文案(适合进入批量表格)">清除(等批量)</button>
+                    </div>
+                `;
+            }
+
+            card.innerHTML = `
+                ${imgHtml}
+                <div class="rop-gallery-info">
+                    <div class="rop-gallery-title-row">
+                        <div class="rop-gallery-title" title="${name}">${name}</div>
+                        ${!isBuiltin && !onSelectCallback ? `<button class="rop-gallery-delete-btn" title="删除该预设">✕</button>` : ''}
+                    </div>
+                    <div class="rop-gallery-tags">${tags.join('')}</div>
+                    ${actionsHtml}
+                </div>
+            `;
+            
+            const delBtn = card.querySelector('.rop-gallery-delete-btn');
+            if (delBtn) {
+                delBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    if (confirm(`确定要删除预设 "${name}" 吗？`)) {
+                        delete presets[name];
+                        this._setOverlayGroupPresets(presets);
+                        card.remove();
+                        sideItem.remove();
+                        this._refreshOverlayGroupPresetSelect();
+                    }
+                };
+            }
+            
+            const btns = card.querySelectorAll('.rop-gallery-actions .rop-btn');
+            btns.forEach(btn => {
+                btn.onclick = (e) => {
+                    const mode = e.target.getAttribute('data-mode');
+                    if (onSelectCallback) {
+                        onSelectCallback(name, data, mode);
+                    } else {
+                        this._applyPresetFromGallery(data, mode);
+                    }
+                    document.body.removeChild(modal);
+                };
+            });
+
+            grid.appendChild(card);
+        }
+    }
+
+    _applyPresetFromGallery(presetData, mode) {
+        const mgr = this.videoCanvas.overlayMgr;
+        if (!mgr) return;
+        
+        const layers = Array.isArray(presetData) ? presetData : presetData.layers;
+        if (!layers || layers.length === 0) return;
+
+        if (mgr.overlays.length > 0 && !confirm(`加载预设将替换当前层结构。是否继续？`)) return;
+
+        // Save existing text before clearing.
+        const oldTextByIndex = [...mgr.overlays];
+        const oldTextByType = new Map();
+        const usedOldText = new Set();
+        const collectText = (ov) => {
+            if (!ov || typeof ov !== 'object') return null;
+            const data = {};
+            let hasText = false;
+            if (ov.type === 'textcard') {
+                if (ov.title_text) { data.title_text = ov.title_text; hasText = true; }
+                if (ov.body_text) { data.body_text = ov.body_text; hasText = true; }
+                if (ov.footer_text) { data.footer_text = ov.footer_text; hasText = true; }
+            } else if (ov.type === 'scroll') {
+                if (ov.scroll_title) { data.scroll_title = ov.scroll_title; hasText = true; }
+                if (ov.content) { data.content = ov.content; hasText = true; }
+            } else if (ov.type === 'text') {
+                if (ov.content) { data.content = ov.content; hasText = true; }
+            }
+            if (hasText) {
+                if (!oldTextByType.has(ov.type)) oldTextByType.set(ov.type, []);
+                oldTextByType.get(ov.type).push(ov);
+            }
+            return hasText ? data : null;
+        };
+
+        const nextTextFor = (type) => {
+            const list = oldTextByType.get(type);
+            if (!list || list.length === 0) return null;
+            for (let i = 0; i < list.length; i++) {
+                const ov = list[i];
+                if (!usedOldText.has(ov)) {
+                    usedOldText.add(ov);
+                    return collectText(ov);
+                }
+            }
+            return null;
+        };
+
+        const applyText = (ov, tData) => {
+            if (!tData) return;
+            if (ov.type === 'textcard') {
+                if (tData.title_text) ov.title_text = tData.title_text;
+                if (tData.body_text) ov.body_text = tData.body_text;
+                if (tData.footer_text) ov.footer_text = tData.footer_text;
+            } else if (ov.type === 'scroll') {
+                if (tData.scroll_title) ov.scroll_title = tData.scroll_title;
+                if (tData.content) ov.content = tData.content;
+            } else if (ov.type === 'text') {
+                if (tData.content) ov.content = tData.content;
+            }
+        };
+
+        const layerHasText = (ov) => {
+            if (ov.type === 'textcard') return !!(ov.title_text || ov.body_text || ov.footer_text);
+            if (ov.type === 'scroll') return !!(ov.scroll_title || ov.content);
+            if (ov.type === 'text') return !!ov.content;
+            return true;
+        };
+
+        const layerNeedsText = (ov) => {
+            if (!ov || ov.fixed_text) return false;
+            return ov.type === 'text' || ov.type === 'textcard' || ov.type === 'scroll';
+        };
+
+        const layerLabel = (ov, idx) => {
+            const typeLabel = ov.type === 'scroll' 
+                ? '滚动字幕' 
+                : ov.type === 'textcard'
+                    ? '文字卡片'
+                    : ov.type === 'text'
+                        ? '文本覆层'
+                        : '覆层';
+            return `${idx + 1}.${typeLabel}`;
+        };
+
+        const missingTextLayers = [];
+        mgr.overlays = [];
+
+        for (let i = 0; i < layers.length; i++) {
+            const layerData = layers[i];
+            const clone = JSON.parse(JSON.stringify(layerData));
+            clone.id = 'ov_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+            clone.start = 0;
+            clone.end = 9999;
+            
+            if (clone.fixed_text) {
+                // 固定文案永远原样保留
+                mgr.overlays.push(clone);
+                continue;
+            }
+
+            if (mode === 'keep') {
+                // 保留模式: 用之前的文案填充
+                const indexedSource = oldTextByIndex[i];
+                const indexedText = usedOldText.has(indexedSource) ? null : collectText(indexedSource);
+                if (indexedText) usedOldText.add(indexedSource);
+                applyText(clone, indexedText || nextTextFor(clone.type));
+                
+                if (layerNeedsText(clone) && !layerHasText(clone)) {
+                    missingTextLayers.push(layerLabel(clone, i));
+                }
+            } else if (mode === 'clear') {
+                // 清除模式: 清空文案, 给表格留位置
+                if (clone.type === 'textcard') {
+                    clone.title_text = '';
+                    clone.body_text = '';
+                    clone.footer_text = '';
+                } else if (clone.type === 'scroll') {
+                    clone.scroll_title = '';
+                    clone.content = '';
+                } else if (clone.type === 'text') {
+                    clone.content = '';
+                }
+            } else if (mode === 'use') {
+                // 全用预设模式: 原样使用预设里的文案(即 clone 本身)
+                // 预设可能本身就没有文案（比如用 clear 模式保存的），不过这是预设自身的状态，用户选择了"使用预设"。
+            }
+            mgr.overlays.push(clone);
+        }
+
+        if (mode === 'keep') {
+            // Append any old text layers that were not absorbed by the new preset
+            for (const oldOv of oldTextByIndex) {
+                if (!usedOldText.has(oldOv)) {
+                    if (oldOv.type === 'text' || oldOv.type === 'textcard' || oldOv.type === 'scroll') {
+                        const clone = JSON.parse(JSON.stringify(oldOv));
+                        clone.id = 'ov_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+                        mgr.overlays.push(clone);
+                    }
+                }
+            }
+        }
+
+        this._selectedOv = mgr.overlays[0] || null;
+        this._refreshList();
+        if (this._selectedOv) this._syncFromOverlay(this._selectedOv);
+        if (this.videoCanvas) this.videoCanvas.render();
+
+        if (mode === 'keep' && missingTextLayers.length > 0) {
+            alert(`预设已加载，但以下覆层没有可继承的文案，请手动填写：\n${missingTextLayers.join('\n')}`);
+        } else if (mode === 'clear') {
+            const batchColStr = (presetData.meta && presetData.meta.batchColumns && presetData.meta.batchColumns.length > 0) 
+                ? presetData.meta.batchColumns.join(', ')
+                : '覆层标题、覆层内容等';
+            alert(`已清空可替换文案。\n💡 建议在【批量表格】中配置对应的列（如：${batchColStr}）并导入数据。`);
         }
     }
 
@@ -3734,6 +4213,55 @@ class ReelsOverlayPanel {
         .rop-reset-all { padding:2px 8px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.05);
                          border-radius:4px; color:#888; font-size:10px; cursor:pointer; transition:all 0.15s; white-space:nowrap; }
         .rop-reset-all:hover { background:rgba(0,212,255,0.15); color:var(--accent); border-color:rgba(0,212,255,0.3); }
+
+        /* Preset Gallery Modal */
+        .rop-gallery-modal { position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:10000; display:flex; align-items:center; justify-content:center; }
+        .rop-gallery-content { width:90%; max-width:960px; height:85%; background:#1a1a2e; border-radius:12px; display:flex; flex-direction:column; box-shadow:0 10px 40px rgba(0,0,0,0.8); overflow:hidden; border:1px solid #333; }
+        .rop-gallery-header { display:flex; justify-content:space-between; align-items:center; padding:16px 20px; background:#141424; border-bottom:1px solid #333; gap: 20px; }
+        .rop-gallery-header h3 { margin:0; font-size:18px; color:#fff; white-space:nowrap; }
+        
+        .rop-gallery-tabs { display:flex; gap:8px; background:#0f0f1d; padding:4px; border-radius:8px; flex:1; max-width:400px; border: 1px solid #333; }
+        .rop-gallery-tab { flex:1; background:transparent; border:none; color:#888; font-size:13px; padding:6px 0; border-radius:6px; cursor:pointer; transition:all 0.2s; }
+        .rop-gallery-tab:hover { color:#ccc; background:rgba(255,255,255,0.05); }
+        .rop-gallery-tab.active { background:#3a3a5c; color:#fff; font-weight:bold; }
+        
+        .rop-gallery-close { background:none; border:none; color:#ccc; font-size:24px; cursor:pointer; margin-left:auto; }
+        .rop-gallery-close:hover { color:#fff; }
+        
+        .rop-gallery-main { display:flex; flex:1; overflow:hidden; height:100%; }
+        .rop-gallery-sidebar { width:180px; background:#0f0f1d; border-right:1px solid #333; overflow-y:auto; padding:12px; display:flex; flex-direction:column; gap:4px; flex-shrink:0; }
+        .rop-gallery-sidebar-item { padding:8px 10px; color:#aaa; cursor:pointer; border-radius:6px; font-size:13px; text-overflow:ellipsis; overflow:hidden; white-space:nowrap; transition:background 0.15s, color 0.15s; border:1px solid transparent; }
+        .rop-gallery-sidebar-item:hover { background:rgba(255,255,255,0.05); color:#fff; border-color:#333; }
+        .rop-gallery-sidebar-item.active { background:#3a3a5c; color:#fff; font-weight:bold; border-color:#555; }
+        
+        .rop-gallery-body { flex:1; overflow-y:auto; padding:20px; scroll-behavior:smooth; }
+        .rop-gallery-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:20px; }
+        
+        .rop-gallery-card { background:#24243e; border-radius:8px; overflow:hidden; border:1px solid #3a3a5c; display:flex; flex-direction:column; transition:transform 0.2s, box-shadow 0.2s; }
+        .rop-gallery-card:hover { transform:translateY(-4px); box-shadow:0 8px 24px rgba(0,0,0,0.5); border-color:#7b8bef; }
+        
+        .rop-gallery-thumb, .rop-gallery-thumb-placeholder { width:100%; aspect-ratio:9/16; object-fit:contain; background:#000; border-bottom:1px solid #333; }
+        .rop-gallery-thumb-placeholder { display:flex; align-items:center; justify-content:center; color:#555; font-size:14px; }
+        
+        .rop-gallery-info { padding:12px; display:flex; flex-direction:column; flex:1; gap:8px; }
+        .rop-gallery-title-row { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+        .rop-gallery-title { font-weight:bold; color:#fff; font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1; }
+        .rop-gallery-delete-btn { background:none; border:none; color:#888; font-size:14px; cursor:pointer; padding:0 4px; transition:color 0.2s; }
+        .rop-gallery-delete-btn:hover { color:#ff4444; }
+        
+        .rop-gallery-tags { display:flex; flex-wrap:wrap; gap:4px; }
+        .rop-badge { padding:2px 6px; border-radius:4px; font-size:10px; font-weight:600; }
+        .rop-badge.builtin { background:#3a3a5c; color:#a7b3cc; }
+        .rop-badge.count { background:#7b8bef33; color:#7b8bef; }
+        .rop-badge.fixed { background:#e8b83933; color:#e8b839; }
+        .rop-badge.batch { background:#a3e86c33; color:#a3e86c; }
+        
+        .rop-gallery-actions { display:flex; flex-direction:column; gap:6px; margin-top:auto; }
+        .rop-gallery-actions .rop-btn { width:100%; text-align:center; padding:6px 0 !important; font-size:12px !important; border:1px solid #444; border-radius:4px; cursor:pointer; transition:all 0.2s; background:#333; color:#ccc; }
+        .rop-gallery-actions .rop-btn.keep { background:#7b8bef22; border-color:#7b8bef; color:#7b8bef; }
+        .rop-gallery-actions .rop-btn.use { background:#a3e86c22; border-color:#a3e86c; color:#a3e86c; }
+        .rop-gallery-actions .rop-btn.clear { background:#e8b83922; border-color:#e8b839; color:#e8b839; }
+        .rop-gallery-actions .rop-btn:hover { filter:brightness(1.5); }
     `;
     document.head.appendChild(s);
 })();

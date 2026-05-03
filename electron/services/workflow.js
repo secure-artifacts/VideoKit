@@ -206,6 +206,10 @@ async function ttsWorkflow(data) {
                 targetFcpxmlPath
             );
 
+            if (typeof alignResult === 'string' && !alignResult.startsWith('生成了字幕文件')) {
+                throw new Error(`字幕对齐失败: ${alignResult}`);
+            }
+
             console.log(`[一键配音] 字幕对齐结果: ${alignResult}`);
 
             if (fs.existsSync(targetSrtPath)) {

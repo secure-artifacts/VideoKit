@@ -62,7 +62,7 @@ function gladiaRequest(method, urlStr, headers, body, timeout = 120000) {
 /**
  * 从视频文件中提取音频（替代 Python extract_audio_from_video）
  */
-async function extractAudioFromVideo(videoPath, outputDir, audioFormat = 'mp3') {
+async function extractAudioFromVideo(videoPath, outputDir, audioFormat = 'wav') {
     const baseName = path.parse(videoPath).name;
     const audioPath = path.join(outputDir, `${baseName}.${audioFormat}`);
     fs.mkdirSync(outputDir, { recursive: true });
@@ -139,7 +139,7 @@ async function detectSilencePoints(filePath, silenceThreshDb = -30, minSilenceLe
  * 按静音切分长音频 — 替代 Python split_audio_on_silence
  * 使用 FFmpeg 进行切分
  */
-async function splitAudioOnSilence(audioPath, outputDir, minMinutes = 5.0, maxMinutes = 50.0, audioFormat = 'mp3') {
+async function splitAudioOnSilence(audioPath, outputDir, minMinutes = 5.0, maxMinutes = 50.0, audioFormat = 'wav') {
     fs.mkdirSync(outputDir, { recursive: true });
     const baseName = path.parse(audioPath).name;
 
@@ -437,12 +437,12 @@ async function transcribeAudioFull(mediaPath, apiKeys, language, jsonPath, txtPa
     const videoExts = ['.mp4', '.mov', '.mkv', '.flv', '.avi', '.wmv'];
     if (videoExts.includes(path.extname(mediaPath).toLowerCase())) {
         if (onProgress) onProgress('提取音频');
-        audioPath = await extractAudioFromVideo(mediaPath, tmpDir);
+        audioPath = await extractAudioFromVideo(mediaPath, tmpDir, 'wav');
     }
 
     // 切分音频
     if (onProgress) onProgress('切分音频');
-    const segments = await splitAudioOnSilence(audioPath, tmpDir, minMinutes);
+    const segments = await splitAudioOnSilence(audioPath, tmpDir, minMinutes, 50.0, 'wav');
 
     // 开始转录
     let curStartTime = 0;

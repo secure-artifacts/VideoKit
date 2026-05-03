@@ -119,15 +119,33 @@ function saveElevenLabsSettings(inputData) {
 }
 
 // ElevenLabs Keys with Status
+function normalizeElevenLabsKeysWithStatus(value) {
+    if (Array.isArray(value)) {
+        return value
+            .map(entry => typeof entry === 'string' ? { key: entry, enabled: true } : entry)
+            .filter(entry => entry && typeof entry === 'object' && typeof entry.key === 'string' && entry.key.trim());
+    }
+    if (typeof value === 'string' && value.trim()) {
+        return [{ key: value.trim(), enabled: true }];
+    }
+    if (value && typeof value === 'object') {
+        return Object.values(value)
+            .map(entry => typeof entry === 'string' ? { key: entry, enabled: true } : entry)
+            .filter(entry => entry && typeof entry === 'object' && typeof entry.key === 'string' && entry.key.trim());
+    }
+    return [];
+}
+
 function loadElevenLabsKeysWithStatus() {
     const data = readJSON(getElevenLabsSettingsPath()) || {};
-    const kws = data.keys_with_status || [];
+    const kws = normalizeElevenLabsKeysWithStatus(data.keys_with_status);
     if (kws.length > 0) return kws;
-    return (data.api_keys || []).map(k => ({ key: k, enabled: true }));
+    const legacyKeys = Array.isArray(data.api_keys) ? data.api_keys : (data.api_keys ? [data.api_keys] : []);
+    return legacyKeys.map(k => ({ key: k, enabled: true })).filter(entry => entry.key && entry.key.trim());
 }
 function saveElevenLabsKeysWithStatus(keysData) {
     const data = readJSON(getElevenLabsSettingsPath()) || {};
-    data.keys_with_status = keysData;
+    data.keys_with_status = normalizeElevenLabsKeysWithStatus(keysData);
     writeJSON(getElevenLabsSettingsPath(), data);
 }
 

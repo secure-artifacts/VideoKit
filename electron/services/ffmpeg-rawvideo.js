@@ -1410,6 +1410,24 @@ async function parallelExport(opts, mainWindow) {
     } else {
         scriptBase = path.join(__dirname, '..', '..', 'src');
     }
+
+    // Apply audioDurScale to subtitle segments to keep sync
+    const _audioDurFactor = (params.audioDurScale || 100) / 100;
+    let _segments = params.segments || [];
+    if (_audioDurFactor !== 1.0 && _segments.length > 0) {
+        console.log(`[Parallel] 字幕时间戳同步缩放 ×${_audioDurFactor.toFixed(2)}`);
+        _segments = _segments.map(seg => ({
+            ...seg,
+            start: (seg.start || 0) * _audioDurFactor,
+            end:   (seg.end   || 0) * _audioDurFactor,
+            words: seg.words ? seg.words.map(w => ({
+                ...w,
+                start: (w.start || 0) * _audioDurFactor,
+                end:   (w.end   || 0) * _audioDurFactor,
+            })) : undefined
+        }));
+    }
+
     const scriptPaths = {
         canvasRenderer: path.join(scriptBase, 'reels-canvas-renderer.js'),
         overlay: path.join(scriptBase, 'reels-overlay.js'),
@@ -1516,7 +1534,7 @@ async function parallelExport(opts, mainWindow) {
                     loopFade: params.loopFade,
                     loopFadeDur: params.loopFadeDur,
                     style: params.style,
-                    segments: params.segments || [],
+                    segments: _segments,
                     overlays: params.overlays || [],
                     contentVideoPath: params.contentVideoPath,
                     contentVideoTrimStart: params.contentVideoTrimStart,

@@ -375,6 +375,19 @@ async function sceneDetect(filePath, threshold = 0.05, minInterval = 0.5) {
  * preview=true 时：生成 320px 宽的低质量缩略图用于预览确认
  * preview=false 时：生成原始尺寸高质量帧到正式输出目录
  */
+function sceneBuildOutputDir(filePath, outputDir, suffix, folderMode = 'per_video', batchName = '') {
+    const baseName = path.parse(filePath).name;
+    const outDir = outputDir || path.dirname(filePath);
+    if (folderMode === 'batch') {
+        const safeBatchName = String(batchName || 'scene_batch')
+            .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+            .replace(/\s+/g, '_')
+            .slice(0, 120) || 'scene_batch';
+        return path.join(outDir, safeBatchName);
+    }
+    return path.join(outDir, `${baseName}_${suffix}`);
+}
+
 async function sceneDetectFrames(filePath, options = {}) {
     const {
         threshold = 0.3,
@@ -385,6 +398,8 @@ async function sceneDetectFrames(filePath, options = {}) {
         outputDir = '',
         boundaryOffset = 0.04,
         cleanOld = false,
+        folderMode = 'per_video',
+        batchName = '',
     } = options;
 
     // 1. 场景检测
@@ -393,8 +408,7 @@ async function sceneDetectFrames(filePath, options = {}) {
 
     // 2. 构建输出目录
     const baseName = path.parse(filePath).name;
-    const outDir = outputDir || path.dirname(filePath);
-    const framesDir = path.join(outDir, `${baseName}_keyframes`);
+    const framesDir = sceneBuildOutputDir(filePath, outputDir, 'keyframes', folderMode, batchName);
 
     // 清除旧文件
     if (cleanOld && fs.existsSync(framesDir)) {
@@ -493,11 +507,12 @@ async function sceneExportFrames(filePath, frameList, options = {}) {
         quality = 2,
         outputDir = '',
         cleanOld = false,
+        folderMode = 'per_video',
+        batchName = '',
     } = options;
 
     const baseName = path.parse(filePath).name;
-    const outDir = outputDir || path.dirname(filePath);
-    const framesDir = path.join(outDir, `${baseName}_keyframes`);
+    const framesDir = sceneBuildOutputDir(filePath, outputDir, 'keyframes', folderMode, batchName);
     fs.mkdirSync(framesDir, { recursive: true });
 
     // 清除旧文件
@@ -635,11 +650,10 @@ function _buildFrameTimestamps(segments, duration, framesPerScene, boundaryOffse
 }
 
 /** 场景拆分 */
-async function sceneSplit(filePath, segments, outputDir) {
+async function sceneSplit(filePath, segments, outputDir, options = {}) {
     const baseName = path.parse(filePath).name;
     const ext = path.extname(filePath).toLowerCase();
-    const outDir = outputDir || path.dirname(filePath);
-    const sceneOutputDir = path.join(outDir, `${baseName}_scenes`);
+    const sceneOutputDir = sceneBuildOutputDir(filePath, outputDir, 'scenes', options.folderMode, options.batchName);
     fs.mkdirSync(sceneOutputDir, { recursive: true });
 
     const exported = [];

@@ -67,7 +67,7 @@ languages = [
 ]
 
 
-def extract_audio_from_video(video_path, output_path, audio_format="mp3"):
+def extract_audio_from_video(video_path, output_path, audio_format="wav"):
     """从视频文件中提取音频"""
     if not os.path.exists(video_path):
         raise FileNotFoundError(f"视频文件不存在: {video_path}")
@@ -108,7 +108,7 @@ def extract_audio_from_video(video_path, output_path, audio_format="mp3"):
 
 
 def split_audio_on_silence(audio_path, output_dir, min_minutes=20.0, max_minutes=50.0,
-                           silence_thresh=None, min_silence_len=500, audio_format="mp3"):
+                           silence_thresh=None, min_silence_len=500, audio_format="wav"):
     """按静音切分长音频"""
     audio = AudioSegment.from_file(audio_path)
     audio = audio.set_channels(1)
@@ -179,7 +179,8 @@ def transcribe_local_audio(file_path, api_key="", language_behaviour="automatic 
     
     try:
         with open(file_path, 'rb') as f:
-            files = {'audio': (file_name, f, 'audio/mpeg')}
+            mime_type = 'audio/wav' if file_path.lower().endswith('.wav') else 'audio/mpeg'
+            files = {'audio': (file_name, f, mime_type)}
             payload = {
                 "language_behaviour": language_behaviour,
                 "diarization": str(diarization).lower(),

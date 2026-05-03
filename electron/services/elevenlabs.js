@@ -82,10 +82,27 @@ function saveSettings(data) {
     fs.writeFileSync(p, JSON.stringify(data, null, 2));
 }
 
+function normalizeKeysWithStatus(value) {
+    if (Array.isArray(value)) {
+        return value
+            .map(entry => typeof entry === 'string' ? { key: entry, enabled: true } : entry)
+            .filter(entry => entry && typeof entry === 'object' && typeof entry.key === 'string' && entry.key.trim());
+    }
+    if (typeof value === 'string' && value.trim()) {
+        return [{ key: value.trim(), enabled: true }];
+    }
+    if (value && typeof value === 'object') {
+        return Object.values(value)
+            .map(entry => typeof entry === 'string' ? { key: entry, enabled: true } : entry)
+            .filter(entry => entry && typeof entry === 'object' && typeof entry.key === 'string' && entry.key.trim());
+    }
+    return [];
+}
+
 /** 加载 API Keys，返回 key 字符串数组（启用的） */
 function loadKeys(includeDisabled = false) {
     const data = loadSettings();
-    let keysWithStatus = data.keys_with_status || [];
+    let keysWithStatus = normalizeKeysWithStatus(data.keys_with_status);
     let keysResult = [];
     
     // 如果启用了网页抓取 Token
@@ -103,10 +120,6 @@ function loadKeys(includeDisabled = false) {
     legacyKeys = legacyKeys.filter(k => k && k.trim());
 
     if (legacyKeys.length > 0) {
-        // Normalize existing entries: convert bare strings to {key, enabled} objects
-        keysWithStatus = keysWithStatus.map(entry =>
-            typeof entry === 'string' ? { key: entry, enabled: true } : entry
-        );
         const existingSet = new Set(keysWithStatus.map(e => e.key));
         let migrated = 0;
         for (const k of legacyKeys) {

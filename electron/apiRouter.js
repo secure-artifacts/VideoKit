@@ -361,7 +361,10 @@ async function routeAPI(endpoint, data) {
 
         case 'media/scene-split':
             if (!data.file_path || !data.segments) throw new Error('缺少参数');
-            return await ffmpegService.sceneSplit(data.file_path, data.segments, data.output_dir);
+            return await ffmpegService.sceneSplit(data.file_path, data.segments, data.output_dir, {
+                folderMode: data.folder_mode || 'per_video',
+                batchName: data.batch_name || '',
+            });
 
         case 'media/scene-detect-frames': {
             if (!data.file_path) throw new Error('缺少文件路径');
@@ -374,6 +377,8 @@ async function routeAPI(endpoint, data) {
                 outputDir: data.output_dir || '',
                 boundaryOffset: parseFloat(data.boundary_offset || 0.04),
                 cleanOld: !!data.clean_old,
+                folderMode: data.folder_mode || 'per_video',
+                batchName: data.batch_name || '',
             });
         }
 
@@ -385,6 +390,8 @@ async function routeAPI(endpoint, data) {
                 quality: parseInt(data.quality || 2),
                 outputDir: data.output_dir || '',
                 cleanOld: !!data.clean_old,
+                folderMode: data.folder_mode || 'per_video',
+                batchName: data.batch_name || '',
             });
         }
 
@@ -809,11 +816,14 @@ async function routeAPI(endpoint, data) {
             // JSON 文件输入
             let generationSubtitleArray;
             let generationSubtitleText;
+            let transcriptionSource = 'unknown'; // 追踪转录数据来源
 
             // 强制重新转录时，删除缓存文件
             if (data.force) {
-                try { if (fs.existsSync(jsonPath)) fs.unlinkSync(jsonPath); } catch { }
+                const hadCache = fs.existsSync(jsonPath);
+                try { if (hadCache) fs.unlinkSync(jsonPath); } catch { }
                 try { if (fs.existsSync(txtPath)) fs.unlinkSync(txtPath); } catch { }
+                if (hadCache) console.log(`[字幕对齐] 强制模式: 已删除旧缓存 ${path.basename(jsonPath)}`);
             }
 
             if (audioPath.toLowerCase().endsWith('.json')) {
@@ -834,17 +844,23 @@ async function routeAPI(endpoint, data) {
                 generationSubtitleText = allText.trimStart();
                 fs.writeFileSync(jsonPath, JSON.stringify(generationSubtitleArray, null, 4), 'utf-8');
                 fs.writeFileSync(txtPath, generationSubtitleText, 'utf-8');
+                transcriptionSource = 'json_file';
             } else if (!fs.existsSync(jsonPath)) {
                 // Gladia 转录
+                console.log(`[字幕对齐] 🎙️ 正在调用 Gladia 进行语音识别...`);
                 const cutLength = parseFloat(data.audio_cut_length || 5.0);
                 const result = await gladiaService.transcribeAudioFull(
                     audioPath, gladiaKeys, langEnName, jsonPath, txtPath, cutLength
                 );
                 generationSubtitleArray = result.wordTimeInfo;
                 generationSubtitleText = result.fullText;
+                transcriptionSource = 'gladia_fresh';
+                console.log(`[字幕对齐] ✅ Gladia 转录完成，${generationSubtitleArray.length} 个片段`);
             } else {
                 generationSubtitleArray = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
                 generationSubtitleText = fs.readFileSync(txtPath, 'utf-8').trim();
+                transcriptionSource = 'gladia_cache';
+                console.log(`[字幕对齐] 📦 使用缓存转录数据: ${path.basename(jsonPath)}`);
             }
 
             // 如果提供了原文本，执行完整对齐
@@ -879,8 +895,17 @@ async function routeAPI(endpoint, data) {
                     currentLanguage, outputDir, fileName,
                     generationSubtitleArray, generationSubtitleText,
                     sourceTextWithInfo, translateTextDict,
-                    genMergeSrt, sourceUpOrder, exportFcpxml, seamlessFcpxml
+                    genMergeSrt, sourceUpOrder, exportFcpxml, seamlessFcpxml,
+                    null, null,
+                    data.ignore_mismatch === true
                 );
+
+                if (typeof alignResult === 'string' && !alignResult.startsWith('生成了字幕文件')) {
+                    if (alignResult.startsWith('{"code":"TEXT_MISMATCH"')) {
+                        throw new Error(alignResult);
+                    }
+                    throw new Error(`字幕对齐失败: ${alignResult}`);
+                }
 
                 // 收集生成的文件
                 const generatedFiles = [];
@@ -903,13 +928,49 @@ async function routeAPI(endpoint, data) {
                     result: alignResult,
                     files: generatedFiles,
                     output_dir: outputDir,
+                    transcription_source: transcriptionSource,
+                    aligned_at: new Date().toISOString(),
                 };
             }
 
+            // 盲转模式 (无 source_text)：直接利用 AI 识别分句生成 SRT
+            const dateStr = new Date().toISOString().replace(/[T:.]/g, '').slice(0, 15);
+            const blindOutputDir = data.output_dir || path.join(os.homedir(), 'Desktop', `字幕输出_${dateStr}`);
+            fs.mkdirSync(blindOutputDir, { recursive: true });
+            
+            const sourceSrt = path.join(blindOutputDir, `${fileName}_${currentLanguage}_source.srt`);
+            
+            const srtEntries = [];
+            let srtIndex = 1;
+            for (const utt of generationSubtitleArray) {
+                let text = utt.text;
+                if (!text && Array.isArray(utt.words)) {
+                    text = utt.words.map(w => w.word).join(' ');
+                }
+                if (!text || !text.trim()) continue;
+                
+                srtEntries.push({
+                    index: srtIndex++,
+                    start: Math.round(utt.audio_start * 1000),
+                    end: Math.round(utt.audio_end * 1000),
+                    text: text.trim()
+                });
+            }
+            
+            if (srtEntries.length > 0) {
+                const { writeSRT } = require('./services/subtitle');
+                writeSRT(srtEntries, sourceSrt);
+            }
+
             return {
-                message: '转录完成',
+                message: '纯语音转录完成',
+                result: `生成了字幕文件（无文案校对模式）: ${sourceSrt}`,
+                files: fs.existsSync(sourceSrt) ? [sourceSrt] : [],
+                output_dir: blindOutputDir,
                 word_time_info: generationSubtitleArray,
                 full_text: generationSubtitleText,
+                transcription_source: transcriptionSource,
+                aligned_at: new Date().toISOString(),
             };
         }
 

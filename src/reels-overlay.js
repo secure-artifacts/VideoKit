@@ -363,7 +363,7 @@ function _getCachedImage(path) {
     };
     img.onerror = () => { _imageCache[path] = null; }; // allow retry on error
     _imageCache[path] = _IMAGE_LOADING;
-    img.src = path.startsWith('/') ? `file://${path}` : path;
+    img.src = path.startsWith('/') ? `local-media://${path}` : path;
     return null;
 }
 
@@ -387,7 +387,7 @@ function _getCachedVideo(path) {
     if (_videoCache[path]) return _videoCache[path];
     const vid = document.createElement('video');
     // 本地路径需要加 file:// 前缀
-    vid.src = path.startsWith('/') ? `file://${path}` : path;
+    vid.src = path.startsWith('/') ? `local-media://${path}` : path;
     vid.muted = true;
     vid.loop = true;
     vid.playsInline = true;
@@ -421,7 +421,7 @@ function _getGifDecoder(path) {
     // 异步初始化解码器
     (async () => {
         try {
-            const url = path.startsWith('/') ? `file://${path}` : path;
+            const url = path.startsWith('/') ? `local-media://${path}` : path;
             const response = await fetch(url);
             const arrayBuffer = await response.arrayBuffer();
 
@@ -465,7 +465,7 @@ function _getGifDecoder(path) {
                 // ImageDecoder 不可用，回退到静态图
                 console.warn('[GIF] ImageDecoder API 不可用, GIF 将显示为静态图');
                 const img = new Image();
-                img.src = path.startsWith('/') ? `file://${path}` : path;
+                img.src = path.startsWith('/') ? `local-media://${path}` : path;
                 img.onload = () => {
                     gifData.frames[0] = img;
                     gifData.frameCount = 1;
@@ -865,7 +865,7 @@ function _drawVideoOverlay(ctx, ov, x, y, w, h, currentTime) {
         if (ov._currentFrameImage) {
             drawable = ov._currentFrameImage;
         } else {
-            drawable = _getCachedImage(`file://${fPath}`); 
+            drawable = _getCachedImage(`local-media://${fPath}`); 
         }
     } else {
         // ═══ 预览模式：使用 <video> 或 GIF 解码器 ═══
@@ -1392,7 +1392,57 @@ function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime
         const cardAlpha = (ov.card_opacity ?? 80) / 100;
         ctx.save();
         ctx.globalAlpha = cardAlpha * ctx.globalAlpha;
-        ctx.fillStyle = ov.card_color || '#FFFFFF';
+        
+        let fillStyle = ov.card_color || '#FFFFFF';
+        
+        // 羽化逻辑
+        if (ov.card_feather_enabled) {
+            const hexMatch = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(fillStyle);
+            if (hexMatch) {
+                const r = parseInt(hexMatch[1], 16);
+                const g = parseInt(hexMatch[2], 16);
+                const b = parseInt(hexMatch[3], 16);
+                
+                const bx = isFullMask ? maskX : x;
+                const by = isFullMask ? maskY : cardY;
+                const bw = isFullMask ? maskW : w;
+                const bh = isFullMask ? maskH : cardH;
+                const cx = bx + bw / 2;
+                const cy = by + bh / 2;
+                
+                const dir = ov.card_feather_dir || 'bottom';
+                
+                const startRatio = (ov.card_feather_start ?? 50) / 100;
+                const endRatio = (ov.card_feather_end ?? 100) / 100;
+                
+                let grad;
+                
+                if (dir === 'radial') {
+                    // 对于矩形，为了保证四角平滑，使用对角线的一半作为半径
+                    const radius = Math.sqrt(bw*bw + bh*bh) / 2;
+                    grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
+                    grad.addColorStop(0, `rgba(${r},${g},${b},1)`);
+                    grad.addColorStop(startRatio, `rgba(${r},${g},${b},1)`);
+                    grad.addColorStop(endRatio, `rgba(${r},${g},${b},0)`);
+                    if (endRatio < 1) grad.addColorStop(1, `rgba(${r},${g},${b},0)`);
+                } else {
+                    let x0=bx, y0=by, x1=bx, y1=by;
+                    if (dir === 'bottom') { y0=by; y1=by+bh; }
+                    else if (dir === 'top') { y0=by+bh; y1=by; }
+                    else if (dir === 'right') { x0=bx; x1=bx+bw; }
+                    else if (dir === 'left') { x0=bx+bw; x1=bx; }
+                    
+                    grad = ctx.createLinearGradient(x0, y0, x1, y1);
+                    grad.addColorStop(0, `rgba(${r},${g},${b},1)`);
+                    grad.addColorStop(startRatio, `rgba(${r},${g},${b},1)`);
+                    grad.addColorStop(endRatio, `rgba(${r},${g},${b},0)`);
+                    if (endRatio < 1) grad.addColorStop(1, `rgba(${r},${g},${b},0)`);
+                }
+                fillStyle = grad;
+            }
+        }
+        
+        ctx.fillStyle = fillStyle;
         if (isFullMask) {
             ctx.fillRect(maskX, maskY, maskW, maskH);
         } else {
