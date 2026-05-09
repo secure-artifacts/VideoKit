@@ -157,6 +157,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setZoomFactor: (factor) => webFrame.setZoomFactor(factor),
     getZoomFactor: () => webFrame.getZoomFactor(),
 
+
+    // 屏幕取色器（解决 Windows 吸管无法吸取窗口外颜色）
+    screenPickColor: () => ipcRenderer.invoke('screen-pick-color'),
+
     // 模板多窗口
     openTemplateWindow: (templateId, templateName) => ipcRenderer.invoke('open-template-window', templateId, templateName),
 });

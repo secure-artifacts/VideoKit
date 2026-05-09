@@ -550,6 +550,293 @@ function _initReelsModule() {
 
     // ═══ 面板拖拽调整宽度 ═══
     _initReelsColumnResize();
+
+    // ═══ 内容视频位置控制器 ═══
+    _initCvPosControl();
+}
+
+// ── 内容视频位置可视化控制器 ──
+function _initCvPosControl() {
+    const panel = document.getElementById('reels-cv-pos-control');
+    if (!panel) return;
+
+    const xVal = document.getElementById('reels-cv-pos-x-val');
+    const yVal = document.getElementById('reels-cv-pos-y-val');
+    const scaleVal = document.getElementById('reels-cv-pos-scale-val');
+    const stepSel = document.getElementById('reels-cv-pos-step');
+
+    // 阻止面板内所有鼠标事件冒泡到预览视口（防止触发画布平移）
+    panel.addEventListener('mousedown', (e) => e.stopPropagation());
+    panel.addEventListener('wheel', (e) => e.stopPropagation());
+
+    // 获取当前选中任务
+    function _getTask() {
+        return _getSelectedTask ? _getSelectedTask() : (_selectedTask || null);
+    }
+
+    // 更新显示值
+    function _updateDisplay() {
+        const task = _getTask();
+        if (!task) return;
+        if (xVal) xVal.value = task.contentVideoX || 'center';
+        if (yVal) yVal.value = task.contentVideoY || 'center';
+        if (scaleVal) scaleVal.value = task.contentVideoScale || 100;
+    }
+
+    // X/Y 输入框直接编辑 (回车确认)
+    function _onPosInput(axis, el) {
+        const task = _getTask();
+        if (!task) return;
+        const val = el.value.trim() || 'center';
+        if (axis === 'x') task.contentVideoX = val;
+        else task.contentVideoY = val;
+        _syncToTableInputs(task);
+        if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
+    }
+    if (xVal) xVal.addEventListener('change', () => _onPosInput('x', xVal));
+    if (yVal) yVal.addEventListener('change', () => _onPosInput('y', yVal));
+
+    // 缩放输入框直接编辑
+    if (scaleVal) scaleVal.addEventListener('change', () => {
+        const task = _getTask();
+        if (!task) return;
+        let v = parseInt(scaleVal.value) || 100;
+        if (v < 1) v = 1;
+        if (v > 1000) v = 1000;
+        task.contentVideoScale = v;
+        scaleVal.value = v;
+        if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
+    });
+
+    // ── 拖拽调整数值 (Scrub Drag) ──
+    // 鼠标按住输入框后左右拖动 → 增减数值，类似 AE / Blender
+    function _initScrubDrag(el, axis) {
+        let _dragging = false;
+        let _startX = 0;
+        let _startVal = 0;
+        let _moved = false;
+
+        el.addEventListener('mousedown', (e) => {
+            // 阻止冒泡到预览视口的拖拽/平移处理器
+            e.stopPropagation();
+            // 如果输入框正在编辑模式（有选中文本），不启动拖拽
+            if (document.activeElement === el && el.selectionStart !== el.selectionEnd) return;
+
+            _dragging = true;
+            _moved = false;
+            _startX = e.clientX;
+            const task = _getTask();
+            if (!task) return;
+            const raw = axis === 'x' ? task.contentVideoX : task.contentVideoY;
+            _startVal = (raw && raw !== 'center') ? (parseFloat(raw) || 0) : 0;
+
+            // 防止拖拽时选中文本
+            e.preventDefault();
+            el.blur();
+            document.body.style.cursor = 'ew-resize';
+            el.style.borderColor = 'rgba(100,160,255,0.6)';
+            el.style.background = 'rgba(100,160,255,0.15)';
+
+            const onMove = (me) => {
+                if (!_dragging) return;
+                const dx = me.clientX - _startX;
+                if (Math.abs(dx) > 2) _moved = true;
+                if (!_moved) return;
+
+                // 灵敏度：每像素移动 = step 值的比例
+                const step = parseInt(stepSel?.value || '50');
+                const sensitivity = step / 20; // 移动20px = 1个step
+                const newVal = Math.round(_startVal + dx * sensitivity);
+
+                const task = _getTask();
+                if (!task) return;
+                if (axis === 'x') task.contentVideoX = newVal === 0 ? 'center' : String(newVal);
+                else task.contentVideoY = newVal === 0 ? 'center' : String(newVal);
+
+                _updateDisplay();
+                _syncToTableInputs(task);
+                if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
+            };
+
+            const onUp = () => {
+                _dragging = false;
+                document.body.style.cursor = '';
+                el.style.borderColor = '#333';
+                el.style.background = '#1a1a2e';
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+
+                // 如果没有拖拽（纯点击），聚焦让用户直接输入
+                if (!_moved) {
+                    el.style.cursor = 'text';
+                    el.focus();
+                    el.select();
+                    // 失焦后恢复拖拽游标
+                    el.addEventListener('blur', () => { el.style.cursor = 'ew-resize'; }, { once: true });
+                }
+            };
+
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+        });
+    }
+
+    if (xVal) _initScrubDrag(xVal, 'x');
+    if (yVal) _initScrubDrag(yVal, 'y');
+
+    // ── 缩放拖拽调整 (Scrub Drag for Scale) ──
+    if (scaleVal) {
+        let _sDragging = false, _sStartX = 0, _sStartVal = 100, _sMoved = false;
+        scaleVal.addEventListener('mousedown', (e) => {
+            e.stopPropagation();
+            if (document.activeElement === scaleVal && scaleVal.selectionStart !== scaleVal.selectionEnd) return;
+            _sDragging = true; _sMoved = false; _sStartX = e.clientX;
+            const task = _getTask();
+            _sStartVal = task ? (task.contentVideoScale || 100) : 100;
+            e.preventDefault(); scaleVal.blur();
+            document.body.style.cursor = 'ew-resize';
+            scaleVal.style.borderColor = 'rgba(100,160,255,0.6)';
+            scaleVal.style.background = 'rgba(100,160,255,0.15)';
+
+            const onMove = (me) => {
+                if (!_sDragging) return;
+                const dx = me.clientX - _sStartX;
+                if (Math.abs(dx) > 2) _sMoved = true;
+                if (!_sMoved) return;
+                // 灵敏度: 拖拽20px = 变化10%
+                const newVal = Math.max(1, Math.min(1000, Math.round(_sStartVal + dx * 0.5)));
+                const task = _getTask();
+                if (!task) return;
+                task.contentVideoScale = newVal;
+                scaleVal.value = newVal;
+                if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
+            };
+            const onUp = () => {
+                _sDragging = false;
+                document.body.style.cursor = '';
+                scaleVal.style.borderColor = '#333'; scaleVal.style.background = '#1a1a2e';
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+                if (!_sMoved) {
+                    scaleVal.style.cursor = 'text'; scaleVal.focus(); scaleVal.select();
+                    scaleVal.addEventListener('blur', () => { scaleVal.style.cursor = 'ew-resize'; }, { once: true });
+                }
+            };
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+        });
+    }
+
+    // 缩放重置按钮
+    const scaleResetBtn = document.getElementById('reels-cv-scale-reset');
+    if (scaleResetBtn) scaleResetBtn.addEventListener('click', () => {
+        const task = _getTask();
+        if (!task) return;
+        task.contentVideoScale = 100;
+        _updateDisplay();
+        if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
+    });
+
+    // 将修改同步回批量表格的输入框
+    function _syncToTableInputs(task) {
+        if (!task || !window._reelsState) return;
+        const idx = window._reelsState.tasks ? window._reelsState.tasks.indexOf(task) : -1;
+        if (idx < 0) return;
+        const xInput = document.querySelector(`.rbt-cvpos-x[data-idx="${idx}"]`);
+        const yInput = document.querySelector(`.rbt-cvpos-y[data-idx="${idx}"]`);
+        if (xInput) xInput.value = task.contentVideoX || 'center';
+        if (yInput) yInput.value = task.contentVideoY || 'center';
+    }
+
+    // 移动位置
+    function _nudge(dir) {
+        const task = _getTask();
+        if (!task || !task.contentVideoPath) return;
+        const step = parseInt(stepSel?.value || '50');
+
+        // 解析当前像素值 (center 视为 0)
+        let cx = 0, cy = 0;
+        if (task.contentVideoX && task.contentVideoX !== 'center') {
+            cx = parseFloat(task.contentVideoX) || 0;
+        }
+        if (task.contentVideoY && task.contentVideoY !== 'center') {
+            cy = parseFloat(task.contentVideoY) || 0;
+        }
+
+        switch (dir) {
+            case 'up':    cy -= step; break;
+            case 'down':  cy += step; break;
+            case 'left':  cx -= step; break;
+            case 'right': cx += step; break;
+        }
+
+        task.contentVideoX = cx === 0 ? 'center' : String(cx);
+        task.contentVideoY = cy === 0 ? 'center' : String(cy);
+        _updateDisplay();
+        _syncToTableInputs(task);
+        if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
+    }
+
+    // 重置为居中
+    function _resetPos() {
+        const task = _getTask();
+        if (!task) return;
+        task.contentVideoX = 'center';
+        task.contentVideoY = 'center';
+        _updateDisplay();
+        _syncToTableInputs(task);
+        if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
+    }
+
+    // 绑定方向按钮
+    panel.querySelectorAll('.reels-cv-dir-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            _nudge(btn.dataset.dir);
+        });
+        // 长按连续移动
+        let _holdTimer = null;
+        btn.addEventListener('mousedown', () => {
+            _holdTimer = setInterval(() => _nudge(btn.dataset.dir), 120);
+        });
+        btn.addEventListener('mouseup', () => { clearInterval(_holdTimer); _holdTimer = null; });
+        btn.addEventListener('mouseleave', () => { clearInterval(_holdTimer); _holdTimer = null; });
+    });
+
+    // 居中按钮
+    const centerBtn = document.getElementById('reels-cv-pos-center-btn');
+    if (centerBtn) centerBtn.addEventListener('click', _resetPos);
+
+    // 重置按钮
+    const resetBtn = document.getElementById('reels-cv-pos-reset');
+    if (resetBtn) resetBtn.addEventListener('click', _resetPos);
+
+    // 键盘方向键支持 (当控制器面板有焦点时)
+    panel.addEventListener('keydown', (e) => {
+        const keyMap = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' };
+        if (keyMap[e.key]) {
+            e.preventDefault();
+            e.stopPropagation();
+            _nudge(keyMap[e.key]);
+        }
+    });
+    panel.tabIndex = 0; // 使其可聚焦以接收键盘事件
+
+    // 控制器显示/隐藏: 按钮仅在有内容视频时显示，面板由用户手动开关
+    const toggleBtn = document.getElementById('reels-cv-pos-toggle');
+    setInterval(() => {
+        const task = _getTask();
+        const hasCV = task && task.contentVideoPath;
+        // 仅控制 toggle 按钮的可见性
+        if (toggleBtn) toggleBtn.style.display = hasCV ? '' : 'none';
+        // 没有内容视频时自动隐藏面板
+        if (!hasCV && panel.style.display !== 'none') {
+            panel.style.display = 'none';
+            if (toggleBtn) { toggleBtn.style.background = 'rgba(100,160,255,0.1)'; toggleBtn.style.color = '#8af'; }
+        }
+        // 面板打开时更新值
+        if (hasCV && panel.style.display !== 'none') _updateDisplay();
+    }, 500);
 }
 
 function _initReelsColumnResize() {
@@ -1692,7 +1979,7 @@ function reelsAddAutoColorRule(type) {
     if (!_reelsState.style.auto_color_rules) _reelsState.style.auto_color_rules = [];
     
     let defaultKw = [];
-    if (type === 'number') defaultKw = ['\\d+(\\.\\d+)?'];
+    if (type === 'number') defaultKw = ['\d+(\.\d+)?'];
     else if (type === 'english') defaultKw = ['[a-zA-Z]+'];
     
     _reelsState.style.auto_color_rules.push({
@@ -2321,6 +2608,10 @@ function reelsUpdatePreview() {
                 if (_reelsState._scrollPreviewEnd && ov.type === 'scroll') {
                     ovTime = parseFloat(ov.end || 10); // 用 end 时间，确保在时间范围内
                 }
+                
+                ov._subtitleTimeMode = _selectedTask ? _selectedTask.subtitleTimeMode : null;
+                ov._subtitleTimeSlices = _selectedTask ? _selectedTask.subtitleTimeSlices : null;
+
                 ReelsOverlay.drawOverlay(ctx, ov, ovTime, w, h);
             }
         }
@@ -5247,9 +5538,22 @@ function _reelsPathBaseName(filePath) {
 }
 
 function _reelsTaskTextBaseName(task) {
-    const text = String(task?.txtContent || task?.aiScript || task?.ttsText || '')
+    let text = String(task?.txtContent || task?.aiScript || task?.ttsText || '')
         .replace(/[\r\n\t]+/g, '')
         .trim();
+    // 若主文案字段为空，尝试从覆层文字卡片中提取标题/正文作为命名
+    if (!text && Array.isArray(task?.overlays)) {
+        for (const ov of task.overlays) {
+            if (!ov || ov.fixed_text) continue;
+            const t = String(ov.title_text || '').trim();
+            const b = String(ov.body_text || '').trim();
+            if (t || b) {
+                text = (t && b) ? `${t}_${b}` : (t || b);
+                text = text.replace(/[\r\n\t]+/g, '').trim();
+                break;
+            }
+        }
+    }
     return text ? _sanitizeReelsFileBaseName(text.substring(0, 50), '') : '';
 }
 
@@ -5732,6 +6036,28 @@ async function reelsStartExport() {
 
     _reelsUpdateExportProgressUI(0, totalJobs);
 
+    // ═══ 文件名去重：行号 + 冲突检测 ═══
+    const _exportResolvedNames = {};
+    {
+        // 先给每个任务加上行号
+        const namedWithRow = exportJobs.map((job, idx) => {
+            const raw = _resolveReelsExportBaseName(job.task, namingMode);
+            return `${raw}_行${idx + 1}`;
+        });
+        // 再检测加完行号后是否仍有重名（极端情况），追加编号
+        const freq = {};
+        namedWithRow.forEach(n => freq[n] = (freq[n] || 0) + 1);
+        const counter = {};
+        namedWithRow.forEach((n, idx) => {
+            if (freq[n] > 1) {
+                counter[n] = (counter[n] || 0) + 1;
+                _exportResolvedNames[idx] = `${n}_${counter[n]}`;
+            } else {
+                _exportResolvedNames[idx] = n;
+            }
+        });
+    }
+
     let currentIndex = 0;
     const processNext = async () => {
         while (currentIndex < totalJobs) {
@@ -5756,7 +6082,7 @@ async function reelsStartExport() {
         if (statusEl) statusEl.textContent = `导出中 ${i + 1}/${totalJobs}: ${task.fileName}${presetLabel}`;
 
         try {
-            const baseName = _resolveReelsExportBaseName(task, namingMode);
+            let baseName = _exportResolvedNames[i] || _resolveReelsExportBaseName(task, namingMode);
 
             // ── 多模板矩阵：调整输出路径 ──
             let jobOutputDir = outputDirTrimmed;
@@ -5931,35 +6257,141 @@ async function reelsStartExport() {
             if (doFcpxml) {
                 // ── 渲染覆层为透明 PNG ──
                 let overlayPngPath = null;
+                let overlayPngSlices = null; // 时间切片多 PNG 模式
                 const taskOverlays = task.overlays || [];
+                const hasTimeSlice = task.subtitleTimeMode === 'split' && Array.isArray(task.subtitleTimeSlices) && task.subtitleTimeSlices.length > 0;
+
                 if (taskOverlays.length > 0 && taskOverlays.some(o => !o.disabled)) {
+                    if (hasTimeSlice) {
+                        // ⏱️ 时间切片模式：为每个切片生成独立的 PNG
+                        overlayPngSlices = [];
+                        for (let sliceIdx = 0; sliceIdx < task.subtitleTimeSlices.length; sliceIdx++) {
+                            const slice = task.subtitleTimeSlices[sliceIdx];
+                            const source = slice.source || 'all';
+                            try {
+                                const offCanvas = document.createElement('canvas');
+                                offCanvas.width = 1080;
+                                offCanvas.height = 1920;
+                                const offCtx = offCanvas.getContext('2d');
+                                offCtx.clearRect(0, 0, 1080, 1920);
+                                if (window.ReelsOverlay && typeof window.ReelsOverlay.drawOverlay === 'function') {
+                                    for (const ov of taskOverlays) {
+                                        if (ov.disabled) continue;
+                                        // 按 source 筛选覆层
+                                        if (source !== 'all') {
+                                            if (source === 'title' && ov.type === 'textcard' && !ov.title_text) continue;
+                                            if (source === 'title' && ov.type === 'textcard') {
+                                                // 标题模式（保留标题，清空正文和结尾）
+                                                const origBody = ov.body_text;
+                                                const origFooter = ov.footer_text;
+                                                ov.body_text = '';
+                                                ov.footer_text = '';
+                                                ov._exporting = true;
+                                                window.ReelsOverlay.drawOverlay(offCtx, ov, 0, 1080, 1920);
+                                                delete ov._exporting;
+                                                ov.body_text = origBody;
+                                                ov.footer_text = origFooter;
+                                                continue;
+                                            }
+                                            if (source === 'body_part1' && ov.type === 'textcard') {
+                                                // 只渲染上半段正文（保留标题）
+                                                const origBody = ov.body_text;
+                                                ov.body_text = window.ReelsOverlay.splitBodyText ? window.ReelsOverlay.splitBodyText(origBody)[0] : origBody;
+                                                ov._exporting = true;
+                                                window.ReelsOverlay.drawOverlay(offCtx, ov, 0, 1080, 1920);
+                                                delete ov._exporting;
+                                                ov.body_text = origBody;
+                                                continue;
+                                            }
+                                            if (source === 'body_part2' && ov.type === 'textcard') {
+                                                // 只渲染下半段正文（保留标题）
+                                                const origBody = ov.body_text;
+                                                ov.body_text = window.ReelsOverlay.splitBodyText ? window.ReelsOverlay.splitBodyText(origBody)[1] : origBody;
+                                                ov._exporting = true;
+                                                window.ReelsOverlay.drawOverlay(offCtx, ov, 0, 1080, 1920);
+                                                delete ov._exporting;
+                                                ov.body_text = origBody;
+                                                continue;
+                                            }
+                                            if (source === 'footer' && ov.type === 'textcard') {
+                                                const origTitle = ov.title_text;
+                                                const origBody = ov.body_text;
+                                                ov.title_text = '';
+                                                ov.body_text = '';
+                                                ov._exporting = true;
+                                                window.ReelsOverlay.drawOverlay(offCtx, ov, 0, 1080, 1920);
+                                                delete ov._exporting;
+                                                ov.title_text = origTitle;
+                                                ov.body_text = origBody;
+                                                continue;
+                                            }
+                                            // scroll 等其他类型按 source 全匹配
+                                            if (source === 'scroll_title' && ov.type !== 'scroll') continue;
+                                            if (source === 'scroll_body' && ov.type !== 'scroll') continue;
+                                        }
+                                        ov._exporting = true;
+                                        window.ReelsOverlay.drawOverlay(offCtx, ov, 0, 1080, 1920);
+                                        delete ov._exporting;
+                                    }
+                                }
+                                const pngDataUrl = offCanvas.toDataURL('image/png');
+                                const pngBase64 = pngDataUrl.replace(/^data:image\/png;base64,/, '');
+                                const binaryStr = atob(pngBase64);
+                                const pngBytes = new Uint8Array(binaryStr.length);
+                                for (let b = 0; b < binaryStr.length; b++) pngBytes[b] = binaryStr.charCodeAt(b);
+
+                                const sliceLabel = slice.label || String.fromCharCode(65 + sliceIdx);
+                                const pngFileName = `${baseName}_overlay_${sliceLabel}.png`;
+                                const pngPath = `${outputDirTrimmed}/${pngFileName}`;
+                                if (window.electronAPI && window.electronAPI.ensureDirectory) {
+                                    await window.electronAPI.ensureDirectory(outputDirTrimmed);
+                                }
+                                if (window.electronAPI && window.electronAPI.savePngFrame) {
+                                    const saveResult = await window.electronAPI.savePngFrame({
+                                        outputPath: pngPath,
+                                        rawRGBA: pngBytes.buffer,
+                                        width: 1080,
+                                        height: 1920,
+                                        isPng: true
+                                    });
+                                    if (saveResult && saveResult.ok) {
+                                        overlayPngSlices.push({
+                                            path: pngPath,
+                                            startSec: slice.startSec || 0,
+                                            endSec: slice.endSec,
+                                            label: sliceLabel,
+                                        });
+                                        console.log(`[FCPXML] 切片 ${sliceLabel} PNG 已导出: ${pngPath}`);
+                                    }
+                                }
+                            } catch (e) {
+                                console.warn(`[FCPXML] 渲染切片 ${sliceIdx} PNG 失败:`, e);
+                            }
+                        }
+                    } else {
+                        // 常规模式：单张 PNG
                     try {
                         const offCanvas = document.createElement('canvas');
                         offCanvas.width = 1080;
                         offCanvas.height = 1920;
                         const offCtx = offCanvas.getContext('2d');
-                        // 清空为全透明
                         offCtx.clearRect(0, 0, 1080, 1920);
-                        // 绘制每个覆层（使用 ReelsOverlay 全局模块）
                         if (window.ReelsOverlay && typeof window.ReelsOverlay.drawOverlay === 'function') {
                             for (const ov of taskOverlays) {
                                 if (ov.disabled) continue;
-                                ov._exporting = true;  // 跳过参考线/辅助线
+                                ov._exporting = true;
                                 window.ReelsOverlay.drawOverlay(offCtx, ov, 0, 1080, 1920);
                                 delete ov._exporting;
                             }
                         }
-                        // 导出为 PNG（带透明通道）
                         const pngDataUrl = offCanvas.toDataURL('image/png');
                         const pngBase64 = pngDataUrl.replace(/^data:image\/png;base64,/, '');
-                        // Base64 → ArrayBuffer for savePngFrame IPC
                         const binaryStr = atob(pngBase64);
                         const pngBytes = new Uint8Array(binaryStr.length);
                         for (let b = 0; b < binaryStr.length; b++) pngBytes[b] = binaryStr.charCodeAt(b);
 
                         const pngFileName = `${baseName}_overlay.png`;
                         const pngPath = `${outputDirTrimmed}/${pngFileName}`;
-                        // 确保输出目录存在
                         if (window.electronAPI && window.electronAPI.ensureDirectory) {
                             await window.electronAPI.ensureDirectory(outputDirTrimmed);
                         }
@@ -5969,7 +6401,7 @@ async function reelsStartExport() {
                                 rawRGBA: pngBytes.buffer,
                                 width: 1080,
                                 height: 1920,
-                                isPng: true  // 直接写入 PNG 数据，不做 RGBA→PNG 转换
+                                isPng: true
                             });
                             if (saveResult && saveResult.ok) {
                                 overlayPngPath = pngPath;
@@ -5981,6 +6413,7 @@ async function reelsStartExport() {
                     } catch (e) {
                         console.warn('[FCPXML] 渲染覆层 PNG 失败:', e);
                     }
+                    }
                 }
 
                 fcpxmlBatchTasks.push({
@@ -5988,16 +6421,19 @@ async function reelsStartExport() {
                     style: taskStyle,
                     segments: showSubtitle ? (task.segments || []) : [],
                     overlays: task.overlays || [],
-                    overlayPngPath: overlayPngPath,  // 透明 PNG 路径
-                    videoPath: task.videoPath || null, // 主视频
-                    backgroundPath: bgPath,            // 背景视频
-                    contentVideoPath: task.contentVideoPath || null, // 额外的内容层视频
+                    overlayPngPath: overlayPngPath,  // 单张 PNG（常规模式）
+                    overlayPngSlices: overlayPngSlices, // 多张 PNG（时间切片模式）
+                    videoPath: task.videoPath || null,
+                    backgroundPath: bgPath,
+                    contentVideoPath: task.contentVideoPath || null,
                     contentVideoTrimStart: task.contentVideoTrimStart != null ? task.contentVideoTrimStart : null,
                     contentVideoTrimEnd: task.contentVideoTrimEnd != null ? task.contentVideoTrimEnd : null,
                     voicePath: voiceSource || null,
                     bgmPath: task.bgmPath || '',
                     customDuration: task.customDuration || customDuration || 0,
-                    taskName: baseName
+                    taskName: baseName,
+                    subtitleTimeMode: task.subtitleTimeMode || 'full',
+                    subtitleTimeSlices: task.subtitleTimeSlices || [],
                 });
                 okCount += 1;
                 // 更新进度并进入下一个
@@ -6495,6 +6931,7 @@ function collectCurrentProjectState() {
     };
     return {
         tasks: _reelsState.tasks,
+        backgroundLibrary: _reelsState.backgroundLibrary || [],
         style: globalStyle,
         exportOpts,
         selectedIdx: _reelsState.selectedIdx,

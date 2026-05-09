@@ -3758,6 +3758,80 @@
                           </div>
                         </div>
                       </div>
+                    <!-- 内容视频位置控制器 (浮动在预览视口内) -->
+                    <div id="reels-cv-pos-control" style="display:none; position:absolute; bottom:8px; right:8px; z-index:30;
+                      background:rgba(20,20,35,0.92); border:1px solid rgba(100,140,255,0.3); border-radius:10px;
+                      padding:8px; backdrop-filter:blur(8px); box-shadow:0 4px 16px rgba(0,0,0,0.5);
+                      font-size:11px; color:#ccc; user-select:none; min-width:140px;">
+                      <div style="display:flex; align-items:center; gap:4px; margin-bottom:6px;">
+                        <span style="font-size:10px; color:#8af; font-weight:600;">🎬 内容视频</span>
+                        <span style="flex:1;"></span>
+                        <button id="reels-cv-pos-reset" title="重置为居中"
+                          style="background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.15); border-radius:4px;
+                          color:#aaa; font-size:9px; padding:1px 6px; cursor:pointer;">重置</button>
+                      </div>
+                      <!-- 方向键网格 -->
+                      <div style="display:grid; grid-template-columns:28px 28px 28px; grid-template-rows:28px 28px 28px; gap:2px; justify-content:center; margin-bottom:6px;">
+                        <div></div>
+                        <button class="reels-cv-dir-btn" data-dir="up" title="上移" style="grid-column:2;grid-row:1;">▲</button>
+                        <div></div>
+                        <button class="reels-cv-dir-btn" data-dir="left" title="左移" style="grid-column:1;grid-row:2;">◀</button>
+                        <button id="reels-cv-pos-center-btn" title="居中" style="grid-column:2;grid-row:2;
+                          background:rgba(100,160,255,0.2); border:1px solid rgba(100,160,255,0.4); border-radius:4px;
+                          color:#8af; font-size:9px; cursor:pointer; font-weight:700;">⊙</button>
+                        <button class="reels-cv-dir-btn" data-dir="right" title="右移" style="grid-column:3;grid-row:2;">▶</button>
+                        <div></div>
+                        <button class="reels-cv-dir-btn" data-dir="down" title="下移" style="grid-column:2;grid-row:3;">▼</button>
+                        <div></div>
+                      </div>
+                      <!-- 步进大小 -->
+                      <div style="display:flex; align-items:center; gap:4px; margin-bottom:4px;">
+                        <span style="font-size:9px; color:#888;">步进:</span>
+                        <select id="reels-cv-pos-step" style="background:#1a1a2e; color:#ccc; border:1px solid #333; border-radius:3px;
+                          font-size:10px; padding:1px 2px; flex:1;">
+                          <option value="1">1px (极精细)</option>
+                          <option value="5">5px (精细)</option>
+                          <option value="10">10px</option>
+                          <option value="50" selected>50px (标准)</option>
+                          <option value="100">100px (大步)</option>
+                          <option value="200">200px (快速)</option>
+                        </select>
+                      </div>
+                      <!-- 当前值 (可拖拽调整 / 双击编辑) -->
+                      <div style="display:flex; gap:6px; font-size:10px; color:#888; align-items:center; justify-content:center;">
+                        <label style="display:flex;align-items:center;gap:2px;">X:
+                          <input type="text" id="reels-cv-pos-x-val" value="center" class="reels-cv-scrub-input"
+                            style="width:52px; font-size:10px; padding:1px 3px; background:#1a1a2e; color:#ccc; border:1px solid #333; border-radius:3px; text-align:center; cursor:ew-resize;"
+                            title="左右拖拽调整 / 双击直接输入">
+                        </label>
+                        <label style="display:flex;align-items:center;gap:2px;">Y:
+                          <input type="text" id="reels-cv-pos-y-val" value="center" class="reels-cv-scrub-input"
+                            style="width:52px; font-size:10px; padding:1px 3px; background:#1a1a2e; color:#ccc; border:1px solid #333; border-radius:3px; text-align:center; cursor:ew-resize;"
+                            title="左右拖拽调整 / 双击直接输入">
+                        </label>
+                      </div>
+                      <!-- 缩放 -->
+                      <div style="display:flex; gap:6px; font-size:10px; color:#888; align-items:center; justify-content:center; margin-top:4px;">
+                        <label style="display:flex;align-items:center;gap:2px;">S:
+                          <input type="text" id="reels-cv-pos-scale-val" value="100" class="reels-cv-scrub-input"
+                            style="width:46px; font-size:10px; padding:1px 3px; background:#1a1a2e; color:#ccc; border:1px solid #333; border-radius:3px; text-align:center; cursor:ew-resize;"
+                            title="缩放百分比 — 左右拖拽调整 / 双击直接输入">
+                        </label>
+                        <span style="font-size:9px; color:#666;">%</span>
+                        <button id="reels-cv-scale-reset" title="重置为100%"
+                          style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:3px;
+                          color:#888; font-size:9px; padding:0px 5px; cursor:pointer; line-height:16px;">100%</button>
+                      </div>
+                    </div>
+                    <style>
+                      .reels-cv-dir-btn {
+                        background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.15);
+                        border-radius: 4px; color: #ccc; font-size: 11px; cursor: pointer;
+                        display: flex; align-items: center; justify-content: center; transition: all 0.1s;
+                      }
+                      .reels-cv-dir-btn:hover { background: rgba(100,160,255,0.25); color: #fff; border-color: rgba(100,160,255,0.5); }
+                      .reels-cv-dir-btn:active { background: rgba(100,160,255,0.4); transform: scale(0.92); }
+                    </style>
                     </div>
                     <!-- 底部控制栏 -->
                     <div
@@ -3781,6 +3855,10 @@
                         <input type="checkbox" id="reels-preview-loop" checked onchange="reelsOnPreviewLoopModeChange()"
                           style="accent-color:var(--accent-color);"> 循环
                       </label>
+                      <button id="reels-cv-pos-toggle" title="内容视频位置调整"
+                        style="display:none; padding:1px 6px; font-size:10px; background:rgba(100,160,255,0.1); border:1px solid rgba(100,160,255,0.3);
+                        border-radius:4px; color:#8af; cursor:pointer; white-space:nowrap; margin-left:2px; transition:all 0.15s;"
+                        onclick="const p=document.getElementById('reels-cv-pos-control');if(p){const v=p.style.display==='none';p.style.display=v?'':'none';this.style.background=v?'rgba(100,160,255,0.3)':'rgba(100,160,255,0.1)';this.style.color=v?'#fff':'#8af';}">🎬 位置</button>
                     </div>
                     <textarea id="reels-preview-text" style="display: none;">Hello World 这是一个测试字幕</textarea>
                   </div> <!-- End form-section -->
@@ -4980,6 +5058,7 @@ THE HOLY	This is no coincidence...</div>
   <script src="reels-richtext-editor.js"></script>
   <script src="reels-timeline-editor.js"></script>
   <script src="reels-overlay-panel.js"></script>
+  <script src="reels-bulk-create.js"></script>
   <script src="reels-batch-table.js"></script>
   <script src="batch-reels.js"></script>
   <script src="app.js"></script>

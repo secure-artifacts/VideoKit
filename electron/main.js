@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, powerSaveBlocker, protocol, shell, net } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, powerSaveBlocker, protocol, shell, net, screen, desktopCapturer } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url');
@@ -793,6 +793,187 @@ app.whenReady().then(async () => {
     // 注册 API 路由（替代 Python Flask 后端）
     registerAPIHandlers();
     log('API handlers registered - no Python backend needed');
+
+    // ==================== 屏幕取色器（解决 Windows 吸管无法吸取窗口外颜色） ====================
+    ipcMain.handle('screen-pick-color', async () => {
+        try {
+            // 获取主显示器信息
+            const primaryDisplay = screen.getPrimaryDisplay();
+            const { width: sw, height: sh } = primaryDisplay.size;
+            const scaleFactor = primaryDisplay.scaleFactor || 1;
+
+            // 截取整个屏幕
+            const sources = await desktopCapturer.getSources({
+                types: ['screen'],
+                thumbnailSize: { width: sw * scaleFactor, height: sh * scaleFactor },
+            });
+            if (!sources || sources.length === 0) {
+                log('[ColorPicker] No screen source found');
+                return null;
+            }
+            const screenshot = sources[0].thumbnail;
+            const dataUrl = screenshot.toDataURL();
+
+            return new Promise((resolve) => {
+                // 创建全屏透明窗口，覆盖整个屏幕
+                const pickerWin = new BrowserWindow({
+                    x: 0, y: 0,
+                    width: sw, height: sh,
+                    frame: false,
+                    transparent: false,
+                    alwaysOnTop: true,
+                    skipTaskbar: true,
+                    fullscreen: false,
+                    resizable: false,
+                    movable: false,
+                    focusable: true,
+                    webPreferences: {
+                        nodeIntegration: false,
+                        contextIsolation: true,
+                    },
+                });
+
+                pickerWin.setMenuBarVisibility(false);
+
+                // 注入 HTML：显示截图 + 点击取色
+                const html = `<!DOCTYPE html>
+<html><head><style>
+  * { margin:0; padding:0; }
+  html, body { width:100%; height:100%; overflow:hidden; cursor:crosshair; }
+  canvas { display:block; width:100%; height:100%; }
+  #loupe {
+    position:fixed; pointer-events:none; display:none;
+    width:120px; height:120px; border-radius:50%;
+    border:3px solid #fff; box-shadow:0 0 12px rgba(0,0,0,.6);
+    overflow:hidden; z-index:999;
+    image-rendering: pixelated;
+  }
+  #loupe canvas { width:120px; height:120px; image-rendering:pixelated; }
+  #crosshair {
+    position:fixed; pointer-events:none; display:none;
+    width:1px; height:1px; z-index:1000;
+  }
+  #crosshair::before, #crosshair::after {
+    content:''; position:absolute; background:rgba(255,255,255,.6);
+  }
+  #crosshair::before { width:1px; height:20px; left:0; top:-10px; }
+  #crosshair::after { width:20px; height:1px; left:-10px; top:0; }
+  #colorLabel {
+    position:fixed; pointer-events:none; display:none;
+    padding:4px 10px; border-radius:4px;
+    font:bold 13px/1.2 monospace; color:#fff;
+    background:rgba(0,0,0,.75); z-index:1001;
+    white-space:nowrap;
+  }
+</style></head><body>
+<canvas id="c"></canvas>
+<div id="loupe"><canvas id="lc" width="120" height="120"></canvas></div>
+<div id="crosshair"></div>
+<div id="colorLabel"></div>
+<script>
+  const img = new Image();
+  const scaleFactor = ${scaleFactor};
+  img.onload = () => {
+    const c = document.getElementById('c');
+    c.width = img.width;
+    c.height = img.height;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(img, 0, 0);
+
+    const loupe = document.getElementById('loupe');
+    const lc = document.getElementById('lc');
+    const lctx = lc.getContext('2d', { willReadFrequently: true });
+    const crosshair = document.getElementById('crosshair');
+    const colorLabel = document.getElementById('colorLabel');
+
+    function getColor(x, y) {
+      const px = Math.round(x * scaleFactor);
+      const py = Math.round(y * scaleFactor);
+      const d = ctx.getImageData(px, py, 1, 1).data;
+      return '#' + [d[0],d[1],d[2]].map(v => v.toString(16).padStart(2,'0')).join('');
+    }
+
+    document.addEventListener('mousemove', e => {
+      const x = e.clientX, y = e.clientY;
+      // 放大镜
+      loupe.style.display = 'block';
+      crosshair.style.display = 'block';
+      colorLabel.style.display = 'block';
+
+      // 放大镜位置：跟随鼠标但偏移
+      let lx = x + 20, ly = y - 140;
+      if (lx + 130 > window.innerWidth) lx = x - 140;
+      if (ly < 10) ly = y + 20;
+      loupe.style.left = lx + 'px';
+      loupe.style.top = ly + 'px';
+
+      // 绘制放大区域 (8x 放大)
+      const zoom = 8;
+      const srcSize = 15; // 15x15 像素区域
+      const px = Math.round(x * scaleFactor);
+      const py = Math.round(y * scaleFactor);
+      lctx.clearRect(0, 0, 120, 120);
+      lctx.imageSmoothingEnabled = false;
+      lctx.drawImage(c,
+        px - srcSize/2, py - srcSize/2, srcSize, srcSize,
+        0, 0, 120, 120
+      );
+      // 中心十字线
+      lctx.strokeStyle = 'rgba(255,255,255,0.8)';
+      lctx.lineWidth = 1;
+      lctx.strokeRect(56, 56, 8, 8);
+
+      crosshair.style.left = x + 'px';
+      crosshair.style.top = y + 'px';
+
+      const hex = getColor(x, y);
+      colorLabel.textContent = hex.toUpperCase();
+      colorLabel.style.left = (lx) + 'px';
+      colorLabel.style.top = (ly + 128) + 'px';
+      colorLabel.style.borderLeft = '4px solid ' + hex;
+    });
+
+    document.addEventListener('mousedown', e => {
+      e.preventDefault();
+      const hex = getColor(e.clientX, e.clientY);
+      // 使用 document.title 通信回主进程
+      document.title = 'PICKED:' + hex;
+    });
+
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') {
+        document.title = 'PICKED:';
+      }
+    });
+  };
+  img.src = "${dataUrl}";
+</script></body></html>`;
+
+                pickerWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+
+                // 监听 title 变化获取拾取结果
+                pickerWin.webContents.on('page-title-updated', (e, title) => {
+                    if (title.startsWith('PICKED:')) {
+                        const hex = title.replace('PICKED:', '').trim();
+                        pickerWin.destroy();
+                        resolve(hex || null);
+                    }
+                });
+
+                pickerWin.on('closed', () => {
+                    resolve(null);
+                });
+
+                // 安全超时：30 秒后自动关闭
+                setTimeout(() => {
+                    if (!pickerWin.isDestroyed()) pickerWin.destroy();
+                }, 30000);
+            });
+        } catch (err) {
+            log('[ColorPicker] Error: ' + err.message);
+            return null;
+        }
+    });
 
     // ==================== 模板多窗口支持 ====================
     ipcMain.handle('open-template-window', (event, templateId, templateName) => {

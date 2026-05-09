@@ -62,6 +62,15 @@ function _layeredLoadImage(src) {
 
 function _normalizeLocalPath(filePath) {
     if (!filePath || typeof filePath !== 'string') return '';
+    if (/^local-media:\/\//i.test(filePath)) {
+        try {
+            let p = decodeURIComponent(filePath.replace(/^local-media:\/\//i, ''));
+            if (/^\/[A-Za-z]:\//.test(p)) p = p.slice(1);
+            return p || filePath;
+        } catch (_) {
+            return filePath.replace(/^local-media:\/\//i, '');
+        }
+    }
     if (!/^file:\/\//i.test(filePath)) return filePath;
     try {
         const u = new URL(filePath);

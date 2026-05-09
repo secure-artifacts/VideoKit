@@ -1,6 +1,6 @@
 {
   "name": "videokit",
-  "version": "4.3.4",
+  "version": "4.3.5",
   "description": "视频工具包-批量：音频生成-reels视频制作-多媒体转换",
   "author": {
     "name": "TimCode",
@@ -30,6 +30,7 @@
     "diff-match-patch": "^1.0.5",
     "electron-store": "^8.1.0",
     "electron-updater": "^6.8.3",
+    "extract-zip": "^2.0.1",
     "node-web-audio-api": "^1.0.8"
   },
   "devDependencies": {

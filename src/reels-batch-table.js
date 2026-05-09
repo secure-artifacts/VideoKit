@@ -51,7 +51,7 @@ function _getActiveTab() {
 function _syncTasksToActiveTab() {
     const tab = _getActiveTab();
     if (tab) {
-        tab.tasks = _serializeTasks(window._reelsState.tasks);
+        tab.tasks = _cloneBatchTasks(window._reelsState.tasks);
         // DEBUG
         const _dbg = tab.tasks.slice(0, 3).map((t, i) => `[${i}] bgScale=${t.bgScale}`);
         console.log('[BatchTable._syncTasksToActiveTab] 保存到 tab:', _dbg.join(', '));
@@ -59,19 +59,30 @@ function _syncTasksToActiveTab() {
 }
 
 function _loadTabTasks(tab) {
-    window._reelsState.tasks = (tab.tasks || []).map(t => ({ ...t }));
+    window._reelsState.tasks = _cloneBatchTasks(tab.tasks || []);
     window._reelsState.selectedIdx = -1;
 }
 
-function _switchToTab(tabId) {
-    if (tabId === _batchTableState.activeTabId) return;
-    // Save current tab tasks
-    _syncTasksToActiveTab();
+function _switchToTab(tabId, opts = {}) {
+    if (tabId === _batchTableState.activeTabId && !opts.forceLoad) return;
+    // Save current tab tasks (apply DOM→state for the OLD tab before saving)
+    if (!opts.skipSave) {
+        // Apply any pending DOM edits to the CURRENT (old) tab's tasks before saving
+        if (!_isRenderingBatchTable) {
+            _isRenderingBatchTable = true;
+            try { _applyBatchTableChanges(); } catch (e) { console.warn('[switchToTab] applyChanges error:', e); }
+            _isRenderingBatchTable = false;
+        }
+        _syncTasksToActiveTab();
+    }
     _batchTableState.activeTabId = tabId;
     const tab = _getActiveTab();
     _loadTabTasks(tab);
     _batchTableState.selectedRows = new Set();
-    _renderBatchTable();
+    // ★ 关键：新标签的 tasks 已从 tab.tasks 加载，绝不能让旧 DOM 值覆盖
+    _skipNextApply = true;
+    if (opts.skipNextAutoSave) _skipNextBatchAutoSave = true;
+    if (!opts.noRender) _renderBatchTable();
 }
 
 function _addTab(name) {
@@ -102,6 +113,105 @@ async function _renameTab(tabId) {
         tab.name = newName.trim();
         _renderBatchTable();
     }
+}
+
+// ★ 应用标签页：将选中标签页的任务合并到当前任务列表
+function _showMergeTabsModal() {
+    // 先保存当前标签的 DOM 编辑
+    _syncTasksToActiveTab();
+
+    const tabs = _batchTableState.tabs;
+    if (tabs.length <= 1) {
+        alert('只有一个标签页，无需合并');
+        return;
+    }
+
+    const ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:99999;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;';
+
+    const totalTasks = tabs.reduce((s, t) => s + (t.tasks?.length || 0), 0);
+
+    ov.innerHTML = `
+        <div style="background:#1a1a2e;border:1px solid #333;border-radius:8px;padding:20px;min-width:420px;max-width:600px;max-height:80vh;overflow-y:auto;box-shadow:0 12px 40px rgba(0,0,0,0.6);">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+                <h3 style="margin:0;font-size:16px;color:#7b8bef;">📋 应用标签页到任务列表</h3>
+                <button id="mt-close" style="background:none;border:none;color:#888;font-size:18px;cursor:pointer;">✕</button>
+            </div>
+            <p style="font-size:12px;color:#888;margin:0 0 12px;">选择要合并的标签页，它们的任务会被合并到当前激活标签中用于渲染输出。</p>
+            <div style="margin-bottom:12px;display:flex;gap:8px;">
+                <button id="mt-select-all" style="padding:4px 12px;font-size:11px;background:rgba(123,139,239,0.15);border:1px solid rgba(123,139,239,0.3);color:#7b8bef;border-radius:4px;cursor:pointer;">全选</button>
+                <button id="mt-deselect-all" style="padding:4px 12px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;border-radius:4px;cursor:pointer;">全不选</button>
+                <span style="flex:1;"></span>
+                <span style="font-size:11px;color:#666;">共 ${tabs.length} 个标签 / ${totalTasks} 条任务</span>
+            </div>
+            <div id="mt-tab-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px;">
+                ${tabs.map((tab, i) => {
+                    const count = tab.tasks?.length || 0;
+                    const isActive = tab.id === _batchTableState.activeTabId;
+                    const t0 = tab.tasks?.[0];
+                    const preview = t0?.overlays?.[0]?.title_text || t0?.ttsText || t0?.baseName || '';
+                    return `<label style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:${isActive ? 'rgba(123,139,239,0.1)' : 'rgba(255,255,255,0.03)'};border:1px solid ${isActive ? 'rgba(123,139,239,0.3)' : 'rgba(255,255,255,0.06)'};border-radius:6px;cursor:pointer;transition:background 0.15s;" onmouseenter="this.style.background='rgba(123,139,239,0.12)'" onmouseleave="this.style.background='${isActive ? 'rgba(123,139,239,0.1)' : 'rgba(255,255,255,0.03)'}'" >
+                        <input type="checkbox" class="mt-tab-cb" data-tab-id="${tab.id}" checked style="margin:0;transform:scale(1.1);accent-color:#7b8bef;">
+                        <div style="flex:1;min-width:0;">
+                            <div style="font-size:12px;color:#eee;font-weight:${isActive ? 'bold' : 'normal'};">${_escHtml(tab.name)}${isActive ? ' <span style="font-size:10px;color:#7b8bef;">（当前）</span>' : ''}</div>
+                            <div style="font-size:10px;color:#666;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${count}条任务${preview ? ' · ' + _escHtml(preview.slice(0, 40)) : ''}</div>
+                        </div>
+                    </label>`;
+                }).join('')}
+            </div>
+            <div style="display:flex;gap:8px;justify-content:flex-end;">
+                <button id="mt-cancel" style="padding:6px 16px;font-size:12px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#aaa;border-radius:4px;cursor:pointer;">取消</button>
+                <button id="mt-apply" style="padding:6px 20px;font-size:12px;background:rgba(123,139,239,0.3);border:1px solid rgba(123,139,239,0.5);color:#fff;border-radius:4px;cursor:pointer;font-weight:bold;">✅ 应用选中标签</button>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(ov);
+
+    const close = () => ov.remove();
+    ov.querySelector('#mt-close').onclick = close;
+    ov.querySelector('#mt-cancel').onclick = close;
+    ov.addEventListener('click', e => { if (e.target === ov) close(); });
+
+    ov.querySelector('#mt-select-all').onclick = () => {
+        ov.querySelectorAll('.mt-tab-cb').forEach(cb => cb.checked = true);
+    };
+    ov.querySelector('#mt-deselect-all').onclick = () => {
+        ov.querySelectorAll('.mt-tab-cb').forEach(cb => cb.checked = false);
+    };
+
+    ov.querySelector('#mt-apply').onclick = () => {
+        const selectedIds = new Set();
+        ov.querySelectorAll('.mt-tab-cb:checked').forEach(cb => selectedIds.add(cb.dataset.tabId));
+        if (selectedIds.size === 0) { alert('请至少选择一个标签页'); return; }
+
+        // 如果只选了当前标签，不做任何改变
+        if (selectedIds.size === 1 && selectedIds.has(_batchTableState.activeTabId)) {
+            alert('已选中的就是当前标签页，无需合并');
+            close();
+            return;
+        }
+
+        // 合并选中标签页的任务
+        const mergedTasks = [];
+        _batchTableState.tabs.forEach(tab => {
+            if (!selectedIds.has(tab.id)) return;
+            (tab.tasks || []).forEach(t => {
+                mergedTasks.push(JSON.parse(JSON.stringify(t)));
+            });
+        });
+
+        // 写入当前 state.tasks
+        window._reelsState.tasks = mergedTasks;
+        window._reelsState.selectedIdx = -1;
+        _skipNextApply = true;
+
+        console.log(`[MergeTabs] 已合并 ${selectedIds.size} 个标签页, 共 ${mergedTasks.length} 条任务`);
+        alert(`✅ 已合并 ${selectedIds.size} 个标签页，共 ${mergedTasks.length} 条任务到当前列表`);
+        close();
+        _renderBatchTable();
+        if (typeof _renderTaskList === 'function') _renderTaskList();
+    };
 }
 
 // ═══════════════════════════════════════════════════════
@@ -434,9 +544,11 @@ function _initLangPicker(container) {
 
 let _isRenderingBatchTable = false; // 防止 _applyBatchTableChanges 与 _renderBatchTable 互相触发
 let _skipNextApply = false; // 粘贴等操作已直接写入 state，跳过 DOM→state 同步防止旧值覆盖
+let _skipNextBatchAutoSave = false; // 大量制作/切换标签已直接写入 tab，跳过一次渲染期自动同步
 
 function _renderBatchTable() {
-    const container = _batchTableState.container;
+  try {
+    let container = _batchTableState.container;
     const state = window._reelsState;
     if (!state) return;
 
@@ -455,12 +567,25 @@ function _renderBatchTable() {
     const _savedScrollTop = oldScrollWrap ? oldScrollWrap.scrollTop : 0;
     const _savedScrollLeft = oldScrollWrap ? oldScrollWrap.scrollLeft : 0;
 
+    // _renderBatchTable 会反复重建表格内容，并在 container 上挂委托事件。
+    // 重绘前替换为干净节点，避免分段/重绘多次后监听器叠加导致卡死或白屏。
+    if (container && container.parentNode) {
+        const freshContainer = container.cloneNode(false);
+        container.parentNode.replaceChild(freshContainer, container);
+        _batchTableState.container = freshContainer;
+        container = freshContainer;
+    }
+
     // DEBUG: 追踪 bgScale 持久化
     const _dbgScales = (state.tasks || []).slice(0, 3).map((t, i) => `[${i}] bgScale=${t.bgScale} bgDur=${t.bgDurScale} audioDur=${t.audioDurScale}`);
     console.log('[BatchTable._renderBatchTable] 渲染前 task scales:', _dbgScales.join(', '));
 
     // 自动保存当前配置到 localStorage
-    _batchAutoSave();
+    if (_skipNextBatchAutoSave) {
+        _skipNextBatchAutoSave = false;
+    } else {
+        _batchAutoSave();
+    }
     const tasks = state.tasks || [];
     const activeTab = _getActiveTab();
     const exportNamingMode = localStorage.getItem('reels_naming_mode') || 'text';
@@ -494,6 +619,8 @@ function _renderBatchTable() {
                 <div class="rbt-tabs-scroll" style="flex:1;">
                     ${tabsHtml}
                     <div class="rbt-tab rbt-tab-add" title="新建标签页">＋</div>
+                    <div class="rbt-tab rbt-tab-clear-all" title="清空删除所有标签页" style="color:#f66;font-size:11px;margin-left:4px;">🗑 清空</div>
+                    <div class="rbt-tab rbt-tab-merge" id="rbt-merge-tabs-btn" title="将多个标签页的任务合并到当前渲染队列" style="color:#7b8bef;font-size:11px;margin-left:4px;cursor:pointer;border:1px solid rgba(123,139,239,0.3);background:rgba(123,139,239,0.1);">📋 应用标签页</div>
                 </div>
                 <div style="padding-right:12px; display:flex; align-items:center; gap:8px;">
                     <span style="font-size:11px;color:#888;">📦 当前工程:</span>
@@ -615,6 +742,7 @@ function _renderBatchTable() {
                         <button class="rbt-btn" id="rbt-paste-btn" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;" title="从 Google 表格粘贴覆层文案(支持标题/内容/结尾多列格式)">粘贴覆层文案</button>
                         <button class="rbt-btn" id="rbt-paste-scroll-btn" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;" title="从 Google 表格批量粘贴滚动字幕">粘贴滚动字幕</button>
                         <button class="rbt-btn" id="rbt-paste-clip-ab" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;" title="A/B双版文案">粘贴剪辑文案 (A/B版)</button>
+                        <button class="rbt-btn" id="rbt-bulk-create-btn" style="padding:2px 8px;font-size:11px;background:rgba(124,92,255,0.15);border:1px solid rgba(124,92,255,0.3);color:#b8a0ff;font-weight:600;" title="类似Canva大量制作：表格数据 × 覆层模板 = 批量任务">🧩 大量制作</button>
                     </div>
 
                     <!-- === 4. 批量参数修剪 (Scaling) === -->
@@ -785,6 +913,7 @@ function _renderBatchTable() {
                             <th class="rbt-col-footer rbt-grp-ovl"><div class="rbt-th-wrap"><span>覆层结尾</span><button class="rbt-th-paste" data-paste-col="overlay_footer" title="从剪贴板粘贴到该列">📋</button><button class="rbt-th-clear" data-clear-col="overlay_footer" title="清空该列">清</button></div></th>
                             <th class="rbt-col-scroll-title rbt-grp-ovl"><div class="rbt-th-wrap"><span>滚动标题</span><button class="rbt-th-paste" data-paste-col="scroll_title" title="从剪贴板粘贴到该列">📋</button><button class="rbt-th-clear" data-clear-col="scroll_title" title="清空该列">清</button></div></th>
                             <th class="rbt-col-scroll-body rbt-grp-ovl"><div class="rbt-th-wrap"><span>滚动内容</span><button class="rbt-th-paste" data-paste-col="scroll_body" title="从剪贴板粘贴到该列">📋</button><button class="rbt-th-clear" data-clear-col="scroll_body" title="清空该列">清</button></div></th>
+                            <th class="rbt-col-subtime rbt-grp-ovl"><div class="rbt-th-wrap"><span>⏱️ 字幕时间</span><button class="rbt-th-clear" data-clear-col="subtitleTime" title="重置为全时段">清</button></div></th>
                         </tr>
                     </thead>
                     <tbody id="rbt-tbody">
@@ -953,6 +1082,13 @@ function _renderBatchTable() {
         newScrollWrap.scrollTop = _savedScrollTop;
         newScrollWrap.scrollLeft = _savedScrollLeft;
     }
+  } catch (fatalErr) {
+    console.error('[BatchTable] _renderBatchTable FATAL:', fatalErr);
+    try {
+      const c = _batchTableState.container;
+      if (c) c.innerHTML = `<div style="padding:20px;color:#f66;font-size:14px;"><h3>⚠️ 批量表格渲染出错</h3><pre style="white-space:pre-wrap;color:#faa;font-size:12px;">${fatalErr.message}\n\n${fatalErr.stack || ''}</pre><button onclick="_renderBatchTable()" style="margin-top:12px;padding:8px 16px;background:#333;border:1px solid #555;color:#ccc;border-radius:6px;cursor:pointer;">🔄 重试</button></div>`;
+    } catch(_) {}
+  }
 }
 
 function _isBatchWritableOverlay(ov) {
@@ -967,6 +1103,38 @@ function _findBatchTextCardOverlay(task) {
 
 function _findBatchScrollOverlay(task) {
     return (task.overlays || []).find(o => o && _isBatchWritableOverlay(o) && o.type === 'scroll');
+}
+
+function _collectBatchOverlayTextSlots(overlays) {
+    const slots = {
+        title: [],
+        body: [],
+        footer: [],
+        plain: [],
+        scrollTitle: [],
+        scrollBody: [],
+    };
+    (overlays || []).forEach(ov => {
+        if (!ov || ov.fixed_text) return;
+        if (ov.type === 'textcard' || !ov.type || ov.type === '') {
+            if (ov.title_text != null) slots.title.push(ov.title_text);
+            if (ov.body_text != null) slots.body.push(ov.body_text);
+            if (ov.footer_text != null) slots.footer.push(ov.footer_text);
+        } else if (ov.type === 'scroll') {
+            if (ov.scroll_title != null) slots.scrollTitle.push(ov.scroll_title);
+            if (ov.content != null) slots.scrollBody.push(ov.content);
+        } else if (ov.type === 'text') {
+            if (ov.content != null) slots.plain.push(ov.content);
+        }
+    });
+    return slots;
+}
+
+function _shiftFirstTextSlot(...lists) {
+    for (const list of lists) {
+        if (list && list.length > 0) return list.shift();
+    }
+    return undefined;
 }
 
 function _applyOverlayField(task, fieldCategory, str) {
@@ -1019,11 +1187,47 @@ function _syncSelectedTaskOverlayMgrIfNeeded(taskIdx) {
     }
 }
 
+function _renderSubtitleTimeCell(task, idx) {
+    try {
+        const mode = task?.subtitleTimeMode || 'full';
+        const slices = Array.isArray(task?.subtitleTimeSlices) ? task.subtitleTimeSlices : [];
+        if (mode === 'split' && slices.length > 0) {
+            const sliceLabels = slices.map((s, si) => {
+                const label = s.label || String.fromCharCode(65 + si);
+                const endStr = s.endSec != null && !isNaN(s.endSec) ? s.endSec + 's' : '尾';
+                return `<div style="font-size:9px;color:#a0d0ff;line-height:1.3;">${_escHtml(label)}: ${s.startSec || 0}s→${endStr}</div>`;
+            }).join('');
+            return `<div class="rbt-subtime-cell" data-idx="${idx}" style="cursor:pointer;padding:2px 4px;border-radius:4px;background:rgba(76,158,255,0.15);border:1px solid rgba(76,158,255,0.3);" title="双击编辑时间切片">
+                <div style="font-size:9px;color:#4c9eff;font-weight:bold;margin-bottom:1px;">⏱ 分段</div>
+                ${sliceLabels}
+            </div>`;
+        }
+        return `<div class="rbt-subtime-cell" data-idx="${idx}" style="cursor:pointer;padding:4px;border-radius:4px;color:#666;border:1px dashed #333;text-align:center;font-size:10px;" title="双击设置字幕时间切片">
+            全时段
+        </div>`;
+    } catch (err) {
+        console.error('[BatchTable] subtitleTimeSlice render error:', err);
+        return `<div class="rbt-subtime-cell" data-idx="${idx}" style="cursor:pointer;padding:4px;border-radius:4px;color:#f66;font-size:10px;text-align:center;">渲染错误</div>`;
+    }
+}
+
+function _updateSubtitleTimeCell(idx) {
+    const task = window._reelsState?.tasks?.[idx];
+    const container = _batchTableState.container;
+    if (!task || !container) return;
+    const td = container.querySelector(`tr[data-idx="${idx}"] .rbt-col-subtime`);
+    if (td) td.innerHTML = _renderSubtitleTimeCell(task, idx);
+    if (typeof _syncTasksToActiveTab === 'function') _syncTasksToActiveTab();
+    if (typeof _batchAutoSave === 'function') _batchAutoSave();
+}
+
 function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
+  try {
     // 提取覆层信息
     const ov = _findBatchTextCardOverlay(task);
-    const title = ov ? (ov.title_text || '') : '';
-    const body = ov ? (ov.body_text || '') : '';
+    const textSlots = _collectBatchOverlayTextSlots(task.overlays || []);
+    const title = ov ? (ov.title_text || '') : (textSlots.plain[0] || '');
+    const body = ov ? (ov.body_text || '') : (textSlots.plain[1] || '');
     const footer = ov ? (ov.footer_text || '') : '';
     // 滚动字幕覆层信息
     const scrollOv = _findBatchScrollOverlay(task);
@@ -1429,8 +1633,15 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
             <td class="rbt-col-scroll-body">
                 <textarea class="rbt-textarea rbt-scroll-body-input" data-idx="${idx}" rows="2" title="双击放大编辑">${_escHtml(scrollBody)}</textarea>
             </td>
+            <td class="rbt-col-subtime">
+                ${_renderSubtitleTimeCell(task, idx)}
+            </td>
         </tr>
     `;
+  } catch (renderErr) {
+    console.error(`[BatchTable] _renderBatchRow(${idx}) error:`, renderErr);
+    return `<tr data-idx="${idx}"><td colspan="30" style="color:#f66;padding:8px;">⚠️ 行 ${idx+1} 渲染错误: ${renderErr.message}</td></tr>`;
+  }
 }
 
 
@@ -1488,6 +1699,19 @@ function _bindBatchTableEvents() {
     const tabBar = container.querySelector('.rbt-tabs-scroll');
     if (tabBar) {
         tabBar.addEventListener('click', (e) => {
+            // Clear all tabs
+            if (e.target.closest('.rbt-tab-clear-all')) {
+                if (!confirm(`确定清空删除所有 ${_batchTableState.tabs.length} 个标签页及全部任务？\n\n此操作不可撤销！`)) return;
+                _batchTableState.tabs = [];
+                _batchTableState.activeTabId = null;
+                _addTab('默认');
+                return;
+            }
+            // ★ 应用标签页 → 合并到当前任务列表
+            if (e.target.closest('.rbt-tab-merge')) {
+                _showMergeTabsModal();
+                return;
+            }
             // Add new tab
             if (e.target.closest('.rbt-tab-add')) {
                 _addTab();
@@ -2481,6 +2705,11 @@ function _bindBatchTableEvents() {
         _showClipAbPasteModal();
     });
 
+    // 🧩 大量制作
+    container.querySelector('#rbt-bulk-create-btn')?.addEventListener('click', () => {
+        _showBulkCreateModal();
+    });
+
     // 内容视频缩放: input + slider
     container.addEventListener('input', (e) => {
         if (e.target.classList.contains('rbt-cvscale-input') || e.target.classList.contains('rbt-cvscale-slider')) {
@@ -2545,6 +2774,13 @@ function _bindBatchTableEvents() {
         if (trimCell) {
             const idx = parseInt(trimCell.dataset.idx);
             _showTrimModal(idx);
+            return;
+        }
+        // ⏱️ 字幕时间切片双击 → 打开切片编辑弹窗
+        const subtimeCell = e.target.closest('.rbt-subtime-cell');
+        if (subtimeCell) {
+            const idx = parseInt(subtimeCell.dataset.idx);
+            _showSubtitleTimeSliceEditor(idx);
             return;
         }
     });
@@ -2948,37 +3184,43 @@ function _bindBatchTableEvents() {
                 if (task.overlays && task.overlays.length > 0) {
                     for (const ov of task.overlays) {
                         if (ov.fixed_text) continue;
-                        ov.title_text = '';
-                        ov.body_text = '';
-                        ov.footer_text = '';
-                        ov.scroll_title = '';
-                        ov.content = '';
+                        if (ov.type === 'textcard' || !ov.type || ov.type === '') {
+                            ov.title_text = '';
+                            ov.body_text = '';
+                            ov.footer_text = '';
+                        } else if (ov.type === 'scroll') {
+                            ov.scroll_title = '';
+                            ov.content = '';
+                        } else if (ov.type === 'text') {
+                            ov.content = '';
+                        }
+                        // image/video 类型不清空 content（content 是文件路径）
                     }
                 }
                 break;
             case 'overlay_title':
                 if (task.overlays && task.overlays.length > 0) {
-                    for (const ov of task.overlays) if (!ov.fixed_text) ov.title_text = '';
+                    for (const ov of task.overlays) if (!ov.fixed_text && (ov.type === 'textcard' || !ov.type || ov.type === '')) ov.title_text = '';
                 }
                 break;
             case 'overlay_body':
                 if (task.overlays && task.overlays.length > 0) {
-                    for (const ov of task.overlays) if (!ov.fixed_text) ov.body_text = '';
+                    for (const ov of task.overlays) if (!ov.fixed_text && (ov.type === 'textcard' || !ov.type || ov.type === '')) ov.body_text = '';
                 }
                 break;
             case 'overlay_footer':
                 if (task.overlays && task.overlays.length > 0) {
-                    for (const ov of task.overlays) if (!ov.fixed_text) ov.footer_text = '';
+                    for (const ov of task.overlays) if (!ov.fixed_text && (ov.type === 'textcard' || !ov.type || ov.type === '')) ov.footer_text = '';
                 }
                 break;
             case 'scroll_title':
                 if (task.overlays && task.overlays.length > 0) {
-                    for (const ov of task.overlays) if (!ov.fixed_text) ov.scroll_title = '';
+                    for (const ov of task.overlays) if (!ov.fixed_text && ov.type === 'scroll') ov.scroll_title = '';
                 }
                 break;
             case 'scroll_body':
                 if (task.overlays && task.overlays.length > 0) {
-                    for (const ov of task.overlays) if (!ov.fixed_text) ov.content = '';
+                    for (const ov of task.overlays) if (!ov.fixed_text && ov.type === 'scroll') ov.content = '';
                 }
                 break;
             case 'exportName':
@@ -2995,6 +3237,10 @@ function _bindBatchTableEvents() {
                 break;
             case 'audioDurScale':
                 task.audioDurScale = 100;
+                break;
+            case 'subtitleTime':
+                task.subtitleTimeMode = 'full';
+                task.subtitleTimeSlices = [];
                 break;
             default:
                 break;
@@ -3028,7 +3274,8 @@ function _bindBatchTableEvents() {
             scroll_body: '滚动内容',
             cover_media: '封面素材',
             cover_text: '封面文案',
-            bgVideoVolume: '背景音量'
+            bgVideoVolume: '背景音量',
+            subtitleTime: '字幕时间切片',
         };
         const { state, indices, label } = _getClearTargets();
         if (!state || indices.length === 0) return;
@@ -5046,6 +5293,7 @@ const _RBT_COLUMNS = [
     { key: 'footer', label: '📌 覆层结尾', default: true },
     { key: 'scroll-title', label: '📜 滚动标题', default: true },
     { key: 'scroll-body', label: '📜 滚动内容', default: true },
+    { key: 'subtime', label: '⏱️ 字幕时间', default: true },
     { key: 'dur', label: '⏱️ 时长(s)', default: true },
     { key: 'tpl', label: '🎬 字幕模板+覆层预设', default: true },
 ];
@@ -5129,9 +5377,10 @@ function _applyColVisibility() {
  * 生成单个预设的带样式 HTML
  * @param {string} name - 预设名称
  * @param {object} presetsMap - { name: styleObj, ... }
+ * @param {boolean} isUserPreset - 是否为用户自定义预设 (显示管理按钮)
  * @returns {string} HTML
  */
-function _buildPresetStyledItemHTML(name, presetsMap) {
+function _buildPresetStyledItemHTML(name, presetsMap, isUserPreset = false) {
     try {
         const style = (presetsMap && presetsMap[name]) || {};
         const m = window.ReelsStyleEngine ? ReelsStyleEngine.mergeStyle(style) : { ...style };
@@ -5201,10 +5450,18 @@ function _buildPresetStyledItemHTML(name, presetsMap) {
             htmlName = `<span style="color:${tc};text-shadow:${ts};">${eName}</span>`;
         }
 
-        return `<div class="rbt-sub-styled-item" data-val="${eName}" style="padding:5px 18px;cursor:pointer;border-bottom:1px solid #2a2a3e;">
-            <span style="font-size:15px;font-weight:${fw};line-height:1.5;${bgCss}${fsStyle}${ffStyle}${ttStyle}${lsStyle}display:inline-block;">
+        // 用户预设：显示重命名和删除按钮
+        const mgmtBtns = isUserPreset ? `
+            <span class="rbt-ssp-mgmt" style="margin-left:auto;display:inline-flex;gap:2px;opacity:0;transition:opacity 0.15s;flex-shrink:0;">
+                <button class="rbt-ssp-rename-btn" data-preset-name="${eName}" title="重命名" style="background:none;border:none;cursor:pointer;font-size:12px;padding:2px 4px;color:#8af;line-height:1;">✏️</button>
+                <button class="rbt-ssp-delete-btn" data-preset-name="${eName}" title="删除" style="background:none;border:none;cursor:pointer;font-size:12px;padding:2px 4px;color:#f87171;line-height:1;">🗑</button>
+            </span>` : '';
+
+        return `<div class="rbt-sub-styled-item" data-val="${eName}" data-user-preset="${isUserPreset ? '1' : ''}" style="padding:5px 18px;cursor:pointer;border-bottom:1px solid #2a2a3e;display:flex;align-items:center;gap:6px;">
+            <span style="font-size:15px;font-weight:${fw};line-height:1.5;${bgCss}${fsStyle}${ffStyle}${ttStyle}${lsStyle}display:inline-block;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
                 ${htmlName}
             </span>
+            ${mgmtBtns}
         </div>`;
     } catch (e) {
         return `<div class="rbt-sub-styled-item" data-val="${_escHtml(name)}" style="padding:5px 18px;cursor:pointer;border-bottom:1px solid #2a2a3e;color:#ccc;font-size:13px;">${_escHtml(name)}</div>`;
@@ -5297,7 +5554,7 @@ function _openStyledPresetPicker(anchorEl, currentVal, onSelect) {
                     ${_escHtml(group.category)} <span style="font-size:10px;color:#666;font-weight:400;">(${group.names.length})</span>
                 </summary>
                 <div class="rbt-ssp-cat-items">
-                    ${group.names.map(n => _buildPresetStyledItemHTML(n, presetsMap)).join('')}
+                    ${group.names.map(n => _buildPresetStyledItemHTML(n, presetsMap, isUserPresets)).join('')}
                 </div>
             </details>`;
         }
@@ -5343,7 +5600,9 @@ function _openStyledPresetPicker(anchorEl, currentVal, onSelect) {
     // 点击项 → 应用预设但不关闭（方便快速切换对比）
     let _activeItem = null;
     popup.querySelectorAll('.rbt-sub-styled-item').forEach(item => {
-        item.addEventListener('click', () => {
+        item.addEventListener('click', (e) => {
+            // 如果点击的是管理按钮（重命名/删除），不触发选择
+            if (e.target.closest('.rbt-ssp-rename-btn') || e.target.closest('.rbt-ssp-delete-btn')) return;
             const val = item.dataset.val;
             // 更新选中高亮
             if (_activeItem) {
@@ -5357,9 +5616,60 @@ function _openStyledPresetPicker(anchorEl, currentVal, onSelect) {
         });
         item.addEventListener('mouseenter', () => {
             if (item !== _activeItem) item.style.background = 'rgba(74,158,255,0.1)';
+            // 显示管理按钮
+            const mgmt = item.querySelector('.rbt-ssp-mgmt');
+            if (mgmt) mgmt.style.opacity = '1';
         });
         item.addEventListener('mouseleave', () => {
             if (item !== _activeItem) item.style.background = 'transparent';
+            // 隐藏管理按钮
+            const mgmt = item.querySelector('.rbt-ssp-mgmt');
+            if (mgmt) mgmt.style.opacity = '0';
+        });
+    });
+
+    // ── 用户预设管理：重命名 ──
+    popup.querySelectorAll('.rbt-ssp-rename-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const oldName = btn.dataset.presetName;
+            if (!oldName || !window.ReelsStyleEngine) return;
+            const newName = await (typeof _showInputDialog === 'function'
+                ? _showInputDialog('重命名预设', oldName)
+                : prompt('请输入新名称：', oldName));
+            if (!newName || !newName.trim() || newName.trim() === oldName) return;
+            const success = ReelsStyleEngine.renameSubtitlePreset(oldName, newName.trim());
+            if (success) {
+                if (typeof showToast === 'function') showToast(`预设已重命名为「${newName.trim()}」`, 'success');
+                // 如果当前选中的正是被重命名的预设，更新引用
+                if (onSelect) onSelect(newName.trim());
+                // 关闭并重新打开以刷新列表
+                popup.remove();
+                document.removeEventListener('mousedown', outsideHandler);
+                _openStyledPresetPicker(anchorEl, newName.trim(), onSelect);
+            } else {
+                if (typeof showToast === 'function') showToast('重命名失败：目标名称已存在或原预设不存在', 'error');
+                else alert('重命名失败：目标名称已存在或原预设不存在');
+            }
+        });
+    });
+
+    // ── 用户预设管理：删除 ──
+    popup.querySelectorAll('.rbt-ssp-delete-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const name = btn.dataset.presetName;
+            if (!name || !window.ReelsStyleEngine) return;
+            if (!confirm(`确定删除预设「${name}」？`)) return;
+            ReelsStyleEngine.deleteSubtitlePreset(name);
+            // 清除默认预设引用
+            const defaultName = localStorage.getItem('reels_default_preset') || '';
+            if (defaultName === name) localStorage.removeItem('reels_default_preset');
+            if (typeof showToast === 'function') showToast(`预设「${name}」已删除`, 'success');
+            // 关闭并重新打开以刷新列表
+            popup.remove();
+            document.removeEventListener('mousedown', outsideHandler);
+            _openStyledPresetPicker(anchorEl, currentVal === name ? '' : currentVal, onSelect);
         });
     });
 
@@ -5456,6 +5766,7 @@ function _showColumnSettingsPopup(anchor) {
         { label: '字幕 & 文本', keys: ['srt', 'txtcontent'] },
         { label: '覆层文案', keys: ['title', 'body', 'footer'] },
         { label: '滚动字幕', keys: ['scroll-title', 'scroll-body'] },
+        { label: '字幕时间', keys: ['subtime'] },
         { label: '其他', keys: ['dur', 'tpl', 'exportname'] },
     ];
 
@@ -7158,6 +7469,16 @@ const RBT_OVERLAY_PRESET_TEXT_KEYS = new Set([
 const RBT_OVERLAY_PRESET_RUNTIME_KEYS = new Set([
     'id', '_img', '_imgLoaded', '_templateName', '_selected', '_exporting',
     '_exportDuration', '_renderedW', '_renderedH', '_renderedY',
+    '_blobUrl', '_cachedUrl', '_imageEl', '_videoEl', '_dirty',
+    'image_src_blob', 'image_src_original',
+]);
+
+// 验证时额外忽略的 key：这些字段在 JSON.parse(JSON.stringify()) 后
+// 容易因浮点精度、undefined→null 转换等原因产生"假不一致"
+const RBT_OVERLAY_VERIFY_SKIP_KEYS = new Set([
+    ...RBT_OVERLAY_PRESET_RUNTIME_KEYS,
+    ...RBT_OVERLAY_PRESET_TEXT_KEYS,
+    'start', 'end', 'fixed_text',
 ]);
 
 function _overlayPresetValueEqual(a, b) {
@@ -7166,7 +7487,15 @@ function _overlayPresetValueEqual(a, b) {
     if (typeof a === 'number' || typeof b === 'number') {
         const na = Number(a);
         const nb = Number(b);
-        return Number.isFinite(na) && Number.isFinite(nb) && Math.abs(na - nb) < 0.0001;
+        return Number.isFinite(na) && Number.isFinite(nb) && Math.abs(na - nb) < 0.01;
+    }
+    // 对于字符串类型的路径/URL，只比较文件名部分（忽略 blob: / local-media: 等前缀差异）
+    if (typeof a === 'string' && typeof b === 'string') {
+        if (a.includes('/') || b.includes('/') || a.startsWith('blob:') || b.startsWith('blob:')) {
+            const nameA = a.split('/').pop().split('?')[0];
+            const nameB = b.split('/').pop().split('?')[0];
+            if (nameA && nameB && nameA === nameB) return true;
+        }
     }
     return JSON.stringify(a) === JSON.stringify(b);
 }
@@ -7174,10 +7503,11 @@ function _overlayPresetValueEqual(a, b) {
 function _overlayMatchesPresetLayer(actual, presetLayer) {
     if (!actual || !presetLayer) return false;
     if ((actual.type || '') !== (presetLayer.type || '')) return false;
-    const preserveText = !presetLayer.fixed_text;
+    // 只检查预设中明确定义的关键样式属性，跳过运行时/文本/路径等易变字段
     for (const [key, expected] of Object.entries(presetLayer)) {
-        if (RBT_OVERLAY_PRESET_RUNTIME_KEYS.has(key)) continue;
-        if (preserveText && RBT_OVERLAY_PRESET_TEXT_KEYS.has(key)) continue;
+        if (RBT_OVERLAY_VERIFY_SKIP_KEYS.has(key)) continue;
+        // 跳过包含路径的字段（image_src 等），clone 后 blob URL 必然不同
+        if (typeof key === 'string' && (key.endsWith('_src') || key.endsWith('_path') || key.endsWith('Path'))) continue;
         if (!_overlayPresetValueEqual(actual[key], expected)) return false;
     }
     return true;
@@ -7293,43 +7623,55 @@ function _applyOverlayGroupPresetToTask(task, presetName, opts = { addScroll: fa
             const layers = Array.isArray(data) ? data : data.layers;
             if (Array.isArray(layers)) {
                 const oldOverlays = task.overlays || [];
-                const textDonors = oldOverlays.filter(o => o && !o.fixed_text); // 仅用于提取批量表格文案
+                const textSlots = _collectBatchOverlayTextSlots(oldOverlays); // 仅用于提取批量表格文案
 
                 // 构建预设覆层，仅迁移文本内容
                 const newOverlays = layers.map(layerData => {
                     const clone = JSON.parse(JSON.stringify(layerData));
                     clone.id = 'ov_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
 
-                    // 从旧覆层中按类型匹配，迁移批量表格文案。
+                    // 从旧覆层中按文字槽位迁移批量表格文案。
                     // fixed_text 层使用预设自带文案，不消费表格文案。
-                    const matchIdx = clone.fixed_text ? -1 : textDonors.findIndex(o => o.type === clone.type);
-                    if (matchIdx !== -1) {
-                        const old = textDonors.splice(matchIdx, 1)[0];
-
+                    if (!clone.fixed_text) {
                         if (clone.type === 'scroll') {
                             // ── 滚动字幕：迁移 scroll_title / content ──
                             if (opts.clearText) {
                                 clone.scroll_title = '';
                                 clone.content = '';
-                            } else if (!clone.fixed_text) {
-                                // 用户旧文案优先（非 null/undefined 就保留，包括空字符串）
-                                if (old.scroll_title != null) clone.scroll_title = old.scroll_title;
-                                if (old.content != null) clone.content = old.content;
-                                // 迁移富文本样式
-                                if (old.scroll_title_styled_ranges) clone.scroll_title_styled_ranges = old.scroll_title_styled_ranges;
-                                if (old.scroll_styled_ranges) clone.scroll_styled_ranges = old.scroll_styled_ranges;
+                            } else {
+                                const st = _shiftFirstTextSlot(textSlots.scrollTitle, textSlots.title);
+                                const sb = _shiftFirstTextSlot(textSlots.scrollBody, textSlots.body, textSlots.plain);
+                                if (st !== undefined) {
+                                    clone.scroll_title = st;
+                                    clone.scroll_title_styled_ranges = null;
+                                }
+                                if (sb !== undefined) {
+                                    clone.content = sb;
+                                    clone.scroll_styled_ranges = null;
+                                }
                             }
-                        } else {
-                            // ── 文字卡片等：迁移 title/body/footer ──
-                            if (!clone.fixed_text) {
-                                if (old.title_text != null) clone.title_text = old.title_text;
-                                if (old.body_text != null) clone.body_text = old.body_text;
-                                if (old.footer_text != null) clone.footer_text = old.footer_text;
-                                if (old.content != null) clone.content = old.content;
-                                // 迁移富文本样式
-                                if (old.title_styled_ranges) clone.title_styled_ranges = old.title_styled_ranges;
-                                if (old.body_styled_ranges) clone.body_styled_ranges = old.body_styled_ranges;
-                                if (old.footer_styled_ranges) clone.footer_styled_ranges = old.footer_styled_ranges;
+                        } else if (clone.type === 'text') {
+                            const txt = _shiftFirstTextSlot(textSlots.plain, textSlots.title, textSlots.body);
+                            if (txt !== undefined) {
+                                clone.content = txt;
+                                clone.styled_ranges = null;
+                            }
+                        } else if (clone.type === 'textcard' || !clone.type || clone.type === '') {
+                            // ── 文字卡片：标题/正文/结尾分槽迁移，避免同一段默认文案同时进入标题和内容 ──
+                            const tt = _shiftFirstTextSlot(textSlots.title, textSlots.plain);
+                            const bt = _shiftFirstTextSlot(textSlots.body, textSlots.plain, textSlots.scrollBody);
+                            const ft = _shiftFirstTextSlot(textSlots.footer);
+                            if (tt !== undefined) {
+                                clone.title_text = tt;
+                                clone.title_styled_ranges = null;
+                            }
+                            if (bt !== undefined) {
+                                clone.body_text = bt;
+                                clone.body_styled_ranges = null;
+                            }
+                            if (ft !== undefined) {
+                                clone.footer_text = ft;
+                                clone.footer_styled_ranges = null;
                             }
                         }
                     } else if (clone.type === 'scroll' && opts.clearText) {
@@ -9464,6 +9806,7 @@ function _injectBatchTableCSS() {
         /* 其他杂项列宽 */
         .rbt-col-tts_voice { width:100px; }
         .rbt-col-dur { width:70px; text-align:center; }
+        .rbt-col-subtime { width:100px; min-width:80px; }
         .rbt-col-tpl { width:120px; }
         .rbt-col-act { width:70px; white-space:nowrap; }
         .rbt-file-name {
@@ -10173,15 +10516,18 @@ function _collectPathsToCheck(tasks) {
     for (let i = 0; i < tasks.length; i++) {
         const task = tasks[i];
         for (const field of FIELDS) {
-            const val = task[field];
+            let val = task[field];
             if (!val || typeof val !== 'string') continue;
+            // 统一去除 file:// 前缀 + URL 解码
+            if (val.startsWith('file://')) val = decodeURIComponent(val.substring(7));
             const fileName = val.split('/').pop().split('\\').pop();
             if (fileName) entries.push({ taskIdx: i, field, path: val, fileName });
         }
         if (Array.isArray(task.bgClipPool)) {
             for (let ci = 0; ci < task.bgClipPool.length; ci++) {
-                const cp = task.bgClipPool[ci];
+                let cp = task.bgClipPool[ci];
                 if (!cp) continue;
+                if (cp.startsWith('file://')) cp = decodeURIComponent(cp.substring(7));
                 const fn = cp.split('/').pop().split('\\').pop();
                 if (fn) entries.push({ taskIdx: i, field: `bgClipPool[${ci}]`, path: cp, fileName: fn });
             }
@@ -10288,7 +10634,7 @@ async function _relocateMissingMaterials() {
     // 通过 IPC 递归搜索
     let foundMap = {};
     if (window.electronAPI && window.electronAPI.searchFilesRecursive) {
-        foundMap = await window.electronAPI.searchFilesRecursive(searchDir, uniqueNames, 5);
+        foundMap = await window.electronAPI.searchFilesRecursive(searchDir, uniqueNames, 10);
     }
 
     // 应用找到的路径
@@ -10476,6 +10822,114 @@ window.addEventListener('beforeunload', () => {
 });
 
 // ═══════════════════════════════════════════════════════
+// ⏱️ Subtitle Time Slice Editor — 字幕时间切片（极简版）
+// ═══════════════════════════════════════════════════════
+
+function _showSubtitleTimeSliceEditor(idx) {
+    const state = window._reelsState;
+    const task = state.tasks[idx];
+    if (!task) return;
+
+    const currentMode = task.subtitleTimeMode || 'full';
+    const currentSlices = task.subtitleTimeSlices || [];
+    // 如果已有切片，取第一个切片的 endSec 作为切换秒数
+    const currentSplitAt = (currentSlices.length > 0 && currentSlices[0].endSec) ? currentSlices[0].endSec : 10;
+
+    // 如果当前是分段模式 → 直接切回全时段（一键切换）
+    if (currentMode === 'split') {
+        task.subtitleTimeMode = 'full';
+        task.subtitleTimeSlices = [];
+        _updateSubtitleTimeCell(idx);
+        if (typeof showToast === 'function') showToast(`✅ 行 ${idx + 1}: 已切回全时段`, 'success');
+        return;
+    }
+
+    // 当前是全时段 → 弹出简洁输入框设置切换秒数
+    // 移除旧弹窗
+    document.querySelectorAll('.rbt-subtime-popover').forEach(el => el.remove());
+
+    const cell = _batchTableState.container.querySelector(`.rbt-subtime-cell[data-idx="${idx}"]`);
+    if (!cell) return;
+
+    const rect = cell.getBoundingClientRect();
+    const pop = document.createElement('div');
+    pop.className = 'rbt-subtime-popover';
+    // 防止右侧溢出屏幕
+    const popWidth = 280;
+    let popLeft = rect.left;
+    if (popLeft + popWidth > window.innerWidth - 12) {
+        popLeft = window.innerWidth - popWidth - 12;
+    }
+    // 防止底部溢出
+    let popTop = rect.bottom + 4;
+    if (popTop + 100 > window.innerHeight) {
+        popTop = rect.top - 100;
+    }
+    pop.style.cssText = `position:fixed;z-index:99999;background:#1e1e2e;border:1px solid #4c9eff;border-radius:8px;padding:12px;box-shadow:0 8px 32px rgba(0,0,0,0.6);
+        left:${popLeft}px;top:${popTop}px;width:${popWidth}px;`;
+
+    pop.innerHTML = `
+        <div style="font-size:11px;color:#999;margin-bottom:8px;">标题始终显示，前 N 秒显示正文上半段，之后显示下半段</div>
+        <div style="display:flex;align-items:center;gap:6px;">
+            <span style="font-size:12px;color:#ccc;">在第</span>
+            <input type="number" id="rbt-subtime-sec" value="${currentSplitAt}" min="1" max="999" step="0.5"
+                   style="width:55px;background:#111;border:1px solid #444;color:#4c9eff;padding:4px 8px;border-radius:4px;font-size:13px;text-align:center;font-weight:bold;">
+            <span style="font-size:12px;color:#ccc;">秒切换</span>
+            <button id="rbt-subtime-apply" style="padding:4px 12px;background:#4c9eff;border:none;color:#000;border-radius:4px;cursor:pointer;font-size:12px;font-weight:bold;">✓</button>
+        </div>
+    `;
+
+    document.body.appendChild(pop);
+
+    // 自动聚焦输入框
+    const input = pop.querySelector('#rbt-subtime-sec');
+    input.focus();
+    input.select();
+
+    let closeHandler = null;
+    const closePopover = () => {
+        if (closeHandler) {
+            document.removeEventListener('mousedown', closeHandler);
+            closeHandler = null;
+        }
+        if (pop.parentNode) pop.remove();
+    };
+
+    const applyAndClose = () => {
+        try {
+            const splitAt = parseFloat(input.value) || 10;
+            task.subtitleTimeMode = 'split';
+            task.subtitleTimeSlices = [
+                { label: 'A', startSec: 0, endSec: splitAt, source: 'body_part1' },
+                { label: 'B', startSec: splitAt, endSec: null, source: 'body_part2' },
+            ];
+            closePopover();
+            _updateSubtitleTimeCell(idx);
+            if (typeof showToast === 'function') showToast(`✅ 行 ${idx + 1}: 前${splitAt}s上半段 → 之后下半段`, 'success');
+        } catch (err) {
+            console.error('[SubtitleTimeSlice] error:', err);
+            closePopover();
+        }
+    };
+
+    pop.querySelector('#rbt-subtime-apply').addEventListener('click', applyAndClose);
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') applyAndClose();
+        if (e.key === 'Escape') closePopover();
+    });
+
+    // 点击外部关闭
+    setTimeout(() => {
+        closeHandler = (e) => {
+            if (!pop.contains(e.target)) {
+                closePopover();
+            }
+        };
+        document.addEventListener('mousedown', closeHandler);
+    }, 100);
+}
+
+// ═══════════════════════════════════════════════════════
 // ✂️ Trim Modal — 裁切区间编辑弹窗
 // ═══════════════════════════════════════════════════════
 
@@ -10596,13 +11050,25 @@ function _showClipAbPasteModal() {
     const presetBgB = localStorage.getItem('rbt_clip_bg_preset_b') || '';
     const presetCvMode = localStorage.getItem('rbt_clip_cv_mode') || 'single';
     const presetCvPath = localStorage.getItem('rbt_clip_cv_preset') || '';
+    const lastPresetA = localStorage.getItem('rbt_clip_overlay_preset_a') || '';
+    const lastPresetB = localStorage.getItem('rbt_clip_overlay_preset_b') || '';
+
+    let presetsMap = {};
+    try { presetsMap = JSON.parse(localStorage.getItem('reels_overlay_group_presets') || '{}'); } catch (e) {}
+    if (window.REELS_BUILTIN_OVERLAY_GROUP_PRESETS) presetsMap = { ...window.REELS_BUILTIN_OVERLAY_GROUP_PRESETS, ...presetsMap };
+    let presetOptionsHtmlA = '';
+    let presetOptionsHtmlB = '';
+    for (const p of Object.keys(presetsMap)) {
+        presetOptionsHtmlA += `<option value="${_escHtml(p)}" ${p === lastPresetA ? 'selected' : ''}>${_escHtml(p)}</option>`;
+        presetOptionsHtmlB += `<option value="${_escHtml(p)}" ${p === lastPresetB ? 'selected' : ''}>${_escHtml(p)}</option>`;
+    }
 
     overlay.innerHTML = `
     <div style="background:#1a1a2e;border:1px solid #333;border-radius:14px;padding:28px;width:950px;max-height:85vh;box-shadow:0 20px 60px rgba(0,0,0,0.8);display:flex;flex-direction:column;">
         <div style="font-size:16px;font-weight:700;color:#eee;margin-bottom:4px;">✂️ 批量 A/B 混剪模式：智能任务提取</div>
         <div style="font-size:11px;color:#888;margin-bottom:12px;line-height:1.6;">
-            直接从谷歌表格复制粘贴，列顺序：<code style="background:#222;padding:2px 6px;border-radius:3px;color:#b8a0ff;">视频名称  片段名称  时间段  A标题  A正文  B标题  B正文</code><br>
-            • 每行自动衍生 <strong style="color:#4c9eff">A版 + B版</strong> 两个任务。粘贴后即时预览。
+            直接从谷歌表格复制粘贴，列顺序：<code style="background:#222;padding:2px 6px;border-radius:3px;color:#b8a0ff;">视频名称  片段名称  时间段  A标题  A正文  B标题  B正文(上半段)  B正文(下半段,选填)</code><br>
+            • 每行自动衍生 <strong style="color:#4c9eff">A版 + B版</strong> 两个任务。若填写了B正文下半段，B版将自动开启10秒分段模式。
         </div>
 
         <!-- 全局设定区 -->
@@ -10611,11 +11077,21 @@ function _showClipAbPasteModal() {
                 <label style="font-size:11px;color:#888;display:block;margin-bottom:4px;">🎨 A版固定背景 (<span style="color:#a78bfa;cursor:pointer;" title="双击打开文件选择器">双击</span> 或拖拽 选文件)</label>
                 <input type="text" id="rbt-clip-bg-a" value="${presetBgA}" placeholder="A版统一背景图片/视频 (可留空)"
                     style="width:100%;padding:6px 10px;background:#141420;border:1px solid #333;border-radius:6px;color:#eee;font-size:12px;">
+                <label style="font-size:11px;color:#888;display:block;margin:8px 0 4px 0;">✨ A版自动套用文字排版预设</label>
+                <select id="rbt-clip-preset-a" style="width:100%;padding:6px;background:#141420;border:1px solid #333;border-radius:6px;color:#eee;font-size:12px;">
+                    <option value="">(不使用预设，生成素颜基础字幕)</option>
+                    ${presetOptionsHtmlA}
+                </select>
             </div>
             <div style="flex:1;">
                 <label style="font-size:11px;color:#888;display:block;margin-bottom:4px;">🎨 B版固定背景 (<span style="color:#4c9eff;cursor:pointer;" title="双击打开文件选择器">双击</span> 或拖拽 选文件)</label>
                 <input type="text" id="rbt-clip-bg-b" value="${presetBgB}" placeholder="B版统一背景图片/视频 (可留空)"
                     style="width:100%;padding:6px 10px;background:#141420;border:1px solid #333;border-radius:6px;color:#eee;font-size:12px;">
+                <label style="font-size:11px;color:#888;display:block;margin:8px 0 4px 0;">✨ B版自动套用文字排版预设</label>
+                <select id="rbt-clip-preset-b" style="width:100%;padding:6px;background:#141420;border:1px solid #333;border-radius:6px;color:#eee;font-size:12px;">
+                    <option value="">(不使用预设，生成素颜基础字幕)</option>
+                    ${presetOptionsHtmlB}
+                </select>
             </div>
         </div>
 
@@ -10658,7 +11134,8 @@ function _showClipAbPasteModal() {
                             <th style="padding:5px 4px;border-bottom:1px solid #444;color:#e879a8;">A标题</th>
                             <th style="padding:5px 4px;border-bottom:1px solid #444;color:#e879a8;">A正文</th>
                             <th style="padding:5px 4px;border-bottom:1px solid #444;color:#4c9eff;">B标题</th>
-                            <th style="padding:5px 4px;border-bottom:1px solid #444;color:#4c9eff;">B正文</th>
+                            <th style="padding:5px 4px;border-bottom:1px solid #444;color:#4c9eff;">B正文上</th>
+                            <th style="padding:5px 4px;border-bottom:1px solid #444;color:#4c9eff;">B正文下</th>
                         </tr></thead>
                         <tbody id="rbt-clip-ab-tbody"></tbody>
                     </table>
@@ -10682,11 +11159,11 @@ function _showClipAbPasteModal() {
     document.body.appendChild(overlay);
 
     // ── 表格数据模型 ──
-    let _tableData = []; // [{videoName, clipName, timeRange, aTitle, aBody, bTitle, bBody}]
-    const COL_KEYS = ['videoName', 'clipName', 'timeRange', 'aTitle', 'aBody', 'bTitle', 'bBody'];
+    let _tableData = []; // [{videoName, clipName, timeRange, aTitle, aBody, bTitle, bBody, bBody2}]
+    const COL_KEYS = ['videoName', 'clipName', 'timeRange', 'aTitle', 'aBody', 'bTitle', 'bBody', 'bBody2'];
 
     function _ensureMinRows(n) {
-        while (_tableData.length < n) _tableData.push({ videoName: '', clipName: '', timeRange: '', aTitle: '', aBody: '', bTitle: '', bBody: '' });
+        while (_tableData.length < n) _tableData.push({ videoName: '', clipName: '', timeRange: '', aTitle: '', aBody: '', bTitle: '', bBody: '', bBody2: '' });
     }
     _ensureMinRows(5);
 
@@ -10824,12 +11301,15 @@ function _showClipAbPasteModal() {
             let aBody = row.aBody ? `<span style="color:#aaa;">${_escHtml(row.aBody)}</span>` : '';
             let bTitle = row.bTitle ? `<strong style="color:#ccc;">${_escHtml(row.bTitle)}</strong>` : '';
             let bBody = row.bBody ? `<span style="color:#aaa;">${_escHtml(row.bBody)}</span>` : '';
+            let bBody2 = row.bBody2 ? `<span style="color:#f59e0b;font-size:10px;">[10s切换]</span> <span style="color:#aaa;">${_escHtml(row.bBody2)}</span>` : '';
 
             if (aTitle || aBody) {
                 html += `<tr style="background:#1a1a24;"><td style="padding:4px 6px;border-bottom:1px solid #2a2a3a;color:#a78bfa;font-weight:bold;text-align:center;">A</td><td style="padding:4px 6px;border-bottom:1px solid #2a2a3a;word-break:break-all;color:#ccc;">${_escHtml(clipName)}_A</td><td style="padding:4px 6px;border-bottom:1px solid #2a2a3a;">${timeStr}</td><td style="padding:4px 6px;border-bottom:1px solid #2a2a3a;word-break:break-word;">${[aTitle, aBody].filter(Boolean).join(' <span style="color:#555">|</span> ')}</td></tr>`;
             }
-            if (bTitle || bBody) {
-                html += `<tr style="background:#141a24;"><td style="padding:4px 6px;border-bottom:1px solid #2a2a3a;color:#4c9eff;font-weight:bold;text-align:center;">B</td><td style="padding:4px 6px;border-bottom:1px solid #2a2a3a;word-break:break-all;color:#ccc;">${_escHtml(clipName)}_B</td><td style="padding:4px 6px;border-bottom:1px solid #2a2a3a;">${timeStr}</td><td style="padding:4px 6px;border-bottom:1px solid #2a2a3a;word-break:break-word;">${[bTitle, bBody].filter(Boolean).join(' <span style="color:#555">|</span> ')}</td></tr>`;
+            if (bTitle || bBody || bBody2) {
+                let finalBBody = bBody;
+                if (bBody2) finalBBody += ' ' + bBody2;
+                html += `<tr style="background:#141a24;"><td style="padding:4px 6px;border-bottom:1px solid #2a2a3a;color:#4c9eff;font-weight:bold;text-align:center;">B</td><td style="padding:4px 6px;border-bottom:1px solid #2a2a3a;word-break:break-all;color:#ccc;">${_escHtml(clipName)}_B</td><td style="padding:4px 6px;border-bottom:1px solid #2a2a3a;">${timeStr}</td><td style="padding:4px 6px;border-bottom:1px solid #2a2a3a;word-break:break-word;">${[bTitle, finalBBody].filter(Boolean).join(' <span style="color:#555">|</span> ')}</td></tr>`;
             }
         }
         html += '</table>';
@@ -11006,6 +11486,8 @@ function _showClipAbPasteModal() {
 
         const bgA = overlay.querySelector('#rbt-clip-bg-a').value.trim();
         const bgB = overlay.querySelector('#rbt-clip-bg-b').value.trim();
+        const selPresetA = overlay.querySelector('#rbt-clip-preset-a').value;
+        const selPresetB = overlay.querySelector('#rbt-clip-preset-b').value;
         const cvMode = document.querySelector('input[name="clip_cv_mode"]:checked').value;
         const cvPath = overlay.querySelector('#rbt-clip-cv-path').value.trim();
         const cvScale = parseInt(overlay.querySelector('#rbt-clip-cv-scale').value, 10) || 100;
@@ -11014,6 +11496,8 @@ function _showClipAbPasteModal() {
         localStorage.setItem('rbt_clip_bg_preset_b', bgB);
         localStorage.setItem('rbt_clip_cv_mode', cvMode);
         localStorage.setItem('rbt_clip_cv_preset', cvPath);
+        localStorage.setItem('rbt_clip_overlay_preset_a', selPresetA);
+        localStorage.setItem('rbt_clip_overlay_preset_b', selPresetB);
 
         const state = window._reelsState;
 
@@ -11064,14 +11548,16 @@ function _showClipAbPasteModal() {
             let trimStart = null, trimEnd = null;
             let displayBaseName = rawName;
 
-            // 7列: 视频名称(0) 片段名称(1) 时间段(2) A标题(3) A正文(4) B标题(5) B正文(6)
+            // 7/8列: 视频名称(0) 片段名称(1) 时间段(2) A标题(3) A正文(4) B标题(5) B正文上(6) B正文下(7)
             const videoName = (cols[0] || '').trim();
             const clipName = (cols[1] || '').trim();
             const timeRange = (cols[2] || '').trim();
             const aTitle = (cols[3] || '').trim();
             const aBody = (cols[4] || '').trim();
             const bTitle = (cols[5] || '').trim();
-            const bBody = (cols[6] || '').trim();
+            const bBody1 = (cols[6] || '').trim();
+            const bBody2 = (cols[7] || '').trim();
+            const bBodyCombined = bBody2 ? `${bBody1}\n\n${bBody2}` : bBody1;
             const aFooter = '';
             const bFooter = '';
 
@@ -11117,12 +11603,18 @@ function _showClipAbPasteModal() {
                 } else {
                     taskA.overlays = [{ type: 'textcard', id: 'tc_' + Date.now() + '_a', title_text: aTitle, body_text: aBody, footer_text: aFooter, x: 85, y: 310, w: 910, h: 1300, start: 0, end: 9999 }];
                 }
+                
+                if (selPresetA) {
+                    taskA._overlayPresetName = selPresetA;
+                    _applyAndVerifyOverlayGroupPresetToTask(taskA, selPresetA, { clearText: false });
+                }
+
+                state.tasks.push(taskA);
             }
-            state.tasks.push(taskA);
             created++;
 
             // ── B ──
-            if (bTitle || bBody || bFooter) {
+            if (bTitle || bBodyCombined || bFooter) {
                 const taskB = typeof _createEmptyTask === 'function' ? _createEmptyTask() : {};
                 taskB.baseName = displayBaseName ? `${displayBaseName}_B` : `clip_${created + 1}_B`;
                 taskB.fileName = taskB.baseName + '.mp4';
@@ -11135,11 +11627,25 @@ function _showClipAbPasteModal() {
                     if (trimEnd !== null) taskB.contentVideoTrimEnd = trimEnd;
                 }
 
-                if (window.ReelsOverlay && window.ReelsOverlay.createTextCardOverlay) {
-                    taskB.overlays = [window.ReelsOverlay.createTextCardOverlay({ title_text: bTitle, body_text: bBody, footer_text: bFooter, start: 0, end: 9999 })];
-                } else {
-                    taskB.overlays = [{ type: 'textcard', id: 'tc_' + Date.now() + '_b', title_text: bTitle, body_text: bBody, footer_text: bFooter, x: 85, y: 310, w: 910, h: 1300, start: 0, end: 9999 }];
+                if (bBody2) {
+                    taskB.subtitleTimeMode = 'split';
+                    taskB.subtitleTimeSlices = [
+                        { label: 'A', startSec: 0, endSec: 10, source: 'body_part1' },
+                        { label: 'B', startSec: 10, endSec: null, source: 'body_part2' },
+                    ];
                 }
+
+                if (window.ReelsOverlay && window.ReelsOverlay.createTextCardOverlay) {
+                    taskB.overlays = [window.ReelsOverlay.createTextCardOverlay({ title_text: bTitle, body_text: bBodyCombined, footer_text: bFooter, start: 0, end: 9999 })];
+                } else {
+                    taskB.overlays = [{ type: 'textcard', id: 'tc_' + Date.now() + '_b', title_text: bTitle, body_text: bBodyCombined, footer_text: bFooter, x: 85, y: 310, w: 910, h: 1300, start: 0, end: 9999 }];
+                }
+
+                if (selPresetB) {
+                    taskB._overlayPresetName = selPresetB;
+                    _applyAndVerifyOverlayGroupPresetToTask(taskB, selPresetB, { clearText: false });
+                }
+
                 state.tasks.push(taskB);
                 created++;
             }

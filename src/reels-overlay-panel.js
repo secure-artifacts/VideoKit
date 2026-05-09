@@ -48,6 +48,7 @@ class ReelsOverlayPanel {
                     </div>
                     <div style="display:flex;gap:4px;margin-top:4px;">
                         <button class="btn btn-secondary rop-btn" id="rop-group-preset-save" style="flex:1;">保存</button>
+                        <button class="btn btn-secondary rop-btn" id="rop-group-preset-rename" style="flex:1;">重命名</button>
                         <button class="btn btn-secondary rop-btn" id="rop-group-preset-del" style="flex:1;">删除</button>
                         <button class="btn btn-secondary rop-btn" id="rop-group-preset-import" style="flex:1;">导入</button>
                         <button class="btn btn-secondary rop-btn" id="rop-group-preset-export" style="flex:1;">导出</button>
@@ -345,6 +346,13 @@ class ReelsOverlayPanel {
                             <input type="checkbox" id="rop-scroll-title-fixed" checked>
                             <span style="font-size:11px;color:var(--text-muted);">标题不参与滚动</span>
                         </div>
+                        <label>独立位置</label>
+                        <div style="display:flex;align-items:center;gap:6px;">
+                            <input type="checkbox" id="rop-scroll-title-independent">
+                            <span style="font-size:11px;color:var(--text-muted);">不挤占正文滚动区</span>
+                        </div>
+                        <label title="标题中心 X；留空时跟随正文中心">标题X</label><input type="number" id="rop-scroll-title-x" class="rop-input" step="10" placeholder="跟随正文">
+                        <label title="标题顶部 Y；留空时使用裁切区顶部">标题Y</label><input type="number" id="rop-scroll-title-y" class="rop-input" step="10" placeholder="裁切顶部">
                         <label>标题字号</label><input type="number" id="rop-scroll-title-fontsize" class="rop-input" min="8" max="300" value="56">
                         <label>标题颜色</label><input type="color" id="rop-scroll-title-color" class="rop-color" value="#ffffff">
                         <label>标题字体</label>
@@ -363,9 +371,15 @@ class ReelsOverlayPanel {
                         </select>
                         <label>标题行距</label><input type="number" id="rop-scroll-title-linespacing" class="rop-input" min="0" max="50" step="1" value="6">
                         <label>标题文本宽度</label>
-                        <div class="rop-slider-combo"><input type="range" id="rop-scroll-title-textw" class="rop-range" min="0" max="1920" step="10" value="0"><input type="number" class="rop-num-readout" data-link="rop-scroll-title-textw" min="0" max="1920" step="10" value="0"></div>
-                        <span style="grid-column: span 2; font-size:10px; color:var(--text-muted);">标题文本宽度=0 表示跟随正文宽度</span>
+                        <div class="rop-slider-combo"><input type="range" id="rop-scroll-title-textw" class="rop-range" min="100" max="1920" step="10" value="900"><input type="number" class="rop-num-readout" data-link="rop-scroll-title-textw" min="100" max="1920" step="10" value="900"></div>
+                        <span style="grid-column: span 2; font-size:10px; color:var(--text-muted);">默认显示当前正文宽度，可单独调整标题宽度</span>
                         <label>标题间距</label><input type="number" id="rop-scroll-title-gap" class="rop-input" min="0" max="200" step="5" value="20">
+                        <label>标题自动缩放</label>
+                        <div style="display:flex;align-items:center;gap:6px;">
+                            <input type="checkbox" id="rop-scroll-title-auto-fit">
+                            <span style="font-size:11px;color:var(--text-muted);">超高时自动缩小</span>
+                        </div>
+                        <label>标题最大高</label><input type="number" id="rop-scroll-title-maxh" class="rop-input" min="0" max="1000" step="10" value="0" title="0=不限制">
                         <div style="grid-column: span 2; font-size:11px; color:var(--accent); margin-top:6px; margin-bottom:2px; border-bottom: 1px solid var(--border-color); padding-bottom: 4px;">标题特效</div>
                         <label>描边颜色</label><input type="color" id="rop-scroll-title-stroke-color" class="rop-color" value="#000000">
                         <label>描边宽度</label><input type="number" id="rop-scroll-title-stroke-width" class="rop-input" min="0" max="20" step="0.5" value="0">
@@ -374,6 +388,18 @@ class ReelsOverlayPanel {
                         <label>阴影模糊</label><input type="number" id="rop-scroll-title-shadow-blur" class="rop-input" min="0" max="50" value="4">
                         <label>阴影偏移X</label><input type="number" id="rop-scroll-title-shadow-x" class="rop-input" min="-20" max="20" value="2">
                         <label>阴影偏移Y</label><input type="number" id="rop-scroll-title-shadow-y" class="rop-input" min="-20" max="20" value="2">
+                        <div style="grid-column: span 2; font-size:11px; color:var(--accent); margin-top:6px; margin-bottom:2px; border-bottom: 1px solid var(--border-color); padding-bottom: 4px;">标题独立背景</div>
+                        <label>开启背景</label><input type="checkbox" id="rop-scroll-title-bg-enabled">
+                        <label>背景模式</label>
+                        <select id="rop-scroll-title-bg-mode" class="rop-select">
+                            <option value="block">整块</option><option value="inline">每行独立包裹</option><option value="inline-joined">连体包裹</option>
+                        </select>
+                        <label>背景颜色</label><input type="color" id="rop-scroll-title-bg-color" class="rop-color" value="#000000">
+                        <label>背景透明%</label><input type="number" id="rop-scroll-title-bg-opacity" class="rop-input" min="0" max="100" value="60">
+                        <label>背景圆角</label><input type="number" id="rop-scroll-title-bg-radius" class="rop-input" min="0" max="100" value="12">
+                        <label>背景水平内边距</label><input type="number" id="rop-scroll-title-bg-pad-h" class="rop-input" min="0" max="200" value="0">
+                        <label>背景上边距</label><input type="number" id="rop-scroll-title-bg-pad-top" class="rop-input" min="0" max="200" value="0">
+                        <label>背景下边距</label><input type="number" id="rop-scroll-title-bg-pad-bottom" class="rop-input" min="0" max="200" value="0">
                     </div>
 
                     <div class="rop-group-title" style="margin-top:6px;">正文</div>
@@ -410,6 +436,18 @@ class ReelsOverlayPanel {
                         <label>阴影模糊</label><input type="number" id="rop-scroll-shadow-blur" class="rop-input" min="0" max="50" value="4">
                         <label>阴影偏移X</label><input type="number" id="rop-scroll-shadow-x" class="rop-input" min="-20" max="20" value="2">
                         <label>阴影偏移Y</label><input type="number" id="rop-scroll-shadow-y" class="rop-input" min="-20" max="20" value="2">
+                        <div style="grid-column: span 2; font-size:11px; color:var(--accent); margin-top:6px; margin-bottom:2px; border-bottom: 1px solid var(--border-color); padding-bottom: 4px;">正文独立背景</div>
+                        <label>开启背景</label><input type="checkbox" id="rop-scroll-body-bg-enabled">
+                        <label>背景模式</label>
+                        <select id="rop-scroll-body-bg-mode" class="rop-select">
+                            <option value="block">整块</option><option value="inline">每行独立包裹</option><option value="inline-joined">连体包裹</option>
+                        </select>
+                        <label>背景颜色</label><input type="color" id="rop-scroll-body-bg-color" class="rop-color" value="#000000">
+                        <label>背景透明%</label><input type="number" id="rop-scroll-body-bg-opacity" class="rop-input" min="0" max="100" value="60">
+                        <label>背景圆角</label><input type="number" id="rop-scroll-body-bg-radius" class="rop-input" min="0" max="100" value="12">
+                        <label>背景水平内边距</label><input type="number" id="rop-scroll-body-bg-pad-h" class="rop-input" min="0" max="200" value="0">
+                        <label>背景上边距</label><input type="number" id="rop-scroll-body-bg-pad-top" class="rop-input" min="0" max="200" value="0">
+                        <label>背景下边距</label><input type="number" id="rop-scroll-body-bg-pad-bottom" class="rop-input" min="0" max="200" value="0">
                     </div>
 
                     <!-- ③ 滚动运动：位置参数 -->
@@ -423,7 +461,7 @@ class ReelsOverlayPanel {
                         <label>结束(s)</label><input type="number" id="rop-scroll-end-time" class="rop-input" step="0.1" min="0">
                         <label title="文字开始向上滚动时的初始Y坐标">起始Y</label><input type="number" id="rop-scroll-from-y" class="rop-input" step="10" value="960">
                         <label title="文字向上滚动最终消失或停留的结束Y坐标">结束Y</label><input type="number" id="rop-scroll-to-y" class="rop-input" step="10" value="-200">
-                        <label>X位置</label><input type="number" id="rop-scroll-from-x" class="rop-input" step="10">
+                        <label title="文字中心轴 X；文本宽度会从这个中心向左右展开">中心X</label><input type="number" id="rop-scroll-from-x" class="rop-input" step="10">
                         <!-- 速度参数已移除：速度由 距离÷时间 自动决定 -->
                         <input type="hidden" id="rop-scroll-speed" value="1">
                         <input type="hidden" id="rop-scroll-speed-num" value="1">
@@ -437,7 +475,7 @@ class ReelsOverlayPanel {
                             <input type="checkbox" id="rop-scroll-auto-stop">
                             <span style="font-size:11px;color:var(--text-muted);">文字全显示后停止滚动</span>
                         </div>
-                        <label>字号自适应</label>
+                        <label>正文自动缩放</label>
                         <div style="display:flex;align-items:center;gap:6px;">
                             <input type="checkbox" id="rop-scroll-auto-fit">
                             <span style="font-size:11px;color:var(--text-muted);">自动缩小确保全部显示</span>
@@ -504,8 +542,8 @@ class ReelsOverlayPanel {
                         </select>
                         <label>字间距</label>
                         <div class="rop-slider-combo"><input type="range" id="rop-title-letterspacing" class="rop-range rop-defaultable" data-default="0" min="-20" max="100" value="0"><input type="number" class="rop-num-readout" data-link="rop-title-letterspacing" min="-20" max="100" value="0"><button class="rop-reset-btn" data-target="rop-title-letterspacing" title="恢复默认(0)">↺</button></div>
-                        <label>独立边界宽</label>
-                        <div class="rop-slider-combo"><input type="range" id="rop-title-override-w" class="rop-range rop-defaultable" data-default="0" min="0" max="1080" value="0"><input type="number" class="rop-num-readout" data-link="rop-title-override-w" min="0" max="1080" value="0"><button class="rop-reset-btn" data-target="rop-title-override-w" title="0=随全局">↺</button></div>
+                        <label>文字宽度</label>
+                        <div class="rop-slider-combo"><input type="range" id="rop-title-override-w" class="rop-range rop-defaultable" data-default="830" min="1" max="1080" value="830"><input type="number" class="rop-num-readout" data-link="rop-title-override-w" min="1" max="1080" value="830"><button class="rop-reset-btn" data-target="rop-title-override-w" title="恢复当前内容宽度">↺</button></div>
                         <label>独立边界高</label>
                         <div class="rop-slider-combo"><input type="range" id="rop-title-override-h" class="rop-range rop-defaultable" data-default="0" min="0" max="1920" value="0"><input type="number" class="rop-num-readout" data-link="rop-title-override-h" min="0" max="1920" value="0"><button class="rop-reset-btn" data-target="rop-title-override-h" title="0=无限制">↺</button></div>
                         <label>独立自动缩放</label><input type="checkbox" id="rop-title-auto-shrink" class="rop-defaultable" data-default="false">
@@ -564,8 +602,8 @@ class ReelsOverlayPanel {
                         </select>
                         <label>字间距</label>
                         <div class="rop-slider-combo"><input type="range" id="rop-body-letterspacing" class="rop-range rop-defaultable" data-default="0" min="-20" max="100" value="0"><input type="number" class="rop-num-readout" data-link="rop-body-letterspacing" min="-20" max="100" value="0"><button class="rop-reset-btn" data-target="rop-body-letterspacing" title="恢复默认(0)">↺</button></div>
-                        <label>独立边界宽</label>
-                        <div class="rop-slider-combo"><input type="range" id="rop-body-override-w" class="rop-range rop-defaultable" data-default="0" min="0" max="1080" value="0"><input type="number" class="rop-num-readout" data-link="rop-body-override-w" min="0" max="1080" value="0"><button class="rop-reset-btn" data-target="rop-body-override-w" title="0=随全局">↺</button></div>
+                        <label>文字宽度</label>
+                        <div class="rop-slider-combo"><input type="range" id="rop-body-override-w" class="rop-range rop-defaultable" data-default="830" min="1" max="1080" value="830"><input type="number" class="rop-num-readout" data-link="rop-body-override-w" min="1" max="1080" value="830"><button class="rop-reset-btn" data-target="rop-body-override-w" title="恢复当前内容宽度">↺</button></div>
                         <label>独立边界高</label>
                         <div class="rop-slider-combo"><input type="range" id="rop-body-override-h" class="rop-range rop-defaultable" data-default="0" min="0" max="1920" value="0"><input type="number" class="rop-num-readout" data-link="rop-body-override-h" min="0" max="1920" value="0"><button class="rop-reset-btn" data-target="rop-body-override-h" title="0=无限制">↺</button></div>
                         <label>独立自动缩放</label><input type="checkbox" id="rop-body-auto-shrink" class="rop-defaultable" data-default="false">
@@ -640,8 +678,8 @@ class ReelsOverlayPanel {
                         </select>
                         <label>字间距</label>
                         <div class="rop-slider-combo"><input type="range" id="rop-footer-letterspacing" class="rop-range rop-defaultable" data-default="0" min="-20" max="100" value="0"><input type="number" class="rop-num-readout" data-link="rop-footer-letterspacing" min="-20" max="100" value="0"><button class="rop-reset-btn" data-target="rop-footer-letterspacing" title="恢复默认(0)">↺</button></div>
-                        <label>独立边界宽</label>
-                        <div class="rop-slider-combo"><input type="range" id="rop-footer-override-w" class="rop-range rop-defaultable" data-default="0" min="0" max="1080" value="0"><input type="number" class="rop-num-readout" data-link="rop-footer-override-w" min="0" max="1080" value="0"><button class="rop-reset-btn" data-target="rop-footer-override-w" title="0=随全局">↺</button></div>
+                        <label>文字宽度</label>
+                        <div class="rop-slider-combo"><input type="range" id="rop-footer-override-w" class="rop-range rop-defaultable" data-default="830" min="1" max="1080" value="830"><input type="number" class="rop-num-readout" data-link="rop-footer-override-w" min="1" max="1080" value="830"><button class="rop-reset-btn" data-target="rop-footer-override-w" title="恢复当前内容宽度">↺</button></div>
                         <label>独立边界高</label>
                         <div class="rop-slider-combo"><input type="range" id="rop-footer-override-h" class="rop-range rop-defaultable" data-default="0" min="0" max="1920" value="0"><input type="number" class="rop-num-readout" data-link="rop-footer-override-h" min="0" max="1920" value="0"><button class="rop-reset-btn" data-target="rop-footer-override-h" title="0=无限制">↺</button></div>
                         <label>独立自动缩放</label><input type="checkbox" id="rop-footer-auto-shrink" class="rop-defaultable" data-default="false">
@@ -731,7 +769,67 @@ class ReelsOverlayPanel {
         `;
 
         this._setupCollapsibleGroups();
+        this._enhanceColorInputs();
         this._bindEvents();
+    }
+
+    _normalizeHexColor(value) {
+        const raw = String(value || '').trim();
+        const match = raw.match(/^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/);
+        if (!match) return null;
+        const hex = match[1].toLowerCase();
+        if (hex.length === 3) {
+            return '#' + hex.split('').map((ch) => ch + ch).join('');
+        }
+        return '#' + hex;
+    }
+
+    _enhanceColorInputs(root = this.container) {
+        const colorInputs = root.querySelectorAll('input[type="color"].rop-color');
+        colorInputs.forEach((colorEl) => this._enhanceColorInput(colorEl));
+    }
+
+    _enhanceColorInput(colorEl, onChange) {
+        if (!colorEl || colorEl.dataset.hexEnhanced === '1') return null;
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'rop-color-combo';
+        const parent = colorEl.parentNode;
+        parent.insertBefore(wrapper, colorEl);
+        wrapper.appendChild(colorEl);
+
+        const hexInput = document.createElement('input');
+        hexInput.type = 'text';
+        hexInput.className = 'rop-color-hex';
+        hexInput.value = this._normalizeHexColor(colorEl.value) || '#000000';
+        hexInput.placeholder = '#ffffff';
+        hexInput.spellcheck = false;
+        wrapper.appendChild(hexInput);
+
+        colorEl.dataset.hexEnhanced = '1';
+        colorEl._ropHexInput = hexInput;
+        hexInput._ropColorInput = colorEl;
+
+        const syncFromColor = () => {
+            const normalized = this._normalizeHexColor(colorEl.value);
+            if (normalized) hexInput.value = normalized;
+            if (typeof onChange === 'function') onChange(normalized || colorEl.value);
+        };
+        const syncFromHex = () => {
+            const normalized = this._normalizeHexColor(hexInput.value);
+            if (!normalized) return;
+            colorEl.value = normalized;
+            hexInput.value = normalized;
+            if (typeof onChange === 'function') onChange(normalized);
+            colorEl.dispatchEvent(new Event('input', { bubbles: true }));
+        };
+
+        colorEl.addEventListener('input', syncFromColor);
+        colorEl.addEventListener('change', syncFromColor);
+        hexInput.addEventListener('input', syncFromHex);
+        hexInput.addEventListener('change', syncFromHex);
+
+        return hexInput;
     }
 
     _setupCollapsibleGroups() {
@@ -873,6 +971,7 @@ class ReelsOverlayPanel {
         this.container.querySelector('#rop-group-preset-load')?.addEventListener('click', () => this._loadOverlayGroupPreset());
         this.container.querySelector('#rop-group-preset-gallery')?.addEventListener('click', () => this._showPresetGallery());
         this.container.querySelector('#rop-group-preset-del')?.addEventListener('click', () => this._deleteOverlayGroupPreset());
+        this.container.querySelector('#rop-group-preset-rename')?.addEventListener('click', () => this._renameOverlayGroupPreset());
         this.container.querySelector('#rop-group-preset-import')?.addEventListener('click', () => this._importOverlayGroupPresets());
         this.container.querySelector('#rop-group-preset-export')?.addEventListener('click', () => this._exportOverlayGroupPresets());
         this._refreshOverlayGroupPresetSelect();
@@ -940,14 +1039,14 @@ class ReelsOverlayPanel {
                 fontsize: null
             });
             this._renderAutoColorRules();
-            this._triggerOverlayChange();
+            if (this.videoCanvas) this.videoCanvas.render();
         });
 
         this.container.querySelector('#rop-autocolor-clear')?.addEventListener('click', () => {
             if (!this._selectedOv) return;
             this._selectedOv.auto_color_rules = [];
             this._renderAutoColorRules();
-            this._triggerOverlayChange();
+            if (this.videoCanvas) this.videoCanvas.render();
         });
 
         this.container.querySelectorAll('.rop-autocolor-preset').forEach(btn => {
@@ -959,17 +1058,17 @@ class ReelsOverlayPanel {
                 
                 if (preset === 'gold_numbers') {
                     // 数字 -> 金色
-                    ov.auto_color_rules.push({ type: 'number', keywords: ['\\d+(\\.\\d+)?'], color: '#FFD700', bold: true });
+                    ov.auto_color_rules.push({ type: 'number', keywords: ['[+\\\\-]?\\\\d+([.,\\\\- ]\\\\d+)*'], color: '#FFD700', bold: true });
                 } else if (preset === 'brand') {
                     ov.auto_color_rules.push({ type: 'english', keywords: ['[a-zA-Z]+'], color: '#00D4FF', bold: true });
-                    ov.auto_color_rules.push({ type: 'number', keywords: ['\\d+(\\.\\d+)?'], color: '#FFD700', bold: true });
+                    ov.auto_color_rules.push({ type: 'number', keywords: ['[+\\\\-]?\\\\d+([.,\\\\- ]\\\\d+)*'], color: '#FFD700', bold: true });
                 } else if (preset === 'red_emphasis') {
-                    ov.auto_color_rules.push({ type: 'number', keywords: ['\\d+(\\.\\d+)?'], color: '#FF4444', bold: true });
+                    ov.auto_color_rules.push({ type: 'number', keywords: ['[+\\\\-]?\\\\d+([.,\\\\- ]\\\\d+)*'], color: '#FF4444', bold: true });
                     ov.auto_color_rules.push({ type: 'punctuation', keywords: ['[!?！？❤️⭐✨🔥💪…]+'], color: '#FF4444', bold: true });
                 }
                 
                 this._renderAutoColorRules();
-                this._triggerOverlayChange();
+                if (this.videoCanvas) this.videoCanvas.render();
             });
         });
 
@@ -1031,16 +1130,25 @@ class ReelsOverlayPanel {
             'rop-scroll-content',
             'rop-scroll-title', 'rop-scroll-title-fontsize', 'rop-scroll-title-color',
             'rop-scroll-title-font', 'rop-scroll-title-weight', 'rop-scroll-title-gap', 'rop-scroll-title-fixed',
+            'rop-scroll-title-independent', 'rop-scroll-title-x', 'rop-scroll-title-y',
+            'rop-scroll-title-auto-fit', 'rop-scroll-title-maxh',
             'rop-scroll-title-uppercase', 'rop-scroll-title-letterspacing',
             'rop-scroll-title-align', 'rop-scroll-title-linespacing', 'rop-scroll-title-textw',
             'rop-scroll-title-stroke-color', 'rop-scroll-title-stroke-width',
             'rop-scroll-title-shadow', 'rop-scroll-title-shadow-color',
             'rop-scroll-title-shadow-blur', 'rop-scroll-title-shadow-x', 'rop-scroll-title-shadow-y',
+            'rop-scroll-title-bg-enabled', 'rop-scroll-title-bg-mode', 'rop-scroll-title-bg-color',
+            'rop-scroll-title-bg-opacity', 'rop-scroll-title-bg-radius',
+            'rop-scroll-title-bg-pad-h', 'rop-scroll-title-bg-pad-top', 'rop-scroll-title-bg-pad-bottom',
             'rop-scroll-font', 'rop-scroll-fontsize',
             'rop-scroll-color', 'rop-scroll-bold', 'rop-scroll-weight',
             'rop-scroll-align', 'rop-scroll-linespacing', 'rop-scroll-textw',
             'rop-scroll-stroke-color', 'rop-scroll-stroke-width',
             'rop-scroll-shadow', 'rop-scroll-shadow-color', 'rop-scroll-shadow-blur',
+            'rop-scroll-shadow-x', 'rop-scroll-shadow-y',
+            'rop-scroll-body-bg-enabled', 'rop-scroll-body-bg-mode', 'rop-scroll-body-bg-color',
+            'rop-scroll-body-bg-opacity', 'rop-scroll-body-bg-radius',
+            'rop-scroll-body-bg-pad-h', 'rop-scroll-body-bg-pad-top', 'rop-scroll-body-bg-pad-bottom',
             'rop-scroll-from-y', 'rop-scroll-to-y', 'rop-scroll-from-x', 'rop-scroll-to-x',
             'rop-scroll-offset-x', 'rop-scroll-offset-y',
             'rop-scroll-final-y', 'rop-scroll-start-offset',
@@ -1058,6 +1166,13 @@ class ReelsOverlayPanel {
             if (!el) continue;
             el.addEventListener('input', () => this._syncToOverlay());
             el.addEventListener('change', () => this._syncToOverlay());
+        }
+        for (const fid of ['rop-title-override-w', 'rop-body-override-w', 'rop-footer-override-w']) {
+            const el = this.container.querySelector('#' + fid);
+            if (!el) continue;
+            const markEdited = () => { el.dataset.userEdited = '1'; el.dataset.followContentWidth = '0'; };
+            el.addEventListener('input', markEdited);
+            el.addEventListener('change', markEdited);
         }
         const animTimingBindings = [
             ['rop-anim-duration', 'duration'],
@@ -1245,6 +1360,10 @@ class ReelsOverlayPanel {
                 const def = el.dataset.default;
                 if (def == null) return;
                 el.value = def;
+                if (['rop-title-override-w', 'rop-body-override-w', 'rop-footer-override-w'].includes(targetId)) {
+                    el.dataset.followContentWidth = '1';
+                    el.dataset.userEdited = '0';
+                }
                 // Sync linked number readout
                 const numReadout = this.container.querySelector(`.rop-num-readout[data-link="${targetId}"]`);
                 if (numReadout) numReadout.value = def;
@@ -1269,6 +1388,10 @@ class ReelsOverlayPanel {
                         el.value = def;
                     }
                     if (el.id) {
+                        if (['rop-title-override-w', 'rop-body-override-w', 'rop-footer-override-w'].includes(el.id)) {
+                            el.dataset.followContentWidth = '1';
+                            el.dataset.userEdited = '0';
+                        }
                         const numReadout = this.container.querySelector(`.rop-num-readout[data-link="${el.id}"]`);
                         if (numReadout) numReadout.value = def;
                     }
@@ -1567,10 +1690,12 @@ class ReelsOverlayPanel {
                 'use_stroke', 'stroke_color', 'stroke_width',
                 'shadow_enabled', 'shadow_color', 'shadow_blur', 'shadow_opacity',
                 'shadow_offset_x', 'shadow_offset_y',
-                'scroll_from_x', 'scroll_from_y', 'scroll_to_x', 'scroll_to_y',
+                'scroll_x_anchor', 'scroll_from_x', 'scroll_from_y', 'scroll_to_x', 'scroll_to_y',
                 'scroll_speed', 'scroll_auto_stop', 'scroll_auto_fit', 'scroll_min_fontsize',
                 'scroll_title_fontsize', 'scroll_title_font_family', 'scroll_title_font_weight',
                 'scroll_title_bold', 'scroll_title_color', 'scroll_title_align', 'scroll_title_gap', 'scroll_title_fixed',
+                'scroll_title_independent', 'scroll_title_x', 'scroll_title_y',
+                'scroll_title_auto_fit', 'scroll_title_max_height',
                 'feather_top', 'feather_bottom',
                 'bg_enabled', 'bg_color', 'bg_opacity', 'bg_radius',
                 'bg_padding_top', 'bg_padding_bottom', 'bg_padding_left', 'bg_padding_right', 'bg_fullscreen',
@@ -2145,6 +2270,9 @@ class ReelsOverlayPanel {
         if (!el) return;
         if (el.type === 'checkbox') el.checked = !!v;
         else el.value = v ?? '';
+        if (el.type === 'color' && el._ropHexInput) {
+            el._ropHexInput.value = this._normalizeHexColor(el.value) || (v ?? '');
+        }
         // Sync linked number readout
         const numReadout = this.container.querySelector(`.rop-num-readout[data-link="${id}"]`);
         if (numReadout) numReadout.value = v ?? '';
@@ -2179,6 +2307,38 @@ class ReelsOverlayPanel {
             x: Math.round(centerX + cx - (width / 2)),
             y: Math.round(centerY + cy - (height / 2)),
         };
+    }
+
+    _getTextcardContentWidth(ov = this._selectedOv) {
+        const cardW = Math.max(1, Number(ov?.w ?? this._get('rop-card-width') ?? 910) || 910);
+        const padL = Math.max(0, Number(ov?.padding_left ?? this._get('rop-pad-left') ?? 40) || 0);
+        const padR = Math.max(0, Number(ov?.padding_right ?? this._get('rop-pad-right') ?? 40) || 0);
+        return Math.max(1, Math.round(cardW - padL - padR));
+    }
+
+    _setTextcardWidthField(id, storedValue, contentWidth) {
+        const isFollow = !(Number(storedValue) > 0);
+        const displayValue = isFollow ? contentWidth : Math.round(Number(storedValue));
+        this._val(id, displayValue);
+        const el = this.container.querySelector('#' + id);
+        if (el) {
+            el.dataset.followContentWidth = isFollow ? '1' : '0';
+            el.dataset.userEdited = '0';
+            el.dataset.default = String(contentWidth);
+        }
+        const readout = this.container.querySelector(`.rop-num-readout[data-link="${id}"]`);
+        if (readout) readout.dataset.default = String(contentWidth);
+    }
+
+    _getTextcardStoredWidth(id) {
+        const el = this.container.querySelector('#' + id);
+        if (!el) return 0;
+        const value = Math.max(1, parseFloat(el.value) || 1);
+        const defaultValue = Math.max(1, parseFloat(el.dataset.default) || 1);
+        if (el.dataset.followContentWidth === '1' && el.dataset.userEdited !== '1' && Math.abs(value - defaultValue) < 0.001) {
+            return 0;
+        }
+        return value;
     }
 
     _refreshWeightOptions(weightSelectId, fontFamily) {
@@ -2350,7 +2510,8 @@ class ReelsOverlayPanel {
             this._val('rop-title-align', ov.title_align || 'center');
             this._val('rop-title-valign', ov.title_valign || 'top');
             this._val('rop-title-letterspacing', ov.title_letter_spacing ?? 0);
-            this._val('rop-title-override-w', ov.title_override_w ?? 0);
+            const textcardContentW = this._getTextcardContentWidth(ov);
+            this._setTextcardWidthField('rop-title-override-w', ov.title_override_w, textcardContentW);
             this._val('rop-title-override-h', ov.title_override_h ?? 0);
             this._val('rop-title-auto-shrink', ov.title_auto_shrink === true);
             this._val('rop-title-linespacing', ov.title_line_spacing ?? 0);
@@ -2365,7 +2526,7 @@ class ReelsOverlayPanel {
             this._val('rop-body-weight', bw);
             this._val('rop-body-bold', bw >= 600);
             this._val('rop-body-letterspacing', ov.body_letter_spacing ?? 0);
-            this._val('rop-body-override-w', ov.body_override_w ?? 0);
+            this._setTextcardWidthField('rop-body-override-w', ov.body_override_w, textcardContentW);
             this._val('rop-body-override-h', ov.body_override_h ?? 0);
             this._val('rop-body-auto-shrink', ov.body_auto_shrink === true);
             this._val('rop-body-linespacing', ov.body_line_spacing ?? 6);
@@ -2383,7 +2544,7 @@ class ReelsOverlayPanel {
             this._val('rop-footer-weight', ftw);
             this._val('rop-footer-bold', ftw >= 600);
             this._val('rop-footer-letterspacing', ov.footer_letter_spacing ?? 0);
-            this._val('rop-footer-override-w', ov.footer_override_w ?? 0);
+            this._setTextcardWidthField('rop-footer-override-w', ov.footer_override_w, textcardContentW);
             this._val('rop-footer-override-h', ov.footer_override_h ?? 0);
             this._val('rop-footer-auto-shrink', ov.footer_auto_shrink === true);
             this._val('rop-footer-linespacing', ov.footer_line_spacing ?? 0);
@@ -2480,9 +2641,25 @@ class ReelsOverlayPanel {
             this._val('rop-scroll-title-letterspacing', ov.scroll_title_letter_spacing || 0);
             this._val('rop-scroll-title-align', ov.scroll_title_align || '');
             this._val('rop-scroll-title-linespacing', ov.scroll_title_line_spacing ?? 6);
-            this._val('rop-scroll-title-textw', ov.scroll_title_text_width ?? 0);
+            this._val('rop-scroll-title-textw', ov.scroll_title_text_width || ov.text_width || 900);
             this._val('rop-scroll-title-gap', ov.scroll_title_gap ?? 20);
             this._val('rop-scroll-title-fixed', ov.scroll_title_fixed !== false);
+            this._val('rop-scroll-title-independent', ov.scroll_title_independent === true);
+            // 标题X/Y：始终显示当前实际位置值（不再显示空的 placeholder）
+            {
+                const _clipX = parseFloat(ov.x ?? 40);
+                const _clipW = parseFloat(ov.w ?? 1000);
+                const _clipY = parseFloat(ov.y ?? 100);
+                const _legacyLeftX = ov.scroll_x_anchor == null
+                    && Math.abs((ov.scroll_from_x ?? 90) - 90) < 0.001
+                    && Math.abs((ov.scroll_to_x ?? 90) - 90) < 0.001;
+                const _defaultTitleX = _legacyLeftX ? (_clipX + _clipW / 2) : parseFloat(ov.scroll_from_x ?? (_clipX + _clipW / 2));
+                const _defaultTitleY = _clipY;
+                this._val('rop-scroll-title-x', ov.scroll_title_x ?? Math.round(_defaultTitleX));
+                this._val('rop-scroll-title-y', ov.scroll_title_y ?? Math.round(_defaultTitleY));
+            }
+            this._val('rop-scroll-title-auto-fit', ov.scroll_title_auto_fit === true);
+            this._val('rop-scroll-title-maxh', ov.scroll_title_max_height ?? 0);
             this._val('rop-scroll-title-stroke-color', ov.scroll_title_stroke_color || '#000000');
             this._val('rop-scroll-title-stroke-width', ov.scroll_title_stroke_width || 0);
             this._val('rop-scroll-title-shadow', ov.scroll_title_shadow_enabled || false);
@@ -2490,6 +2667,15 @@ class ReelsOverlayPanel {
             this._val('rop-scroll-title-shadow-blur', ov.scroll_title_shadow_blur || 4);
             this._val('rop-scroll-title-shadow-x', ov.scroll_title_shadow_x || 2);
             this._val('rop-scroll-title-shadow-y', ov.scroll_title_shadow_y || 2);
+            // 标题独立背景
+            this._val('rop-scroll-title-bg-enabled', ov.scroll_title_bg_enabled || false);
+            this._val('rop-scroll-title-bg-mode', ov.scroll_title_bg_mode || 'block');
+            this._val('rop-scroll-title-bg-color', ov.scroll_title_bg_color || '#000000');
+            this._val('rop-scroll-title-bg-opacity', ov.scroll_title_bg_opacity ?? 60);
+            this._val('rop-scroll-title-bg-radius', ov.scroll_title_bg_radius ?? 12);
+            this._val('rop-scroll-title-bg-pad-h', ov.scroll_title_bg_pad_h ?? 0);
+            this._val('rop-scroll-title-bg-pad-top', ov.scroll_title_bg_pad_top ?? 0);
+            this._val('rop-scroll-title-bg-pad-bottom', ov.scroll_title_bg_pad_bottom ?? 0);
             // 正文
             this._val('rop-scroll-font', ov.font_family || 'Arial');
             this._refreshWeightOptions('rop-scroll-weight', ov.font_family || 'Arial');
@@ -2510,10 +2696,22 @@ class ReelsOverlayPanel {
             this._val('rop-scroll-shadow-blur', ov.shadow_blur || 4);
             this._val('rop-scroll-shadow-x', ov.scroll_shadow_x || 2);
             this._val('rop-scroll-shadow-y', ov.scroll_shadow_y || 2);
+            // 正文独立背景
+            this._val('rop-scroll-body-bg-enabled', ov.scroll_body_bg_enabled || false);
+            this._val('rop-scroll-body-bg-mode', ov.scroll_body_bg_mode || 'block');
+            this._val('rop-scroll-body-bg-color', ov.scroll_body_bg_color || '#000000');
+            this._val('rop-scroll-body-bg-opacity', ov.scroll_body_bg_opacity ?? 60);
+            this._val('rop-scroll-body-bg-radius', ov.scroll_body_bg_radius ?? 12);
+            this._val('rop-scroll-body-bg-pad-h', ov.scroll_body_bg_pad_h ?? 0);
+            this._val('rop-scroll-body-bg-pad-top', ov.scroll_body_bg_pad_top ?? 0);
+            this._val('rop-scroll-body-bg-pad-bottom', ov.scroll_body_bg_pad_bottom ?? 0);
             // 独立同步 起始Y 和 结束Y
             this._val('rop-scroll-from-y', ov.scroll_from_y ?? 960);
             this._val('rop-scroll-to-y', ov.scroll_to_y ?? -200);
-            this._val('rop-scroll-from-x', ov.scroll_from_x ?? 90);
+            const legacyDefaultLeftX = ov.scroll_x_anchor == null
+                && Math.abs((ov.scroll_from_x ?? 90) - 90) < 0.001
+                && Math.abs((ov.scroll_to_x ?? 90) - 90) < 0.001;
+            this._val('rop-scroll-from-x', legacyDefaultLeftX ? ((ov.x ?? 40) + (ov.w ?? 1000) / 2) : (ov.scroll_from_x ?? 540));
             // 整体偏移
             this._val('rop-scroll-offset-x', ov.scroll_offset_x ?? 0);
             this._val('rop-scroll-offset-y', ov.scroll_offset_y ?? 0);
@@ -2700,7 +2898,7 @@ class ReelsOverlayPanel {
             ov.title_align = this._get('rop-title-align');
             ov.title_valign = this._get('rop-title-valign');
             ov.title_letter_spacing = this._get('rop-title-letterspacing');
-            ov.title_override_w = this._get('rop-title-override-w');
+            ov.title_override_w = this._getTextcardStoredWidth('rop-title-override-w');
             ov.title_override_h = this._get('rop-title-override-h');
             ov.title_auto_shrink = this._get('rop-title-auto-shrink');
             ov.title_line_spacing = this._get('rop-title-linespacing');
@@ -2716,7 +2914,7 @@ class ReelsOverlayPanel {
             ov.body_font_weight = bw;
             ov.body_bold = bw >= 600;
             ov.body_letter_spacing = this._get('rop-body-letterspacing');
-            ov.body_override_w = this._get('rop-body-override-w');
+            ov.body_override_w = this._getTextcardStoredWidth('rop-body-override-w');
             ov.body_override_h = this._get('rop-body-override-h');
             ov.body_auto_shrink = this._get('rop-body-auto-shrink');
             ov.body_line_spacing = this._get('rop-body-linespacing');
@@ -2735,7 +2933,7 @@ class ReelsOverlayPanel {
             ov.footer_font_weight = ftw;
             ov.footer_bold = ftw >= 600;
             ov.footer_letter_spacing = this._get('rop-footer-letterspacing');
-            ov.footer_override_w = this._get('rop-footer-override-w');
+            ov.footer_override_w = this._getTextcardStoredWidth('rop-footer-override-w');
             ov.footer_override_h = this._get('rop-footer-override-h');
             ov.footer_auto_shrink = this._get('rop-footer-auto-shrink');
             ov.footer_line_spacing = this._get('rop-footer-linespacing');
@@ -2839,9 +3037,18 @@ class ReelsOverlayPanel {
             ov.scroll_title_letter_spacing = this._get('rop-scroll-title-letterspacing');
             ov.scroll_title_align = this._get('rop-scroll-title-align') || '';
             ov.scroll_title_line_spacing = this._get('rop-scroll-title-linespacing') ?? 6;
-            ov.scroll_title_text_width = this._get('rop-scroll-title-textw') ?? 0;
+            ov.scroll_title_text_width = this._get('rop-scroll-title-textw') || ov.text_width || 900;
             ov.scroll_title_gap = this._get('rop-scroll-title-gap') ?? 20;
             ov.scroll_title_fixed = this._get('rop-scroll-title-fixed');
+            ov.scroll_title_independent = this._get('rop-scroll-title-independent');
+            const titleXEl = this.container.querySelector('#rop-scroll-title-x');
+            const titleYEl = this.container.querySelector('#rop-scroll-title-y');
+            const titleXRaw = titleXEl ? titleXEl.value : '';
+            const titleYRaw = titleYEl ? titleYEl.value : '';
+            ov.scroll_title_x = titleXRaw === '' ? null : (parseFloat(titleXRaw) || 0);
+            ov.scroll_title_y = titleYRaw === '' ? null : (parseFloat(titleYRaw) || 0);
+            ov.scroll_title_auto_fit = this._get('rop-scroll-title-auto-fit');
+            ov.scroll_title_max_height = this._get('rop-scroll-title-maxh') || 0;
             ov.scroll_title_stroke_color = this._get('rop-scroll-title-stroke-color');
             ov.scroll_title_stroke_width = this._get('rop-scroll-title-stroke-width');
             ov.scroll_title_shadow_enabled = this._get('rop-scroll-title-shadow');
@@ -2849,6 +3056,15 @@ class ReelsOverlayPanel {
             ov.scroll_title_shadow_blur = this._get('rop-scroll-title-shadow-blur');
             ov.scroll_title_shadow_x = this._get('rop-scroll-title-shadow-x');
             ov.scroll_title_shadow_y = this._get('rop-scroll-title-shadow-y');
+            // 标题独立背景
+            ov.scroll_title_bg_enabled = this._get('rop-scroll-title-bg-enabled');
+            ov.scroll_title_bg_mode = this._get('rop-scroll-title-bg-mode') || 'block';
+            ov.scroll_title_bg_color = this._get('rop-scroll-title-bg-color');
+            ov.scroll_title_bg_opacity = this._get('rop-scroll-title-bg-opacity') ?? 60;
+            ov.scroll_title_bg_radius = this._get('rop-scroll-title-bg-radius') ?? 12;
+            ov.scroll_title_bg_pad_h = this._get('rop-scroll-title-bg-pad-h') ?? 0;
+            ov.scroll_title_bg_pad_top = this._get('rop-scroll-title-bg-pad-top') ?? 0;
+            ov.scroll_title_bg_pad_bottom = this._get('rop-scroll-title-bg-pad-bottom') ?? 0;
             // 正文
             ov.font_family = this._get('rop-scroll-font');
             ov.fontsize = this._get('rop-scroll-fontsize');
@@ -2869,10 +3085,20 @@ class ReelsOverlayPanel {
             ov.shadow_blur = this._get('rop-scroll-shadow-blur');
             ov.scroll_shadow_x = this._get('rop-scroll-shadow-x');
             ov.scroll_shadow_y = this._get('rop-scroll-shadow-y');
+            // 正文独立背景
+            ov.scroll_body_bg_enabled = this._get('rop-scroll-body-bg-enabled');
+            ov.scroll_body_bg_mode = this._get('rop-scroll-body-bg-mode') || 'block';
+            ov.scroll_body_bg_color = this._get('rop-scroll-body-bg-color');
+            ov.scroll_body_bg_opacity = this._get('rop-scroll-body-bg-opacity') ?? 60;
+            ov.scroll_body_bg_radius = this._get('rop-scroll-body-bg-radius') ?? 12;
+            ov.scroll_body_bg_pad_h = this._get('rop-scroll-body-bg-pad-h') ?? 0;
+            ov.scroll_body_bg_pad_top = this._get('rop-scroll-body-bg-pad-top') ?? 0;
+            ov.scroll_body_bg_pad_bottom = this._get('rop-scroll-body-bg-pad-bottom') ?? 0;
             // 独立获取设置，解耦拖动逻辑防止双重偏移修改死循环
             ov.scroll_from_y = this._get('rop-scroll-from-y') ?? 960;
             ov.scroll_to_y = this._get('rop-scroll-to-y') ?? -200;
-            ov.scroll_from_x = this._get('rop-scroll-from-x');
+            ov.scroll_x_anchor = 'center';
+            ov.scroll_from_x = this._get('rop-scroll-from-x') ?? 540;
             ov.scroll_to_x = ov.scroll_from_x;  // X stays the same
             // 整体偏移
             ov.scroll_offset_x = this._get('rop-scroll-offset-x') ?? 0;
@@ -3036,14 +3262,14 @@ class ReelsOverlayPanel {
             select.value = rule.type;
             select.addEventListener('change', () => {
                 rule.type = select.value;
-                if (rule.type === 'number') rule.keywords = ['\\d+(\\.\\d+)?'];
+                if (rule.type === 'number') rule.keywords = ['[+\\\\-]?\\\\d+([.,\\\\- ]\\\\d+)*'];
                 else if (rule.type === 'english') rule.keywords = ['[a-zA-Z]+'];
                 else if (rule.type === 'punctuation') rule.keywords = ['[!?！？❤️⭐✨🔥💪…]+'];
                 else if (rule.type === 'quoted') rule.keywords = ['[「」"\'\'][^「」"\'\']*[「」"\'\']'];
                 else if (rule.type === 'emoji') rule.keywords = ['\\p{Emoji_Presentation}|\\p{Extended_Pictographic}'];
                 else rule.keywords = []; // keyword type
                 this._renderAutoColorRules();
-                this._triggerOverlayChange();
+                if (this.videoCanvas) this.videoCanvas.render();
             });
             header.appendChild(select);
             
@@ -3053,7 +3279,7 @@ class ReelsOverlayPanel {
             delBtn.addEventListener('click', () => {
                 ov.auto_color_rules.splice(idx, 1);
                 this._renderAutoColorRules();
-                this._triggerOverlayChange();
+                if (this.videoCanvas) this.videoCanvas.render();
             });
             header.appendChild(delBtn);
             ruleDiv.appendChild(header);
@@ -3070,7 +3296,7 @@ class ReelsOverlayPanel {
                 kwInput.addEventListener('input', () => {
                     // Split by newlines, English commas, or Chinese commas
                     rule.keywords = kwInput.value.split(/[\n,，]+/).map(s => s.trim()).filter(s => s);
-                    this._triggerOverlayChange();
+                    if (this.videoCanvas) this.videoCanvas.render();
                 });
                 ruleDiv.appendChild(kwInput);
             }
@@ -3086,17 +3312,21 @@ class ReelsOverlayPanel {
             colorPicker.value = rule.color || '#ffffff';
             colorPicker.addEventListener('input', () => {
                 rule.color = colorPicker.value;
-                this._triggerOverlayChange();
+                if (this.videoCanvas) this.videoCanvas.render();
             });
             stylesRow.appendChild(document.createTextNode('颜色'));
             stylesRow.appendChild(colorPicker);
+            this._enhanceColorInput(colorPicker, (value) => {
+                rule.color = value || colorPicker.value;
+                if (this.videoCanvas) this.videoCanvas.render();
+            });
             
             const boldCheck = document.createElement('input');
             boldCheck.type = 'checkbox';
             boldCheck.checked = !!rule.bold;
             boldCheck.addEventListener('change', () => {
                 rule.bold = boldCheck.checked;
-                this._triggerOverlayChange();
+                if (this.videoCanvas) this.videoCanvas.render();
             });
             stylesRow.appendChild(document.createTextNode('粗体'));
             stylesRow.appendChild(boldCheck);
@@ -3710,7 +3940,8 @@ class ReelsOverlayPanel {
         }
     }
 
-    _showPresetGallery(onSelectCallback) {
+    _showPresetGallery(onSelectCallback, multiSelect = false) {
+        this.multiSelectPicker = multiSelect;
         if (!onSelectCallback && (!this.videoCanvas || !this.videoCanvas.overlayMgr)) {
             alert('没有可用的覆层管理器');
             return;
@@ -3883,12 +4114,46 @@ class ReelsOverlayPanel {
                 <div class="rop-gallery-info">
                     <div class="rop-gallery-title-row">
                         <div class="rop-gallery-title" title="${name}">${name}</div>
-                        ${!isBuiltin && !onSelectCallback ? `<button class="rop-gallery-delete-btn" title="删除该预设">✕</button>` : ''}
+                        ${!isBuiltin && !onSelectCallback ? `<span style="display:inline-flex;gap:2px;flex-shrink:0;">
+                            <button class="rop-gallery-rename-btn" title="重命名" style="background:none;border:none;cursor:pointer;font-size:13px;padding:2px 4px;color:#8af;line-height:1;">✏️</button>
+                            <button class="rop-gallery-delete-btn" title="删除该预设">✕</button>
+                        </span>` : ''}
                     </div>
                     <div class="rop-gallery-tags">${tags.join('')}</div>
                     ${actionsHtml}
                 </div>
             `;
+
+            // 重命名按钮
+            const renameBtn = card.querySelector('.rop-gallery-rename-btn');
+            if (renameBtn) {
+                renameBtn.onclick = async (e) => {
+                    e.stopPropagation();
+                    const newName = await this._showCardTemplateNameDialog(name);
+                    if (!newName || newName === name) return;
+                    if (presets[newName]) {
+                        alert(`预设名称「${newName}」已存在，请使用其他名称`);
+                        return;
+                    }
+                    // 转移数据到新名称
+                    const presetData = presets[name];
+                    presetData.name = newName;
+                    presetData.updatedAt = new Date().toISOString();
+                    presets[newName] = presetData;
+                    delete presets[name];
+                    this._setOverlayGroupPresets(presets);
+                    this._refreshOverlayGroupPresetSelect();
+                    // 更新 UI
+                    const titleEl = card.querySelector('.rop-gallery-title');
+                    if (titleEl) {
+                        titleEl.textContent = newName;
+                        titleEl.title = newName;
+                    }
+                    sideItem.textContent = newName;
+                    sideItem.title = newName;
+                    if (typeof showToast === 'function') showToast(`覆层预设已重命名为「${newName}」`, 'success');
+                };
+            }
             
             const delBtn = card.querySelector('.rop-gallery-delete-btn');
             if (delBtn) {
@@ -3910,10 +4175,21 @@ class ReelsOverlayPanel {
                     const mode = e.target.getAttribute('data-mode');
                     if (onSelectCallback) {
                         onSelectCallback(name, data, mode);
+                        if (!this.multiSelectPicker) {
+                            document.body.removeChild(modal);
+                        } else {
+                            const oldText = e.target.textContent;
+                            e.target.textContent = '✅ 已添加';
+                            e.target.style.background = 'rgba(16,185,129,0.8)';
+                            setTimeout(() => {
+                                e.target.textContent = oldText;
+                                e.target.style.background = '';
+                            }, 1500);
+                        }
                     } else {
                         this._applyPresetFromGallery(data, mode);
+                        document.body.removeChild(modal);
                     }
-                    document.body.removeChild(modal);
                 };
             });
 
@@ -4092,6 +4368,33 @@ class ReelsOverlayPanel {
         this._refreshOverlayGroupPresetSelect();
     }
 
+    async _renameOverlayGroupPreset() {
+        const select = this.container.querySelector('#rop-group-preset-select');
+        if (!select || !select.value) {
+            alert('请先在下拉列表中选择要重命名的预设');
+            return;
+        }
+        const oldName = select.value;
+        const newName = await this._showCardTemplateNameDialog(oldName);
+        if (!newName || newName === oldName) return;
+        const presets = this._getOverlayGroupPresets();
+        if (presets[newName]) {
+            alert(`预设名称「${newName}」已存在，请使用其他名称`);
+            return;
+        }
+        // 转移数据到新名称
+        const presetData = presets[oldName];
+        presetData.name = newName;
+        presetData.updatedAt = new Date().toISOString();
+        presets[newName] = presetData;
+        delete presets[oldName];
+        this._setOverlayGroupPresets(presets);
+        this._refreshOverlayGroupPresetSelect();
+        select.value = newName;
+        if (typeof showToast === 'function') showToast(`覆层预设已重命名为「${newName}」`, 'success');
+        else alert(`✅ 覆层预设已重命名为「${newName}」`);
+    }
+
     _importOverlayGroupPresets() {
         const input = document.createElement('input');
         input.type = 'file';
@@ -4196,7 +4499,11 @@ class ReelsOverlayPanel {
         .rop-range { width:100%; }
         .rop-select { width:100%; padding:3px 6px; background:var(--bg-primary, #141414); border:1px solid var(--border-color, var(--border-color));
                       border-radius:4px; color:#ddd; font-size:11px; }
-        .rop-color { width:100%; height:24px; padding:0; border:1px solid var(--border-color, var(--border-color)); border-radius:4px; cursor:pointer; }
+        .rop-color-combo { display:flex; align-items:center; gap:6px; width:100%; min-width:0; }
+        .rop-color { width:32px; min-width:32px; height:24px; padding:0; border:1px solid var(--border-color, var(--border-color)); border-radius:4px; cursor:pointer; }
+        .rop-color-hex { flex:1; min-width:0; height:24px; padding:3px 6px; background:var(--bg-primary, #141414); border:1px solid var(--border-color, var(--border-color));
+                         border-radius:4px; color:#ddd; font-size:11px; font-family:monospace; text-transform:lowercase; box-sizing:border-box; }
+        .rop-color-hex:focus { border-color:var(--accent); outline:none; }
         .rop-textarea { width:100%; padding:6px; background:var(--bg-primary, #141414); border:1px solid var(--border-color, var(--border-color));
                         border-radius:4px; color:#ddd; font-size:11px; resize:vertical; margin-bottom:6px; font-family:system-ui; }
         .rop-actions { padding:8px 10px; }
@@ -4215,7 +4522,7 @@ class ReelsOverlayPanel {
         .rop-reset-all:hover { background:rgba(0,212,255,0.15); color:var(--accent); border-color:rgba(0,212,255,0.3); }
 
         /* Preset Gallery Modal */
-        .rop-gallery-modal { position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:10000; display:flex; align-items:center; justify-content:center; }
+        .rop-gallery-modal { position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:350000; display:flex; align-items:center; justify-content:center; }
         .rop-gallery-content { width:90%; max-width:960px; height:85%; background:#1a1a2e; border-radius:12px; display:flex; flex-direction:column; box-shadow:0 10px 40px rgba(0,0,0,0.8); overflow:hidden; border:1px solid #333; }
         .rop-gallery-header { display:flex; justify-content:space-between; align-items:center; padding:16px 20px; background:#141424; border-bottom:1px solid #333; gap: 20px; }
         .rop-gallery-header h3 { margin:0; font-size:18px; color:#fff; white-space:nowrap; }

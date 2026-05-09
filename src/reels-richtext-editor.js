@@ -297,18 +297,39 @@ class ReelsRichTextEditor {
             </div>
             <div class="rte-se-toolbar">
                 <button class="rt-btn rt-btn-bold" data-cmd="bold" title="粗体"><b>B</b></button>
+                <button class="rt-btn rt-btn-italic" data-cmd="italic" title="斜体"><i>I</i></button>
                 <div class="rt-divider"></div>
+                <select class="rt-select rt-sel-font" title="字体" style="max-width:100px;">
+                    <option value="">字体</option>
+                </select>
                 <select class="rt-select rt-sel-size" title="字号">
                     <option value="">字号</option>
+                    <option value="24">极小(24)</option>
+                    <option value="32">微小(32)</option>
                     <option value="40">超小(40)</option>
+                    <option value="50">小(50)</option>
                     <option value="60">较小(60)</option>
+                    <option value="72">中(72)</option>
                     <option value="80">正常(80)</option>
-                    <option value="100">较大(100)</option>
+                    <option value="96">较大(96)</option>
+                    <option value="100">大(100)</option>
                     <option value="120">超大(120)</option>
                     <option value="150">巨大(150)</option>
                     <option value="200">极巨(200)</option>
                 </select>
-                <input type="color" class="rt-color-picker" title="颜色" value="#ff0000">
+                <input type="color" class="rt-color-picker" title="文字颜色" value="#ff0000">
+                <div class="rt-divider"></div>
+                <input type="color" class="rt-color-picker rt-stroke-color" title="描边颜色" value="#000000">
+                <select class="rt-select rt-sel-stroke" title="描边宽度" style="width:56px;">
+                    <option value="">描边</option>
+                    <option value="0">无</option>
+                    <option value="1">1px</option>
+                    <option value="2">2px</option>
+                    <option value="3">3px</option>
+                    <option value="4">4px</option>
+                    <option value="6">6px</option>
+                    <option value="8">8px</option>
+                </select>
                 <div class="rt-divider"></div>
                 <button class="rt-btn rt-btn-clear" data-cmd="clear" title="清除样式">✕</button>
             </div>
@@ -349,13 +370,18 @@ class ReelsRichTextEditor {
             if (!seg.text) continue;
             let css = '';
             if (seg.style.bold) css += 'font-weight:bold;';
+            if (seg.style.italic) css += 'font-style:italic;';
             if (seg.style.color) css += `color:${seg.style.color};`;
+            if (seg.style.font_family) css += `font-family:"${seg.style.font_family}",sans-serif;`;
             if (seg.style.fontsize) {
                 const baseFs = this.baseStyle.fontsize || 80;
                 const ratio = seg.style.fontsize / baseFs;
                 css += `font-size:${Math.max(12, 24 * ratio)}px;`;
             }
             if (seg.style.bg_color) css += `background-color:${seg.style.bg_color};`;
+            if (seg.style.color_outline && seg.style.border_width > 0) {
+                css += `-webkit-text-stroke:${seg.style.border_width}px ${seg.style.color_outline};`;
+            }
             
             const textHTML = this._escapeHtml(seg.text);
             
@@ -408,10 +434,47 @@ class ReelsRichTextEditor {
                 } else {
                     this.applyStyleToSelection({ bold: true });
                 }
+            } else if (cmd === 'italic') {
+                const isItalic = btn.classList.contains('active');
+                if (isItalic) {
+                    this.removeStyleFromSelection(['italic']);
+                } else {
+                    this.applyStyleToSelection({ italic: true });
+                }
             } else if (cmd === 'clear') {
                 this.removeStyleFromSelection(ReelsRichText.STYLE_KEYS);
             }
         });
+
+        // 字体选择
+        const selFont = this.popup.querySelector('.rt-sel-font');
+        if (selFont && typeof getFontManager === 'function') {
+            const fm = getFontManager();
+            const fonts = fm.getAllFonts ? fm.getAllFonts() : [];
+            const seen = new Set();
+            for (const f of fonts) {
+                const family = f.family || f.name || f;
+                if (seen.has(family)) continue;
+                seen.add(family);
+                const opt = document.createElement('option');
+                opt.value = family;
+                opt.textContent = family;
+                selFont.appendChild(opt);
+            }
+        }
+        if (selFont) {
+            selFont.addEventListener('change', (e) => {
+                const val = e.target.value;
+                if (val) {
+                    this.applyStyleToSelection({ font_family: val });
+                } else {
+                    this.removeStyleFromSelection(['font_family']);
+                }
+                e.target.value = '';
+                this.editorEl.focus();
+                this._restoreSelection(this._savedStart, this._savedEnd);
+            });
+        }
 
         // 字号选择
         const selSize = this.popup.querySelector('.rt-sel-size');
@@ -428,11 +491,35 @@ class ReelsRichTextEditor {
             this._restoreSelection(this._savedStart, this._savedEnd);
         });
 
-        // 颜色选择
-        const cp = this.popup.querySelector('.rt-color-picker');
+        // 文字颜色选择
+        const cp = this.popup.querySelector('.rt-color-picker:not(.rt-stroke-color)');
         cp.addEventListener('input', (e) => {
             this.applyStyleToSelection({ color: e.target.value });
         });
+
+        // 描边颜色选择
+        const strokeCp = this.popup.querySelector('.rt-stroke-color');
+        if (strokeCp) {
+            strokeCp.addEventListener('input', (e) => {
+                this.applyStyleToSelection({ color_outline: e.target.value });
+            });
+        }
+
+        // 描边宽度选择
+        const selStroke = this.popup.querySelector('.rt-sel-stroke');
+        if (selStroke) {
+            selStroke.addEventListener('change', (e) => {
+                const val = e.target.value;
+                if (val !== '') {
+                    this.applyStyleToSelection({ border_width: parseInt(val, 10) });
+                } else {
+                    this.removeStyleFromSelection(['border_width']);
+                }
+                e.target.value = '';
+                this.editorEl.focus();
+                this._restoreSelection(this._savedStart, this._savedEnd);
+            });
+        }
 
         // 选区变化监测 (更新工具栏状态)
         this._onSelectionChangeWrapper = () => {
@@ -599,22 +686,31 @@ class ReelsRichTextEditor {
         if (selInfo.start >= selInfo.end) return;
 
         let isBold = true;
+        let isItalic = true;
         let mainColor = '';
+        let mainStrokeColor = '';
         
         for (let i = selInfo.start; i < selInfo.end; i++) {
             const r = this.ranges.find(rg => rg.start <= i && rg.end > i);
             if (!r || !r.bold) isBold = false;
+            if (!r || !r.italic) isItalic = false;
             if (r && r.color && !mainColor) mainColor = r.color;
+            if (r && r.color_outline && !mainStrokeColor) mainStrokeColor = r.color_outline;
         }
 
         const btnBold = this.popup.querySelector('.rt-btn-bold');
-        if (btnBold) {
-            btnBold.classList.toggle('active', isBold);
-        }
+        if (btnBold) btnBold.classList.toggle('active', isBold);
+
+        const btnItalic = this.popup.querySelector('.rt-btn-italic');
+        if (btnItalic) btnItalic.classList.toggle('active', isItalic);
 
         if (mainColor) {
-            const cp = this.popup.querySelector('.rt-color-picker');
+            const cp = this.popup.querySelector('.rt-color-picker:not(.rt-stroke-color)');
             if (cp) cp.value = mainColor;
+        }
+        if (mainStrokeColor) {
+            const scp = this.popup.querySelector('.rt-stroke-color');
+            if (scp) scp.value = mainStrokeColor;
         }
     }
 

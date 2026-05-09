@@ -13490,3 +13490,125 @@ async function initUpdateChannelUI() {
 
 // 页面加载时初始化通道 UI
 document.addEventListener('DOMContentLoaded', initUpdateChannelUI);
+
+// ==================== 全局屏幕取色器 ====================
+// 解决 Windows 上 <input type="color"> 吸管无法吸取窗口外颜色的问题
+// 在每个颜色选择器旁边添加一个🎯吸管按钮，点击后调用主进程截屏取色
+
+(function initGlobalEyeDropper() {
+    // 仅在 Electron 环境且支持 screenPickColor 时启用
+    if (!window.electronAPI?.screenPickColor) return;
+
+    const MARKER = '_eyedropper-attached';
+    const BUTTON_CLASS = 'vk-eyedropper-btn';
+
+    // 注入全局样式
+    const style = document.createElement('style');
+    style.textContent = `
+        .vk-eyedropper-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 22px;
+            height: 22px;
+            padding: 0;
+            margin-left: 2px;
+            border: 1px solid var(--border-color, rgba(255,255,255,0.15));
+            border-radius: 4px;
+            background: var(--bg-secondary, rgba(255,255,255,0.06));
+            cursor: pointer;
+            font-size: 12px;
+            line-height: 1;
+            vertical-align: middle;
+            transition: background 0.15s, border-color 0.15s;
+            flex-shrink: 0;
+        }
+        .vk-eyedropper-btn:hover {
+            background: var(--bg-hover, rgba(255,255,255,0.12));
+            border-color: var(--accent, #4c9eff);
+        }
+        .vk-eyedropper-btn:active {
+            transform: scale(0.92);
+        }
+        .vk-eyedropper-btn.picking {
+            background: var(--accent, #4c9eff);
+            border-color: var(--accent, #4c9eff);
+            animation: vk-pulse 0.8s ease-in-out infinite alternate;
+        }
+        @keyframes vk-pulse {
+            from { opacity: 0.7; }
+            to { opacity: 1; }
+        }
+    `;
+    document.head.appendChild(style);
+
+    function attachEyedropper(input) {
+        if (input[MARKER]) return;
+        input[MARKER] = true;
+
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = BUTTON_CLASS;
+        btn.title = '屏幕取色 (可吸取窗口外颜色)';
+        btn.textContent = '💉';
+        btn.setAttribute('tabindex', '-1');
+
+        btn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            btn.classList.add('picking');
+            try {
+                const hex = await window.electronAPI.screenPickColor();
+                if (hex) {
+                    // 更新 input 值
+                    input.value = hex;
+                    // 触发 input 和 change 事件，确保所有监听器都能收到
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+            } catch (err) {
+                console.error('[EyeDropper] Error:', err);
+            } finally {
+                btn.classList.remove('picking');
+            }
+        });
+
+        // 将按钮插入到 input 后面
+        input.insertAdjacentElement('afterend', btn);
+    }
+
+    function scanAndAttach(root) {
+        const inputs = (root || document).querySelectorAll('input[type="color"]');
+        inputs.forEach(attachEyedropper);
+    }
+
+    // 初始扫描
+    document.addEventListener('DOMContentLoaded', () => {
+        setTimeout(() => scanAndAttach(), 500);
+    });
+
+    // 监听动态添加的颜色输入框
+    const observer = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+            for (const node of mutation.addedNodes) {
+                if (node.nodeType !== Node.ELEMENT_NODE) continue;
+                if (node.matches?.('input[type="color"]')) {
+                    attachEyedropper(node);
+                } else if (node.querySelectorAll) {
+                    node.querySelectorAll('input[type="color"]').forEach(attachEyedropper);
+                }
+            }
+        }
+    });
+
+    // 页面加载后启动观察
+    if (document.body) {
+        observer.observe(document.body, { childList: true, subtree: true });
+        scanAndAttach();
+    } else {
+        document.addEventListener('DOMContentLoaded', () => {
+            observer.observe(document.body, { childList: true, subtree: true });
+        });
+    }
+})();

@@ -34,6 +34,109 @@ function _loadImage(src) {
     });
 }
 
+function _normalizeOverlayLocalPath(filePath) {
+    if (!filePath || typeof filePath !== 'string') return '';
+    let s = filePath;
+    if (/^local-media:\/\//i.test(s)) {
+        s = s.replace(/^local-media:\/\//i, '');
+    } else if (/^file:\/\//i.test(s)) {
+        try {
+            const u = new URL(s);
+            s = u.pathname || s.replace(/^file:\/\//i, '');
+        } catch (_) {
+            s = s.replace(/^file:\/\//i, '');
+        }
+    }
+    try { s = decodeURIComponent(s); } catch (_) { }
+    if (/^\/[A-Za-z]:[\\/]/.test(s)) s = s.slice(1);
+    return s;
+}
+
+function _overlayPathBaseName(filePath) {
+    const s = _normalizeOverlayLocalPath(filePath || '');
+    return (s.replace(/\\/g, '/').split('/').pop() || '').trim();
+}
+
+function _overlayPathDirName(filePath) {
+    const s = _normalizeOverlayLocalPath(filePath || '').replace(/\\/g, '/');
+    const idx = s.lastIndexOf('/');
+    return idx > 0 ? s.slice(0, idx) : '';
+}
+
+async function _overlayLocalPathExists(filePath) {
+    const p = _normalizeOverlayLocalPath(filePath);
+    if (!p || /^blob:/i.test(p)) return false;
+    if (window.electronAPI && typeof window.electronAPI.checkFilesExist === 'function') {
+        try {
+            const map = await window.electronAPI.checkFilesExist([p]);
+            return !!map[p];
+        } catch (_) { }
+    }
+    return false;
+}
+
+function _collectOverlaySearchDirs(taskOverlays) {
+    const dirs = [];
+    const add = (dir) => {
+        if (!dir || typeof dir !== 'string') return;
+        const d = _normalizeOverlayLocalPath(dir).replace(/[\\/]+$/, '');
+        if (d && !/^blob:/i.test(d) && !dirs.includes(d)) dirs.push(d);
+    };
+
+    try { add(localStorage.getItem('videokit_overlay_lib_path') || ''); } catch (_) { }
+
+    try {
+        const tabs = (typeof _batchTableState !== 'undefined' && _batchTableState?.tabs) ? _batchTableState.tabs : [];
+        for (const tab of tabs) add(tab?.materialDir || '');
+    } catch (_) { }
+
+    try {
+        const activeTab = (typeof _getActiveTab === 'function') ? _getActiveTab() : null;
+        add(activeTab?.materialDir || '');
+    } catch (_) { }
+
+    const tasks = window._reelsState?.tasks || [];
+    for (const task of tasks) {
+        add(_overlayPathDirName(task?.bgPath || task?.videoPath || ''));
+        add(_overlayPathDirName(task?.audioPath || ''));
+        add(_overlayPathDirName(task?.bgmPath || ''));
+        add(_overlayPathDirName(task?.contentVideoPath || ''));
+        for (const ov of (task?.overlays || [])) add(_overlayPathDirName(ov?.content || ''));
+    }
+
+    for (const ov of (taskOverlays || [])) add(_overlayPathDirName(ov?.content || ''));
+    return dirs;
+}
+
+async function _resolveMissingOverlayPath(ov, taskOverlays, log) {
+    const opath = _normalizeOverlayLocalPath(ov?.content || '');
+    if (await _overlayLocalPathExists(opath)) return opath;
+
+    const fileName = _overlayPathBaseName(ov?.content || '');
+    if (!fileName || !window.electronAPI || typeof window.electronAPI.searchFilesRecursive !== 'function') {
+        return opath;
+    }
+
+    const dirs = _collectOverlaySearchDirs(taskOverlays);
+    const key = fileName.toLowerCase();
+    for (const dir of dirs) {
+        try {
+            const foundMap = await window.electronAPI.searchFilesRecursive(dir, [fileName], 5);
+            const foundPath = foundMap && foundMap[key];
+            if (foundPath) {
+                if (log) log(`已自动找回覆层素材: ${fileName} → ${foundPath}`);
+                if (window.electronAPI && typeof window.electronAPI.toFileUrl === 'function') {
+                    ov.content = window.electronAPI.toFileUrl(foundPath) || foundPath;
+                } else {
+                    ov.content = foundPath;
+                }
+                return foundPath;
+            }
+        } catch (_) { }
+    }
+    return opath;
+}
+
 /**
  * AudioBuffer → WAV (PCM 16-bit) ArrayBuffer
  */
@@ -344,7 +447,10 @@ async function reelsWysiwygExport(params) {
         log(`阶段1.5: 预处理 ${videoOverlays.length} 个视频/动图覆层...`);
         for (const ov of videoOverlays) {
             if (!ov.content) continue;
-            const opath = ov.content.startsWith('file://') ? decodeURIComponent(ov.content.substring(7)) : ov.content;
+            const opath = await _resolveMissingOverlayPath(ov, taskOverlays, log);
+            if (!opath || /^blob:/i.test(opath)) {
+                throw new Error(`覆层素材不是可导出的本地文件路径: ${ov.name || ov.content}`);
+            }
             const oPrep = await window.electronAPI.reelsComposeWysiwyg('prepare-overlay', {
                 overlayPath: opath,
                 fps,

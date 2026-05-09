@@ -51,11 +51,14 @@ function _updateCurrentTemplateButton() {
     }
 }
 
-function openTemplateLibrary() {
+function openTemplateLibrary(onSelectCallback = null, opts = {}) {
     // 如果已存在就显示
     let modal = document.getElementById('template-library-modal');
     if (modal) {
         modal.style.display = 'flex';
+        // 绑定回调到全局，方便 _refreshTemplateList 中使用
+        modal._onSelectCallback = onSelectCallback;
+        modal._pickerDisabledIds = new Set(opts.disabledIds || []);
         _updateCurrentTemplateButton();
         _refreshTemplateList();
         return;
@@ -63,21 +66,29 @@ function openTemplateLibrary() {
 
     modal = document.createElement('div');
     modal.id = 'template-library-modal';
-    modal.style.cssText = 'display:flex;align-items:center;justify-content:center;z-index:10000;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);backdrop-filter:blur(4px);';
+    modal._onSelectCallback = onSelectCallback;
+    modal._pickerDisabledIds = new Set(opts.disabledIds || []);
+    modal.style.cssText = 'display:flex;align-items:center;justify-content:center;z-index:400000;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);backdrop-filter:blur(4px);';
+    
+    // UI elements hide/show based on mode
+    const isPicker = !!onSelectCallback;
+    
     modal.innerHTML = `
         <div class="modal-content" style="width:90vw;max-width:1100px;height:80vh;display:flex;flex-direction:column;background:var(--bg-secondary,#1a1a2e);border-radius:16px;overflow:hidden;border:1px solid rgba(255,255,255,0.08);">
             <div style="display:flex;align-items:center;justify-content:space-between;padding:18px 24px;border-bottom:1px solid rgba(255,255,255,0.06);">
                 <div style="display:flex;align-items:center;gap:12px;">
                     <span style="font-size:22px;">📂</span>
-                    <h2 style="margin:0;font-size:18px;font-weight:700;color:#fff;">视频模板库</h2>
+                    <h2 id="tpl-lib-title" style="margin:0;font-size:18px;font-weight:700;color:#fff;">${isPicker ? '选择视频模板' : '视频模板库'}</h2>
                     <span id="tpl-count-badge" style="font-size:11px;padding:2px 8px;background:rgba(110,231,183,0.15);color:#6ee7b7;border-radius:10px;"></span>
                 </div>
                 <div style="display:flex;gap:6px;align-items:center;">
+                    ${isPicker ? '' : `
                     <button onclick="saveCurrentAsTemplate()" style="padding:5px 12px;font-size:11px;font-weight:600;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;border:none;border-radius:8px;cursor:pointer;">💾 保存当前工程</button>
                     <button id="tpl-update-current-btn" onclick="updateCurrentTemplate()" style="padding:5px 12px;font-size:11px;font-weight:600;background:rgba(245,158,11,0.16);color:#fbbf24;border:1px solid rgba(245,158,11,0.35);border-radius:8px;cursor:pointer;">♻️ 更新当前模板</button>
                     <button onclick="_importTemplate()" style="padding:5px 12px;font-size:11px;font-weight:600;background:rgba(16,185,129,0.15);color:#10b981;border:1px solid rgba(16,185,129,0.3);border-radius:8px;cursor:pointer;">📥 导入</button>
                     <button onclick="_exportAllTemplates()" style="padding:5px 12px;font-size:11px;font-weight:600;background:rgba(236,72,153,0.15);color:#ec4899;border:1px solid rgba(236,72,153,0.3);border-radius:8px;cursor:pointer;">📤 导出全部</button>
                     <span id="tpl-current-template-label" style="max-width:170px;font-size:10px;color:#777;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span>
+                    `}
                     <button onclick="document.getElementById('template-library-modal').style.display='none'" style="background:none;border:none;color:#888;font-size:20px;cursor:pointer;padding:4px 8px;">✕</button>
                 </div>
             </div>
@@ -98,9 +109,12 @@ function openTemplateLibrary() {
 }
 
 async function _refreshTemplateList() {
+    const modal = document.getElementById('template-library-modal');
     const container = document.getElementById('tpl-grid-container');
     const badge = document.getElementById('tpl-count-badge');
-    if (!container) return;
+    if (!container || !modal) return;
+    
+    const isPicker = !!modal._onSelectCallback;
 
     try {
         const resp = await apiFetch(`${API_BASE}/templates/list`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
@@ -109,12 +123,16 @@ async function _refreshTemplateList() {
 
         badge.textContent = `${templates.length} 个模板`;
 
+        // Also update title in case mode changed via display='flex'
+        const titleEl = document.getElementById('tpl-lib-title');
+        if (titleEl) titleEl.textContent = isPicker ? '选择视频模板' : '视频模板库';
+
         if (templates.length === 0) {
             container.innerHTML = `
                 <div style="text-align:center;padding:80px 0;color:#555;">
                     <div style="font-size:48px;margin-bottom:16px;opacity:0.4;">📂</div>
                     <p style="font-size:14px;margin:0;">还没有保存任何模板</p>
-                    <p style="font-size:12px;color:#444;margin-top:6px;">点击上方「保存当前工程为模板」开始</p>
+                    ${isPicker ? '' : '<p style="font-size:12px;color:#444;margin-top:6px;">点击上方「保存当前工程为模板」开始</p>'}
                 </div>
             `;
             return;
@@ -130,17 +148,34 @@ async function _refreshTemplateList() {
             const safeThumb = _tplEscapeHtml(thumbSrc);
             const safeDate = _tplEscapeHtml(dateStr);
             const safeTaskInfo = _tplEscapeHtml(taskInfo);
+            const isDisabledPick = isPicker && modal._pickerDisabledIds && modal._pickerDisabledIds.has(tpl.id);
             const thumbHtml = thumbSrc
                 ? `<img src="${safeThumb}" style="width:100%;height:100%;object-fit:cover;" />`
                 : `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#555;font-size:36px;">🎬</div>`;
 
+            const actionsHtml = isPicker ? `
+                <div class="tpl-actions" style="position:absolute;top:8px;right:8px;display:flex;gap:4px;opacity:0;transition:opacity 0.2s;background:rgba(0,0,0,0.7);padding:6px;border-radius:8px;">
+                    <button data-action="pick" ${isDisabledPick ? 'disabled' : ''} style="padding:4px 12px;font-size:12px;font-weight:600;background:${isDisabledPick ? 'rgba(120,120,130,0.35)' : 'linear-gradient(135deg,#7c5cff,#a855f7)'};color:${isDisabledPick ? '#999' : '#fff'};border:none;border-radius:6px;cursor:${isDisabledPick ? 'not-allowed' : 'pointer'};">${isDisabledPick ? '已添加' : '✅ 选用此模板'}</button>
+                </div>
+            ` : `
+                <div class="tpl-actions" style="position:absolute;top:8px;right:8px;display:flex;gap:4px;opacity:1;transition:opacity 0.2s;background:rgba(0,0,0,0.5);padding:4px;border-radius:8px;">
+                    <button data-action="load" style="padding:4px 6px;font-size:11px;background:rgba(59,130,246,0.9);color:#fff;border:none;border-radius:6px;cursor:pointer;" title="覆盖当前工程直接载入">🔽</button>
+                    <button data-action="window" style="padding:4px 6px;font-size:11px;background:rgba(99,102,241,0.9);color:#fff;border:none;border-radius:6px;cursor:pointer;" title="独立新窗口打开">🪟</button>
+                    <button data-action="export" style="padding:4px 6px;font-size:11px;background:rgba(16,185,129,0.2);color:#10b981;border:none;border-radius:6px;cursor:pointer;" title="仅导出 JSON 配置">📤</button>
+                    <button data-action="export_archive" style="padding:4px 6px;font-size:11px;background:rgba(245,158,11,0.2);color:#fbbf24;border:none;border-radius:6px;cursor:pointer;" title="打包导出关联素材 (归档)">📦</button>
+                    <button data-action="rename" style="padding:4px 6px;font-size:11px;background:rgba(255,255,255,0.1);color:#ccc;border:none;border-radius:6px;cursor:pointer;" title="重命名">✏️</button>
+                    <button data-action="delete" style="padding:4px 6px;font-size:11px;background:rgba(239,68,68,0.2);color:#f87171;border:none;border-radius:6px;cursor:pointer;" title="删除">🗑</button>
+                </div>
+            `;
+
             html += `
-                <div class="tpl-card" data-id="${safeId}" data-name="${safeName}" style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:12px;overflow:hidden;cursor:pointer;transition:all 0.2s;position:relative;"
+                <div class="tpl-card" data-id="${safeId}" data-name="${safeName}" data-disabled-pick="${isDisabledPick ? 'true' : 'false'}" style="background:rgba(255,255,255,${isDisabledPick ? '0.018' : '0.03'});border:1px solid ${isDisabledPick ? 'rgba(120,120,130,0.28)' : 'rgba(255,255,255,0.06)'};border-radius:12px;overflow:hidden;cursor:${isDisabledPick ? 'not-allowed' : 'pointer'};transition:all 0.2s;position:relative;${isDisabledPick ? 'opacity:0.58;' : ''}"
                      onmouseenter="this.style.borderColor='rgba(99,102,241,0.4)';this.style.transform='translateY(-2px)'"
                      onmouseleave="this.style.borderColor='rgba(255,255,255,0.06)';this.style.transform='none'">
                     <div style="aspect-ratio:9/16;max-height:280px;background:#0a0a1a;overflow:hidden;">
                         ${thumbHtml}
                     </div>
+                    ${isDisabledPick ? '<div style="position:absolute;left:8px;top:8px;background:rgba(16,185,129,0.9);color:#06150f;font-size:11px;font-weight:700;padding:3px 8px;border-radius:999px;">已添加</div>' : ''}
                     <div style="padding:10px 12px;">
                         <div class="tpl-name" style="font-size:13px;font-weight:600;color:#e0e0e0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${safeName}">${safeName}</div>
                         <div style="font-size:10px;color:#666;margin-top:4px;display:flex;justify-content:space-between;">
@@ -148,13 +183,7 @@ async function _refreshTemplateList() {
                             <span>${safeTaskInfo}</span>
                         </div>
                     </div>
-                    <div class="tpl-actions" style="position:absolute;top:8px;right:8px;display:flex;gap:4px;opacity:1;transition:opacity 0.2s;background:rgba(0,0,0,0.5);padding:4px;border-radius:8px;">
-                        <button data-action="load" style="padding:4px 6px;font-size:11px;background:rgba(59,130,246,0.9);color:#fff;border:none;border-radius:6px;cursor:pointer;" title="覆盖当前工程直接载入">🔽 载入</button>
-                        <button data-action="window" style="padding:4px 6px;font-size:11px;background:rgba(99,102,241,0.9);color:#fff;border:none;border-radius:6px;cursor:pointer;" title="独立新窗口打开">🪟 新窗</button>
-                        <button data-action="export" style="padding:4px 6px;font-size:11px;background:rgba(16,185,129,0.2);color:#10b981;border:none;border-radius:6px;cursor:pointer;" title="导出为文件">📤</button>
-                        <button data-action="rename" style="padding:4px 6px;font-size:11px;background:rgba(255,255,255,0.1);color:#ccc;border:none;border-radius:6px;cursor:pointer;" title="重命名">✏️</button>
-                        <button data-action="delete" style="padding:4px 6px;font-size:11px;background:rgba(239,68,68,0.2);color:#f87171;border:none;border-radius:6px;cursor:pointer;" title="删除">🗑</button>
-                    </div>
+                    ${actionsHtml}
                 </div>
             `;
         }
@@ -163,26 +192,66 @@ async function _refreshTemplateList() {
 
         // 显示操作按钮的 hover 效果
         container.querySelectorAll('.tpl-card').forEach(card => {
-            card.addEventListener('mouseenter', () => card.querySelector('.tpl-actions').style.opacity = '1');
-            card.addEventListener('mouseleave', () => card.querySelector('.tpl-actions').style.opacity = '0');
-            card.querySelector('.tpl-actions')?.addEventListener('click', (e) => {
+            if (isPicker) {
+                card.addEventListener('mouseenter', () => card.querySelector('.tpl-actions').style.opacity = '1');
+                card.addEventListener('mouseleave', () => card.querySelector('.tpl-actions').style.opacity = '0');
+            } else {
+                card.addEventListener('mouseenter', () => card.querySelector('.tpl-actions').style.opacity = '1');
+                card.addEventListener('mouseleave', () => card.querySelector('.tpl-actions').style.opacity = '0');
+            }
+            
+            card.querySelector('.tpl-actions')?.addEventListener('click', async (e) => {
                 const btn = e.target.closest('button[data-action]');
                 if (!btn) return;
                 e.stopPropagation();
                 const id = card.dataset.id || '';
                 const name = card.dataset.name || '';
                 const action = btn.dataset.action;
-                if (action === 'load') _loadTemplateInCurrentWindow(id);
+                
+                if (action === 'pick') {
+                    if (btn.disabled || card.dataset.disabledPick === 'true') return;
+                    // Fetch full data and pass to callback
+                    btn.textContent = '加载中...';
+                    try {
+                        const r = await apiFetch(`${API_BASE}/templates/get`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id}) });
+                        const res = await r.json();
+                        const tplData = res.data || res;
+                        if (modal._onSelectCallback) {
+                            modal._onSelectCallback(tplData);
+                        }
+                        btn.textContent = '✅ 已添加';
+                        btn.style.background = 'rgba(16,185,129,0.8)';
+                        setTimeout(() => {
+                            btn.textContent = '✅ 选用此模板';
+                            btn.style.background = 'linear-gradient(135deg,#7c5cff,#a855f7)';
+                        }, 1500);
+                    } catch(err) {
+                        alert('读取模板失败');
+                        btn.textContent = '✅ 选用此模板';
+                    }
+                }
+                else if (action === 'load') _loadTemplateInCurrentWindow(id);
                 else if (action === 'window') _openTemplateInWindow(id, name);
                 else if (action === 'export') _exportTemplate(id, name);
+                else if (action === 'export_archive') _exportArchiveTemplate(id, name);
                 else if (action === 'rename') _renameTemplate(id);
                 else if (action === 'delete') _deleteTemplate(id, name);
             });
+            
             // 双击打开
-            card.addEventListener('dblclick', () => {
+            card.addEventListener('dblclick', async () => {
                 const id = card.dataset.id;
                 const name = card.dataset.name || '';
-                _openTemplateInWindow(id, name);
+                if (isPicker) {
+                    if (card.dataset.disabledPick === 'true') return;
+                    try {
+                        const r = await apiFetch(`${API_BASE}/templates/get`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id}) });
+                        const res = await r.json();
+                        if (modal._onSelectCallback) modal._onSelectCallback(res.data || res);
+                    } catch(err) {}
+                } else {
+                    _openTemplateInWindow(id, name);
+                }
             });
         });
 
@@ -468,12 +537,39 @@ async function _exportTemplate(id, name) {
 }
 
 /**
- * 导入 .vktpl 模板文件
+ * 打包导出模板及关联的本地素材 (归档)
+ */
+async function _exportArchiveTemplate(id, name) {
+    try {
+        if (typeof showToast === 'function') showToast(`正在收集素材并打包，请稍候...`, 'info');
+        const resp = await apiFetch(`${API_BASE}/templates/export-archive`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id }),
+        });
+        const result = await resp.json();
+        const zipPath = result.data ? result.data.zip_path : result.zip_path;
+        if (zipPath && window.electronAPI && window.electronAPI.showItemInFolder) {
+            window.electronAPI.showItemInFolder(zipPath);
+            if (typeof showToast === 'function') showToast(`打包完成！已在文件夹中显示。`, 'success');
+        } else if (zipPath) {
+            if (typeof showToast === 'function') showToast(`打包完成: ${zipPath}`, 'success');
+        } else {
+            throw new Error(result.error || '打包失败');
+        }
+    } catch (e) {
+        if (typeof showToast === 'function') showToast('打包失败: ' + e.message, 'error');
+        else alert('打包失败: ' + e.message);
+    }
+}
+
+/**
+ * 导入 .vktpl 或 .vkpkg 模板文件
  */
 async function _importTemplate() {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = '.vktpl,.json';
+    input.accept = '.vktpl,.json,.vkpkg';
     input.multiple = true;
     input.onchange = async (e) => {
         const files = Array.from(e.target.files);
@@ -481,6 +577,29 @@ async function _importTemplate() {
 
         let imported = 0;
         for (const file of files) {
+            if (file.name.endsWith('.vkpkg')) {
+                const filePath = window.electronAPI ? window.electronAPI.getFilePath(file) : '';
+                if (!filePath) {
+                    if (typeof showToast === 'function') showToast(`跳过 ${file.name}: 无法获取本地路径`, 'warning');
+                    continue;
+                }
+                try {
+                    if (typeof showToast === 'function') showToast(`正在导入归档包 ${file.name}...`, 'info');
+                    const resp = await apiFetch(`${API_BASE}/templates/import-archive`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ zip_path: filePath }),
+                    });
+                    const result = await resp.json();
+                    if (result.id || (result.data && result.data.id)) {
+                        imported++;
+                    }
+                } catch (err) {
+                    if (typeof showToast === 'function') showToast(`导入失败 ${file.name}: ` + err.message, 'error');
+                }
+                continue;
+            }
+
             try {
                 const text = await file.text();
                 const data = JSON.parse(text);

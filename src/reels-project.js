@@ -54,7 +54,7 @@ function _clonePlain(value) {
  * @returns {object} 项目数据
  */
 function collectProjectData(state) {
-    const { tasks = [], style = {}, exportOpts = {}, selectedIdx = -1 } = state;
+    const { tasks = [], backgroundLibrary = [], style = {}, exportOpts = {}, selectedIdx = -1 } = state;
 
     const tasksData = tasks.map(task => {
         const taskData = {
@@ -125,6 +125,7 @@ function collectProjectData(state) {
         style: JSON.parse(JSON.stringify(style)),
         exportOpts: JSON.parse(JSON.stringify(exportOpts)),
         tasks: tasksData,
+        backgroundLibrary: JSON.parse(JSON.stringify(backgroundLibrary || [])),
         selectedIdx: selectedIdx,
     };
 }
@@ -206,6 +207,7 @@ function applyProjectData(data) {
 
     return {
         tasks,
+        backgroundLibrary: normalized.backgroundLibrary || normalized.background_library || [],
         style: normalized.style || {},
         exportOpts: normalized.exportOpts || normalized.export_opts || {},
         selectedIdx: normalized.selectedIdx || normalized.curr_idx || 0,

@@ -1075,6 +1075,150 @@ async function routeAPI(endpoint, data) {
             if (!data.id || !data.name) throw new Error('缺少模板 ID 或新名称');
             return templateService.renameTemplate(data.id, data.name);
 
+        case 'templates/export-archive': {
+            if (!data.id) throw new Error('缺少模板 ID');
+            const tplData = templateService.getTemplate(data.id);
+            const exportId = `archive_${Date.now()}`;
+            const tmpDir = settingsService.getSecureTmpDir(exportId);
+            const assetsDir = path.join(tmpDir, 'Assets');
+            fs.mkdirSync(assetsDir, { recursive: true });
+
+            const assetMap = {};
+            function extractAndRewritePaths(obj) {
+                if (typeof obj === 'string') {
+                    let checkPath = obj;
+                    let prefix = '';
+                    if (checkPath.startsWith('local-media://')) {
+                        prefix = 'local-media://';
+                        checkPath = checkPath.replace('local-media://', '');
+                    }
+                    if (checkPath.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(checkPath)) {
+                        try {
+                            if (fs.existsSync(checkPath) && fs.statSync(checkPath).isFile()) {
+                                if (!assetMap[checkPath]) {
+                                    const ext = path.extname(checkPath);
+                                    const name = path.basename(checkPath, ext);
+                                    const newName = `${name}_${Object.keys(assetMap).length}${ext}`;
+                                    assetMap[checkPath] = newName;
+                                    fs.copyFileSync(checkPath, path.join(assetsDir, newName));
+                                }
+                                return `${prefix}Assets/${assetMap[checkPath]}`;
+                            }
+                        } catch (e) {}
+                    }
+                    return obj;
+                }
+                if (Array.isArray(obj)) {
+                    for (let i = 0; i < obj.length; i++) obj[i] = extractAndRewritePaths(obj[i]);
+                    return obj;
+                }
+                if (obj !== null && typeof obj === 'object') {
+                    for (const key of Object.keys(obj)) obj[key] = extractAndRewritePaths(obj[key]);
+                    return obj;
+                }
+                return obj;
+            }
+
+            const rewrittenProjectData = extractAndRewritePaths(tplData.projectData);
+            const exportObj = {
+                _format: 'videokit-template-archive',
+                _version: 1,
+                name: tplData.name,
+                description: tplData.description || '',
+                thumbnail: tplData.thumbnail || '',
+                tags: tplData.tags || [],
+                createdAt: tplData.createdAt,
+                projectData: rewrittenProjectData,
+            };
+
+            const jsonPath = path.join(tmpDir, 'template.json');
+            fs.writeFileSync(jsonPath, JSON.stringify(exportObj, null, 2), 'utf-8');
+
+            const zipPath = settingsService.secureTmpFile(`Template_${tplData.name || 'Archive'}_${Date.now()}`, '.vkpkg');
+            const archiver = require('archiver');
+            await new Promise((resolve, reject) => {
+                const output = fs.createWriteStream(zipPath);
+                const archive = archiver('zip', { zlib: { level: 6 } });
+                output.on('close', resolve);
+                archive.on('error', reject);
+                archive.pipe(output);
+                archive.directory(tmpDir, false);
+                archive.finalize();
+            });
+
+            try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (e) {}
+
+            return { message: '归档导出完成', zip_path: zipPath, name: tplData.name };
+        }
+
+        case 'templates/import-archive': {
+            const zipPath = data.zip_path;
+            if (!zipPath || !fs.existsSync(zipPath)) throw new Error('无效的归档文件');
+            
+            const extractDir = settingsService.getSecureTmpDir(`import_${Date.now()}`);
+            const extract = require('extract-zip');
+            await extract(zipPath, { dir: extractDir });
+
+            const jsonPath = path.join(extractDir, 'template.json');
+            if (!fs.existsSync(jsonPath)) {
+                try { fs.rmSync(extractDir, { recursive: true, force: true }); } catch (e) {}
+                throw new Error('归档包内找不到 template.json，不是有效的模板包');
+            }
+
+            const parsed = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
+            if (parsed._format !== 'videokit-template-archive') {
+                try { fs.rmSync(extractDir, { recursive: true, force: true }); } catch (e) {}
+                throw new Error('不支持的归档格式');
+            }
+
+            const { app } = require('electron');
+            const permAssetsDir = path.join(app.getPath('userData'), 'videokit-templates', 'assets', `tpl_${Date.now()}`);
+            fs.mkdirSync(permAssetsDir, { recursive: true });
+
+            const tmpAssetsDir = path.join(extractDir, 'Assets');
+            if (fs.existsSync(tmpAssetsDir)) {
+                fs.cpSync(tmpAssetsDir, permAssetsDir, { recursive: true });
+            }
+
+            function restorePaths(obj) {
+                if (typeof obj === 'string') {
+                    let checkPath = obj;
+                    let prefix = '';
+                    if (checkPath.startsWith('local-media://')) {
+                        prefix = 'local-media://';
+                        checkPath = checkPath.replace('local-media://', '');
+                    }
+                    if (checkPath.startsWith('Assets/')) {
+                        const rel = checkPath.replace('Assets/', '');
+                        return `${prefix}${path.join(permAssetsDir, rel)}`;
+                    }
+                    return obj;
+                }
+                if (Array.isArray(obj)) {
+                    for (let i = 0; i < obj.length; i++) obj[i] = restorePaths(obj[i]);
+                    return obj;
+                }
+                if (obj !== null && typeof obj === 'object') {
+                    for (const key of Object.keys(obj)) obj[key] = restorePaths(obj[key]);
+                    return obj;
+                }
+                return obj;
+            }
+
+            const restoredProjectData = restorePaths(parsed.projectData);
+
+            const res = templateService.saveTemplate({
+                name: parsed.name,
+                description: parsed.description || '',
+                thumbnail: parsed.thumbnail || '',
+                tags: parsed.tags || [],
+                projectData: restoredProjectData
+            });
+
+            try { fs.rmSync(extractDir, { recursive: true, force: true }); } catch (e) {}
+            return { message: '导入成功', id: res.id, name: parsed.name };
+        }
+
         // ==================== Wav2Lip 口型同步 ====================
         case 'wav2lip/check':
             return await wav2lipService.checkEnvironment();

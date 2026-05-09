@@ -32,6 +32,7 @@ async function reelsBatchFcpxmlExport(params) {
     // segmentsToFcpxml 需要的 segment 格式:
     //   { name, start, end, videoPath, videoDuration, subtitles: [text1, text2, ...], clipColor }
     const segments = [];
+    const usedNames = new Set();
 
     for (let i = 0; i < tasks.length; i++) {
         const config = tasks[i];
@@ -40,7 +41,16 @@ async function reelsBatchFcpxmlExport(params) {
 
         const trimStart = parseFloat(config.contentVideoTrimStart) || 0;
         const trimEnd = parseFloat(config.contentVideoTrimEnd) || 0;
-        const clipName = config.taskName || (task && task.fileName) || `Task_${i + 1}`;
+        let clipName = config.taskName || (task && task.fileName) || `Task_${i + 1}`;
+        
+        let uniqueName = clipName;
+        let counter = 1;
+        while (usedNames.has(uniqueName)) {
+            uniqueName = `${clipName}_${counter}`;
+            counter++;
+        }
+        usedNames.add(uniqueName);
+        clipName = uniqueName;
 
         log(`处理任务行 ${i + 1}/${tasks.length}: ${clipName}`);
 
@@ -169,13 +179,59 @@ async function reelsBatchFcpxmlExport(params) {
             }
         }
 
-        // 如果没有覆层文字，回退到 SRT segments 文本
-        if (subtitleTexts.length === 0 && srtSegments && srtSegments.length > 0) {
-            const allText = srtSegments.map(seg => seg.text).join('   ');
-            subtitleTexts.push({
-                text: allText, font: 'Playfair Display', fontSize: 32,
-                fontColor: '#FFE500', bold: true, posX: 720, posY: 800
-            });
+        // ── ⏱️ 时间切片处理 ──
+        // 如果任务启用了分段模式，为每个切片筛选对应的覆层文字并附加时间范围
+        const subtitleTimeMode = config.subtitleTimeMode || 'full';
+        const subtitleTimeSlices = config.subtitleTimeSlices || [];
+        let finalSubtitles = subtitleTexts;
+
+        if (subtitleTimeMode === 'split' && subtitleTimeSlices.length > 0 && subtitleTexts.length > 0) {
+            finalSubtitles = [];
+            // 为每个切片构建带时间范围的字幕条目
+            for (const slice of subtitleTimeSlices) {
+                const source = slice.source || 'all';
+                // 根据 source 筛选对应的覆层文字
+                let sliceTexts = [];
+                if (source === 'all') {
+                    sliceTexts = subtitleTexts.slice(); // 全部
+                } else if (source === 'body_part1') {
+                    // 内容覆层 posY=800
+                    sliceTexts = [];
+                    for (const s of subtitleTexts) {
+                        if (s.posY >= 750 && s.posY < 950) {
+                            const splitText = window.ReelsOverlay && window.ReelsOverlay.splitBodyText ? window.ReelsOverlay.splitBodyText(s.text)[0] : s.text;
+                            if (splitText) sliceTexts.push({ ...s, text: splitText });
+                        } else {
+                            sliceTexts.push(s); // 保留标题和结尾
+                        }
+                    }
+                } else if (source === 'body_part2') {
+                    sliceTexts = [];
+                    for (const s of subtitleTexts) {
+                        if (s.posY >= 750 && s.posY < 950) {
+                            const splitText = window.ReelsOverlay && window.ReelsOverlay.splitBodyText ? window.ReelsOverlay.splitBodyText(s.text)[1] : s.text;
+                            if (splitText) sliceTexts.push({ ...s, text: splitText });
+                        } else {
+                            sliceTexts.push(s);
+                        }
+                    }
+                } else if (source === 'scroll_title') {
+                    sliceTexts = subtitleTexts.filter(s => s.posY >= 950);
+                } else if (source === 'scroll_body') {
+                    sliceTexts = subtitleTexts.filter(s => s.posY >= 650 && s.posY < 750);
+                }
+                // 如果按位置没有找到，回退到全部
+                if (sliceTexts.length === 0) sliceTexts = subtitleTexts.slice();
+
+                for (const st of sliceTexts) {
+                    finalSubtitles.push({
+                        ...st,
+                        timeStart: slice.startSec || 0,
+                        timeEnd: slice.endSec != null ? slice.endSec : null, // null = 到片尾
+                    });
+                }
+            }
+            log(`  任务行 ${i + 1}: 使用分段模式，${subtitleTimeSlices.length} 个切片 → ${finalSubtitles.length} 条带时间的字幕`);
         }
 
         // ── 构造 segment ──
@@ -205,9 +261,10 @@ async function reelsBatchFcpxmlExport(params) {
             bgPath: hasSeparateBg ? bgPath2 : null,
             bgDuration: bgDuration,
             loopFadeDur: parseFloat(task?.loopFadeDur || config.loopFadeDur || 1.0),
-            // 覆层
-            subtitles: subtitleTexts,
+            // 覆层（可能带时间切片信息）
+            subtitles: finalSubtitles,
             overlayPngPath: config.overlayPngPath || null,
+            overlayPngSlices: config.overlayPngSlices || null,
         };
 
         segments.push(seg);
@@ -447,7 +504,7 @@ async function _fallbackFrontendExport(segments, outputDir, taskName, fps, tasks
 
         // ── PNG 覆层优先，否则用 Basic Title ──
         if (seg.overlayPngPath) {
-            xml += `\t\t\t\t\t\t\t<asset-clip name="overlay_${clipName}" ref="r${200 + i}" lane="1" offset="${secToFrac(segStart)}" duration="${secToFrac(segDuration)}" format="r0" tcFormat="NDF"/>\n`;
+            xml += `\t\t\t\t\t\t\t<asset-clip name="overlay_${clipName}" ref="r${200 + i}" lane="1" offset="${secToFrac(timelineOffset)}" duration="${secToFrac(segDuration)}" format="r0" tcFormat="NDF"/>\n`;
         } else {
         const totalLanes = subtitles.length;
         for (let ci = 0; ci < subtitles.length; ci++) {
@@ -476,7 +533,17 @@ async function _fallbackFrontendExport(segments, outputDir, taskName, fps, tasks
                 }
             }
 
-            xml += `\t\t\t\t\t\t\t<title name="${xmlEscape(text.slice(0, 40))}" lane="${lane}" offset="${secToFrac(segStart)}" ref="r100" duration="${secToFrac(segDuration)}" start="3600/1s">\n`;
+            // ⏱️ 时间切片支持：与后端 fcpxml.js 逻辑一致
+            let titleOffsetStr = secToFrac(timelineOffset);
+            let titleDurationStr = secToFrac(segDuration);
+            if (isObj && subEntry.timeStart != null) {
+                const sliceStart = subEntry.timeStart || 0;
+                const sliceEnd = subEntry.timeEnd != null ? subEntry.timeEnd : segDuration;
+                titleOffsetStr = secToFrac(timelineOffset + sliceStart);
+                titleDurationStr = secToFrac(Math.max(0.1, sliceEnd - sliceStart));
+            }
+
+            xml += `\t\t\t\t\t\t\t<title name="${xmlEscape(text.slice(0, 40))}" lane="${lane}" offset="${titleOffsetStr}" ref="r100" duration="${titleDurationStr}" start="3600/1s">\n`;
             xml += `\t\t\t\t\t\t\t\t<param name="Position" key="9999/999166631/999166633/2/100/101" value="${posX} ${posY}"/>\n`;
             xml += `\t\t\t\t\t\t\t\t<text>\n`;
             xml += `\t\t\t\t\t\t\t\t\t<text-style ref="${styleId}">${xmlEscape(text)}</text-style>\n`;
