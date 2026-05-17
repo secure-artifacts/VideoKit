@@ -2430,7 +2430,10 @@ function _drawScrollOverlay(ctx, ov, clipX, clipY, clipW, clipH, currentTime, ca
     }
 
     // 将正文第一行的实时位置暴露出去，供媒体覆层「跟随滚动」绑定使用
-    ov._scrollBodyFirstLineY = curY + titleOccupiedH;
+    // 固定标题模式下正文直接从 curY 开始（_skipTitle 跳过标题绘制）；
+    // 标题跟随滚动时正文在标题块后面，需加 titleOccupiedH。
+    const _titleFixed = ov.scroll_title_fixed !== false && (ov.scroll_title || '').trim();
+    ov._scrollBodyFirstLineY = _titleFixed ? curY : (curY + titleOccupiedH);
     ov._scrollBodyLineHeight = lineHeight;
     ov._scrollBodyCurX = curAxisX;
 
