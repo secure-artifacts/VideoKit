@@ -479,7 +479,7 @@ function _initReelsModule() {
         };
 
         // 双击字幕编辑后的回写
-        _reelsState.timelineEditor.onSubtitleEdit = (trackIdx, clipIdx, newText, oldText, newRanges) => {
+        _reelsState.timelineEditor.onSubtitleEdit = (trackIdx, clipIdx, newText, oldText, newRanges, styleOverride) => {
             const task = _getSelectedTask();
             if (!task || !task.segments) return;
             // 通过 _segIdx（如有）或 clipIdx 定位到 segment
@@ -497,8 +497,15 @@ function _initReelsModule() {
                     delete seg.styled_ranges;
                     if (clip) delete clip.styled_ranges;
                 }
+                if (styleOverride && Object.keys(styleOverride).length > 0) {
+                    seg.style_override = styleOverride;
+                    if (clip) clip.style_override = styleOverride;
+                } else {
+                    delete seg.style_override;
+                    if (clip) delete clip.style_override;
+                }
                 
-                console.log(`[Timeline] Segment #${segIdx} text/style updated: "${oldText}" → "${newText}"`, newRanges);
+                console.log(`[Timeline] Segment #${segIdx} text/style updated: "${oldText}" → "${newText}"`, newRanges, styleOverride);
                 // 刷新预览
                 if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
             }
@@ -550,6 +557,20 @@ function _initReelsModule() {
 
     // ═══ 面板拖拽调整宽度 ═══
     _initReelsColumnResize();
+
+    // ═══ Windows Electron: 阻止 Inspector 面板的 mousedown 冒泡到视口 ═══
+    // 防止预览视口的平移 handler 在 Windows 上抢夺输入焦点
+    const inspectorCol = document.getElementById('reels-col-subtitle');
+    if (inspectorCol) {
+        inspectorCol.addEventListener('mousedown', (e) => {
+            // 仅对面板内的可交互元素阻止冒泡（不拦截标题栏等非输入区域）
+            const tag = e.target.tagName;
+            if (tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT' ||
+                e.target.isContentEditable || e.target.closest('.rop-textarea, .rop-input, .rop-select, .rop-range, .rop-color')) {
+                e.stopPropagation();
+            }
+        });
+    }
 
     // ═══ 内容视频位置控制器 ═══
     _initCvPosControl();
@@ -2601,8 +2622,12 @@ function reelsUpdatePreview() {
         const ovMgr = _reelsState.overlayProxy.overlayMgr;
         const overlays = ovMgr.overlays || [];
         if (overlays.length > 0 && window.ReelsOverlay) {
-            for (const ov of overlays) {
-                if (ov.disabled) continue;
+            // 注入覆层列表引用（供跟随绑定），确保 scroll 先渲染
+            const sorted = overlays.filter(o => !o.disabled).slice().sort((a, b) => {
+                return (a.type === 'scroll' ? 0 : 1) - (b.type === 'scroll' ? 0 : 1);
+            });
+            for (const ov of sorted) {
+                ov._allOverlays = overlays;
                 // "显示终点" 模式：滚动字幕用终点时间渲染
                 let ovTime = cycleTime;
                 if (_reelsState._scrollPreviewEnd && ov.type === 'scroll') {
@@ -2729,9 +2754,14 @@ function _drawWatermarks(ctx, canvasW, canvasH) {
 
         ctx.save();
         ctx.font = `${fontSize}px Arial, sans-serif`;
-        const textW = ctx.measureText(wm.text).width;
-        const boxW = textW + padH * 2;
-        const boxH = fontSize + padV * 2;
+        const lines = wm.text.split('\n');
+        let maxTextW = 0;
+        for (const line of lines) {
+            maxTextW = Math.max(maxTextW, ctx.measureText(line).width);
+        }
+        const boxW = maxTextW + padH * 2;
+        const lineSpacing = 4;
+        const boxH = lines.length * fontSize + (lines.length - 1) * lineSpacing + padV * 2;
 
         // 计算位置
         const margin = 16;
@@ -2746,8 +2776,11 @@ function _drawWatermarks(ctx, canvasW, canvasH) {
             case 'bottom-left': bx = margin; by = canvasH - boxH - margin; break;
             case 'bottom-center': bx = (canvasW - boxW) / 2; by = canvasH - boxH - margin; break;
             case 'bottom-right': bx = canvasW - boxW - margin; by = canvasH - boxH - margin; break;
+            case 'custom': bx = 0; by = 0; break;
             default: bx = canvasW - boxW - margin; by = margin; break;
         }
+        bx += (wm.x || 0);
+        by += (wm.y || 0);
 
         // 半透明背景
         ctx.globalAlpha = wm.bgOpacity ?? 0.5;
@@ -2761,7 +2794,11 @@ function _drawWatermarks(ctx, canvasW, canvasH) {
         ctx.globalAlpha = wm.textOpacity ?? 1.0;
         ctx.fillStyle = wm.color || '#FFFFFF';
         ctx.textBaseline = 'middle';
-        ctx.fillText(wm.text, bx + padH, by + boxH / 2);
+        let currentY = by + padV + fontSize / 2;
+        for (const line of lines) {
+            ctx.fillText(line, bx + padH, currentY);
+            currentY += fontSize + lineSpacing;
+        }
         ctx.restore();
     }
 }
@@ -2959,6 +2996,8 @@ function _reelsSyncWatermarkFromUI() {
         wm.textOpacity = Number.isFinite(rawTextOp) ? rawTextOp / 100 : 1.0;
         wm.position = row.querySelector('.wm-position')?.value || 'top-right';
         wm.enabled = row.querySelector('.wm-enabled')?.checked ?? true;
+        wm.x = parseInt(row.querySelector('.wm-x')?.value) || 0;
+        wm.y = parseInt(row.querySelector('.wm-y')?.value) || 0;
     });
     _reelsSaveWatermarks();
 }
@@ -2973,21 +3012,73 @@ function _reelsRefreshWatermarkUI() {
         ['top-left', '左上'], ['top-center', '上中'], ['top-right', '右上'],
         ['center-left', '左中'], ['center', '居中'], ['center-right', '右中'],
         ['bottom-left', '左下'], ['bottom-center', '下中'], ['bottom-right', '右下'],
+        ['custom', '自定义坐标']
     ].map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
 
     list.innerHTML = wms.map((wm, i) => `
         <div class="wm-row" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:6px;padding:6px;background:var(--bg-tertiary);border-radius:6px;">
-            <label style="display:flex;align-items:center;gap:3px;"><input type="checkbox" class="wm-enabled" ${wm.enabled ? 'checked' : ''} onchange="_reelsSyncWatermarkFromUI()"> 启用</label>
-            <input class="wm-text input" value="${(wm.text || '').replace(/"/g, '&quot;')}" style="width:150px;font-size:11px;padding:4px 6px;" oninput="_reelsSyncWatermarkFromUI()">
-            <label style="display:flex;align-items:center;gap:2px;">字号:<input class="wm-fontsize input input-small" type="number" value="${wm.fontSize || 20}" min="8" max="80" style="width:48px;font-size:11px;padding:3px;" oninput="_reelsSyncWatermarkFromUI()"></label>
-            <label style="display:flex;align-items:center;gap:2px;">字色:<input class="wm-color" type="color" value="${wm.color || '#FFFFFF'}" style="width:24px;height:20px;border:none;cursor:pointer;" oninput="_reelsSyncWatermarkFromUI()"></label>
-            <label style="display:flex;align-items:center;gap:2px;">字透明:<input type="range" class="wm-textopacity-slider" min="0" max="100" value="${Math.round((wm.textOpacity ?? 1.0) * 100)}" style="width:60px;height:14px;accent-color:#4fc3f7;vertical-align:middle;" oninput="this.parentElement.querySelector('.wm-textopacity').value=this.value;_reelsSyncWatermarkFromUI()"><input class="wm-textopacity input input-small" type="number" value="${Math.round((wm.textOpacity ?? 1.0) * 100)}" min="0" max="100" style="width:38px;font-size:10px;padding:2px;text-align:center;" oninput="this.parentElement.querySelector('.wm-textopacity-slider').value=this.value;_reelsSyncWatermarkFromUI()">%</label>
-            <label style="display:flex;align-items:center;gap:2px;">底色:<input class="wm-bgcolor" type="color" value="${wm.bgColor || '#000000'}" style="width:24px;height:20px;border:none;cursor:pointer;" oninput="_reelsSyncWatermarkFromUI()"></label>
-            <label style="display:flex;align-items:center;gap:2px;">底透明:<input type="range" class="wm-bgopacity-slider" min="0" max="100" value="${Math.round((wm.bgOpacity ?? 0.5) * 100)}" style="width:60px;height:14px;accent-color:#9b59b6;vertical-align:middle;" oninput="this.parentElement.querySelector('.wm-bgopacity').value=this.value;_reelsSyncWatermarkFromUI()"><input class="wm-bgopacity input input-small" type="number" value="${Math.round((wm.bgOpacity ?? 0.5) * 100)}" min="0" max="100" style="width:38px;font-size:10px;padding:2px;text-align:center;" oninput="this.parentElement.querySelector('.wm-bgopacity-slider').value=this.value;_reelsSyncWatermarkFromUI()">%</label>
-            <select class="wm-position select" style="width:70px;font-size:11px;padding:3px;" onchange="_reelsSyncWatermarkFromUI()">${posOptions.replace(`value="${wm.position || 'top-right'}"`, `value="${wm.position || 'top-right'}" selected`)}</select>
-            <button class="btn btn-secondary" style="font-size:10px;padding:2px 6px;color:#f87171;" onclick="reelsRemoveWatermark(${i})">✕</button>
+            <div style="display:flex;gap:6px;width:100%;align-items:flex-start;">
+                <label style="display:flex;align-items:center;gap:3px;margin-top:4px;"><input type="checkbox" class="wm-enabled" ${wm.enabled ? 'checked' : ''} onchange="_reelsSyncWatermarkFromUI()"> 启用</label>
+                <textarea class="wm-text input" style="flex:1;font-size:11px;padding:4px 6px;resize:vertical;min-height:28px;" rows="1" oninput="_reelsSyncWatermarkFromUI()">${(wm.text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</textarea>
+                <button class="btn btn-secondary" style="font-size:10px;padding:2px 6px;color:#f87171;margin-top:4px;" onclick="reelsRemoveWatermark(${i})">✕</button>
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;width:100%;">
+                <label style="display:flex;align-items:center;gap:2px;">字号:<input class="wm-fontsize input input-small" type="number" value="${wm.fontSize || 20}" min="8" max="80" style="width:48px;font-size:11px;padding:3px;" oninput="_reelsSyncWatermarkFromUI()"></label>
+                <label style="display:flex;align-items:center;gap:2px;">字色:<input class="wm-color" type="color" value="${wm.color || '#FFFFFF'}" style="width:24px;height:20px;border:none;cursor:pointer;" oninput="_reelsSyncWatermarkFromUI()"></label>
+                <label style="display:flex;align-items:center;gap:2px;">字透明:<input type="range" class="wm-textopacity-slider" min="0" max="100" value="${Math.round((wm.textOpacity ?? 1.0) * 100)}" style="width:50px;height:14px;accent-color:#4fc3f7;vertical-align:middle;" oninput="this.parentElement.querySelector('.wm-textopacity').value=this.value;_reelsSyncWatermarkFromUI()"><input class="wm-textopacity input input-small" type="number" value="${Math.round((wm.textOpacity ?? 1.0) * 100)}" min="0" max="100" style="width:38px;font-size:10px;padding:2px;text-align:center;" oninput="this.parentElement.querySelector('.wm-textopacity-slider').value=this.value;_reelsSyncWatermarkFromUI()">%</label>
+                <label style="display:flex;align-items:center;gap:2px;">底色:<input class="wm-bgcolor" type="color" value="${wm.bgColor || '#000000'}" style="width:24px;height:20px;border:none;cursor:pointer;" oninput="_reelsSyncWatermarkFromUI()"></label>
+                <label style="display:flex;align-items:center;gap:2px;">底透明:<input type="range" class="wm-bgopacity-slider" min="0" max="100" value="${Math.round((wm.bgOpacity ?? 0.5) * 100)}" style="width:50px;height:14px;accent-color:#9b59b6;vertical-align:middle;" oninput="this.parentElement.querySelector('.wm-bgopacity').value=this.value;_reelsSyncWatermarkFromUI()"><input class="wm-bgopacity input input-small" type="number" value="${Math.round((wm.bgOpacity ?? 0.5) * 100)}" min="0" max="100" style="width:38px;font-size:10px;padding:2px;text-align:center;" oninput="this.parentElement.querySelector('.wm-bgopacity-slider').value=this.value;_reelsSyncWatermarkFromUI()">%</label>
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;width:100%;">
+                <label style="display:flex;align-items:center;gap:4px;">位置: <select class="wm-position select" style="width:85px;font-size:11px;padding:3px;" onchange="_reelsSyncWatermarkFromUI()">${posOptions.replace(`value="${wm.position || 'top-right'}"`, `value="${wm.position || 'top-right'}" selected`)}</select></label>
+                <label style="display:flex;align-items:center;gap:2px;margin-left:4px;" title="偏移值（可填负数）">偏移X:<input class="wm-x input input-small" type="number" value="${wm.x || 0}" style="width:48px;font-size:11px;padding:3px;" oninput="_reelsSyncWatermarkFromUI()"></label>
+                <label style="display:flex;align-items:center;gap:2px;">Y:<input class="wm-y input input-small" type="number" value="${wm.y || 0}" style="width:48px;font-size:11px;padding:3px;" oninput="_reelsSyncWatermarkFromUI()"></label>
+            </div>
         </div>
     `).join('');
+
+    // 添加鼠标左右拖拽调整数值功能
+    list.querySelectorAll('input[type="number"]').forEach(el => {
+        el.style.cursor = 'ew-resize';
+        let dragging = false, startX = 0, startVal = 0;
+        el.addEventListener('mousedown', (e) => {
+            e.stopPropagation();
+            if (document.activeElement === el) return;
+            dragging = true;
+            startX = e.clientX;
+            startVal = parseFloat(el.value) || 0;
+            e.preventDefault();
+            const onMove = (me) => {
+                if (!dragging) return;
+                const dx = me.clientX - startX;
+                const speed = me.shiftKey ? 0.1 : 1;
+                const step = parseFloat(el.getAttribute('step')) || 1;
+                let newVal = Math.round((startVal + dx * speed * step) / step) * step;
+                
+                // 处理极值
+                const min = parseFloat(el.getAttribute('min'));
+                const max = parseFloat(el.getAttribute('max'));
+                if (!isNaN(min) && newVal < min) newVal = min;
+                if (!isNaN(max) && newVal > max) newVal = max;
+
+                el.value = newVal;
+                // 触发同步和预览刷新（通过 dispatchEvent 触发 inline oninput）
+                el.dispatchEvent(new Event('input'));
+            };
+            const onUp = () => {
+                dragging = false;
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+            };
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+        });
+        el.addEventListener('dblclick', (e) => {
+            e.preventDefault();
+            el.focus();
+            el.select();
+        });
+    });
 }
 
 // 初始化水印 — 从 localStorage 恢复
@@ -3050,9 +3141,19 @@ function _syncCurrentOverlayEditorToSelectedTask() {
     }
 }
 
+function _reelsFileExists(filePath) {
+    if (!filePath || typeof filePath !== 'string') return false;
+    if (/^(blob:|data:|https?:)/i.test(filePath)) return true;
+    if (window.electronAPI && typeof window.electronAPI.fileExists === 'function') {
+        return window.electronAPI.fileExists(filePath);
+    }
+    return true;
+}
+
 function _toPlayablePath(filePath, srcUrl = null) {
-    if (srcUrl) return srcUrl;
+    if (srcUrl && _reelsFileExists(srcUrl)) return srcUrl;
     if (!filePath) return '';
+    if (!_reelsFileExists(filePath)) return '';
     if (window.electronAPI && typeof window.electronAPI.toFileUrl === 'function') {
         const u = window.electronAPI.toFileUrl(filePath);
         if (u) return u;
@@ -3306,20 +3407,18 @@ function _applyPreviewAudioMix() {
     const contentVideoEl = document.getElementById('reels-preview-contentvideo');
     const cfg = _getPreviewAudioMixConfig();
     const hasVoice = !!(task && task.audioPath && audio && audio.src);
+    // ── 计算有效音量（优先使用任务级覆盖，再回退到全局配置）──
+    const effectiveVoiceGain = (task && task.voiceVolume != null) ? task.voiceVolume / 100 : cfg.voiceGain;
+    const effectiveBgGain = (task && task.bgVideoVolume != null) ? task.bgVideoVolume / 100 : cfg.bgGain;
 
     if (audio) {
-        audio.volume = hasVoice ? cfg.voiceGain : 1.0;
-        audio.muted = hasVoice ? (cfg.voiceGain <= 0.0001) : false;
+        // HTMLMediaElement.volume 仅允许 [0,1]，超过100%的增益仅在 FFmpeg 导出时生效
+        audio.volume = hasVoice ? Math.min(1.0, effectiveVoiceGain) : 1.0;
+        audio.muted = hasVoice ? (effectiveVoiceGain <= 0.0001) : false;
     }
     if (video) {
-        if (hasVoice) {
-            video.volume = cfg.bgGain;
-            video.muted = cfg.bgGain <= 0.0001;
-        } else {
-            // 无配音时预览以背景原声为主，和旧导出行为一致。
-            video.volume = 1.0;
-            video.muted = false;
-        }
+        video.volume = Math.min(1.0, effectiveBgGain);
+        video.muted = effectiveBgGain <= 0.0001;
     }
 
     // ── 覆层视频 (Content Video) 音量 ──
@@ -3596,6 +3695,13 @@ function _calcPreviewLoopFadeFrame() {
     const masterTime = _getPreviewCurrentTime();
     if (!Number.isFinite(masterTime) || masterTime < 0) return null;
 
+    // ── 智能避让：预览接近结尾时压制转场，避免最终帧是半透明重叠 ──
+    const totalDur = _getPreviewDuration();
+    if (totalDur > 0 && (totalDur - masterTime) < fadeDur) {
+        // 接近结束，不绘制交叉淡化
+        return null;
+    }
+
     const loopTime = ((masterTime % video.duration) + video.duration) % video.duration;
     const remain = video.duration - loopTime;
     if (!(remain < fadeDur)) return null;
@@ -3710,6 +3816,7 @@ function _updatePreviewTimeUI(currentTime, duration) {
 function _updateTimelineForTask(task) {
     if (!_reelsState.timelineEditor || !task) return;
     const editor = _reelsState.timelineEditor;
+    editor.subtitleBaseStyle = _resolveSubtitleStyleForTask(task);
     if (task.segments && task.segments.length > 0) editor.loadSubtitleTrack(task.segments);
     else editor.loadSubtitleTrack([]);
 
@@ -4350,6 +4457,10 @@ function _renderTaskList() {
     if (countEl) countEl.textContent = `${tasks.length} 个任务`;
     if (countPanelEl) countPanelEl.textContent = tasks.length > 0 ? `${tasks.length}` : '0';
 
+    // 确保所有任务都有 _exportSelected 属性（默认选中）
+    tasks.forEach(t => { if (t._exportSelected === undefined) t._exportSelected = true; });
+    _updateExportSelectedCountUI();
+
     if (tasks.length === 0) {
         const hint = workMode === 'srt'
             ? '添加背景素材 + 配音 + SRT，支持拖拽和文件夹导入；同名自动配对。'
@@ -4366,6 +4477,7 @@ function _renderTaskList() {
         const hasAudio = !!task.audioPath;
         const hasSrt = !!task.srtPath && (task.segments || []).length > 0;
         const hasTxt = !!task.txtContent;
+        const exportChecked = task._exportSelected !== false;
 
         let statusParts;
         if (workMode === 'voiced_bg') {
@@ -4445,15 +4557,23 @@ function _renderTaskList() {
             }
         }
 
+        // 未选中导出时降低整行不透明度
+        const rowOpacity = exportChecked ? '1' : '0.45';
+
         return `
             <div class="reels-task-item ${selected ? 'reels-task-selected' : ''}"
                  onclick="reelsSelectTask(${i})"
                  title="${task.fileName}"
                  style="display:flex; align-items:center; gap:4px; padding:5px 6px; margin-bottom:2px;
-                        border-radius:5px; cursor:pointer; transition:background .12s;
+                        border-radius:5px; cursor:pointer; transition:background .12s, opacity .15s;
                         background: ${selected ? 'rgba(0,212,255,0.15)' : 'transparent'};
                         border-left: 3px solid ${selected ? '#4c9eff' : 'transparent'};
+                        opacity: ${rowOpacity};
                         ${selected ? 'box-shadow: inset 0 0 0 1px rgba(0,212,255,0.3);' : ''}">
+                <input type="checkbox" class="reels-export-cb" data-task-idx="${i}" ${exportChecked ? 'checked' : ''}
+                    style="accent-color:var(--accent-color,#7b8bef);transform:scale(0.8);margin:0;flex-shrink:0;cursor:pointer;"
+                    onclick="event.stopPropagation(); reelsToggleExportSelect(${i}, this.checked)"
+                    title="勾选以包含在批量导出中">
                 <span style="font-size:12px; font-weight:${selected ? '600' : '400'}; color:${selected ? '#fff' : 'var(--text-primary)'}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:60px; max-width:120px;">${shortName}</span>
                 ${alphaIcon}
                 ${ovPreview}
@@ -4566,7 +4686,11 @@ function reelsSelectTask(idx) {
         audio.pause();
         if (voicePath) {
             const audioUrl = _toPlayablePath(voicePath, null);
-            if (audio.src !== audioUrl) audio.src = audioUrl;
+            if (audioUrl) {
+                if (audio.src !== audioUrl) audio.src = audioUrl;
+            } else {
+                audio.removeAttribute('src');
+            }
         } else {
             audio.removeAttribute('src');
         }
@@ -4582,14 +4706,28 @@ function reelsSelectTask(idx) {
         bgmAudio.pause();
         if (task.bgmPath) {
             const bgmUrl = _toPlayablePath(task.bgmPath, null);
-            if (bgmAudio.src !== bgmUrl) bgmAudio.src = bgmUrl;
+            if (bgmUrl) {
+                if (bgmAudio.src !== bgmUrl) bgmAudio.src = bgmUrl;
+            } else {
+                bgmAudio.removeAttribute('src');
+            }
         } else {
             bgmAudio.removeAttribute('src');
         }
     }
     _applyPreviewAudioMix();
 
-    if (video && bgPath) {
+    if (video && bgPath && !_reelsFileExists(bgPath)) {
+        _reelsState._previewBgImage = null;
+        video.pause();
+        video.removeAttribute('src');
+        _resetPreviewFadeVideo();
+        video.style.display = 'none';
+        if (placeholder) {
+            placeholder.style.display = 'flex';
+            placeholder.textContent = `背景素材文件不存在：${bgPath.split(/[\\/]/).pop() || bgPath}`;
+        }
+    } else if (video && bgPath) {
         if (_isImagePath(bgPath)) {
             video.pause();
             video.removeAttribute('src');
@@ -5520,6 +5658,65 @@ function reelsCancelExport() {
     }
 }
 
+// ═══════════════════════════════════════════════════════
+// Export Selection (勾选导出)
+// ═══════════════════════════════════════════════════════
+
+/** 切换单个任务的导出选中状态 */
+function reelsToggleExportSelect(idx, checked) {
+    const task = _reelsState.tasks[idx];
+    if (task) task._exportSelected = !!checked;
+    _updateExportSelectedCountUI();
+    // 更新该行的视觉不透明度（无需完整重绘）
+    const items = document.querySelectorAll('.reels-task-item');
+    if (items[idx]) items[idx].style.opacity = checked ? '1' : '0.45';
+}
+window.reelsToggleExportSelect = reelsToggleExportSelect;
+
+/** 全选 / 取消全选 */
+function reelsToggleExportSelectAll(checked) {
+    _reelsState.tasks.forEach(t => t._exportSelected = !!checked);
+    // 更新所有 checkbox
+    document.querySelectorAll('.reels-export-cb').forEach(cb => {
+        cb.checked = !!checked;
+    });
+    // 更新所有行的不透明度
+    document.querySelectorAll('.reels-task-item').forEach(el => {
+        el.style.opacity = checked ? '1' : '0.45';
+    });
+    _updateExportSelectedCountUI();
+}
+window.reelsToggleExportSelectAll = reelsToggleExportSelectAll;
+
+/** 更新已选计数 UI */
+function _updateExportSelectedCountUI() {
+    const tasks = _reelsState.tasks;
+    const total = tasks.length;
+    const selected = tasks.filter(t => t._exportSelected !== false).length;
+    const countEl = document.getElementById('reels-export-selected-count');
+    if (countEl) {
+        if (total === 0) {
+            countEl.textContent = '';
+        } else if (selected === total) {
+            countEl.textContent = `全部 ${total}`;
+            countEl.style.color = 'var(--accent,#7b8bef)';
+        } else {
+            countEl.textContent = `已选 ${selected}/${total}`;
+            countEl.style.color = selected === 0 ? '#f87171' : '#ffa502';
+        }
+    }
+    // 同步全选 checkbox 状态
+    const selectAllCb = document.getElementById('reels-export-select-all');
+    if (selectAllCb) {
+        selectAllCb.checked = total > 0 && selected === total;
+        selectAllCb.indeterminate = selected > 0 && selected < total;
+    }
+    // 同步多模板矩阵预计
+    if (typeof _updateMultiPresetSummary === 'function') {
+        _updateMultiPresetSummary();
+    }
+}
+
 function _sanitizeReelsFileBaseName(name, fallback = 'reel') {
     let base = String(name || '').trim()
         .replace(/\.[^.\\/]+$/, '')
@@ -5777,7 +5974,8 @@ function _updateMultiPresetSummary() {
     const selected = _getSelectedMultiPresets();
     const summary = document.getElementById('reels-multi-preset-summary');
     const estimate = document.getElementById('reels-mp-estimate');
-    const taskCount = (_reelsState.tasks || []).length;
+    // 使用已勾选导出的任务数
+    const taskCount = (_reelsState.tasks || []).filter(t => t._exportSelected !== false).length;
     
     if (summary) {
         summary.textContent = selected.length > 0 ? `已选 ${selected.length} 个模板` : '未选择模板';
@@ -5861,8 +6059,15 @@ async function reelsStartExport() {
         }
     }
 
+    // ── 仅导出已勾选的任务 ──
+    const selectedForExport = _reelsState.tasks.filter(t => t._exportSelected !== false);
+    if (selectedForExport.length === 0) {
+        alert('没有选中任何任务用于导出。请在任务列表中勾选要导出的任务。');
+        return;
+    }
+
     const invalidTasks = [];
-    const tasks = _reelsState.tasks.filter((t, idx) => {
+    const tasks = selectedForExport.filter((t, idx) => {
         const hasSub = !!t.srtPath && (t.segments || []).length > 0;
         const bgPath = t.bgPath || t.videoPath;
         const hasMultiClip = t.bgMode === 'multi' && Array.isArray(t.bgClipPool) && t.bgClipPool.length > 0;
@@ -6173,6 +6378,9 @@ async function reelsStartExport() {
             const hasVoiceAudio = !!task.audioPath || workMode === 'voiced_bg';
             // For voiced_bg mode, use the background video's audio track as the voice source
             const voiceSource = task.audioPath || (workMode === 'voiced_bg' ? bgPath : null);
+            const effectiveAudioDurScale = (workMode === 'voiced_bg' && !task.audioPath)
+                ? (task.bgDurScale || task.audioDurScale || 100)
+                : (task.audioDurScale || 100);
             let finalOutputPath = outputPath;
 
             // ── 读取导出格式 ──
@@ -6224,7 +6432,7 @@ async function reelsStartExport() {
                     targetWidth: 1080,
                     targetHeight: 1920,
                     fps: 30,
-                    voiceVolume: (workMode === 'voiced_bg' && !task.audioPath) ? (task.bgVideoVolume != null ? task.bgVideoVolume : bgVolume) / 100 : voiceVolume / 100,
+                    voiceVolume: (workMode === 'voiced_bg' && !task.audioPath) ? (task.bgVideoVolume != null ? task.bgVideoVolume : bgVolume) / 100 : (task.voiceVolume != null ? task.voiceVolume : voiceVolume) / 100,
                     bgVolume: (task.bgVideoVolume != null ? task.bgVideoVolume : bgVolume) / 100,
                     loopFade,
                     loopFadeDur,
@@ -6259,7 +6467,21 @@ async function reelsStartExport() {
                 let overlayPngPath = null;
                 let overlayPngSlices = null; // 时间切片多 PNG 模式
                 const taskOverlays = task.overlays || [];
-                const hasTimeSlice = task.subtitleTimeMode === 'split' && Array.isArray(task.subtitleTimeSlices) && task.subtitleTimeSlices.length > 0;
+                let hasTimeSlice = task.subtitleTimeMode === 'split' && Array.isArray(task.subtitleTimeSlices) && task.subtitleTimeSlices.length > 0;
+
+                // B 版自动拆分：标题 0~10s，正文 10s~ (通过 AB 批量创建时的 _version 标记识别)
+                const isBVersion = task._version === 'B';
+                // B 版强制覆盖切片: 已有切片可能是旧数据(source 为 'all')，强制替换为 title/body
+                const needsBSlice = isBVersion && taskOverlays.some(o => !o.disabled && (o.type === 'textcard' || !o.type));
+                if (needsBSlice) {
+                    const bOverlaySplit = 10;
+                    task.subtitleTimeSlices = [
+                        { label: '标题', source: 'title', startSec: 0, endSec: bOverlaySplit },
+                        { label: '正文', source: 'body', startSec: bOverlaySplit, endSec: null },
+                    ];
+                    task.subtitleTimeMode = 'split';
+                    hasTimeSlice = true;
+                }
 
                 if (taskOverlays.length > 0 && taskOverlays.some(o => !o.disabled)) {
                     if (hasTimeSlice) {
@@ -6275,63 +6497,77 @@ async function reelsStartExport() {
                                 const offCtx = offCanvas.getContext('2d');
                                 offCtx.clearRect(0, 0, 1080, 1920);
                                 if (window.ReelsOverlay && typeof window.ReelsOverlay.drawOverlay === 'function') {
-                                    for (const ov of taskOverlays) {
-                                        if (ov.disabled) continue;
-                                        // 按 source 筛选覆层
-                                        if (source !== 'all') {
-                                            if (source === 'title' && ov.type === 'textcard' && !ov.title_text) continue;
-                                            if (source === 'title' && ov.type === 'textcard') {
-                                                // 标题模式（保留标题，清空正文和结尾）
-                                                const origBody = ov.body_text;
-                                                const origFooter = ov.footer_text;
-                                                ov.body_text = '';
-                                                ov.footer_text = '';
-                                                ov._exporting = true;
-                                                window.ReelsOverlay.drawOverlay(offCtx, ov, 0, 1080, 1920);
-                                                delete ov._exporting;
-                                                ov.body_text = origBody;
-                                                ov.footer_text = origFooter;
-                                                continue;
+                                    // ── 时间切片渲染: 整体控制所有覆层的文字字段 ──
+                                    // 保存所有覆层的原始文字字段
+                                    const savedFields = taskOverlays.map(ov => ({
+                                        title_text: ov.title_text,
+                                        body_text: ov.body_text,
+                                        footer_text: ov.footer_text,
+                                        content: ov.content,
+                                        disabled: ov.disabled,
+                                    }));
+
+                                    try {
+                                        if (source === 'title') {
+                                            // 标题模式: 只保留第一个有 title_text 的 textcard 的标题
+                                            for (const ov of taskOverlays) {
+                                                const isCard = !ov.type || ov.type === '' || ov.type === 'textcard';
+                                                if (isCard) {
+                                                    ov.body_text = '';
+                                                    ov.footer_text = '';
+                                                    if (!ov.title_text) ov.disabled = true;
+                                                } else {
+                                                    ov.disabled = true; // 标题模式不渲染非卡片覆层
+                                                }
                                             }
-                                            if (source === 'body_part1' && ov.type === 'textcard') {
-                                                // 只渲染上半段正文（保留标题）
-                                                const origBody = ov.body_text;
-                                                ov.body_text = window.ReelsOverlay.splitBodyText ? window.ReelsOverlay.splitBodyText(origBody)[0] : origBody;
-                                                ov._exporting = true;
-                                                window.ReelsOverlay.drawOverlay(offCtx, ov, 0, 1080, 1920);
-                                                delete ov._exporting;
-                                                ov.body_text = origBody;
-                                                continue;
+                                        } else if (source === 'body') {
+                                            // 正文模式: 清空所有 textcard 的标题, 保留正文+结尾+其他覆层
+                                            for (const ov of taskOverlays) {
+                                                const isCard = !ov.type || ov.type === '' || ov.type === 'textcard';
+                                                if (isCard) {
+                                                    ov.title_text = '';
+                                                }
                                             }
-                                            if (source === 'body_part2' && ov.type === 'textcard') {
-                                                // 只渲染下半段正文（保留标题）
-                                                const origBody = ov.body_text;
-                                                ov.body_text = window.ReelsOverlay.splitBodyText ? window.ReelsOverlay.splitBodyText(origBody)[1] : origBody;
-                                                ov._exporting = true;
-                                                window.ReelsOverlay.drawOverlay(offCtx, ov, 0, 1080, 1920);
-                                                delete ov._exporting;
-                                                ov.body_text = origBody;
-                                                continue;
+                                        } else if (source === 'body_part1') {
+                                            for (const ov of taskOverlays) {
+                                                const isCard = !ov.type || ov.type === '' || ov.type === 'textcard';
+                                                if (isCard && ov.body_text) {
+                                                    ov.body_text = window.ReelsOverlay?.splitBodyText ? window.ReelsOverlay.splitBodyText(ov.body_text)[0] : ov.body_text;
+                                                }
                                             }
-                                            if (source === 'footer' && ov.type === 'textcard') {
-                                                const origTitle = ov.title_text;
-                                                const origBody = ov.body_text;
-                                                ov.title_text = '';
-                                                ov.body_text = '';
-                                                ov._exporting = true;
-                                                window.ReelsOverlay.drawOverlay(offCtx, ov, 0, 1080, 1920);
-                                                delete ov._exporting;
-                                                ov.title_text = origTitle;
-                                                ov.body_text = origBody;
-                                                continue;
+                                        } else if (source === 'body_part2') {
+                                            for (const ov of taskOverlays) {
+                                                const isCard = !ov.type || ov.type === '' || ov.type === 'textcard';
+                                                if (isCard && ov.body_text) {
+                                                    ov.body_text = window.ReelsOverlay?.splitBodyText ? window.ReelsOverlay.splitBodyText(ov.body_text)[1] : ov.body_text;
+                                                }
                                             }
-                                            // scroll 等其他类型按 source 全匹配
+                                        } else if (source === 'footer') {
+                                            for (const ov of taskOverlays) {
+                                                const isCard = !ov.type || ov.type === '' || ov.type === 'textcard';
+                                                if (isCard) { ov.title_text = ''; ov.body_text = ''; }
+                                            }
+                                        }
+                                        // scroll source 类型保持不变
+
+                                        // 统一渲染所有未禁用的覆层
+                                        for (const ov of taskOverlays) {
+                                            if (ov.disabled) continue;
                                             if (source === 'scroll_title' && ov.type !== 'scroll') continue;
                                             if (source === 'scroll_body' && ov.type !== 'scroll') continue;
+                                            ov._exporting = true;
+                                            window.ReelsOverlay.drawOverlay(offCtx, ov, 0, 1080, 1920);
+                                            delete ov._exporting;
                                         }
-                                        ov._exporting = true;
-                                        window.ReelsOverlay.drawOverlay(offCtx, ov, 0, 1080, 1920);
-                                        delete ov._exporting;
+                                    } finally {
+                                        // 恢复所有覆层的原始字段
+                                        taskOverlays.forEach((ov, idx) => {
+                                            ov.title_text = savedFields[idx].title_text;
+                                            ov.body_text = savedFields[idx].body_text;
+                                            ov.footer_text = savedFields[idx].footer_text;
+                                            ov.content = savedFields[idx].content;
+                                            ov.disabled = savedFields[idx].disabled;
+                                        });
                                     }
                                 }
                                 const pngDataUrl = offCanvas.toDataURL('image/png');
@@ -6516,13 +6752,13 @@ async function reelsStartExport() {
                                 contentVideoVolume: (task.contentVideoVolume != null ? task.contentVideoVolume : 100) / 100,
                                 voicePath: voiceSource || null,
                                 targetWidth: 1080, targetHeight: 1920, fps: 30,
-                                voiceVolume: (workMode === 'voiced_bg' && !task.audioPath) ? (task.bgVideoVolume != null ? task.bgVideoVolume : bgVolume) / 100 : voiceVolume / 100,
+                                voiceVolume: (workMode === 'voiced_bg' && !task.audioPath) ? (task.bgVideoVolume != null ? task.bgVideoVolume : bgVolume) / 100 : (task.voiceVolume != null ? task.voiceVolume : voiceVolume) / 100,
                                 bgVolume: (task.bgVideoVolume != null ? task.bgVideoVolume : bgVolume) / 100,
                                 loopFade, loopFadeDur,
                                 bgmPath: task.bgmPath || '',
                                 bgmVolume: (task.bgmVolume != null ? task.bgmVolume : 10) / 100,
                                 bgDurScale: task.bgDurScale || 100,
-                                audioDurScale: task.audioDurScale || 100,
+                                audioDurScale: effectiveAudioDurScale,
                                 reverbEnabled: _getReverbConfig().enabled,
                                 reverbPreset: _getReverbConfig().preset,
                                 reverbMix: _getReverbConfig().mix,
@@ -6554,6 +6790,7 @@ async function reelsStartExport() {
                 const isBgVideo = bgPath && !_isImageFile(bgPath);
                 const canUseAlpha = fastAlphaEnabled 
                     && bgPath 
+                    && Math.abs((task.bgDurScale || 100) - 100) < 0.01
                     && !(task.bgClipPool && task.bgClipPool.length > 0)
                     && (!task.bgMode || task.bgMode === 'single')
                     && !(isBgVideo && loopFade); // 如果是视频且开启了首尾过渡转场，回退稳定模式
@@ -6584,7 +6821,7 @@ async function reelsStartExport() {
                     targetHeight: 1920,
                     fps: 30,
                     // voiced_bg 模式: 背景音频作为主音轨，用 bgVolume 控制
-                    voiceVolume: (workMode === 'voiced_bg' && !task.audioPath) ? (task.bgVideoVolume != null ? task.bgVideoVolume : bgVolume) / 100 : voiceVolume / 100,
+                    voiceVolume: (workMode === 'voiced_bg' && !task.audioPath) ? (task.bgVideoVolume != null ? task.bgVideoVolume : bgVolume) / 100 : (task.voiceVolume != null ? task.voiceVolume : voiceVolume) / 100,
                     bgVolume: (task.bgVideoVolume != null ? task.bgVideoVolume : bgVolume) / 100,
                     loopFade,
                     loopFadeDur,
@@ -6593,7 +6830,7 @@ async function reelsStartExport() {
                     bgmVolume: (task.bgmVolume != null ? task.bgmVolume : 10) / 100,
                     bgScale: task.bgScale || 100,
                     bgDurScale: task.bgDurScale || 100,
-                    audioDurScale: task.audioDurScale || 100,
+                    audioDurScale: effectiveAudioDurScale,
                     reverbEnabled: (() => { const rc = _getReverbConfig(); console.log('[Export] Reverb config:', JSON.stringify(rc)); return rc.enabled; })(),
                     reverbPreset: _getReverbConfig().preset,
                     reverbMix: _getReverbConfig().mix,

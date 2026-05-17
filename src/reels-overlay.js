@@ -236,6 +236,26 @@ function createTextCardOverlay(opts = {}) {
         title_max_lines: opts.title_max_lines ?? 3,
         min_fontsize: opts.min_fontsize ?? 16,
         fullscreen_mask: opts.fullscreen_mask ?? false,
+        // ── 蒙版边框 ──
+        card_border_enabled: opts.card_border_enabled ?? false,
+        card_border_color: opts.card_border_color || '#FFD700',
+        card_border_width: opts.card_border_width ?? 3,
+        card_border_style: opts.card_border_style || 'solid',   // solid | dashed | dotted
+        card_border_opacity: opts.card_border_opacity ?? 100,    // 0-100 (百分比)
+        // ── 磨砂模糊 ──
+        card_blur_enabled: opts.card_blur_enabled ?? false,
+        card_blur_amount: opts.card_blur_amount ?? 10,           // 模糊强度 px (1-30)
+        // ── 标题装饰线 ──
+        title_deco_enabled: opts.title_deco_enabled ?? false,
+        title_deco_position: opts.title_deco_position || 'bottom',  // top | bottom
+        title_deco_style: opts.title_deco_style || 'solid',         // solid | dashed | dotted | double | gradient
+        title_deco_color: opts.title_deco_color || '#FFD700',
+        title_deco_color2: opts.title_deco_color2 || '#FF6B35',     // gradient 模式的第二色
+        title_deco_thickness: opts.title_deco_thickness ?? 3,       // 线条粗细 px
+        title_deco_length: opts.title_deco_length ?? 0,             // 0=跟随标题宽度
+        title_deco_gap: opts.title_deco_gap ?? 12,                  // 与标题的距离 px
+        title_deco_opacity: opts.title_deco_opacity ?? 100,         // 0-100
+        title_deco_align: opts.title_deco_align || 'center',        // left | center | right
         // ── 获取位置偏移 ──
         offset_x: opts.offset_x ?? 0,
         offset_y: opts.offset_y ?? 0,
@@ -343,6 +363,7 @@ function createScrollOverlay(opts = {}) {
         scroll_to_y: opts.scroll_to_y ?? -200,      // 向上滚出
         scroll_speed: opts.scroll_speed ?? 0.8,
         scroll_auto_stop: opts.scroll_auto_stop === true, // 默认关闭
+        scroll_static: opts.scroll_static === true,       // 固定显示模式（关闭滚动）
         scroll_auto_fit: opts.scroll_auto_fit === true,   // 默认关闭
         scroll_min_fontsize: opts.scroll_min_fontsize ?? 16,
         // 卡片背景
@@ -355,6 +376,15 @@ function createScrollOverlay(opts = {}) {
         bg_padding_left: opts.bg_padding_left ?? 16,
         bg_padding_right: opts.bg_padding_right ?? 16,
         bg_fullscreen: opts.bg_fullscreen ?? false,
+        // 卡片边框
+        bg_border_enabled: opts.bg_border_enabled ?? false,
+        bg_border_color: opts.bg_border_color || '#FFD700',
+        bg_border_width: opts.bg_border_width ?? 3,
+        bg_border_style: opts.bg_border_style || 'solid',   // solid | dashed | dotted
+        bg_border_opacity: opts.bg_border_opacity ?? 100,    // 0-100 (百分比)
+        // 磨砂模糊
+        bg_blur_enabled: opts.bg_blur_enabled ?? false,
+        bg_blur_amount: opts.bg_blur_amount ?? 10,             // 模糊强度 px (1-30)
         // 羽化
         feather_top: opts.feather_top ?? 80,
         feather_bottom: opts.feather_bottom ?? 80,
@@ -733,6 +763,34 @@ function drawOverlay(ctx, origOv, currentTime = 0, canvasW = 1920, canvasH = 108
     let destScaleOffset = 1.0;
     const w = parseFloat(ov.w || 100);
     const h = parseFloat(ov.h || 100);
+
+    // ── 跟随滚动字幕正文绑定 ──
+    if (ov.bind_scroll_overlay_id && (ov.type === 'image' || ov.type === 'video')) {
+        const allOvs = ov._allOverlays || [];
+        const scrollOv = allOvs.find(o => o.id === ov.bind_scroll_overlay_id && o.type === 'scroll');
+        if (scrollOv && scrollOv._scrollBodyFirstLineY != null) {
+            const bindOffsetX = parseFloat(ov.bind_scroll_offset_x || 0);
+            const bindOffsetY = parseFloat(ov.bind_scroll_offset_y || 0);
+            const bindMinY = ov.bind_scroll_clamp_min_y;
+            const bindMaxY = ov.bind_scroll_clamp_max_y;
+
+            // Y 跟随正文第一行
+            let targetY = scrollOv._scrollBodyFirstLineY + bindOffsetY;
+            // 应用边界钳制
+            if (bindMinY != null && !isNaN(parseFloat(bindMinY))) {
+                targetY = Math.max(parseFloat(bindMinY), targetY);
+            }
+            if (bindMaxY != null && !isNaN(parseFloat(bindMaxY))) {
+                targetY = Math.min(parseFloat(bindMaxY), targetY);
+            }
+            y = targetY;
+
+            // X 可选跟随
+            if (ov.bind_scroll_follow_x) {
+                x = scrollOv._scrollBodyCurX + bindOffsetX - w / 2;
+            }
+        }
+    }
 
     if (ov.anim_dest_enabled && end > start) {
         // A→B 面板坐标与普通位置控件保持一致：
@@ -1475,6 +1533,23 @@ function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime
     }
     ctx.globalAlpha *= animOpFactor;
 
+    // ── 磨砂模糊 (Frosted Glass) ──
+    if (ov.card_blur_enabled) {
+        const blurPx = Math.max(1, Math.min(40, parseFloat(ov.card_blur_amount ?? 10)));
+        ctx.save();
+        if (isFullMask) {
+            ctx.rect(maskX, maskY, maskW, maskH);
+        } else {
+            _roundRectIndividual(ctx, x, cardY, w, cardH,
+                ov.radius_tl || 0, ov.radius_tr || 0, ov.radius_br || 0, ov.radius_bl || 0);
+        }
+        ctx.clip();
+        ctx.filter = `blur(${blurPx}px)`;
+        ctx.drawImage(ctx.canvas, 0, 0);
+        ctx.filter = 'none';
+        ctx.restore();
+    }
+
     // ── 绘制背景 ──
     if (ov.card_enabled !== false) {
         const cardAlpha = (ov.card_opacity ?? 80) / 100;
@@ -1538,6 +1613,55 @@ function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime
                 ov.radius_tl || 0, ov.radius_tr || 0, ov.radius_br || 0, ov.radius_bl || 0);
             ctx.fill();
         }
+        ctx.restore();
+    }
+
+    // ── 蒙版边框 ──
+    if (ov.card_border_enabled && !isFullMask) {
+        const borderW = parseFloat(ov.card_border_width ?? 3);
+        const borderOp = (ov.card_border_opacity ?? 100) / 100;
+        const borderStyle = ov.card_border_style || 'solid';
+        const borderSides = ov.card_border_sides || 'all';
+        ctx.save();
+        ctx.globalAlpha = borderOp * ctx.globalAlpha;
+        ctx.strokeStyle = ov.card_border_color || '#FFD700';
+        ctx.lineWidth = borderW;
+        ctx.lineJoin = 'round';
+        // 虚线/点线
+        if (borderStyle === 'dashed') {
+            ctx.setLineDash([borderW * 4, borderW * 3]);
+        } else if (borderStyle === 'dotted') {
+            ctx.setLineDash([borderW, borderW * 2]);
+        } else {
+            ctx.setLineDash([]);
+        }
+
+        if (borderSides === 'all') {
+            _roundRectIndividual(ctx, x, cardY, w, cardH,
+                ov.radius_tl || 0, ov.radius_tr || 0, ov.radius_br || 0, ov.radius_bl || 0);
+            ctx.stroke();
+        } else {
+            ctx.beginPath();
+            if (borderSides === 'top' || borderSides === 'top-bottom') {
+                ctx.moveTo(x, cardY);
+                ctx.lineTo(x + w, cardY);
+            }
+            if (borderSides === 'bottom' || borderSides === 'top-bottom') {
+                ctx.moveTo(x, cardY + cardH);
+                ctx.lineTo(x + w, cardY + cardH);
+            }
+            if (borderSides === 'left' || borderSides === 'left-right') {
+                ctx.moveTo(x, cardY);
+                ctx.lineTo(x, cardY + cardH);
+            }
+            if (borderSides === 'right' || borderSides === 'left-right') {
+                ctx.moveTo(x + w, cardY);
+                ctx.lineTo(x + w, cardY + cardH);
+            }
+            ctx.stroke();
+        }
+
+        ctx.setLineDash([]);
         ctx.restore();
     }
 
@@ -1765,6 +1889,122 @@ function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime
         }
 
         if (ov.layout_mode !== 'absolute') currentY += tSpace;
+    }
+
+    // ── 标题装饰线 ──
+    if (hasTitle && ov.title_deco_enabled) {
+        const disableOffsets = useAutoFit || useAutoCenterV;
+        const customX = disableOffsets ? 0 : (ov.title_offset_x || 0);
+        const decoThickness = parseFloat(ov.title_deco_thickness ?? 3);
+        const decoGap = parseFloat(ov.title_deco_gap ?? 12);
+        const decoOp = (ov.title_deco_opacity ?? 100) / 100;
+        const decoStyle = ov.title_deco_style || 'solid';
+        const decoPos = ov.title_deco_position || 'bottom';
+        const decoAlign = ov.title_deco_align || 'center';
+        // titleTextTopY, titleTextH 已在 title 绘制阶段计算出
+        // 重新计算标题块的 secBaseY 和 tDeltaY 以定位装饰线
+        const _dOff = (useAutoFit || useAutoCenterV) ? 0 : (ov.title_offset_y || 0);
+        const _dSecBaseY = (ov.layout_mode === 'absolute') ? (textY + padT + _dOff) : (textY + padT + _dOff);
+        let _dAvailSpace = tSpace;
+        if (ov.title_override_h == 0 && ov.layout_mode === 'absolute') _dAvailSpace = cardH - padT - padB;
+        let _dDeltaY = 0;
+        if (_dAvailSpace > titleBlockH) {
+            const vAlign = ov.title_valign || 'top';
+            if (vAlign === 'center') _dDeltaY = (_dAvailSpace - titleBlockH) / 2;
+            else if (vAlign === 'bottom') _dDeltaY = _dAvailSpace - titleBlockH;
+        }
+        const _dTopY = _dSecBaseY + _dDeltaY + titleExt.padT + titleExt.extTop;
+        // 测量标题实际最大行宽度
+        ctx.save();
+        ctx.font = titleFont;
+        ctx.letterSpacing = `${ov.title_letter_spacing || 0}px`;
+        let titleMaxW = 0;
+        for (const line of titleLines) {
+            titleMaxW = Math.max(titleMaxW, ctx.measureText(line).width);
+        }
+        ctx.restore();
+        const isVertical = (decoPos === 'left' || decoPos === 'right');
+        const defaultLen = isVertical ? titleTextH : titleMaxW;
+        const decoLen = parseFloat(ov.title_deco_length ?? 0) || defaultLen;
+
+        let startX, startY, endX, endY;
+
+        if (isVertical) {
+            let baseY = _dTopY;
+            if (decoAlign === 'left') startY = baseY; // align top
+            else if (decoAlign === 'right') startY = baseY + titleTextH - decoLen; // align bottom
+            else startY = baseY + (titleTextH - decoLen) / 2; // align center
+            
+            let textBoundX = _sectionX(tW, customX);
+            if (tAlign === 'center') textBoundX += (tW - titleMaxW) / 2;
+            else if (tAlign === 'right') textBoundX += tW - titleMaxW;
+            
+            if (decoPos === 'left') {
+                startX = textBoundX - decoGap - decoThickness / 2;
+            } else {
+                startX = textBoundX + titleMaxW + decoGap + decoThickness / 2;
+            }
+            endX = startX;
+            endY = startY + decoLen;
+        } else {
+            const sectionCX = _sectionX(tW, customX) + tW / 2;
+            if (decoAlign === 'left') startX = _sectionX(tW, customX);
+            else if (decoAlign === 'right') startX = _sectionX(tW, customX) + tW - decoLen;
+            else startX = sectionCX - decoLen / 2;
+
+            if (decoPos === 'top') {
+                startY = _dTopY - decoGap - decoThickness / 2;
+            } else {
+                startY = _dTopY + titleTextH + decoGap + decoThickness / 2;
+            }
+            endX = startX + decoLen;
+            endY = startY;
+        }
+
+        ctx.save();
+        ctx.globalAlpha = decoOp * ctx.globalAlpha;
+        ctx.lineWidth = decoThickness;
+        ctx.lineCap = 'round';
+
+        if (decoStyle === 'dashed') {
+            ctx.setLineDash([decoThickness * 4, decoThickness * 3]);
+        } else if (decoStyle === 'dotted') {
+            ctx.setLineDash([decoThickness, decoThickness * 2]);
+        } else {
+            ctx.setLineDash([]);
+        }
+
+        if (decoStyle === 'gradient') {
+            const grad = ctx.createLinearGradient(startX, startY, endX, endY);
+            grad.addColorStop(0, ov.title_deco_color || '#FFD700');
+            grad.addColorStop(1, ov.title_deco_color2 || '#FF6B35');
+            ctx.strokeStyle = grad;
+        } else {
+            ctx.strokeStyle = ov.title_deco_color || '#FFD700';
+        }
+
+        ctx.beginPath();
+        ctx.moveTo(startX, startY);
+        ctx.lineTo(endX, endY);
+        ctx.stroke();
+
+        if (decoStyle === 'double') {
+            const gap2 = Math.max(2, decoThickness * 1.5);
+            ctx.beginPath();
+            if (isVertical) {
+                const dOff = decoPos === 'left' ? -gap2 : gap2;
+                ctx.moveTo(startX + dOff, startY);
+                ctx.lineTo(endX + dOff, endY);
+            } else {
+                const dOff = decoPos === 'top' ? -gap2 : gap2;
+                ctx.moveTo(startX, startY + dOff);
+                ctx.lineTo(endX, endY + dOff);
+            }
+            ctx.stroke();
+        }
+
+        ctx.setLineDash([]);
+        ctx.restore();
     }
 
     // ── 绘制内容文字 ──
@@ -2139,8 +2379,8 @@ function _drawScrollOverlay(ctx, ov, clipX, clipY, clipW, clipH, currentTime, ca
     let effectiveToY = toY;
     if (ov.scroll_auto_stop) {
         const totalTextH = lines.length * lineHeight;
-        const featherT = parseFloat(ov.feather_top ?? 0);
-        const featherB = parseFloat(ov.feather_bottom ?? 0);
+        const featherT = parseFloat(ov.feather_top ?? 0) + parseFloat(ov.feather_top_offset ?? 0);
+        const featherB = parseFloat(ov.feather_bottom ?? 0) + parseFloat(ov.feather_bottom_offset ?? 0);
 
         // 固定标题模式下正文 clip 区会缩小
         const titleFixed = ov.scroll_title_fixed !== false && (ov.scroll_title || '').trim();
@@ -2178,7 +2418,42 @@ function _drawScrollOverlay(ctx, ov, clipX, clipY, clipW, clipH, currentTime, ca
 
     const curAxisX = fromX + (toX - fromX) * progress;
     const curX  = useCenterAnchor ? curAxisX - textW / 2 : curAxisX;
-    const curY  = fromY + (effectiveToY - fromY) * progress;
+    let curY;
+    if (ov.scroll_static) {
+        // 固定显示模式：文字固定在裁切区顶部（考虑羽化偏移）
+        const featherT_static = parseFloat(ov.feather_top ?? 0) + parseFloat(ov.feather_top_offset ?? 0);
+        const titleFixed = ov.scroll_title_fixed !== false && (ov.scroll_title || '').trim();
+        const staticBaseY = (titleFixed && !titleIndependent) ? (clipY + titleOccupiedH + featherT_static) : (clipY + featherT_static);
+        curY = staticBaseY;
+    } else {
+        curY = fromY + (effectiveToY - fromY) * progress;
+    }
+
+    // 将正文第一行的实时位置暴露出去，供媒体覆层「跟随滚动」绑定使用
+    ov._scrollBodyFirstLineY = curY + titleOccupiedH;
+    ov._scrollBodyLineHeight = lineHeight;
+    ov._scrollBodyCurX = curAxisX;
+
+    // ── 磨砂模糊 (Frosted Glass) ──
+    if (ov.bg_blur_enabled) {
+        const blurPx = Math.max(1, Math.min(40, parseFloat(ov.bg_blur_amount ?? 10)));
+        const padT_blur = parseFloat(ov.bg_padding_top ?? 16);
+        const padB_blur = parseFloat(ov.bg_padding_bottom ?? 16);
+        const padL_blur = parseFloat(ov.bg_padding_left ?? 16);
+        const padR_blur = parseFloat(ov.bg_padding_right ?? 16);
+        const rad_blur = parseFloat(ov.bg_radius || 12);
+        ctx.save();
+        if (ov.bg_fullscreen) {
+            ctx.rect(0, 0, canvasW, canvasH);
+        } else {
+            _roundRect(ctx, clipX - padL_blur, clipY - padT_blur, clipW + padL_blur + padR_blur, clipH + padT_blur + padB_blur, rad_blur);
+        }
+        ctx.clip();
+        ctx.filter = `blur(${blurPx}px)`;
+        ctx.drawImage(ctx.canvas, 0, 0);
+        ctx.filter = 'none';
+        ctx.restore();
+    }
 
     // ── 卡片背景 ──
     if (ov.bg_enabled) {
@@ -2201,8 +2476,72 @@ function _drawScrollOverlay(ctx, ov, clipX, clipY, clipW, clipH, currentTime, ca
         ctx.restore();
     }
 
+    // ── 卡片边框 ──
+    if (ov.bg_border_enabled && !ov.bg_fullscreen) {
+        const padT_b = parseFloat(ov.bg_padding_top ?? 16);
+        const padB_b = parseFloat(ov.bg_padding_bottom ?? 16);
+        const padL_b = parseFloat(ov.bg_padding_left ?? 16);
+        const padR_b = parseFloat(ov.bg_padding_right ?? 16);
+        const rad_b = parseFloat(ov.bg_radius || 12);
+        const borderW = parseFloat(ov.bg_border_width ?? 3);
+        const borderOp = (ov.bg_border_opacity ?? 100) / 100;
+        const borderStyle = ov.bg_border_style || 'solid';
+        const borderSides = ov.bg_border_sides || 'all';
+
+        const rx = clipX - padL_b;
+        const ry = clipY - padT_b;
+        const rw = clipW + padL_b + padR_b;
+        const rh = clipH + padT_b + padB_b;
+
+        ctx.save();
+        ctx.globalAlpha = borderOp * ctx.globalAlpha;
+        ctx.strokeStyle = ov.bg_border_color || '#FFD700';
+        ctx.lineWidth = borderW;
+        ctx.lineJoin = 'round';
+        if (borderStyle === 'dashed') {
+            ctx.setLineDash([borderW * 4, borderW * 3]);
+        } else if (borderStyle === 'dotted') {
+            ctx.setLineDash([borderW, borderW * 2]);
+        } else {
+            ctx.setLineDash([]);
+        }
+
+        if (borderSides === 'all') {
+            _roundRect(ctx, rx, ry, rw, rh, rad_b);
+            ctx.stroke();
+        } else {
+            ctx.beginPath();
+            if (borderSides === 'top' || borderSides === 'top-bottom') {
+                ctx.moveTo(rx, ry);
+                ctx.lineTo(rx + rw, ry);
+            }
+            if (borderSides === 'bottom' || borderSides === 'top-bottom') {
+                ctx.moveTo(rx, ry + rh);
+                ctx.lineTo(rx + rw, ry + rh);
+            }
+            if (borderSides === 'left' || borderSides === 'left-right') {
+                ctx.moveTo(rx, ry);
+                ctx.lineTo(rx, ry + rh);
+            }
+            if (borderSides === 'right' || borderSides === 'left-right') {
+                ctx.moveTo(rx + rw, ry);
+                ctx.lineTo(rx + rw, ry + rh);
+            }
+            ctx.stroke();
+        }
+
+        ctx.setLineDash([]);
+        ctx.restore();
+    }
+
     const featherTop    = parseFloat(ov.feather_top ?? 0);
     const featherBottom = parseFloat(ov.feather_bottom ?? 0);
+    const featherTopOff = parseFloat(ov.feather_top_offset ?? 0);
+    const featherBotOff = parseFloat(ov.feather_bottom_offset ?? 0);
+    const featherLeft   = parseFloat(ov.feather_left ?? 0);
+    const featherRight  = parseFloat(ov.feather_right ?? 0);
+    const featherLeftOff = parseFloat(ov.feather_left_offset ?? 0);
+    const featherRightOff = parseFloat(ov.feather_right_offset ?? 0);
 
     // ── 固定标题模式 ──
         let titleText = (ov.scroll_title || '').trim();
@@ -2338,12 +2677,120 @@ function _drawScrollOverlay(ctx, ov, clipX, clipY, clipW, clipH, currentTime, ca
             }
             ctx.restore();
 
+            // ── 标题装饰线 ──
+            if (ov.scroll_title_deco_enabled && titleLines.length > 0) {
+                const decoThickness = parseFloat(ov.scroll_title_deco_thickness ?? 3);
+                const decoGap = parseFloat(ov.scroll_title_deco_gap ?? 12);
+                const decoOp = (ov.scroll_title_deco_opacity ?? 100) / 100;
+                const decoStyle = ov.scroll_title_deco_style || 'solid';
+                const decoPos = ov.scroll_title_deco_position || 'bottom';
+                const decoAlign = ov.scroll_title_deco_align || 'center';
+
+                ctx.save();
+                ctx.font = `${tWeight} ${tSize}px ${tFamily}, ${tFallback}`;
+                if (typeof ctx.letterSpacing !== 'undefined') {
+                    ctx.letterSpacing = `${tLetterSpacing}px`;
+                }
+                let titleMaxW = 0;
+                for (const line of titleLines) {
+                    titleMaxW = Math.max(titleMaxW, ctx.measureText(line).width);
+                }
+                if (typeof ctx.letterSpacing !== 'undefined') {
+                    ctx.letterSpacing = '0px';
+                }
+                ctx.restore();
+
+                const isVertical = (decoPos === 'left' || decoPos === 'right');
+                const defaultLen = isVertical ? titleBlockH : titleMaxW;
+                const decoLen = parseFloat(ov.scroll_title_deco_length ?? 0) || defaultLen;
+
+                let startX, startY, endX, endY;
+
+                if (isVertical) {
+                    let baseY = titleDrawY;
+                    if (decoAlign === 'left') startY = baseY; // align top
+                    else if (decoAlign === 'right') startY = baseY + titleBlockH - decoLen; // align bottom
+                    else startY = baseY + (titleBlockH - decoLen) / 2; // align center
+                    
+                    let textBoundX = titleDrawX;
+                    if (tAlign === 'center') textBoundX += (tTextW - titleMaxW) / 2;
+                    else if (tAlign === 'right') textBoundX += tTextW - titleMaxW;
+                    
+                    if (decoPos === 'left') {
+                        startX = textBoundX - decoGap - decoThickness / 2;
+                    } else {
+                        startX = textBoundX + titleMaxW + decoGap + decoThickness / 2;
+                    }
+                    endX = startX;
+                    endY = startY + decoLen;
+                } else {
+                    const sectionCX = titleDrawX + tTextW / 2;
+                    if (decoAlign === 'left') startX = titleDrawX;
+                    else if (decoAlign === 'right') startX = titleDrawX + tTextW - decoLen;
+                    else startX = sectionCX - decoLen / 2;
+
+                    if (decoPos === 'top') {
+                        startY = titleDrawY - decoGap - decoThickness / 2;
+                    } else {
+                        startY = titleDrawY + titleBlockH + decoGap + decoThickness / 2;
+                    }
+                    endX = startX + decoLen;
+                    endY = startY;
+                }
+
+                ctx.save();
+                ctx.globalAlpha = decoOp * ctx.globalAlpha;
+                ctx.lineWidth = decoThickness;
+                ctx.lineCap = 'round';
+
+                if (decoStyle === 'dashed') {
+                    ctx.setLineDash([decoThickness * 4, decoThickness * 3]);
+                } else if (decoStyle === 'dotted') {
+                    ctx.setLineDash([decoThickness, decoThickness * 2]);
+                } else {
+                    ctx.setLineDash([]);
+                }
+
+                if (decoStyle === 'gradient') {
+                    const grad = ctx.createLinearGradient(startX, startY, endX, endY);
+                    grad.addColorStop(0, ov.scroll_title_deco_color || '#FFD700');
+                    grad.addColorStop(1, ov.scroll_title_deco_color2 || '#FF6B35');
+                    ctx.strokeStyle = grad;
+                } else {
+                    ctx.strokeStyle = ov.scroll_title_deco_color || '#FFD700';
+                }
+
+                ctx.beginPath();
+                ctx.moveTo(startX, startY);
+                ctx.lineTo(endX, endY);
+                ctx.stroke();
+
+                if (decoStyle === 'double') {
+                    const gap2 = Math.max(2, decoThickness * 1.5);
+                    ctx.beginPath();
+                    if (isVertical) {
+                        const dOff = decoPos === 'left' ? -gap2 : gap2;
+                        ctx.moveTo(startX + dOff, startY);
+                        ctx.lineTo(endX + dOff, endY);
+                    } else {
+                        const dOff = decoPos === 'top' ? -gap2 : gap2;
+                        ctx.moveTo(startX, startY + dOff);
+                        ctx.lineTo(endX, endY + dOff);
+                    }
+                    ctx.stroke();
+                }
+
+                ctx.setLineDash([]);
+                ctx.restore();
+            }
+
         // ── 2. 正文在标题下方的剩余空间内滚动 ──
         const bodyClipY = titleIndependent ? clipY : (clipY + titleBlockH + tGap);
         const bodyClipH = titleIndependent ? clipH : (clipH - titleBlockH - tGap);
         if (bodyClipH > 0) {
             const ovProxy = Object.assign({}, ov, { _skipTitle: true });
-            if (featherTop > 0 || featherBottom > 0) {
+            const hasFeather = featherTop > 0 || featherBottom > 0 || featherTopOff > 0 || featherBotOff > 0 || featherLeft > 0 || featherRight > 0 || featherLeftOff > 0 || featherRightOff > 0;
+            if (hasFeather) {
                 const cW = Math.ceil(clipW), cH = Math.ceil(bodyClipH);
                 const tmp = document.createElement('canvas');
                 tmp.width = cW; tmp.height = cH;
@@ -2356,20 +2803,61 @@ function _drawScrollOverlay(ctx, ov, clipX, clipY, clipW, clipH, currentTime, ca
                 // 渐变遮罩：固定标题只作用于正文裁切区，标题本身不参与羽化。
                 tc.globalCompositeOperation = 'destination-in';
                 const grad = tc.createLinearGradient(0, 0, 0, cH);
-                if (featherTop > 0) {
+                if (featherTop > 0 || featherTopOff > 0) {
                     grad.addColorStop(0, 'rgba(0,0,0,0)');
-                    grad.addColorStop(Math.min(featherTop / cH, 0.49), 'rgba(0,0,0,1)');
+                    if (featherTopOff > 0) grad.addColorStop(Math.min(featherTopOff / cH, 0.49), 'rgba(0,0,0,0)');
+                    if (featherTop > 0) {
+                        grad.addColorStop(Math.min((featherTopOff + featherTop) / cH, 0.499), 'rgba(0,0,0,1)');
+                    } else {
+                        grad.addColorStop(Math.min(featherTopOff / cH, 0.499), 'rgba(0,0,0,1)');
+                    }
                 } else {
                     grad.addColorStop(0, 'rgba(0,0,0,1)');
                 }
-                if (featherBottom > 0) {
-                    grad.addColorStop(Math.max(1 - featherBottom / cH, 0.51), 'rgba(0,0,0,1)');
+                
+                if (featherBottom > 0 || featherBotOff > 0) {
+                    if (featherBottom > 0) {
+                        grad.addColorStop(Math.max(1 - (featherBotOff + featherBottom) / cH, 0.501), 'rgba(0,0,0,1)');
+                    } else {
+                        grad.addColorStop(Math.max(1 - featherBotOff / cH, 0.501), 'rgba(0,0,0,1)');
+                    }
+                    if (featherBotOff > 0) grad.addColorStop(Math.max(1 - featherBotOff / cH, 0.502), 'rgba(0,0,0,0)');
                     grad.addColorStop(1, 'rgba(0,0,0,0)');
                 } else {
                     grad.addColorStop(1, 'rgba(0,0,0,1)');
                 }
                 tc.fillStyle = grad;
                 tc.fillRect(0, 0, cW, cH);
+                
+                if (featherLeft > 0 || featherRight > 0 || featherLeftOff > 0 || featherRightOff > 0) {
+                    const gradX = tc.createLinearGradient(0, 0, cW, 0);
+                    if (featherLeft > 0 || featherLeftOff > 0) {
+                        gradX.addColorStop(0, 'rgba(0,0,0,0)');
+                        if (featherLeftOff > 0) gradX.addColorStop(Math.min(featherLeftOff / cW, 0.49), 'rgba(0,0,0,0)');
+                        if (featherLeft > 0) {
+                            gradX.addColorStop(Math.min((featherLeftOff + featherLeft) / cW, 0.499), 'rgba(0,0,0,1)');
+                        } else {
+                            gradX.addColorStop(Math.min(featherLeftOff / cW, 0.499), 'rgba(0,0,0,1)');
+                        }
+                    } else {
+                        gradX.addColorStop(0, 'rgba(0,0,0,1)');
+                    }
+                    
+                    if (featherRight > 0 || featherRightOff > 0) {
+                        if (featherRight > 0) {
+                            gradX.addColorStop(Math.max(1 - (featherRightOff + featherRight) / cW, 0.501), 'rgba(0,0,0,1)');
+                        } else {
+                            gradX.addColorStop(Math.max(1 - featherRightOff / cW, 0.501), 'rgba(0,0,0,1)');
+                        }
+                        if (featherRightOff > 0) gradX.addColorStop(Math.max(1 - featherRightOff / cW, 0.502), 'rgba(0,0,0,0)');
+                        gradX.addColorStop(1, 'rgba(0,0,0,0)');
+                    } else {
+                        gradX.addColorStop(1, 'rgba(0,0,0,1)');
+                    }
+                    tc.fillStyle = gradX;
+                    tc.fillRect(0, 0, cW, cH);
+                }
+                
                 ctx.drawImage(tmp, clipX, bodyClipY);
             } else {
                 ctx.save();
@@ -2382,7 +2870,8 @@ function _drawScrollOverlay(ctx, ov, clipX, clipY, clipW, clipH, currentTime, ca
         }
     } else {
         // ── 标题跟随滚动 (原有逻辑) ──
-        if (featherTop > 0 || featherBottom > 0) {
+        const hasFeather = featherTop > 0 || featherBottom > 0 || featherTopOff > 0 || featherBotOff > 0 || featherLeft > 0 || featherRight > 0 || featherLeftOff > 0 || featherRightOff > 0;
+        if (hasFeather) {
             const cW = Math.ceil(clipW), cH = Math.ceil(clipH);
             const tmp = document.createElement('canvas');
             tmp.width = cW; tmp.height = cH;
@@ -2395,20 +2884,61 @@ function _drawScrollOverlay(ctx, ov, clipX, clipY, clipW, clipH, currentTime, ca
 
             tc.globalCompositeOperation = 'destination-in';
             const grad = tc.createLinearGradient(0, 0, 0, cH);
-            if (featherTop > 0) {
+            if (featherTop > 0 || featherTopOff > 0) {
                 grad.addColorStop(0, 'rgba(0,0,0,0)');
-                grad.addColorStop(Math.min(featherTop / cH, 0.49), 'rgba(0,0,0,1)');
+                if (featherTopOff > 0) grad.addColorStop(Math.min(featherTopOff / cH, 0.49), 'rgba(0,0,0,0)');
+                if (featherTop > 0) {
+                    grad.addColorStop(Math.min((featherTopOff + featherTop) / cH, 0.499), 'rgba(0,0,0,1)');
+                } else {
+                    grad.addColorStop(Math.min(featherTopOff / cH, 0.499), 'rgba(0,0,0,1)');
+                }
             } else {
                 grad.addColorStop(0, 'rgba(0,0,0,1)');
             }
-            if (featherBottom > 0) {
-                grad.addColorStop(Math.max(1 - featherBottom / cH, 0.51), 'rgba(0,0,0,1)');
+            
+            if (featherBottom > 0 || featherBotOff > 0) {
+                if (featherBottom > 0) {
+                    grad.addColorStop(Math.max(1 - (featherBotOff + featherBottom) / cH, 0.501), 'rgba(0,0,0,1)');
+                } else {
+                    grad.addColorStop(Math.max(1 - featherBotOff / cH, 0.501), 'rgba(0,0,0,1)');
+                }
+                if (featherBotOff > 0) grad.addColorStop(Math.max(1 - featherBotOff / cH, 0.502), 'rgba(0,0,0,0)');
                 grad.addColorStop(1, 'rgba(0,0,0,0)');
             } else {
                 grad.addColorStop(1, 'rgba(0,0,0,1)');
             }
             tc.fillStyle = grad;
             tc.fillRect(0, 0, cW, cH);
+            
+            if (featherLeft > 0 || featherRight > 0 || featherLeftOff > 0 || featherRightOff > 0) {
+                const gradX = tc.createLinearGradient(0, 0, cW, 0);
+                if (featherLeft > 0 || featherLeftOff > 0) {
+                    gradX.addColorStop(0, 'rgba(0,0,0,0)');
+                    if (featherLeftOff > 0) gradX.addColorStop(Math.min(featherLeftOff / cW, 0.49), 'rgba(0,0,0,0)');
+                    if (featherLeft > 0) {
+                        gradX.addColorStop(Math.min((featherLeftOff + featherLeft) / cW, 0.499), 'rgba(0,0,0,1)');
+                    } else {
+                        gradX.addColorStop(Math.min(featherLeftOff / cW, 0.499), 'rgba(0,0,0,1)');
+                    }
+                } else {
+                    gradX.addColorStop(0, 'rgba(0,0,0,1)');
+                }
+                
+                if (featherRight > 0 || featherRightOff > 0) {
+                    if (featherRight > 0) {
+                        gradX.addColorStop(Math.max(1 - (featherRightOff + featherRight) / cW, 0.501), 'rgba(0,0,0,1)');
+                    } else {
+                        gradX.addColorStop(Math.max(1 - featherRightOff / cW, 0.501), 'rgba(0,0,0,1)');
+                    }
+                    if (featherRightOff > 0) gradX.addColorStop(Math.max(1 - featherRightOff / cW, 0.502), 'rgba(0,0,0,0)');
+                    gradX.addColorStop(1, 'rgba(0,0,0,0)');
+                } else {
+                    gradX.addColorStop(1, 'rgba(0,0,0,1)');
+                }
+                tc.fillStyle = gradX;
+                tc.fillRect(0, 0, cW, cH);
+            }
+
             ctx.drawImage(tmp, clipX, clipY);
         } else {
             ctx.save();
@@ -2428,15 +2958,45 @@ function _drawScrollOverlay(ctx, ov, clipX, clipY, clipW, clipH, currentTime, ca
         ctx.lineWidth = 1.5;
         ctx.globalAlpha = 0.5;
         ctx.strokeRect(clipX, clipY, clipW, clipH);
+        if (featherTopOff > 0) {
+            ctx.strokeStyle = '#FF4444'; ctx.setLineDash([2, 2]); // Red dashed for total transparency zone
+            ctx.beginPath(); ctx.moveTo(clipX, clipY + featherTopOff);
+            ctx.lineTo(clipX + clipW, clipY + featherTopOff); ctx.stroke();
+        }
         if (featherTop > 0) {
             ctx.strokeStyle = '#FFD700'; ctx.setLineDash([4, 4]);
-            ctx.beginPath(); ctx.moveTo(clipX, clipY + featherTop);
-            ctx.lineTo(clipX + clipW, clipY + featherTop); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(clipX, clipY + featherTop + featherTopOff);
+            ctx.lineTo(clipX + clipW, clipY + featherTop + featherTopOff); ctx.stroke();
+        }
+        if (featherBotOff > 0) {
+            ctx.strokeStyle = '#FF4444'; ctx.setLineDash([2, 2]);
+            ctx.beginPath(); ctx.moveTo(clipX, clipY + clipH - featherBotOff);
+            ctx.lineTo(clipX + clipW, clipY + clipH - featherBotOff); ctx.stroke();
         }
         if (featherBottom > 0) {
             ctx.strokeStyle = '#FFD700'; ctx.setLineDash([4, 4]);
-            ctx.beginPath(); ctx.moveTo(clipX, clipY + clipH - featherBottom);
-            ctx.lineTo(clipX + clipW, clipY + clipH - featherBottom); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(clipX, clipY + clipH - featherBottom - featherBotOff);
+            ctx.lineTo(clipX + clipW, clipY + clipH - featherBottom - featherBotOff); ctx.stroke();
+        }
+        if (featherLeftOff > 0) {
+            ctx.strokeStyle = '#FF4444'; ctx.setLineDash([2, 2]);
+            ctx.beginPath(); ctx.moveTo(clipX + featherLeftOff, clipY);
+            ctx.lineTo(clipX + featherLeftOff, clipY + clipH); ctx.stroke();
+        }
+        if (featherLeft > 0) {
+            ctx.strokeStyle = '#FFD700'; ctx.setLineDash([4, 4]);
+            ctx.beginPath(); ctx.moveTo(clipX + featherLeft + featherLeftOff, clipY);
+            ctx.lineTo(clipX + featherLeft + featherLeftOff, clipY + clipH); ctx.stroke();
+        }
+        if (featherRightOff > 0) {
+            ctx.strokeStyle = '#FF4444'; ctx.setLineDash([2, 2]);
+            ctx.beginPath(); ctx.moveTo(clipX + clipW - featherRightOff, clipY);
+            ctx.lineTo(clipX + clipW - featherRightOff, clipY + clipH); ctx.stroke();
+        }
+        if (featherRight > 0) {
+            ctx.strokeStyle = '#FFD700'; ctx.setLineDash([4, 4]);
+            ctx.beginPath(); ctx.moveTo(clipX + clipW - featherRight - featherRightOff, clipY);
+            ctx.lineTo(clipX + clipW - featherRight - featherRightOff, clipY + clipH); ctx.stroke();
         }
         ctx.setLineDash([]);
         ctx.font = '20px sans-serif';
@@ -2725,7 +3285,17 @@ class OverlayManager {
      */
     renderAll(ctx, currentTime, canvasW = 1920, canvasH = 1080) {
         const visible = this.getVisibleOverlays(currentTime);
+        // 将完整覆层列表引用注入每个可见覆层，供「跟随滚动绑定」使用
         for (const ov of visible) {
+            ov._allOverlays = this.overlays;
+        }
+        // 确保 scroll 覆层先渲染，这样绑定它们的媒体覆层能读到 _scrollBodyFirstLineY
+        const scrollFirst = visible.slice().sort((a, b) => {
+            const aIsScroll = a.type === 'scroll' ? 0 : 1;
+            const bIsScroll = b.type === 'scroll' ? 0 : 1;
+            return aIsScroll - bIsScroll;
+        });
+        for (const ov of scrollFirst) {
             drawOverlay(ctx, ov, currentTime, canvasW, canvasH);
         }
     }

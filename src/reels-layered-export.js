@@ -443,8 +443,11 @@ async function reelsLayeredExport(params) {
 
             // 覆盖层（文字卡片等，属于画面层）
             if (taskOverlays && taskOverlays.length > 0 && window.ReelsOverlay) {
-                for (const ov of taskOverlays) {
-                    if (ov.disabled) continue;
+                const sortedOvs = taskOverlays.filter(ov => !ov.disabled).slice().sort((a, b) => {
+                    return (a.type === 'scroll' ? 0 : 1) - (b.type === 'scroll' ? 0 : 1);
+                });
+                for (const ov of sortedOvs) {
+                    ov._allOverlays = taskOverlays;
                     const ovStart = parseFloat(ov.start || 0);
                     const ovEnd = parseFloat(ov.end || 9999);
                     if (t >= ovStart && (ov.type === 'scroll' || t <= ovEnd)) {

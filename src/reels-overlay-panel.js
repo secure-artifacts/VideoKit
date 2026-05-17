@@ -363,6 +363,24 @@ class ReelsOverlayPanel {
                             <option value="overlay">叠加</option>
                         </select>
                     </div>
+                    <!-- 跟随滚动字幕绑定 -->
+                    <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border-color);">
+                        <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+                            <span style="font-size:12px;color:var(--accent-primary,#7b8bef);font-weight:600;">🔗 跟随滚动字幕</span>
+                        </div>
+                        <div class="rop-grid">
+                            <label>绑定目标</label>
+                            <select id="rop-bind-scroll-target" class="rop-select">
+                                <option value="">— 不绑定 —</option>
+                            </select>
+                            <label title="Y方向偏移(正=下移)">Y偏移</label><input type="number" id="rop-bind-scroll-offset-y" class="rop-input" step="10" value="0">
+                            <label title="Y上限(最小Y，图片不会超过此位置往上)">上边界Y</label><input type="number" id="rop-bind-scroll-clamp-min-y" class="rop-input" step="10" placeholder="不限">
+                            <label title="Y下限(最大Y，图片不会超过此位置往下)">下边界Y</label><input type="number" id="rop-bind-scroll-clamp-max-y" class="rop-input" step="10" placeholder="不限">
+                            <label title="X方向偏移(配合跟随X使用)">X偏移</label><input type="number" id="rop-bind-scroll-offset-x" class="rop-input" step="10" value="0">
+                            <label>跟随X</label><input type="checkbox" id="rop-bind-scroll-follow-x">
+                        </div>
+                        <div style="font-size:10px;color:var(--text-muted);margin-top:4px;line-height:1.4;">绑定后，此媒体覆层的 Y 坐标将跟随滚动字幕正文第一行实时移动。上/下边界限制图片的移动范围。</div>
+                    </div>
                 </div>
 
 
@@ -1242,6 +1260,8 @@ class ReelsOverlayPanel {
             'rop-color', 'rop-bold', 'rop-font-weight', 'rop-stroke-color', 'rop-stroke-width',
             'rop-shadow-color', 'rop-shadow-blur', 'rop-scale', 'rop-flip-h', 'rop-video-offset', 'rop-keep-aspect',
             'rop-flip-v', 'rop-blend', 'rop-anim-in', 'rop-anim-out',
+            'rop-bind-scroll-target', 'rop-bind-scroll-offset-y', 'rop-bind-scroll-offset-x',
+            'rop-bind-scroll-clamp-min-y', 'rop-bind-scroll-clamp-max-y', 'rop-bind-scroll-follow-x',
             'rop-anim-in-dur', 'rop-anim-out-dur',
             'rop-anim-dest-enabled', 'rop-anim-easing', 'rop-anim-timing-mode', 'rop-anim-duration', 'rop-anim-speed', 'rop-anim-start-x', 'rop-anim-start-y', 'rop-anim-end-x', 'rop-anim-end-y', 'rop-anim-start-scale', 'rop-anim-end-scale',
             // Text card fields
@@ -2742,6 +2762,32 @@ class ReelsOverlayPanel {
             this._val('rop-blend', ov.blend_mode || 'source-over');
             this._val('rop-video-offset', ov.video_start_offset || 0);
             this._val('rop-keep-aspect', ov.keep_aspect !== false);
+
+            // 跟随滚动字幕绑定
+            this._val('rop-bind-scroll-offset-y', ov.bind_scroll_offset_y || 0);
+            this._val('rop-bind-scroll-offset-x', ov.bind_scroll_offset_x || 0);
+            this._val('rop-bind-scroll-follow-x', ov.bind_scroll_follow_x || false);
+            const clampMinEl = this.container.querySelector('#rop-bind-scroll-clamp-min-y');
+            if (clampMinEl) clampMinEl.value = ov.bind_scroll_clamp_min_y != null ? ov.bind_scroll_clamp_min_y : '';
+            const clampMaxEl = this.container.querySelector('#rop-bind-scroll-clamp-max-y');
+            if (clampMaxEl) clampMaxEl.value = ov.bind_scroll_clamp_max_y != null ? ov.bind_scroll_clamp_max_y : '';
+            // 填充绑定目标下拉列表
+            const bindSelect = this.container.querySelector('#rop-bind-scroll-target');
+            if (bindSelect) {
+                const curVal = ov.bind_scroll_overlay_id || '';
+                let opts = '<option value="">— 不绑定 —</option>';
+                const mgr = this.videoCanvas && this.videoCanvas.overlayMgr;
+                if (mgr && mgr.overlays) {
+                    mgr.overlays.forEach(o => {
+                        if (o.type === 'scroll') {
+                            const label = o.name || o.scroll_title || o.content?.slice(0, 20) || o.id;
+                            const sel = o.id === curVal ? ' selected' : '';
+                            opts += `<option value="${o.id}"${sel}>${label}</option>`;
+                        }
+                    });
+                }
+                bindSelect.innerHTML = opts;
+            }
         }
 
         if (ov.type === 'textcard') {
@@ -3171,6 +3217,17 @@ class ReelsOverlayPanel {
             ov.blend_mode = this._get('rop-blend');
             ov.video_start_offset = parseFloat(this._get('rop-video-offset')) || 0;
             ov.keep_aspect = this._get('rop-keep-aspect');
+
+            // 跟随滚动字幕绑定
+            const bindTarget = this._get('rop-bind-scroll-target') || '';
+            ov.bind_scroll_overlay_id = bindTarget || null;
+            ov.bind_scroll_offset_y = parseFloat(this._get('rop-bind-scroll-offset-y')) || 0;
+            ov.bind_scroll_offset_x = parseFloat(this._get('rop-bind-scroll-offset-x')) || 0;
+            ov.bind_scroll_follow_x = this._get('rop-bind-scroll-follow-x') || false;
+            const clampMinEl = this.container.querySelector('#rop-bind-scroll-clamp-min-y');
+            ov.bind_scroll_clamp_min_y = (clampMinEl && clampMinEl.value !== '') ? parseFloat(clampMinEl.value) : null;
+            const clampMaxEl = this.container.querySelector('#rop-bind-scroll-clamp-max-y');
+            ov.bind_scroll_clamp_max_y = (clampMaxEl && clampMaxEl.value !== '') ? parseFloat(clampMaxEl.value) : null;
         }
 
         if (ov.type === 'textcard') {

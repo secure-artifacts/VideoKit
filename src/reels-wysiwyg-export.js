@@ -524,6 +524,7 @@ async function reelsWysiwygExport(params) {
         bgHasAudio: isMultiClip ? false : ((voicePath && backgroundPath && voicePath === backgroundPath) ? false : !_isImageFile(backgroundPath)),
         bgmPath: bgmPath || '',
         bgmVolume: bgmVolume || 0,
+        bgDurScale: bgDurScale || 100,
         audioDurScale: audioDurScale || 100,
         reverbEnabled,
         reverbPreset,
@@ -742,8 +743,12 @@ async function reelsWysiwygExport(params) {
 
             // ── 覆盖层（文字卡片等）──
             if (taskOverlays && taskOverlays.length > 0 && window.ReelsOverlay) {
-                for (const ov of taskOverlays) {
-                    if (ov.disabled) continue;
+                // 注入覆层列表引用（供跟随绑定），并确保 scroll 先渲染
+                const sortedOvs = taskOverlays.filter(ov => !ov.disabled).slice().sort((a, b) => {
+                    return (a.type === 'scroll' ? 0 : 1) - (b.type === 'scroll' ? 0 : 1);
+                });
+                for (const ov of sortedOvs) {
+                    ov._allOverlays = taskOverlays;
                     const ovStart = parseFloat(ov.start || 0);
                     const ovEnd = parseFloat(ov.end || 9999);
                     // scroll 覆层不受 end 限制（动画完成后保持最终位置）
