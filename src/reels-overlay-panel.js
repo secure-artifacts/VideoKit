@@ -369,7 +369,13 @@ class ReelsOverlayPanel {
 
                 <!-- 滚动字幕属性 (scroll覆层独有) -->
                 <div id="rop-scroll-props" class="rop-group" style="display:none;">
-                    <div class="rop-group-title">滚动字幕</div>
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <div class="rop-group-title" style="margin:0;">滚动字幕</div>
+                        <label style="display:flex;align-items:center;gap:4px;font-size:11px;cursor:pointer;color:var(--text-primary); margin:0;">
+                            <input type="checkbox" id="rop-scroll-apply-all">
+                            <span>应用到全部任务</span>
+                        </label>
+                    </div>
 
                     <!-- ① 内容：标题在前，正文在后 -->
                     <div class="rop-group-title" style="margin-top:4px;">标题</div>
@@ -1134,6 +1140,10 @@ class ReelsOverlayPanel {
                 if (ov.type === 'textcard' && applyAllEl && applyAllEl.checked) {
                     this._applyTextcardStyleToAllTasks(ov);
                 }
+                const scrollApplyAllEl = this.container.querySelector('#rop-scroll-apply-all');
+                if (ov.type === 'scroll' && scrollApplyAllEl && scrollApplyAllEl.checked) {
+                    this._applyScrollStyleToAllTasks(ov);
+                }
                 
                 if (this.videoCanvas) this.videoCanvas.render();
             });
@@ -1154,6 +1164,10 @@ class ReelsOverlayPanel {
                 const applyAllEl = this.container.querySelector('#rop-card-apply-all');
                 if (ov.type === 'textcard' && applyAllEl && applyAllEl.checked) {
                     this._applyTextcardStyleToAllTasks(ov);
+                }
+                const scrollApplyAllEl = this.container.querySelector('#rop-scroll-apply-all');
+                if (ov.type === 'scroll' && scrollApplyAllEl && scrollApplyAllEl.checked) {
+                    this._applyScrollStyleToAllTasks(ov);
                 }
                 
                 if (this.videoCanvas) this.videoCanvas.render();
@@ -1365,6 +1379,14 @@ class ReelsOverlayPanel {
         if (applyAllEl) {
             applyAllEl.addEventListener('change', () => {
                 if (applyAllEl.checked && this._selectedOv && this._selectedOv.type === 'textcard') {
+                    this._syncToOverlay();
+                }
+            });
+        }
+        const scrollApplyAllEl = this.container.querySelector('#rop-scroll-apply-all');
+        if (scrollApplyAllEl) {
+            scrollApplyAllEl.addEventListener('change', () => {
+                if (scrollApplyAllEl.checked && this._selectedOv && this._selectedOv.type === 'scroll') {
                     this._syncToOverlay();
                 }
             });
@@ -1604,6 +1626,10 @@ class ReelsOverlayPanel {
                 const applyAllEl = this.container.querySelector('#rop-card-apply-all');
                 if (ov.type === 'textcard' && applyAllEl && applyAllEl.checked) {
                     this._applyTextcardStyleToAllTasks(ov);
+                }
+                const scrollApplyAllEl = this.container.querySelector('#rop-scroll-apply-all');
+                if (ov.type === 'scroll' && scrollApplyAllEl && scrollApplyAllEl.checked) {
+                    this._applyScrollStyleToAllTasks(ov);
                 }
             };
         }
@@ -3473,6 +3499,13 @@ class ReelsOverlayPanel {
             }
         }
 
+        if (ov.type === 'scroll') {
+            const scrollApplyAllCb = this.container.querySelector('#rop-scroll-apply-all');
+            if (scrollApplyAllCb && scrollApplyAllCb.checked) {
+                this._applyScrollStyleToAllTasks(ov);
+            }
+        }
+
         // Re-render canvas to reflect changes
         if (this.videoCanvas) this.videoCanvas.render();
     }
@@ -3509,6 +3542,89 @@ class ReelsOverlayPanel {
             });
         } finally {
             this._isApplyingAllTextcards = false;
+        }
+    }
+
+    _extractScrollStyle(ov) {
+        // Extract scroll overlay style properties (excludes text content)
+        const keys = [
+            'name', 'fixed_text',
+            'x', 'y', 'w', 'h', 'rotation', 'opacity',
+            // 标题样式
+            'scroll_title_fontsize', 'scroll_title_font_family', 'scroll_title_font_weight',
+            'scroll_title_bold', 'scroll_title_color', 'scroll_title_uppercase',
+            'scroll_title_letter_spacing', 'scroll_title_align', 'scroll_title_line_spacing',
+            'scroll_title_text_width', 'scroll_title_gap', 'scroll_title_fixed',
+            'scroll_title_independent', 'scroll_title_x', 'scroll_title_y',
+            'scroll_title_auto_fit', 'scroll_title_max_height',
+            'scroll_title_stroke_color', 'scroll_title_stroke_width',
+            'scroll_title_shadow_enabled', 'scroll_title_shadow_color', 'scroll_title_shadow_blur',
+            'scroll_title_shadow_x', 'scroll_title_shadow_y',
+            'scroll_title_bg_enabled', 'scroll_title_bg_mode', 'scroll_title_bg_color',
+            'scroll_title_bg_opacity', 'scroll_title_bg_radius',
+            'scroll_title_bg_pad_h', 'scroll_title_bg_pad_top', 'scroll_title_bg_pad_bottom',
+            'scroll_title_deco_enabled', 'scroll_title_deco_position', 'scroll_title_deco_style',
+            'scroll_title_deco_align', 'scroll_title_deco_color', 'scroll_title_deco_color2',
+            'scroll_title_deco_thickness', 'scroll_title_deco_length', 'scroll_title_deco_gap', 'scroll_title_deco_opacity',
+            'scroll_title_styled_ranges',
+            // 正文样式
+            'font_family', 'fontsize', 'font_weight', 'bold', 'italic',
+            'color', 'text_align', 'text_width', 'line_spacing',
+            'scroll_uppercase', 'scroll_letter_spacing',
+            'use_stroke', 'stroke_color', 'stroke_width',
+            'shadow_enabled', 'shadow_color', 'shadow_blur',
+            'scroll_shadow_x', 'scroll_shadow_y',
+            // 正文独立背景
+            'scroll_body_bg_enabled', 'scroll_body_bg_mode', 'scroll_body_bg_color',
+            'scroll_body_bg_opacity', 'scroll_body_bg_radius',
+            'scroll_body_bg_pad_h', 'scroll_body_bg_pad_top', 'scroll_body_bg_pad_bottom',
+            'scroll_styled_ranges',
+            // 滚动参数
+            'scroll_x_anchor', 'scroll_from_x', 'scroll_from_y', 'scroll_to_x', 'scroll_to_y',
+            'scroll_offset_x', 'scroll_offset_y',
+            'scroll_speed', 'scroll_auto_stop', 'scroll_static', 'scroll_auto_fit', 'scroll_min_fontsize',
+            // 羽化
+            'feather_top', 'feather_bottom', 'feather_top_offset', 'feather_bottom_offset',
+            'feather_left', 'feather_right', 'feather_left_offset', 'feather_right_offset',
+            // 卡片背景
+            'bg_enabled', 'bg_color', 'bg_opacity', 'bg_radius',
+            'bg_padding_top', 'bg_padding_bottom', 'bg_padding_left', 'bg_padding_right', 'bg_fullscreen',
+            // 卡片边框
+            'bg_border_enabled', 'bg_border_sides', 'bg_border_color', 'bg_border_width', 'bg_border_style', 'bg_border_opacity',
+            // 磨砂模糊
+            'bg_blur_enabled', 'bg_blur_amount',
+            // 动画
+            'anim_in_type', 'anim_out_type', 'anim_in_duration', 'anim_out_duration',
+        ];
+        const result = {};
+        for (const k of keys) {
+            if (ov[k] !== undefined) result[k] = ov[k];
+        }
+        return result;
+    }
+
+    _applyScrollStyleToAllTasks(ov) {
+        if (!ov || ov.type !== 'scroll') return;
+        if (!window._reelsState || !Array.isArray(window._reelsState.tasks)) return;
+        
+        if (this._isApplyingAllScrolls) return;
+        this._isApplyingAllScrolls = true;
+        
+        try {
+            const styleObj = this._extractScrollStyle(ov);
+
+            window._reelsState.tasks.forEach(task => {
+                if (task && Array.isArray(task.overlays)) {
+                    task.overlays.forEach(otherOv => {
+                        if (otherOv && otherOv.type === 'scroll' && otherOv !== ov) {
+                            const styleCopy = JSON.parse(JSON.stringify(styleObj));
+                            Object.assign(otherOv, styleCopy);
+                        }
+                    });
+                }
+            });
+        } finally {
+            this._isApplyingAllScrolls = false;
         }
     }
 
