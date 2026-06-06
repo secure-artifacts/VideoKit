@@ -23,7 +23,7 @@ const ReelsRichText = (() => {
     // ══════════════════════════════════════════════
 
     const STYLE_KEYS = [
-        'fontsize', 'font_family', 'color', 'bold', 'italic',
+        'fontsize', 'font_family', 'font_weight', 'color', 'bold', 'italic',
         'letter_spacing', 'underline',
         'color_outline', 'border_width',
         'bg_color', 'bg_opacity',

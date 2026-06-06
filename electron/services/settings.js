@@ -67,8 +67,19 @@ function writeJSON(filePath, data) {
 
 // Gladia Keys
 function getGladiaKeysPath() { return path.join(getBackendDir(), 'gladia_keys.json'); }
-function loadGladiaKeys() { return readJSON(getGladiaKeysPath()) || { keys: [] }; }
-function saveGladiaKeys(data) { writeJSON(getGladiaKeysPath(), data); }
+function loadGladiaKeys() {
+    const data = readJSON(getGladiaKeysPath()) || { keys: [] };
+    if (data && Array.isArray(data.keys)) {
+        data.keys = data.keys.map(k => typeof k === 'string' ? k.trim() : '').filter(Boolean);
+    }
+    return data;
+}
+function saveGladiaKeys(data) {
+    if (data && Array.isArray(data.keys)) {
+        data.keys = data.keys.map(k => typeof k === 'string' ? k.trim() : '').filter(Boolean);
+    }
+    writeJSON(getGladiaKeysPath(), data);
+}
 
 // Gemini Keys
 const DEFAULT_GEMINI_PROMPT = "ElevenLabs 配音文案格式化助手 — 为祷告/宣告/属灵鼓励/短视频旁白文案添加情感标签、拆句断行、排节奏，可直接复制粘贴用于 ElevenLabs 生成配音\n\n## 核心用途\n用于 ElevenLabs 配音\n场景：祷告 / 宣告 / 属灵鼓励 / 短视频旁白\n需要可直接复制粘贴使用\n\n## 情感标签（最重要）\n✅ 只用情感 / 语气标签（如 [calm] [reverent] [faith-filled]）\n❌ 不要 emoji\n❌ 不要解释标签含义\n标签要：克制、稳定、不浮夸、不戏剧化\n\n## 节奏与结构\n每段都有清晰停顿\n常用：[pause]\n适合：跟读、默读、夜间 / 安静场景\n长文也要分层，不能一口气读完\n\n## 语气取向\n偏向：祷告感、安抚感、权柄但不咆哮\n避免：情绪炸裂、表演感、过度煽动\n\n## 内容处理原则\n❌ 不改原文意思\n❌ 不擅自删句\n❌ 不加新神学内容\n❌ 不删除标题\n对于文案中关于上帝的单词、代词都要标准的首字母大写（如 God / He / Him / His / Lord / Father）\n只做三件事：拆句断行、排节奏、加合适的情感标签\n\n## 输出要求 - 分两部分\n你需要输出两个结果，用 ||| 分隔：\n1. 加标签结果：带情感标签的完整文案（用于 ElevenLabs 配音）\n2. 断句结果：根据标签合理断行后的文案（用于字幕显示）\n\n断行规则：\n- 断句合理，符合语言习惯\n- 每行不超过 4 个单词，便于字幕显示\n- 也不要太短（至少有完整的意思单元）\n- 在 [pause] 标签处自然断行\n- 断句结果不包含情感标签，只保留纯文本\n- ⚠️ 断句结果不包含省略号（...），省略号仅用于配音的加标签结果\n\n输出格式示例：\n[calm] Lord... I come before You today, with a grateful heart...\n|||\nLord,\nI come before You today,\nwith a grateful heart.\n\n## 批量处理输出规则\n你需要处理多条文案，每条以 [编号] 开头。\n对于每条文案，输出格式为：[编号] 加标签结果|||断句结果\n⚠️ 断句结果中的换行用 \\\\n 表示（字面的反斜杠n），不要真正换行，保持每条结果在同一行。\n每条结果占一行。";
@@ -76,12 +87,20 @@ const DEFAULT_GEMINI_PROMPT = "ElevenLabs 配音文案格式化助手 — 为祷
 function getGeminiKeysPath() { return path.join(getBackendDir(), 'gemini_keys.json'); }
 function loadGeminiKeys() {
     const data = readJSON(getGeminiKeysPath()) || { keys: [] };
+    if (data && Array.isArray(data.keys)) {
+        data.keys = data.keys.map(k => typeof k === 'string' ? k.trim() : '').filter(Boolean);
+    }
     if (!data.prompt || !data.prompt.trim()) {
         data.prompt = DEFAULT_GEMINI_PROMPT;
     }
     return data;
 }
-function saveGeminiKeys(data) { writeJSON(getGeminiKeysPath(), data); }
+function saveGeminiKeys(data) {
+    if (data && Array.isArray(data.keys)) {
+        data.keys = data.keys.map(k => typeof k === 'string' ? k.trim() : '').filter(Boolean);
+    }
+    writeJSON(getGeminiKeysPath(), data);
+}
 
 // ElevenLabs Settings
 function getElevenLabsSettingsPath() { return path.join(getBackendDir(), 'elevenlabs_settings.json'); }
@@ -103,11 +122,24 @@ function saveElevenLabsSettings(inputData) {
     if (typeof keys === 'string') keys = [keys];
     if (keys.length === 0 && inputData.api_key) keys = [inputData.api_key];
     keys = keys.filter(k => typeof k === 'string' && k.trim());
+    keys = [...new Set(keys.map(k => k.trim()))];
+
+    const existingStatus = normalizeElevenLabsKeysWithStatus(existingData.keys_with_status);
+    const existingByKey = new Map(existingStatus.map(entry => [entry.key, entry]));
+    const keysWithStatus = keys.map(key => ({
+        ...(existingByKey.get(key) || {}),
+        key,
+        enabled: true,
+        manual_disabled: false,
+        auto_disabled: false,
+        auto_disabled_reason: ''
+    }));
 
     const payload = {
         ...existingData,
         api_key: keys[0] || '',
-        api_keys: keys
+        api_keys: keys,
+        keys_with_status: keysWithStatus
     };
 
     if (inputData.use_web_token !== undefined) {
@@ -147,6 +179,83 @@ function saveElevenLabsKeysWithStatus(keysData) {
     const data = readJSON(getElevenLabsSettingsPath()) || {};
     data.keys_with_status = normalizeElevenLabsKeysWithStatus(keysData);
     writeJSON(getElevenLabsSettingsPath(), data);
+}
+
+function addElevenLabsKey(key) {
+    const cleanKey = typeof key === 'string' ? key.trim() : '';
+    if (!cleanKey) throw new Error('Key 不能为空');
+    const data = readJSON(getElevenLabsSettingsPath()) || {};
+    const keys = loadElevenLabsKeysWithStatus();
+    if (keys.some(entry => entry.key === cleanKey)) throw new Error('Key 已存在');
+    keys.push({
+        key: cleanKey,
+        enabled: true,
+        manual_disabled: false,
+        auto_disabled: false,
+        auto_disabled_reason: ''
+    });
+    data.keys_with_status = keys;
+    data.api_keys = keys.map(entry => entry.key);
+    data.api_key = data.api_keys[0] || '';
+    writeJSON(getElevenLabsSettingsPath(), data);
+}
+
+function deleteElevenLabsKey(index) {
+    const data = readJSON(getElevenLabsSettingsPath()) || {};
+    const keys = loadElevenLabsKeysWithStatus();
+    if (!Number.isInteger(index) || index < 0 || index >= keys.length) throw new Error('索引无效');
+    keys.splice(index, 1);
+    data.keys_with_status = keys;
+    data.api_keys = keys.map(entry => entry.key);
+    data.api_key = data.api_keys[0] || '';
+    writeJSON(getElevenLabsSettingsPath(), data);
+}
+
+function updateElevenLabsKeys(actionData) {
+    const data = readJSON(getElevenLabsSettingsPath()) || {};
+    const keys = loadElevenLabsKeysWithStatus();
+    const action = actionData && actionData.action;
+
+    if (action === 'toggle') {
+        const index = actionData.index;
+        if (!Number.isInteger(index) || index < 0 || index >= keys.length) throw new Error('索引无效');
+        const nextEnabled = keys[index].enabled === false;
+        keys[index].enabled = nextEnabled;
+        keys[index].manual_disabled = !nextEnabled;
+        if (nextEnabled) {
+            keys[index].auto_disabled = false;
+            keys[index].auto_disabled_reason = '';
+        }
+        data.keys_with_status = keys;
+        writeJSON(getElevenLabsSettingsPath(), data);
+        return { enabled: nextEnabled };
+    }
+
+    if (action === 'move') {
+        const from = actionData.from;
+        const to = actionData.to;
+        if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || from >= keys.length || to < 0 || to >= keys.length) {
+            throw new Error('索引无效');
+        }
+        const [item] = keys.splice(from, 1);
+        keys.splice(to, 0, item);
+        data.keys_with_status = keys;
+        data.api_keys = keys.map(entry => entry.key);
+        data.api_key = data.api_keys[0] || '';
+        writeJSON(getElevenLabsSettingsPath(), data);
+        return { message: '顺序已更新' };
+    }
+
+    if (action === 'reorder') {
+        const nextKeys = normalizeElevenLabsKeysWithStatus(actionData.keys);
+        data.keys_with_status = nextKeys;
+        data.api_keys = nextKeys.map(entry => entry.key);
+        data.api_key = data.api_keys[0] || '';
+        writeJSON(getElevenLabsSettingsPath(), data);
+        return { message: '顺序已更新' };
+    }
+
+    throw new Error('无效操作');
 }
 
 // Replace Rules
@@ -254,6 +363,9 @@ module.exports = {
     saveElevenLabsSettings,
     loadElevenLabsKeysWithStatus,
     saveElevenLabsKeysWithStatus,
+    addElevenLabsKey,
+    deleteElevenLabsKey,
+    updateElevenLabsKeys,
     loadReplaceRules,
     saveReplaceRules,
     openFolder,

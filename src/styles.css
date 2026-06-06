@@ -1350,6 +1350,7 @@ body.theme-light .rbt-table td {
     border-right-color: rgba(0, 0, 0, 0.04) !important;
 }
 body.theme-light .rbt-header,
+body.theme-light .rbt-actions-panel,
 body.theme-light .rbt-footer {
     border-color: rgba(0, 0, 0, 0.1) !important;
 }
@@ -1642,3 +1643,203 @@ body.theme-light .rbt-btn[style*="background:rgba(120,40,40"] {
     background: rgba(220, 80, 80, 0.1) !important;
     border-color: rgba(220, 80, 80, 0.25) !important;
 }
+
+/* API Key 表格管理器样式 */
+.key-manager-container {
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: var(--bg-input);
+    overflow: hidden;
+    margin-bottom: 8px;
+}
+
+.key-manager-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--bg-tertiary);
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.key-manager-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.key-manager-tabs {
+    display: flex;
+    gap: 4px;
+}
+
+.key-manager-tab {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    padding: 3px 8px;
+    font-size: 11px;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+}
+
+.key-manager-tab:hover {
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.key-manager-tab.active {
+    color: var(--accent);
+    background: rgba(76, 158, 255, 0.12);
+    font-weight: 600;
+}
+
+.key-manager-table-view {
+    padding: 8px;
+}
+
+.key-manager-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.key-manager-table th {
+    text-align: left;
+    padding: 6px 8px;
+    color: var(--text-secondary);
+    font-weight: 500;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 11px;
+}
+
+.key-manager-table td {
+    padding: 6px 4px;
+    border-bottom: 1px dashed rgba(255,255,255,0.04);
+    vertical-align: middle;
+}
+
+.key-manager-row-num {
+    color: var(--text-muted);
+    text-align: center;
+    font-family: monospace;
+    font-size: 11px;
+}
+
+.key-manager-input-wrap {
+    display: flex;
+    align-items: center;
+    background: rgba(0,0,0,0.2);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 0 6px;
+    width: 100%;
+    transition: border-color 0.2s ease;
+}
+
+.key-manager-input-wrap:focus-within {
+    border-color: var(--accent);
+}
+
+.key-manager-key-input {
+    flex: 1;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 5px 4px !important;
+    color: var(--text-primary);
+    font-family: monospace;
+    font-size: 12px;
+    outline: none;
+    width: 100%;
+}
+
+.key-manager-eye-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    transition: color 0.2s;
+}
+
+.key-manager-eye-btn:hover {
+    color: var(--text-primary);
+}
+
+.key-manager-delete-btn {
+    background: transparent;
+    border: none;
+    color: #ff6b6b;
+    cursor: pointer;
+    padding: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    margin: 0 auto;
+    transition: background 0.2s;
+}
+
+.key-manager-delete-btn:hover {
+    background: rgba(255, 107, 107, 0.15);
+}
+
+.key-manager-add-row {
+    padding: 4px 8px;
+    text-align: left;
+}
+
+.key-manager-add-btn {
+    background: transparent;
+    border: 1px dashed rgba(255,255,255,0.15);
+    color: var(--text-secondary);
+    padding: 4px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    transition: all 0.2s;
+}
+
+.key-manager-add-btn:hover {
+    color: var(--text-primary);
+    border-color: var(--accent);
+    background: rgba(76, 158, 255, 0.05);
+}
+
+/* 全局 .rbt-select 样式，防止在未加载批量生成面板时主面板预设下拉等元素缺少框框 */
+.rbt-select {
+    background: #0e0e1c;
+    border: 1px solid #1e1e3a;
+    border-radius: 3px;
+    color: #ddd;
+    font-size: 11px;
+    box-sizing: border-box;
+}
+
+body.theme-light .rbt-select {
+    background: var(--bg-input) !important;
+    border-color: var(--border-color) !important;
+    color: var(--text-primary) !important;
+}
+
+.rbt-select-trigger-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.rbt-select-caret {
+    font-size: 10px;
+    opacity: 0.85;
+}
+
+

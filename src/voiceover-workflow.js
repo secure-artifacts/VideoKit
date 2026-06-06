@@ -273,6 +273,33 @@ function vwGetFileName(filePath) {
     return String(filePath).split(/[\\/]/).pop() || String(filePath);
 }
 
+function vwBuildBatchFolderName(date = new Date()) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    const hh = String(date.getHours()).padStart(2, '0');
+    const mm = String(date.getMinutes()).padStart(2, '0');
+    return `${y}-${m}-${d}_${hh}${mm}_一键配音`;
+}
+
+async function vwResolveOutputBaseDir(rawOutputDir) {
+    const trimmed = String(rawOutputDir || '').trim();
+    if (trimmed) return trimmed.replace(/[\\/]+$/, '') || trimmed;
+    if (window.electronAPI && window.electronAPI.getDownloadsPath) {
+        try {
+            const downloads = await window.electronAPI.getDownloadsPath();
+            if (downloads) return String(downloads).replace(/[\\/]+$/, '') || String(downloads);
+        } catch (_) { }
+    }
+    return '~/Downloads';
+}
+
+async function vwCreateBatchOutputDir(rawOutputDir) {
+    const baseDir = await vwResolveOutputBaseDir(rawOutputDir);
+    const sep = baseDir.includes('\\') ? '\\' : '/';
+    return `${baseDir}${sep}${vwBuildBatchFolderName()}`;
+}
+
 function vwPickAudioFilePath() {
     return new Promise((resolve) => {
         const input = document.createElement('input');
@@ -503,14 +530,20 @@ async function startVoiceoverWorkflow() {
     const defaultVoice = document.getElementById('vw-default-voice').value;
     const modelId = document.getElementById('vw-model')?.value || 'eleven_v3';
     const maxDuration = parseInt(document.getElementById('vw-max-duration').value) || 30;
-    const outputDir = document.getElementById('vw-output-dir').value.trim();
+    const rawTailSilence = parseFloat(document.getElementById('vw-tail-silence')?.value || '0');
+    const tailSilence = Number.isFinite(rawTailSilence) && rawTailSilence > 0
+        ? Math.max(0.1, Math.min(5, rawTailSilence))
+        : 0;
+    const outputDirInput = document.getElementById('vw-output-dir');
+    const outputDir = outputDirInput.value.trim();
 
     if (!defaultVoice) {
         showToast('请选择默认音色', 'warning');
         return;
     }
 
-    // 输出目录可以为空，后端会使用默认的下载文件夹
+    const batchOutputDir = await vwCreateBatchOutputDir(outputDir);
+    window._vwLastOutputFolder = batchOutputDir;
 
     const btn = document.getElementById('vw-start-btn');
     btn.disabled = true;
@@ -531,6 +564,8 @@ async function startVoiceoverWorkflow() {
 
             try {
                 const exportFcpxml = document.getElementById('vw-export-fcpxml')?.checked ?? true;
+                const gladiaKeysText = document.getElementById('gladia-keys')?.value || '';
+                const gladiaKeys = gladiaKeysText.split('\n').map(k => k.trim()).filter(Boolean);
                 const ttsResponse = await apiFetch(`${API_BASE}/elevenlabs/tts-workflow`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -544,10 +579,12 @@ async function startVoiceoverWorkflow() {
                         max_duration: maxDuration,
                         subtitle_text: task.subtitleText,
                         bgm_path: task.bgmPath || '',
+                        tail_silence: tailSilence,
                         export_mp4: task.exportMp4,  // 从任务读取
                         export_fcpxml: exportFcpxml,  // 导出达芬奇字幕
                         seamless_fcpxml: true,  // 默认无缝字幕
-                        output_dir: outputDir
+                        output_dir: batchOutputDir,
+                        gladia_keys: gladiaKeys
                     })
                 });
 
@@ -565,10 +602,6 @@ async function startVoiceoverWorkflow() {
                 task.segments = ttsData.segments;
                 task.status = 'done';
 
-                if (!document.getElementById('vw-output-dir').value.trim() && ttsData.output_folder) {
-                    document.getElementById('vw-output-dir').value = ttsData.output_folder;
-                }
-
             } catch (err) {
                 task.status = 'error';
                 task.error = err.message;
@@ -579,7 +612,7 @@ async function startVoiceoverWorkflow() {
         }
 
         const successCount = vwTasks.filter(t => t.status === 'done').length;
-        showToast(`完成！成功 ${successCount}/${vwTasks.length} 条`, successCount === vwTasks.length ? 'success' : 'warning');
+        showToast(`完成！成功 ${successCount}/${vwTasks.length} 条，输出: ${batchOutputDir}`, successCount === vwTasks.length ? 'success' : 'warning');
 
     } catch (error) {
         showToast('工作流执行失败: ' + error.message, 'error');
@@ -634,12 +667,10 @@ async function vwBrowseOutputDir() {
 
 // 打开输出文件夹
 async function vwOpenOutputDir() {
-    let outputDir = document.getElementById('vw-output-dir').value.trim();
+    let outputDir = window._vwLastOutputFolder || document.getElementById('vw-output-dir').value.trim();
 
-    // 如果没有指定，使用默认目录（让后端处理）
     if (!outputDir) {
-        const today = new Date().toISOString().split('T')[0];  // YYYY-MM-DD
-        outputDir = `~/Downloads/${today}_一键配音`;
+        outputDir = await vwResolveOutputBaseDir('');
     }
 
     // 调用后端 API 打开文件夹

@@ -363,6 +363,7 @@ function createScrollOverlay(opts = {}) {
         scroll_to_y: opts.scroll_to_y ?? -200,      // 向上滚出
         scroll_speed: opts.scroll_speed ?? 0.8,
         scroll_auto_stop: opts.scroll_auto_stop === true, // 默认关闭
+        scroll_auto_stop_lead: opts.scroll_auto_stop_lead ?? 0, // 提前完成秒数，默认0
         scroll_static: opts.scroll_static === true,       // 固定显示模式（关闭滚动）
         scroll_auto_fit: opts.scroll_auto_fit === true,   // 默认关闭
         scroll_min_fontsize: opts.scroll_min_fontsize ?? 16,
@@ -711,7 +712,7 @@ function drawOverlay(ctx, origOv, currentTime = 0, canvasW = 1920, canvasH = 108
     let ov = origOv;
     
     // ── 时间切片模式拦截 (分段正文) ──
-    if (ov._subtitleTimeMode === 'split' && ov._subtitleTimeSlices && ov.type === 'textcard' && !ov._exporting) {
+    if (ov._subtitleTimeMode === 'split' && ov._subtitleTimeSlices && ov.type === 'textcard' && !ov._fcpxml_generating) {
         const slices = ov._subtitleTimeSlices;
         let currentSource = 'all';
         let matchedSlice = null;
@@ -727,6 +728,11 @@ function drawOverlay(ctx, origOv, currentTime = 0, canvasW = 1920, canvasH = 108
             // 覆写进出场时间以触发进出场动画
             ov.start = matchedSlice.startSec || 0;
             if (matchedSlice.endSec) ov.end = matchedSlice.endSec;
+            
+            // 备份原始文本供测算布局高度，避免高度塌陷与抖动
+            ov._original_title_text = origOv.title_text;
+            ov._original_body_text = origOv.body_text;
+            ov._original_footer_text = origOv.footer_text;
             
             if (currentSource === 'body_part1') {
                 ov.body_text = splitBodyText(origOv.body_text)[0];
@@ -1235,6 +1241,11 @@ function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime
 
     const contentW = Math.max(1, w - padL - padR);
 
+    // ── 测量所使用的原始文本 (避免时间切片导致高度塌陷与抖动) ──
+    const measureTitleText = ov._original_title_text !== undefined ? (ov.title_uppercase ? (ov._original_title_text || '').toUpperCase() : (ov._original_title_text || '')) : (ov.title_uppercase ? (ov.title_text || '').toUpperCase() : (ov.title_text || ''));
+    const measureBodyText = ov._original_body_text !== undefined ? (ov._original_body_text || '') : (ov.body_text || '');
+    const measureFooterText = ov._original_footer_text !== undefined ? (ov._original_footer_text || '') : (ov.footer_text || '');
+
     // ── 原始字号 ──
     const titleText = ov.title_uppercase ? (ov.title_text || '').toUpperCase() : (ov.title_text || '');
     let titleFontSize = ov.title_fontsize ?? 60;
@@ -1328,12 +1339,12 @@ function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime
     // ── 内部测量函数 ──
     function _measure(tfs, bfs, ffs) {
         // 先合并自动着色范围，再用最大字号做换行测量（防止字号不同导致布局错位）
-        const tMergedRanges = _getAutoColorMergedRanges(ov, 'title', titleText) || ov.title_styled_ranges || [];
+        const tMergedRanges = _getAutoColorMergedRanges(ov, 'title', measureTitleText) || ov.title_styled_ranges || [];
         const actualTfs = _getMaxFontSizeFromRanges(tfs, tMergedRanges);
         const tfActual = `${titleItalic} ${titleWeight} ${actualTfs}px "${titleFamily}", ${titleFallback}`;
         ctx.font = tfActual;
         ctx.letterSpacing = `${ov.title_letter_spacing || 0}px`;
-        const tLines = titleText ? _wrapText(ctx, titleText, tW) : [];
+        const tLines = measureTitleText ? _wrapText(ctx, measureTitleText, tW) : [];
         ctx.letterSpacing = '0px';
         const tLineH = actualTfs * 1.3 + parseFloat(ov.title_line_spacing || 0);
         const tExt = _getSectionExtents('title', actualTfs);
@@ -1343,12 +1354,12 @@ function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime
         const tTextH = tLines.length > 0 ? (tFM.ascent + tDesc + (tLines.length - 1) * tLineH) : 0;
         const tBlockH = tLines.length > 0 ? (tTextH + tExt.padT + tExt.padB + tExt.extTop + tExt.extBot) : 0;
 
-        const bMergedRanges = _getAutoColorMergedRanges(ov, 'body', bodyText) || ov.body_styled_ranges || [];
+        const bMergedRanges = _getAutoColorMergedRanges(ov, 'body', measureBodyText) || ov.body_styled_ranges || [];
         const actualBfs = _getMaxFontSizeFromRanges(bfs, bMergedRanges);
         const bfActual = `${bodyItalic} ${bodyWeight} ${actualBfs}px "${bodyFamily}", ${bodyFallback}`;
         ctx.font = bfActual;
         ctx.letterSpacing = `${ov.body_letter_spacing || 0}px`;
-        const bLines = bodyText ? _wrapText(ctx, bodyText, bW) : [];
+        const bLines = measureBodyText ? _wrapText(ctx, measureBodyText, bW) : [];
         ctx.letterSpacing = '0px';
         const bLineH = actualBfs * 1.3 + parseFloat(ov.body_line_spacing || 0);
         const bExt = _getSectionExtents('body', actualBfs);
@@ -1358,12 +1369,12 @@ function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime
         const bTextH = bLines.length > 0 ? (bFM.ascent + bDesc + (bLines.length - 1) * bLineH) : 0;
         const bBlockH = bLines.length > 0 ? (bTextH + bExt.padT + bExt.padB + bExt.extTop + bExt.extBot) : 0;
 
-        const fMergedRanges = _getAutoColorMergedRanges(ov, 'footer', footerText) || ov.footer_styled_ranges || [];
+        const fMergedRanges = _getAutoColorMergedRanges(ov, 'footer', measureFooterText) || ov.footer_styled_ranges || [];
         const actualFfs = _getMaxFontSizeFromRanges(ffs, fMergedRanges);
         const ffActual = `${footerItalic} ${footerWeight} ${actualFfs}px "${footerFamily}", ${footerFallback}`;
         ctx.font = ffActual;
         ctx.letterSpacing = `${ov.footer_letter_spacing || 0}px`;
-        const fLines = footerText ? _wrapText(ctx, footerText, fW) : [];
+        const fLines = measureFooterText ? _wrapText(ctx, measureFooterText, fW) : [];
         ctx.letterSpacing = '0px';
         const fLineH = actualFfs * 1.3 + parseFloat(ov.footer_line_spacing || 0);
         const fExt = _getSectionExtents('footer', actualFfs);
@@ -1462,6 +1473,10 @@ function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime
         fLines: footerLines, fLineH: footerLineH, fTextH: footerTextH, fBlockH: footerBlockH, fFM: footerFM, fExt: footerExt, fSpace,
         total: autoH, tf: titleFont, bf: bodyFont, ff: footerFont,
         hasT: hasTitle, hasB: hasBody, hasF: hasFooter } = m;
+
+    const drawTitleLines = ov.title_text ? titleLines : [];
+    const drawBodyLines = ov.body_text ? bodyLines : [];
+    const drawFooterLines = ov.footer_text ? footerLines : [];
 
     // ── 计算总高度与锚点 ──
     // 自动适配开：高度跟随内容；无适配：手动设定的 h 或回退到内容。
@@ -1823,76 +1838,78 @@ function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime
         const customY = disableOffsets ? 0 : (ov.title_offset_y || 0);
 
         const secBaseY = (ov.layout_mode === 'absolute') ? (textY + padT + customY) : (currentY + customY);
-        let availSpace = tSpace;
-        if (ov.title_override_h == 0 && ov.layout_mode === 'absolute') availSpace = cardH - padT - padB;
-        let tDeltaY = 0;
-        if (availSpace > titleBlockH) {
-            const vAlign = ov.title_valign || 'top';
-            if (vAlign === 'center') tDeltaY = (availSpace - titleBlockH) / 2;
-            else if (vAlign === 'bottom') tDeltaY = availSpace - titleBlockH;
-        }
-        const titleTextTopY = secBaseY + tDeltaY + titleExt.padT + titleExt.extTop;
-        const fx = _resolveEffects('title');
-        _drawSectionBg('title', titleTextTopY, titleTextH, tW, titleFontSize, fx, customX, secBaseY);
-        ctx.save();
-        ctx.font = titleFont;
-        ctx.letterSpacing = `${ov.title_letter_spacing || 0}px`;
-        if (fx.shadowBlur > 0 || fx.shadowX !== 0 || fx.shadowY !== 0) {
-            ctx.shadowColor = fx.shadowColor;
-            ctx.shadowBlur = fx.shadowBlur;
-            ctx.shadowOffsetX = fx.shadowX;
-            ctx.shadowOffsetY = fx.shadowY;
-        }
-        let ty = titleTextTopY + titleFM.ascent;
-        if (indep && ov.title_bg_enabled && ov.title_bg_mode !== 'block') {
-            const boxes = [];
-            let bY = ty;
-            for (const line of titleLines) {
-                const lx = _alignX(ctx, line, _sectionX(tW, customX), tW, ov.title_align || 'center');
-                const lw = ctx.measureText(line).width;
-                boxes.push({ lx, y: bY, lw });
-                bY += titleLineH;
+        if (drawTitleLines.length > 0) {
+            let availSpace = tSpace;
+            if (ov.title_override_h == 0 && ov.layout_mode === 'absolute') availSpace = cardH - padT - padB;
+            let tDeltaY = 0;
+            if (availSpace > titleBlockH) {
+                const vAlign = ov.title_valign || 'top';
+                if (vAlign === 'center') tDeltaY = (availSpace - titleBlockH) / 2;
+                else if (vAlign === 'bottom') tDeltaY = availSpace - titleBlockH;
             }
-            _drawInlineBgGroup(ctx, 'title', boxes, titleFM.ascent, titleFM.descent, titleFontSize, fx);
-        }
-        if (typeof _drawRichLine !== 'undefined') _drawRichLine._searchFrom = 0;
-        for (const line of titleLines) {
-            const lx = _alignX(ctx, line, _sectionX(tW, customX), tW, ov.title_align || 'center');
-            if (fx.strokeW > 0) {
-                ctx.strokeStyle = fx.strokeC;
-                ctx.lineWidth = fx.strokeW;
-                ctx.lineJoin = 'round';
-                ctx.strokeText(line, lx, ty);
+            const titleTextTopY = secBaseY + tDeltaY + titleExt.padT + titleExt.extTop;
+            const fx = _resolveEffects('title');
+            _drawSectionBg('title', titleTextTopY, titleTextH, tW, titleFontSize, fx, customX, secBaseY);
+            ctx.save();
+            ctx.font = titleFont;
+            ctx.letterSpacing = `${ov.title_letter_spacing || 0}px`;
+            if (fx.shadowBlur > 0 || fx.shadowX !== 0 || fx.shadowY !== 0) {
+                ctx.shadowColor = fx.shadowColor;
+                ctx.shadowBlur = fx.shadowBlur;
+                ctx.shadowOffsetX = fx.shadowX;
+                ctx.shadowOffsetY = fx.shadowY;
             }
-            // ── 富文本检测 (含自动着色) ──
-            const _titleMerged = _getAutoColorMergedRanges(ov, 'title', ov.title_text);
-            const _titleRanges = _titleMerged || ov.title_styled_ranges;
-            if (_titleRanges && _titleRanges.length > 0 && typeof ReelsRichText !== 'undefined') {
-                _drawRichLine(ctx, line, ov.title_text, _titleRanges, lx, ty,
-                    ov.title_color || '#1A1A1A', titleFontSize, titleFamily, titleFallback, titleWeight, ov.title_letter_spacing || 0);
-            } else {
-                if (!indep && ov.title_color_from_style) {
-                    ctx.fillStyle = _resolveTitleColor(ov.title_color_from_style);
-                } else {
-                    ctx.fillStyle = ov.title_color || '#1A1A1A';
+            let ty = titleTextTopY + titleFM.ascent;
+            if (indep && ov.title_bg_enabled && ov.title_bg_mode !== 'block') {
+                const boxes = [];
+                let bY = ty;
+                for (const line of drawTitleLines) {
+                    const lx = _alignX(ctx, line, _sectionX(tW, customX), tW, ov.title_align || 'center');
+                    const lw = ctx.measureText(line).width;
+                    boxes.push({ lx, y: bY, lw });
+                    bY += titleLineH;
                 }
-                ctx.fillText(line, lx, ty);
+                _drawInlineBgGroup(ctx, 'title', boxes, titleFM.ascent, titleFM.descent, titleFontSize, fx);
             }
-            ty += titleLineH;
-        }
-        ctx.restore();
-        
-        if (!ov._exporting && (ov.debug_title || (ov.debug_title === undefined && ov.debug_layout))) {
-            ctx.save(); ctx.strokeStyle='#ff5555'; ctx.lineWidth=1; ctx.setLineDash([4,4]);
-            ctx.strokeRect(_sectionX(tW, customX), secBaseY, tW, tSpace);
+            if (typeof _drawRichLine !== 'undefined') _drawRichLine._searchFrom = 0;
+            for (const line of drawTitleLines) {
+                const lx = _alignX(ctx, line, _sectionX(tW, customX), tW, ov.title_align || 'center');
+                if (fx.strokeW > 0) {
+                    ctx.strokeStyle = fx.strokeC;
+                    ctx.lineWidth = fx.strokeW;
+                    ctx.lineJoin = 'round';
+                    ctx.strokeText(line, lx, ty);
+                }
+                // ── 富文本检测 (含自动着色) ──
+                const _titleMerged = _getAutoColorMergedRanges(ov, 'title', ov.title_text);
+                const _titleRanges = _titleMerged || ov.title_styled_ranges;
+                if (_titleRanges && _titleRanges.length > 0 && typeof ReelsRichText !== 'undefined') {
+                    _drawRichLine(ctx, line, ov.title_text, _titleRanges, lx, ty,
+                        ov.title_color || '#1A1A1A', titleFontSize, titleFamily, titleFallback, titleWeight, ov.title_letter_spacing || 0);
+                } else {
+                    if (!indep && ov.title_color_from_style) {
+                        ctx.fillStyle = _resolveTitleColor(ov.title_color_from_style);
+                    } else {
+                        ctx.fillStyle = ov.title_color || '#1A1A1A';
+                    }
+                    ctx.fillText(line, lx, ty);
+                }
+                ty += titleLineH;
+            }
             ctx.restore();
+            
+            if (!ov._exporting && (ov.debug_title || (ov.debug_title === undefined && ov.debug_layout))) {
+                ctx.save(); ctx.strokeStyle='#ff5555'; ctx.lineWidth=1; ctx.setLineDash([4,4]);
+                ctx.strokeRect(_sectionX(tW, customX), secBaseY, tW, tSpace);
+                ctx.restore();
+            }
         }
 
         if (ov.layout_mode !== 'absolute') currentY += tSpace;
     }
 
     // ── 标题装饰线 ──
-    if (hasTitle && ov.title_deco_enabled) {
+    if (drawTitleLines.length > 0 && ov.title_deco_enabled) {
         const disableOffsets = useAutoFit || useAutoCenterV;
         const customX = disableOffsets ? 0 : (ov.title_offset_x || 0);
         const decoThickness = parseFloat(ov.title_deco_thickness ?? 3);
@@ -2021,65 +2038,67 @@ function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime
             secBaseY = currentY + customY;
         }
 
-        let availSpace = bSpace;
-        if (ov.body_override_h == 0 && ov.layout_mode === 'absolute') availSpace = cardH - padT - padB;
-        let bDeltaY = 0;
-        if (availSpace > bodyBlockH) {
-            const vAlign = ov.body_valign || 'top';
-            if (vAlign === 'center') bDeltaY = (availSpace - bodyBlockH) / 2;
-            else if (vAlign === 'bottom') bDeltaY = availSpace - bodyBlockH;
-        }
-        const bodyTextTopY = secBaseY + bDeltaY + bodyExt.padT + bodyExt.extTop;
-        const fx = _resolveEffects('body');
-        _drawSectionBg('body', bodyTextTopY, bodyTextH, bW, bodyFontSize, fx, customX, secBaseY);
-        ctx.save();
-        ctx.font = bodyFont;
-        ctx.letterSpacing = `${ov.body_letter_spacing || 0}px`;
-        if (fx.shadowBlur > 0 || fx.shadowX !== 0 || fx.shadowY !== 0) {
-            ctx.shadowColor = fx.shadowColor;
-            ctx.shadowBlur = fx.shadowBlur;
-            ctx.shadowOffsetX = fx.shadowX;
-            ctx.shadowOffsetY = fx.shadowY;
-        }
-        let by = bodyTextTopY + bodyFM.ascent;
-        if (indep && ov.body_bg_enabled && ov.body_bg_mode !== 'block') {
-            const boxes = [];
-            let bY2 = by;
-            for (const line of bodyLines) {
+        if (drawBodyLines.length > 0) {
+            let availSpace = bSpace;
+            if (ov.body_override_h == 0 && ov.layout_mode === 'absolute') availSpace = cardH - padT - padB;
+            let bDeltaY = 0;
+            if (availSpace > bodyBlockH) {
+                const vAlign = ov.body_valign || 'top';
+                if (vAlign === 'center') bDeltaY = (availSpace - bodyBlockH) / 2;
+                else if (vAlign === 'bottom') bDeltaY = availSpace - bodyBlockH;
+            }
+            const bodyTextTopY = secBaseY + bDeltaY + bodyExt.padT + bodyExt.extTop;
+            const fx = _resolveEffects('body');
+            _drawSectionBg('body', bodyTextTopY, bodyTextH, bW, bodyFontSize, fx, customX, secBaseY);
+            ctx.save();
+            ctx.font = bodyFont;
+            ctx.letterSpacing = `${ov.body_letter_spacing || 0}px`;
+            if (fx.shadowBlur > 0 || fx.shadowX !== 0 || fx.shadowY !== 0) {
+                ctx.shadowColor = fx.shadowColor;
+                ctx.shadowBlur = fx.shadowBlur;
+                ctx.shadowOffsetX = fx.shadowX;
+                ctx.shadowOffsetY = fx.shadowY;
+            }
+            let by = bodyTextTopY + bodyFM.ascent;
+            if (indep && ov.body_bg_enabled && ov.body_bg_mode !== 'block') {
+                const boxes = [];
+                let bY2 = by;
+                for (const line of drawBodyLines) {
+                    const lx = _alignX(ctx, line, _sectionX(bW, customX), bW, ov.body_align || 'center');
+                    const lw = ctx.measureText(line).width;
+                    boxes.push({ lx, y: bY2, lw });
+                    bY2 += bodyLineH;
+                }
+                _drawInlineBgGroup(ctx, 'body', boxes, bodyFM.ascent, bodyFM.descent, bodyFontSize, fx);
+            }
+            if (typeof _drawRichLine !== 'undefined') _drawRichLine._searchFrom = 0;
+            for (const line of drawBodyLines) {
                 const lx = _alignX(ctx, line, _sectionX(bW, customX), bW, ov.body_align || 'center');
-                const lw = ctx.measureText(line).width;
-                boxes.push({ lx, y: bY2, lw });
-                bY2 += bodyLineH;
+                if (fx.strokeW > 0) {
+                    ctx.strokeStyle = fx.strokeC;
+                    ctx.lineWidth = fx.strokeW;
+                    ctx.lineJoin = 'round';
+                    ctx.strokeText(line, lx, by);
+                }
+                // ── 富文本检测 (含自动着色) ──
+                const _bodyMerged = _getAutoColorMergedRanges(ov, 'body', ov.body_text);
+                const _bodyRanges = _bodyMerged || ov.body_styled_ranges;
+                if (_bodyRanges && _bodyRanges.length > 0 && typeof ReelsRichText !== 'undefined') {
+                    _drawRichLine(ctx, line, ov.body_text, _bodyRanges, lx, by,
+                        ov.body_color || '#333333', bodyFontSize, bodyFamily, bodyFallback, bodyWeight, ov.body_letter_spacing || 0);
+                } else {
+                    ctx.fillStyle = ov.body_color || '#333333';
+                    ctx.fillText(line, lx, by);
+                }
+                by += bodyLineH;
             }
-            _drawInlineBgGroup(ctx, 'body', boxes, bodyFM.ascent, bodyFM.descent, bodyFontSize, fx);
-        }
-        if (typeof _drawRichLine !== 'undefined') _drawRichLine._searchFrom = 0;
-        for (const line of bodyLines) {
-            const lx = _alignX(ctx, line, _sectionX(bW, customX), bW, ov.body_align || 'center');
-            if (fx.strokeW > 0) {
-                ctx.strokeStyle = fx.strokeC;
-                ctx.lineWidth = fx.strokeW;
-                ctx.lineJoin = 'round';
-                ctx.strokeText(line, lx, by);
-            }
-            // ── 富文本检测 (含自动着色) ──
-            const _bodyMerged = _getAutoColorMergedRanges(ov, 'body', ov.body_text);
-            const _bodyRanges = _bodyMerged || ov.body_styled_ranges;
-            if (_bodyRanges && _bodyRanges.length > 0 && typeof ReelsRichText !== 'undefined') {
-                _drawRichLine(ctx, line, ov.body_text, _bodyRanges, lx, by,
-                    ov.body_color || '#333333', bodyFontSize, bodyFamily, bodyFallback, bodyWeight, ov.body_letter_spacing || 0);
-            } else {
-                ctx.fillStyle = ov.body_color || '#333333';
-                ctx.fillText(line, lx, by);
-            }
-            by += bodyLineH;
-        }
-        ctx.restore();
-        
-        if (!ov._exporting && (ov.debug_body || (ov.debug_body === undefined && ov.debug_layout))) {
-            ctx.save(); ctx.strokeStyle='#55ff55'; ctx.lineWidth=1; ctx.setLineDash([4,4]);
-            ctx.strokeRect(_sectionX(bW, customX), secBaseY, bW, bSpace);
             ctx.restore();
+            
+            if (!ov._exporting && (ov.debug_body || (ov.debug_body === undefined && ov.debug_layout))) {
+                ctx.save(); ctx.strokeStyle='#55ff55'; ctx.lineWidth=1; ctx.setLineDash([4,4]);
+                ctx.strokeRect(_sectionX(bW, customX), secBaseY, bW, bSpace);
+                ctx.restore();
+            }
         }
 
         if (ov.layout_mode !== 'absolute') currentY += bSpace;
@@ -2099,65 +2118,67 @@ function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime
             secBaseY = currentY + customY;
         }
 
-        let availSpace = fSpace;
-        if (ov.footer_override_h == 0 && ov.layout_mode === 'absolute') availSpace = cardH - padT - padB;
-        let fDeltaY = 0;
-        if (availSpace > footerBlockH) {
-            const vAlign = ov.footer_valign || 'top';
-            if (vAlign === 'center') fDeltaY = (availSpace - footerBlockH) / 2;
-            else if (vAlign === 'bottom') fDeltaY = availSpace - footerBlockH;
-        }
-        const footerTextTopY = secBaseY + fDeltaY + footerExt.padT + footerExt.extTop;
-        const fx = _resolveEffects('footer');
-        _drawSectionBg('footer', footerTextTopY, footerTextH, fW, footerFontSize, fx, customX, secBaseY);
-        ctx.save();
-        ctx.font = footerFont;
-        ctx.letterSpacing = `${ov.footer_letter_spacing || 0}px`;
-        if (fx.shadowBlur > 0 || fx.shadowX !== 0 || fx.shadowY !== 0) {
-            ctx.shadowColor = fx.shadowColor;
-            ctx.shadowBlur = fx.shadowBlur;
-            ctx.shadowOffsetX = fx.shadowX;
-            ctx.shadowOffsetY = fx.shadowY;
-        }
-        let fy = footerTextTopY + footerFM.ascent;
-        if (indep && ov.footer_bg_enabled && ov.footer_bg_mode !== 'block') {
-            const boxes = [];
-            let bY3 = fy;
-            for (const line of footerLines) {
+        if (drawFooterLines.length > 0) {
+            let availSpace = fSpace;
+            if (ov.footer_override_h == 0 && ov.layout_mode === 'absolute') availSpace = cardH - padT - padB;
+            let fDeltaY = 0;
+            if (availSpace > footerBlockH) {
+                const vAlign = ov.footer_valign || 'top';
+                if (vAlign === 'center') fDeltaY = (availSpace - footerBlockH) / 2;
+                else if (vAlign === 'bottom') fDeltaY = availSpace - footerBlockH;
+            }
+            const footerTextTopY = secBaseY + fDeltaY + footerExt.padT + footerExt.extTop;
+            const fx = _resolveEffects('footer');
+            _drawSectionBg('footer', footerTextTopY, footerTextH, fW, footerFontSize, fx, customX, secBaseY);
+            ctx.save();
+            ctx.font = footerFont;
+            ctx.letterSpacing = `${ov.footer_letter_spacing || 0}px`;
+            if (fx.shadowBlur > 0 || fx.shadowX !== 0 || fx.shadowY !== 0) {
+                ctx.shadowColor = fx.shadowColor;
+                ctx.shadowBlur = fx.shadowBlur;
+                ctx.shadowOffsetX = fx.shadowX;
+                ctx.shadowOffsetY = fx.shadowY;
+            }
+            let fy = footerTextTopY + footerFM.ascent;
+            if (indep && ov.footer_bg_enabled && ov.footer_bg_mode !== 'block') {
+                const boxes = [];
+                let bY3 = fy;
+                for (const line of drawFooterLines) {
+                    const lx = _alignX(ctx, line, _sectionX(fW, customX), fW, ov.footer_align || 'center');
+                    const lw = ctx.measureText(line).width;
+                    boxes.push({ lx, y: bY3, lw });
+                    bY3 += footerLineH;
+                }
+                _drawInlineBgGroup(ctx, 'footer', boxes, footerFM.ascent, footerFM.descent, footerFontSize, fx);
+            }
+            if (typeof _drawRichLine !== 'undefined') _drawRichLine._searchFrom = 0;
+            for (const line of drawFooterLines) {
                 const lx = _alignX(ctx, line, _sectionX(fW, customX), fW, ov.footer_align || 'center');
-                const lw = ctx.measureText(line).width;
-                boxes.push({ lx, y: bY3, lw });
-                bY3 += footerLineH;
+                if (fx.strokeW > 0) {
+                    ctx.strokeStyle = fx.strokeC;
+                    ctx.lineWidth = fx.strokeW;
+                    ctx.lineJoin = 'round';
+                    ctx.strokeText(line, lx, fy);
+                }
+                // ── 富文本检测 (含自动着色) ──
+                const _footerMerged = _getAutoColorMergedRanges(ov, 'footer', ov.footer_text);
+                const _footerRanges = _footerMerged || ov.footer_styled_ranges;
+                if (_footerRanges && _footerRanges.length > 0 && typeof ReelsRichText !== 'undefined') {
+                    _drawRichLine(ctx, line, ov.footer_text, _footerRanges, lx, fy,
+                        ov.footer_color || '#666666', footerFontSize, footerFamily, footerFallback, footerWeight, ov.footer_letter_spacing || 0);
+                } else {
+                    ctx.fillStyle = ov.footer_color || '#666666';
+                    ctx.fillText(line, lx, fy);
+                }
+                fy += footerLineH;
             }
-            _drawInlineBgGroup(ctx, 'footer', boxes, footerFM.ascent, footerFM.descent, footerFontSize, fx);
-        }
-        if (typeof _drawRichLine !== 'undefined') _drawRichLine._searchFrom = 0;
-        for (const line of footerLines) {
-            const lx = _alignX(ctx, line, _sectionX(fW, customX), fW, ov.footer_align || 'center');
-            if (fx.strokeW > 0) {
-                ctx.strokeStyle = fx.strokeC;
-                ctx.lineWidth = fx.strokeW;
-                ctx.lineJoin = 'round';
-                ctx.strokeText(line, lx, fy);
-            }
-            // ── 富文本检测 (含自动着色) ──
-            const _footerMerged = _getAutoColorMergedRanges(ov, 'footer', ov.footer_text);
-            const _footerRanges = _footerMerged || ov.footer_styled_ranges;
-            if (_footerRanges && _footerRanges.length > 0 && typeof ReelsRichText !== 'undefined') {
-                _drawRichLine(ctx, line, ov.footer_text, _footerRanges, lx, fy,
-                    ov.footer_color || '#666666', footerFontSize, footerFamily, footerFallback, footerWeight, ov.footer_letter_spacing || 0);
-            } else {
-                ctx.fillStyle = ov.footer_color || '#666666';
-                ctx.fillText(line, lx, fy);
-            }
-            fy += footerLineH;
-        }
-        ctx.restore();
-        
-        if (!ov._exporting && (ov.debug_footer || (ov.debug_footer === undefined && ov.debug_layout))) {
-            ctx.save(); ctx.strokeStyle='#5555ff'; ctx.lineWidth=1; ctx.setLineDash([4,4]);
-            ctx.strokeRect(_sectionX(fW, customX), secBaseY, fW, fSpace);
             ctx.restore();
+            
+            if (!ov._exporting && (ov.debug_footer || (ov.debug_footer === undefined && ov.debug_layout))) {
+                ctx.save(); ctx.strokeStyle='#5555ff'; ctx.lineWidth=1; ctx.setLineDash([4,4]);
+                ctx.strokeRect(_sectionX(fW, customX), secBaseY, fW, fSpace);
+                ctx.restore();
+            }
         }
 
         if (ov.layout_mode !== 'absolute') currentY += fSpace;
@@ -2281,9 +2302,11 @@ function _drawScrollOverlay(ctx, ov, clipX, clipY, clipW, clipH, currentTime, ca
     const duration = end - start;
     if (duration <= 0) return;
 
-    // 进度 = (当前时间 - 开始) / 时长，clamp 到 [0, 1]
-    // 速度由 距离 ÷ 时间 自动决定，不再有 speed 乘数
-    let progress = (currentTime - start) / duration;
+    // 进度 = (当前时间 - 开始) / 有效时长，clamp 到 [0, 1]
+    // scroll_auto_stop_lead: 提前N秒完成滚动（默认0，即不提前）
+    const leadTime = Math.max(0, parseFloat(ov.scroll_auto_stop_lead ?? 0));
+    const effectiveDuration = Math.max(0.1, duration - leadTime);
+    let progress = (currentTime - start) / effectiveDuration;
     progress = Math.max(0, Math.min(1, progress));
 
     // 插值当前位置（加上整体偏移）。
@@ -2378,12 +2401,19 @@ function _drawScrollOverlay(ctx, ov, clipX, clipY, clipW, clipH, currentTime, ca
     // ── 自动停止：到达最终位置后冻结 ──
     let effectiveToY = toY;
     if (ov.scroll_auto_stop) {
-        const totalTextH = lines.length * lineHeight;
+        // 正文行高度
+        let totalTextH = lines.length * lineHeight;
+        // 非固定标题会跟随滚动，它的高度也要计入总文本高度
+        const titleFixed = ov.scroll_title_fixed !== false && (ov.scroll_title || '').trim();
+        if (!titleFixed && titleOccupiedH > 0) {
+            // titleOccupiedH = titleLines.length * tLineH + tGap
+            totalTextH += titleOccupiedH;
+        }
+
         const featherT = parseFloat(ov.feather_top ?? 0) + parseFloat(ov.feather_top_offset ?? 0);
         const featherB = parseFloat(ov.feather_bottom ?? 0) + parseFloat(ov.feather_bottom_offset ?? 0);
 
         // 固定标题模式下正文 clip 区会缩小
-        const titleFixed = ov.scroll_title_fixed !== false && (ov.scroll_title || '').trim();
         const bodyClipTop = (titleFixed && !titleIndependent) ? (clipY + titleOccupiedH) : clipY;
         const bodyClipBot = clipY + clipH;
         const bodyClipH = bodyClipBot - bodyClipTop;
@@ -2393,12 +2423,10 @@ function _drawScrollOverlay(ctx, ov, clipX, clipY, clipW, clipH, currentTime, ca
             const visibleBodyH = bodyClipH - featherT - featherB;
             if (totalTextH <= visibleBodyH) {
                 // 文字短于可见区：停在文字顶部刚好在 bodyClipTop + featherT 处（全部可见）
-                const stopY = bodyClipTop + featherT;
-                effectiveToY = Math.max(toY, stopY);
+                effectiveToY = bodyClipTop + featherT;
             } else {
                 // 文字长于可见区：停在文字底部刚好到达 bodyClipBot - featherB 处
-                const stopY = bodyClipBot - featherB - totalTextH;
-                effectiveToY = Math.max(toY, stopY);
+                effectiveToY = bodyClipBot - featherB - totalTextH;
             }
         }
         // 向下滚 (fromY < toY)
@@ -2406,12 +2434,10 @@ function _drawScrollOverlay(ctx, ov, clipX, clipY, clipW, clipH, currentTime, ca
             const visibleBodyH = bodyClipH - featherT - featherB;
             if (totalTextH <= visibleBodyH) {
                 // 文字短于可见区：停在文字底部刚好在 bodyClipBot - featherB 处（全部可见）
-                const stopY = bodyClipBot - featherB - totalTextH;
-                effectiveToY = Math.min(toY, stopY);
+                effectiveToY = bodyClipBot - featherB - totalTextH;
             } else {
                 // 文字长于可见区：停在文字顶部刚好到达 bodyClipTop + featherT 处
-                const stopY = bodyClipTop + featherT;
-                effectiveToY = Math.min(toY, stopY);
+                effectiveToY = bodyClipTop + featherT;
             }
         }
     }
@@ -2806,13 +2832,14 @@ function _drawScrollOverlay(ctx, ov, clipX, clipY, clipW, clipH, currentTime, ca
                 // 渐变遮罩：固定标题只作用于正文裁切区，标题本身不参与羽化。
                 tc.globalCompositeOperation = 'destination-in';
                 const grad = tc.createLinearGradient(0, 0, 0, cH);
+                const _cs = (v) => Math.max(0, Math.min(1, v)); // clamp to [0,1]
                 if (featherTop > 0 || featherTopOff > 0) {
                     grad.addColorStop(0, 'rgba(0,0,0,0)');
-                    if (featherTopOff > 0) grad.addColorStop(Math.min(featherTopOff / cH, 0.49), 'rgba(0,0,0,0)');
+                    if (featherTopOff > 0) grad.addColorStop(_cs(Math.min(featherTopOff / cH, 0.49)), 'rgba(0,0,0,0)');
                     if (featherTop > 0) {
-                        grad.addColorStop(Math.min((featherTopOff + featherTop) / cH, 0.499), 'rgba(0,0,0,1)');
+                        grad.addColorStop(_cs(Math.min((featherTopOff + featherTop) / cH, 0.499)), 'rgba(0,0,0,1)');
                     } else {
-                        grad.addColorStop(Math.min(featherTopOff / cH, 0.499), 'rgba(0,0,0,1)');
+                        grad.addColorStop(_cs(Math.min(featherTopOff / cH, 0.499)), 'rgba(0,0,0,1)');
                     }
                 } else {
                     grad.addColorStop(0, 'rgba(0,0,0,1)');
@@ -2820,11 +2847,11 @@ function _drawScrollOverlay(ctx, ov, clipX, clipY, clipW, clipH, currentTime, ca
                 
                 if (featherBottom > 0 || featherBotOff > 0) {
                     if (featherBottom > 0) {
-                        grad.addColorStop(Math.max(1 - (featherBotOff + featherBottom) / cH, 0.501), 'rgba(0,0,0,1)');
+                        grad.addColorStop(_cs(Math.max(1 - (featherBotOff + featherBottom) / cH, 0.501)), 'rgba(0,0,0,1)');
                     } else {
-                        grad.addColorStop(Math.max(1 - featherBotOff / cH, 0.501), 'rgba(0,0,0,1)');
+                        grad.addColorStop(_cs(Math.max(1 - featherBotOff / cH, 0.501)), 'rgba(0,0,0,1)');
                     }
-                    if (featherBotOff > 0) grad.addColorStop(Math.max(1 - featherBotOff / cH, 0.502), 'rgba(0,0,0,0)');
+                    if (featherBotOff > 0) grad.addColorStop(_cs(Math.max(1 - featherBotOff / cH, 0.502)), 'rgba(0,0,0,0)');
                     grad.addColorStop(1, 'rgba(0,0,0,0)');
                 } else {
                     grad.addColorStop(1, 'rgba(0,0,0,1)');
@@ -2836,11 +2863,11 @@ function _drawScrollOverlay(ctx, ov, clipX, clipY, clipW, clipH, currentTime, ca
                     const gradX = tc.createLinearGradient(0, 0, cW, 0);
                     if (featherLeft > 0 || featherLeftOff > 0) {
                         gradX.addColorStop(0, 'rgba(0,0,0,0)');
-                        if (featherLeftOff > 0) gradX.addColorStop(Math.min(featherLeftOff / cW, 0.49), 'rgba(0,0,0,0)');
+                        if (featherLeftOff > 0) gradX.addColorStop(_cs(Math.min(featherLeftOff / cW, 0.49)), 'rgba(0,0,0,0)');
                         if (featherLeft > 0) {
-                            gradX.addColorStop(Math.min((featherLeftOff + featherLeft) / cW, 0.499), 'rgba(0,0,0,1)');
+                            gradX.addColorStop(_cs(Math.min((featherLeftOff + featherLeft) / cW, 0.499)), 'rgba(0,0,0,1)');
                         } else {
-                            gradX.addColorStop(Math.min(featherLeftOff / cW, 0.499), 'rgba(0,0,0,1)');
+                            gradX.addColorStop(_cs(Math.min(featherLeftOff / cW, 0.499)), 'rgba(0,0,0,1)');
                         }
                     } else {
                         gradX.addColorStop(0, 'rgba(0,0,0,1)');
@@ -2848,11 +2875,11 @@ function _drawScrollOverlay(ctx, ov, clipX, clipY, clipW, clipH, currentTime, ca
                     
                     if (featherRight > 0 || featherRightOff > 0) {
                         if (featherRight > 0) {
-                            gradX.addColorStop(Math.max(1 - (featherRightOff + featherRight) / cW, 0.501), 'rgba(0,0,0,1)');
+                            gradX.addColorStop(_cs(Math.max(1 - (featherRightOff + featherRight) / cW, 0.501)), 'rgba(0,0,0,1)');
                         } else {
-                            gradX.addColorStop(Math.max(1 - featherRightOff / cW, 0.501), 'rgba(0,0,0,1)');
+                            gradX.addColorStop(_cs(Math.max(1 - featherRightOff / cW, 0.501)), 'rgba(0,0,0,1)');
                         }
-                        if (featherRightOff > 0) gradX.addColorStop(Math.max(1 - featherRightOff / cW, 0.502), 'rgba(0,0,0,0)');
+                        if (featherRightOff > 0) gradX.addColorStop(_cs(Math.max(1 - featherRightOff / cW, 0.502)), 'rgba(0,0,0,0)');
                         gradX.addColorStop(1, 'rgba(0,0,0,0)');
                     } else {
                         gradX.addColorStop(1, 'rgba(0,0,0,1)');
@@ -2887,13 +2914,14 @@ function _drawScrollOverlay(ctx, ov, clipX, clipY, clipW, clipH, currentTime, ca
 
             tc.globalCompositeOperation = 'destination-in';
             const grad = tc.createLinearGradient(0, 0, 0, cH);
+            const _cs2 = (v) => Math.max(0, Math.min(1, v));
             if (featherTop > 0 || featherTopOff > 0) {
                 grad.addColorStop(0, 'rgba(0,0,0,0)');
-                if (featherTopOff > 0) grad.addColorStop(Math.min(featherTopOff / cH, 0.49), 'rgba(0,0,0,0)');
+                if (featherTopOff > 0) grad.addColorStop(_cs2(Math.min(featherTopOff / cH, 0.49)), 'rgba(0,0,0,0)');
                 if (featherTop > 0) {
-                    grad.addColorStop(Math.min((featherTopOff + featherTop) / cH, 0.499), 'rgba(0,0,0,1)');
+                    grad.addColorStop(_cs2(Math.min((featherTopOff + featherTop) / cH, 0.499)), 'rgba(0,0,0,1)');
                 } else {
-                    grad.addColorStop(Math.min(featherTopOff / cH, 0.499), 'rgba(0,0,0,1)');
+                    grad.addColorStop(_cs2(Math.min(featherTopOff / cH, 0.499)), 'rgba(0,0,0,1)');
                 }
             } else {
                 grad.addColorStop(0, 'rgba(0,0,0,1)');
@@ -2901,11 +2929,11 @@ function _drawScrollOverlay(ctx, ov, clipX, clipY, clipW, clipH, currentTime, ca
             
             if (featherBottom > 0 || featherBotOff > 0) {
                 if (featherBottom > 0) {
-                    grad.addColorStop(Math.max(1 - (featherBotOff + featherBottom) / cH, 0.501), 'rgba(0,0,0,1)');
+                    grad.addColorStop(_cs2(Math.max(1 - (featherBotOff + featherBottom) / cH, 0.501)), 'rgba(0,0,0,1)');
                 } else {
-                    grad.addColorStop(Math.max(1 - featherBotOff / cH, 0.501), 'rgba(0,0,0,1)');
+                    grad.addColorStop(_cs2(Math.max(1 - featherBotOff / cH, 0.501)), 'rgba(0,0,0,1)');
                 }
-                if (featherBotOff > 0) grad.addColorStop(Math.max(1 - featherBotOff / cH, 0.502), 'rgba(0,0,0,0)');
+                if (featherBotOff > 0) grad.addColorStop(_cs2(Math.max(1 - featherBotOff / cH, 0.502)), 'rgba(0,0,0,0)');
                 grad.addColorStop(1, 'rgba(0,0,0,0)');
             } else {
                 grad.addColorStop(1, 'rgba(0,0,0,1)');
@@ -2917,11 +2945,11 @@ function _drawScrollOverlay(ctx, ov, clipX, clipY, clipW, clipH, currentTime, ca
                 const gradX = tc.createLinearGradient(0, 0, cW, 0);
                 if (featherLeft > 0 || featherLeftOff > 0) {
                     gradX.addColorStop(0, 'rgba(0,0,0,0)');
-                    if (featherLeftOff > 0) gradX.addColorStop(Math.min(featherLeftOff / cW, 0.49), 'rgba(0,0,0,0)');
+                    if (featherLeftOff > 0) gradX.addColorStop(_cs2(Math.min(featherLeftOff / cW, 0.49)), 'rgba(0,0,0,0)');
                     if (featherLeft > 0) {
-                        gradX.addColorStop(Math.min((featherLeftOff + featherLeft) / cW, 0.499), 'rgba(0,0,0,1)');
+                        gradX.addColorStop(_cs2(Math.min((featherLeftOff + featherLeft) / cW, 0.499)), 'rgba(0,0,0,1)');
                     } else {
-                        gradX.addColorStop(Math.min(featherLeftOff / cW, 0.499), 'rgba(0,0,0,1)');
+                        gradX.addColorStop(_cs2(Math.min(featherLeftOff / cW, 0.499)), 'rgba(0,0,0,1)');
                     }
                 } else {
                     gradX.addColorStop(0, 'rgba(0,0,0,1)');
@@ -2929,11 +2957,11 @@ function _drawScrollOverlay(ctx, ov, clipX, clipY, clipW, clipH, currentTime, ca
                 
                 if (featherRight > 0 || featherRightOff > 0) {
                     if (featherRight > 0) {
-                        gradX.addColorStop(Math.max(1 - (featherRightOff + featherRight) / cW, 0.501), 'rgba(0,0,0,1)');
+                        gradX.addColorStop(_cs2(Math.max(1 - (featherRightOff + featherRight) / cW, 0.501)), 'rgba(0,0,0,1)');
                     } else {
-                        gradX.addColorStop(Math.max(1 - featherRightOff / cW, 0.501), 'rgba(0,0,0,1)');
+                        gradX.addColorStop(_cs2(Math.max(1 - featherRightOff / cW, 0.501)), 'rgba(0,0,0,1)');
                     }
-                    if (featherRightOff > 0) gradX.addColorStop(Math.max(1 - featherRightOff / cW, 0.502), 'rgba(0,0,0,0)');
+                    if (featherRightOff > 0) gradX.addColorStop(_cs2(Math.max(1 - featherRightOff / cW, 0.502)), 'rgba(0,0,0,0)');
                     gradX.addColorStop(1, 'rgba(0,0,0,0)');
                 } else {
                     gradX.addColorStop(1, 'rgba(0,0,0,1)');
@@ -3275,6 +3303,12 @@ class OverlayManager {
      * 获取在指定时间可见的覆层列表。
      */
     getVisibleOverlays(currentTime) {
+        // 确保所有覆层都有 ID，防止因缺少 ID 导致“跟随滚动字幕”绑定失效
+        for (const ov of this.overlays) {
+            if (!ov.id) {
+                ov.id = 'ov_' + Math.random().toString(36).slice(2, 9) + '_' + Date.now().toString(36);
+            }
+        }
         return this.overlays.filter(ov => {
             if (ov.disabled) return false;
             const start = parseFloat(ov.start || 0);

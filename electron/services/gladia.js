@@ -27,6 +27,26 @@ function resolveCmd(cmd) {
 
 const GLADIA_API_URL = 'https://api.gladia.io';
 
+function parseGladiaErrorText(body) {
+    const text = Buffer.isBuffer(body) ? body.toString() : String(body || '');
+    try {
+        const data = JSON.parse(text);
+        if (data && typeof data === 'object') {
+            return data.message || data.error || text;
+        }
+    } catch (_) { }
+    return text;
+}
+
+function isGladiaRateLimit(status, body) {
+    const errText = parseGladiaErrorText(body).toLowerCase();
+    return status === 429 ||
+        errText.includes('rate limit') ||
+        errText.includes('limit exceeded') ||
+        errText.includes('too many requests') ||
+        errText.includes('quota');
+}
+
 // ==================== HTTP 请求工具 ====================
 
 function gladiaRequest(method, urlStr, headers, body, timeout = 120000) {
@@ -251,8 +271,8 @@ async function uploadAudio(apiKey, filePath) {
     if (res.status !== 200 && res.status !== 201) {
         const errText = res.body.toString().slice(0, 500);
         // 检查是否 limit exceeded
-        if (errText.includes('limit exceeded') || errText.includes('quota')) {
-            throw new Error('LIMIT_EXCEEDED');
+        if (isGladiaRateLimit(res.status, res.body)) {
+            throw new Error(`LIMIT_EXCEEDED: ${parseGladiaErrorText(res.body).slice(0, 300)}`);
         }
         throw new Error(`Gladia 上传失败: ${res.status} - ${errText}`);
     }
@@ -289,14 +309,18 @@ async function startTranscription(apiKey, audioUrl, language = 'english') {
 
     const payload = JSON.stringify(payloadObj);
 
-    const res = await gladiaRequest('POST', `${GLADIA_API_URL}/v2/transcription`, {
+    const res = await gladiaRequest('POST', `${GLADIA_API_URL}/v2/pre-recorded`, {
         'x-gladia-key': apiKey,
         'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(payload),
     }, payload, 30000);
 
     if (res.status !== 200 && res.status !== 201) {
-        throw new Error(`Gladia 转录请求失败: ${res.status} - ${res.body.toString().slice(0, 300)}`);
+        const errText = parseGladiaErrorText(res.body);
+        if (isGladiaRateLimit(res.status, res.body)) {
+            throw new Error(`LIMIT_EXCEEDED: Gladia 转录请求限流 (${res.status}) - ${errText.slice(0, 300)}`);
+        }
+        throw new Error(`Gladia 转录请求失败: ${res.status} - ${errText.slice(0, 300)}`);
     }
 
     const data = JSON.parse(res.body.toString());
@@ -327,7 +351,12 @@ async function pollResult(apiKey, resultUrl, maxAttempts = 60, interval = 10000)
         } else if (res.status === 202) {
             console.log('Gladia 仍在处理...');
         } else {
-            throw new Error(`Gladia 轮询错误: ${res.status}`);
+            const errText = res.body.toString();
+            const lowerErr = errText.toLowerCase();
+            if (res.status === 429 || lowerErr.includes('limit exceeded') || lowerErr.includes('quota') || lowerErr.includes('rate limit')) {
+                throw new Error('LIMIT_EXCEEDED');
+            }
+            throw new Error(`Gladia 轮询错误: ${res.status} - ${errText.slice(0, 300)}`);
         }
         await new Promise(r => setTimeout(r, interval));
     }
@@ -458,10 +487,12 @@ async function transcribeAudioFull(mediaPath, apiKeys, language, jsonPath, txtPa
         if (onProgress) onProgress(`转录进度: ${idx + 1}/${segments.length}`);
 
         let success = false;
+        const keyErrors = [];
 
         // 尝试每个 key，每个 key 最多重试 3 次
         for (let keyAttempt = curKeyIndex; keyAttempt < apiKeys.length; keyAttempt++) {
             const apiKey = apiKeys[keyAttempt];
+            let lastKeyError = null;
 
             for (let retry = 0; retry < 3; retry++) {
                 try {
@@ -485,8 +516,9 @@ async function transcribeAudioFull(mediaPath, apiKeys, language, jsonPath, txtPa
                     break;
                 } catch (e) {
                     console.error(`Gladia 转录失败 (key ${keyAttempt + 1}, 重试 ${retry + 1}): ${e.message}`);
+                    lastKeyError = e.message;
 
-                    if (e.message === 'LIMIT_EXCEEDED') {
+                    if (e.message.startsWith('LIMIT_EXCEEDED')) {
                         console.log('Gladia 达到限制，切换下一个 API key');
                         break; // 跳到下一个 key
                     }
@@ -498,11 +530,26 @@ async function transcribeAudioFull(mediaPath, apiKeys, language, jsonPath, txtPa
                 }
             }
 
-            if (success) break;
+            if (success) {
+                break;
+            } else {
+                const maskedKey = apiKey.length > 8 ? `${apiKey.slice(0, 4)}...${apiKey.slice(-4)}` : '***';
+                let friendlyError = lastKeyError || '未知错误';
+                if (friendlyError.includes('401')) {
+                    friendlyError = '401 Unauthorized (接口鉴权失败，请检查 Key 是否正确或已过期)';
+                } else if (friendlyError.includes('403')) {
+                    friendlyError = '403 Forbidden (无权限，可能账号受限)';
+                } else if (friendlyError.includes('LIMIT_EXCEEDED') || friendlyError.toLowerCase().includes('rate limit') || friendlyError.toLowerCase().includes('quota')) {
+                    friendlyError = '请求频率超限/额度限制 (429 Rate limit)。免费试用账号通常会被每小时 transcription 请求数限制，即使月度音频额度未用完也会触发。';
+                } else if (friendlyError.includes('timeout') || friendlyError.includes('超时')) {
+                    friendlyError = '连接超时 (Timeout)';
+                }
+                keyErrors.push(`- Key #${keyAttempt + 1} (${maskedKey}): ${friendlyError}`);
+            }
         }
 
         if (!success) {
-            throw new Error('转录失败: 所有 API key 均不可用');
+            throw new Error(`转录失败: 所有 API key 均不可用。\n详细错误原因：\n${keyErrors.join('\n')}`);
         }
 
         curStartTime += duration;

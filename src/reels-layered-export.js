@@ -91,6 +91,80 @@ function _isLayeredImageFile(filePath) {
     return ['jpg', 'jpeg', 'png', 'webp', 'bmp', 'gif'].includes(ext);
 }
 
+function _parseCropString(cropStr) {
+    let cropX = 0, cropY = 0, cropW = 1, cropH = 1;
+    if (cropStr && typeof cropStr === 'string' && cropStr.trim() !== '') {
+        const parts = cropStr.split(',').map(p => parseFloat(p.trim()));
+        if (parts.length === 4 && parts.every(p => !isNaN(p))) {
+            cropX = Math.max(0, Math.min(100, parts[0])) / 100;
+            cropY = Math.max(0, Math.min(100, parts[1])) / 100;
+            cropW = Math.max(1, Math.min(100, parts[2])) / 100;
+            cropH = Math.max(1, Math.min(100, parts[3])) / 100;
+        }
+    }
+    return { cropX, cropY, cropW, cropH };
+}
+
+function _drawImageFlipped(ctx, img, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, flipH, flipV) {
+    if (!flipH && !flipV) {
+        if (arg5 !== undefined) {
+            ctx.drawImage(img, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
+        } else if (arg3 !== undefined) {
+            ctx.drawImage(img, arg1, arg2, arg3, arg4);
+        } else {
+            ctx.drawImage(img, arg1, arg2);
+        }
+        return;
+    }
+    
+    ctx.save();
+    let dx, dy, dw, dh;
+    if (arg5 !== undefined) {
+        // 9 arguments: img, sx, sy, sw, sh, dx, dy, dw, dh
+        dx = arg5; dy = arg6; dw = arg7; dh = arg8;
+        ctx.translate(dx + dw / 2, dy + dh / 2);
+        ctx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
+        ctx.drawImage(img, arg1, arg2, arg3, arg4, -dw / 2, -dh / 2, dw, dh);
+    } else if (arg3 !== undefined) {
+        // 5 arguments: img, dx, dy, dw, dh
+        dx = arg1; dy = arg2; dw = arg3; dh = arg4;
+        ctx.translate(dx + dw / 2, dy + dh / 2);
+        ctx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
+        ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
+    } else {
+        // 3 arguments: img, dx, dy
+        dx = arg1; dy = arg2; dw = img.naturalWidth || img.width || 0; dh = img.naturalHeight || img.height || 0;
+        ctx.translate(dx + dw / 2, dy + dh / 2);
+        ctx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
+        ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
+    }
+    ctx.restore();
+}
+
+function _drawCroppedVideoCover(ctx, videoEl, cropX, cropY, cropW, cropH, targetW, targetH, scalePct, offsetX = 0, offsetY = 0, flipH = false, flipV = false) {
+    if (!ctx || !videoEl || !(targetW > 0) || !(targetH > 0)) return;
+    const srcW = videoEl.videoWidth || videoEl.naturalWidth || targetW;
+    const srcH = videoEl.videoHeight || videoEl.naturalHeight || targetH;
+    if (!(srcW > 0) || !(srcH > 0)) {
+        _drawImageFlipped(ctx, videoEl, 0, 0, targetW, targetH, undefined, undefined, undefined, undefined, flipH, flipV);
+        return;
+    }
+    const sx = srcW * cropX;
+    const sy = srcH * cropY;
+    const sWidth = srcW * cropW;
+    const sHeight = srcH * cropH;
+
+    const userScale = (scalePct || 100) / 100;
+    const scale = Math.max(targetW / sWidth, targetH / sHeight) * userScale;
+    const drawW = sWidth * scale;
+    const drawH = sHeight * scale;
+    const maxShiftX = Math.abs(targetW - drawW) / 2;
+    const maxShiftY = Math.abs(targetH - drawH) / 2;
+    const drawX = (targetW - drawW) / 2 + maxShiftX * (offsetX / 100);
+    const drawY = (targetH - drawH) / 2 + maxShiftY * (offsetY / 100);
+    _drawImageFlipped(ctx, videoEl, sx, sy, sWidth, sHeight, drawX, drawY, drawW, drawH, flipH, flipV);
+}
+
 
 /**
  * 主导出函数：分层 PNG 序列导出
@@ -104,6 +178,8 @@ async function reelsLayeredExport(params) {
         backgroundPath,
         bgMode = 'single',
         bgClipPool = [],
+        bgClipOrder = 'random',
+        bgClipSeed = '',
         bgTransition = 'crossfade',
         bgTransDur = 0.5,
         voicePath,
@@ -125,7 +201,17 @@ async function reelsLayeredExport(params) {
         contentVideoScale = 100,
         contentVideoX = 'center',
         contentVideoY = 'center',
+        contentVideoCrop = '',
+        contentVideoBlurBg = false,
+        contentVideoBlur = 40,
+        contentVideoBrightness = 60,
         bgScale = 100,
+        bgX = 0,
+        bgY = 0,
+        bgFlipH = false,
+        bgFlipV = false,
+        contentVideoFlipH = false,
+        contentVideoFlipV = false,
         bgDurScale = 100,
         audioDurScale = 100,
         onProgress,
@@ -136,14 +222,50 @@ async function reelsLayeredExport(params) {
     const isMultiClip = bgMode === 'multi' && Array.isArray(bgClipPool) && bgClipPool.length > 0;
 
     if (!canvas) throw new Error('需要提供 canvas');
-    if (!backgroundPath && !isMultiClip) throw new Error('缺少背景素材');
+    if (!backgroundPath && !isMultiClip && !contentVideoBlurBg) throw new Error('缺少背景素材');
     if (!outputDir) throw new Error('缺少输出目录');
     if (!window.electronAPI) throw new Error('需要 Electron API');
 
+    // 允许无字幕（纯覆层模式）
     if (!segments) segments = [];
 
     const log = (msg) => { if (onLog) onLog(msg); console.log(`[LayeredExport] ${msg}`); };
     const progress = (v) => { if (onProgress) onProgress(v); };
+
+    // ── 确保所有覆层与字幕使用的字体全部预加载完成 ──
+    const fontsToLoad = new Set();
+    if (style && style.font_family) {
+        fontsToLoad.add(style.font_family);
+    }
+    if (Array.isArray(taskOverlays)) {
+        for (const ov of taskOverlays) {
+            if (ov.disabled) continue;
+            if (ov.type === 'textcard' || !ov.type || ov.type === '') {
+                if (ov.title_text && ov.title_font_family) fontsToLoad.add(ov.title_font_family);
+                if (ov.body_text && ov.body_font_family) fontsToLoad.add(ov.body_font_family);
+                if (ov.footer_text && ov.footer_font_family) fontsToLoad.add(ov.footer_font_family);
+            } else if (ov.type === 'text' || ov.type === 'scroll') {
+                if (ov.font_family) fontsToLoad.add(ov.font_family);
+            }
+        }
+    }
+    if (window.getFontManager && fontsToLoad.size > 0) {
+        log(`正在预加载字体: ${Array.from(fontsToLoad).join(', ')}`);
+        const fm = window.getFontManager();
+        for (const font of fontsToLoad) {
+            try {
+                await fm.loadGoogleFont(font);
+            } catch (e) {
+                console.warn(`[Export Font Load] Failed to load font "${font}":`, e);
+            }
+        }
+        try {
+            await document.fonts.ready;
+            log('字体全部加载完成');
+        } catch (e) {
+            console.warn(`[Export Font Load] document.fonts.ready error:`, e);
+        }
+    }
 
     // ── 创建输出目录结构 ──
     const safeName = (taskName || 'task').replace(/[\\/:*?"<>|]/g, '_');
@@ -203,6 +325,18 @@ async function reelsLayeredExport(params) {
                 } else {
                     duration = rawBgDur;
                 }
+            } else if (contentVideoPath) {
+                let rawCvDur = await window.electronAPI.getMediaDuration(contentVideoPath);
+                if (rawCvDur > 0) {
+                    const trimS = (contentVideoTrimStart != null) ? parseFloat(contentVideoTrimStart) : 0;
+                    const trimE = (contentVideoTrimEnd != null) ? parseFloat(contentVideoTrimEnd) : 0;
+                    if (trimE > trimS) {
+                        rawCvDur = trimE - trimS;
+                    } else if (trimS > 0) {
+                        rawCvDur = Math.max(0, rawCvDur - trimS);
+                    }
+                    duration = rawCvDur;
+                }
             }
         }
         if (!duration || duration <= 0) {
@@ -229,31 +363,45 @@ async function reelsLayeredExport(params) {
     }
 
     // ═══ 阶段 1: FFmpeg 提取背景帧序列 ═══
-    log('阶段1: FFmpeg 预处理背景视频...');
-    progress(5);
+    let framesDir = null;
+    let totalBgFrames = 0;
 
-    const prepResult = await window.electronAPI.reelsComposeWysiwyg('prepare-bg', {
-        backgroundPath: isMultiClip ? null : backgroundPath,
-        bgMode: isMultiClip ? 'multi' : 'single',
-        bgClipPool: isMultiClip ? bgClipPool : [],
-        bgTransition: isMultiClip ? bgTransition : 'none',
-        bgTransDur: isMultiClip ? bgTransDur : 0,
-        voicePath,
-        targetWidth,
-        targetHeight,
-        fps,
-        duration,
-        loopFade: isMultiClip ? false : loopFade,
-        loopFadeDur,
-        bgScale: bgScale || 100,
-    });
+    if (!contentVideoBlurBg) {
+        log('阶段1: FFmpeg 预处理背景视频...');
+        progress(5);
 
-    if (!prepResult || prepResult.error) {
-        throw new Error(prepResult?.error || '背景预处理失败');
+        const prepResult = await window.electronAPI.reelsComposeWysiwyg('prepare-bg', {
+            backgroundPath: isMultiClip ? null : backgroundPath,
+            bgMode: isMultiClip ? 'multi' : 'single',
+            bgClipPool: isMultiClip ? bgClipPool : [],
+            bgClipOrder: isMultiClip ? bgClipOrder : 'random',
+            bgClipSeed: isMultiClip ? bgClipSeed : '',
+            bgTransition: isMultiClip ? bgTransition : 'none',
+            bgTransDur: isMultiClip ? bgTransDur : 0,
+            voicePath,
+            targetWidth,
+            targetHeight,
+            fps,
+            duration,
+            loopFade: isMultiClip ? false : loopFade,
+            loopFadeDur,
+            bgScale: bgScale || 100,
+            bgX: bgX || 0,
+            bgY: bgY || 0,
+            bgFlipH: bgFlipH || false,
+            bgFlipV: bgFlipV || false,
+            bgDurScale: bgDurScale || 100,
+        });
+
+        if (!prepResult || prepResult.error) {
+            throw new Error(prepResult?.error || '背景预处理失败');
+        }
+        framesDir = prepResult.framesDir;
+        totalBgFrames = prepResult.frameCount;
+        log(`背景帧: ${totalBgFrames} 帧`);
+    } else {
+        log('使用内容视频作为高斯模糊背景，跳过背景视频预处理');
     }
-    const framesDir = prepResult.framesDir;
-    const totalBgFrames = prepResult.frameCount;
-    log(`背景帧: ${totalBgFrames} 帧`);
     progress(15);
 
     // ── 预处理视频覆层帧 ──
@@ -324,21 +472,36 @@ async function reelsLayeredExport(params) {
             const t = frameIdx / fps;
             const frameName = `frame_${String(frameIdx + 1).padStart(6, '0')}.png`;
 
-            // ── 加载背景帧 ──
-            const bgFrameIdx = Math.min(frameIdx, totalBgFrames - 1);
-            if (bgFrameIdx !== currentBgIdx) {
-                const padRef = String(bgFrameIdx + 1).padStart(6, '0');
-                try {
-                    currentBgImg = await _layeredLoadImage(`file://${framesDir}/frame_${padRef}.jpg`);
-                    currentBgIdx = bgFrameIdx;
-                } catch (e) {
+            // ── 预加载内容视频帧 ──
+            if (contentVideoPath && cvFramesDir) {
+                let frameIdxCv = frameIdx;
+                if (cvFrameCount > 0) frameIdxCv = Math.min(frameIdxCv, cvFrameCount - 1);
+                if (frameIdxCv !== currentCvIdx) {
+                    const cvFrameName = `frame_${String(frameIdxCv + 1).padStart(6, '0')}.png`;
                     try {
-                        currentBgImg = await _layeredLoadImage(`file://${framesDir}/frame_${padRef}.png`);
+                        currentCvImg = await _layeredLoadImage(`file://${cvFramesDir}/${cvFrameName}`);
+                        currentCvIdx = frameIdxCv;
+                    } catch (e) { currentCvImg = null; }
+                }
+            }
+
+            // ── 加载背景帧 ──
+            if (!contentVideoBlurBg) {
+                const bgFrameIdx = Math.min(frameIdx, totalBgFrames - 1);
+                if (bgFrameIdx !== currentBgIdx) {
+                    const padRef = String(bgFrameIdx + 1).padStart(6, '0');
+                    try {
+                        currentBgImg = await _layeredLoadImage(`file://${framesDir}/frame_${padRef}.jpg`);
                         currentBgIdx = bgFrameIdx;
-                    } catch (e2) {
-                        if (!currentBgImg) {
-                            ctx.fillStyle = '#000000';
-                            ctx.fillRect(0, 0, targetWidth, targetHeight);
+                    } catch (e) {
+                        try {
+                            currentBgImg = await _layeredLoadImage(`file://${framesDir}/frame_${padRef}.png`);
+                            currentBgIdx = bgFrameIdx;
+                        } catch (e2) {
+                            if (!currentBgImg) {
+                                ctx.fillStyle = '#000000';
+                                ctx.fillRect(0, 0, targetWidth, targetHeight);
+                            }
                         }
                     }
                 }
@@ -383,53 +546,45 @@ async function reelsLayeredExport(params) {
             ctx.fillStyle = '#000000';
             ctx.fillRect(0, 0, targetWidth, targetHeight);
 
-            if (currentBgImg) {
-                const _userScale = (bgScale || 100) / 100;
-                if (Math.abs(_userScale - 1.0) < 0.01) {
-                    ctx.drawImage(currentBgImg, 0, 0, targetWidth, targetHeight);
-                } else {
-                    const srcW = currentBgImg.naturalWidth || targetWidth;
-                    const srcH = currentBgImg.naturalHeight || targetHeight;
-                    const coverScale = Math.max(targetWidth / srcW, targetHeight / srcH) * _userScale;
-                    const drawW = srcW * coverScale;
-                    const drawH = srcH * coverScale;
-                    const drawX = (targetWidth - drawW) / 2;
-                    const drawY = (targetHeight - drawH) / 2;
-                    ctx.drawImage(currentBgImg, drawX, drawY, drawW, drawH);
-                }
+            if (contentVideoBlurBg && currentCvImg) {
+                const { cropX, cropY, cropW, cropH } = _parseCropString(contentVideoCrop);
+                const blurVal = contentVideoBlur != null ? contentVideoBlur : 40;
+                const brightnessVal = (contentVideoBrightness != null ? contentVideoBrightness : 60) / 100;
+                ctx.save();
+                ctx.filter = `blur(${blurVal}px) brightness(${brightnessVal})`;
+                _drawCroppedVideoCover(ctx, currentCvImg, cropX, cropY, cropW, cropH, targetWidth, targetHeight, bgScale, bgX, bgY, bgFlipH, bgFlipV);
+                ctx.restore();
+            } else if (currentBgImg) {
+                // 直接绘制（FFmpeg 预处理时已完成缩放、裁切与翻转）
+                ctx.drawImage(currentBgImg, 0, 0, targetWidth, targetHeight);
             }
 
             // 内容视频
-            if (contentVideoPath && cvFramesDir) {
-                let frameIdxCv = frameIdx;
-                if (cvFrameCount > 0) frameIdxCv = frameIdxCv % cvFrameCount;
-                if (frameIdxCv !== currentCvIdx) {
-                    const cvFrameName = `frame_${String(frameIdxCv + 1).padStart(6, '0')}.png`;
-                    try {
-                        currentCvImg = await _layeredLoadImage(`file://${cvFramesDir}/${cvFrameName}`);
-                        currentCvIdx = frameIdxCv;
-                    } catch (e) { currentCvImg = null; }
+            if (contentVideoPath && currentCvImg) {
+                const imgW = currentCvImg.naturalWidth || targetWidth;
+                const imgH = currentCvImg.naturalHeight || targetHeight;
+                const { cropX, cropY, cropW, cropH } = _parseCropString(contentVideoCrop);
+                const sx = imgW * cropX;
+                const sy = imgH * cropY;
+                const sWidth = imgW * cropW;
+                const sHeight = imgH * cropH;
+
+                const cScale = (contentVideoScale || 100) / 100;
+                const baseScale = targetWidth / sWidth;
+                const finalScale = baseScale * cScale;
+                const drawW = sWidth * finalScale;
+                const drawH = sHeight * finalScale;
+                let drawX = (targetWidth - drawW) / 2;
+                let drawY = (targetHeight - drawH) / 2;
+                if (contentVideoX && contentVideoX !== 'center') {
+                    const relX = parseFloat(contentVideoX);
+                    if (!isNaN(relX)) Math.abs(relX) <= 1 ? drawX += targetWidth * relX : drawX += relX;
                 }
-                if (currentCvImg) {
-                    const imgW = currentCvImg.naturalWidth || targetWidth;
-                    const imgH = currentCvImg.naturalHeight || targetHeight;
-                    const cScale = (contentVideoScale || 100) / 100;
-                    const baseScale = targetWidth / imgW;
-                    const finalScale = baseScale * cScale;
-                    const drawW = imgW * finalScale;
-                    const drawH = imgH * finalScale;
-                    let drawX = (targetWidth - drawW) / 2;
-                    let drawY = (targetHeight - drawH) / 2;
-                    if (contentVideoX && contentVideoX !== 'center') {
-                        const relX = parseFloat(contentVideoX);
-                        if (!isNaN(relX)) Math.abs(relX) <= 1 ? drawX += targetWidth * relX : drawX += relX;
-                    }
-                    if (contentVideoY && contentVideoY !== 'center') {
-                        const relY = parseFloat(contentVideoY);
-                        if (!isNaN(relY)) Math.abs(relY) <= 1 ? drawY += targetHeight * relY : drawY += relY;
-                    }
-                    ctx.drawImage(currentCvImg, drawX, drawY, drawW, drawH);
+                if (contentVideoY && contentVideoY !== 'center') {
+                    const relY = parseFloat(contentVideoY);
+                    if (!isNaN(relY)) Math.abs(relY) <= 1 ? drawY += targetHeight * relY : drawY += relY;
                 }
+                _drawImageFlipped(ctx, currentCvImg, sx, sy, sWidth, sHeight, drawX, drawY, drawW, drawH, contentVideoFlipH, contentVideoFlipV);
             }
 
             // 全局蒙版
@@ -485,8 +640,8 @@ async function reelsLayeredExport(params) {
 
             if (segments && segments.length > 0) {
                 let activeSeg = segments.find(seg => t >= (seg.start || 0) && t <= (seg.end || 0));
-                // Scrolling mode: find nearest segment during gaps
-                if (!activeSeg && style.scrolling_mode && segments.length > 0) {
+                // Scrolling/typewriter mode: find nearest segment during gaps
+                if (!activeSeg && (style.scrolling_mode || style.fullpage_typewriter) && segments.length > 0) {
                     let best = segments[0];
                     for (const seg of segments) {
                         if ((seg.start || 0) <= t) best = seg;
@@ -589,7 +744,9 @@ async function reelsLayeredExport(params) {
         log(`元信息已写入: info.json`);
 
         // ── 清理缓存 ──
-        await window.electronAPI.reelsComposeWysiwyg('cleanup-bg', { framesDir });
+        if (framesDir) {
+            await window.electronAPI.reelsComposeWysiwyg('cleanup-bg', { framesDir });
+        }
         for (const ov of videoOverlays) {
             if (ov._framesDir) {
                 try { await window.electronAPI.reelsComposeWysiwyg('cleanup-bg', { framesDir: ov._framesDir }); } catch (_) { }
@@ -606,7 +763,9 @@ async function reelsLayeredExport(params) {
 
     } catch (e) {
         // 清理
-        try { await window.electronAPI.reelsComposeWysiwyg('cleanup-bg', { framesDir }); } catch (_) { }
+        if (framesDir) {
+            try { await window.electronAPI.reelsComposeWysiwyg('cleanup-bg', { framesDir }); } catch (_) { }
+        }
         for (const ov of videoOverlays) {
             if (ov._framesDir) {
                 try { await window.electronAPI.reelsComposeWysiwyg('cleanup-bg', { framesDir: ov._framesDir }); } catch (_) { }

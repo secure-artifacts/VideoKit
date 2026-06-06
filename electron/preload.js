@@ -34,6 +34,24 @@ function toFileUrl(filePath) {
     }
 }
 
+function fileExists(filePath) {
+    if (!filePath || typeof filePath !== 'string') return false;
+    let p = filePath.trim();
+    if (!p || /^blob:|^data:|^https?:/i.test(p)) return true;
+    if (/^file:\/\//i.test(p)) {
+        try {
+            p = decodeURIComponent(p.replace(/^file:\/\//i, ''));
+        } catch {
+            p = p.replace(/^file:\/\//i, '');
+        }
+    }
+    try {
+        return fs.existsSync(p);
+    } catch {
+        return false;
+    }
+}
+
 // 暴露 API 给渲染进程
 const _autoSaveDir = path.join(require('os').homedir(), '.videokit');
 const _autoSavePath = path.join(_autoSaveDir, 'autosave.json');
@@ -45,6 +63,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     autoSavePath: _autoSavePath,
     resolveAssetUrl,
     toFileUrl,
+    fileExists,
     // 获取 File 对象的本地完整路径（contextIsolation 下 File.path 不可用）
     getFilePath: (file) => {
         try {
@@ -61,6 +80,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // 选择目录
     selectDirectory: () => ipcRenderer.invoke('select-directory'),
     selectFiles: (options) => ipcRenderer.invoke('select-files', options),
+    saveFile: (options) => ipcRenderer.invoke('save-file', options),
+
     scanDirectory: (dirPath) => ipcRenderer.invoke('scan-directory', dirPath),
     searchFilesRecursive: (searchDir, fileNames, maxDepth) => ipcRenderer.invoke('search-files-recursive', searchDir, fileNames, maxDepth),
     checkFilesExist: (filePaths) => ipcRenderer.invoke('check-files-exist', filePaths),

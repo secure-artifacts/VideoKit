@@ -18,24 +18,34 @@ const PROJECT_VERSION = '2.0.0';
 const REELS_TASK_EXTRA_FIELDS = [
     'txtPath', 'txtContent', 'ttsText', 'ttsVoiceId', 'aiScript', 'aligned',
     'exportName', 'status', 'error',
-    'bgScale', 'bgDurScale', 'audioDurScale',
+    'bgScale', 'bgX', 'bgY', 'bgFlipH', 'bgFlipV', 'bgDurScale', 'audioDurScale',
     'bgMode', 'bgClipPool', 'bgTransition', 'bgTransDur',
     'bgmPath', 'bgmVolume', 'bgVideoVolume',
+    'bgmMode', 'bgmClipPool', 'bgmClipActivePool', 'bgmClipOrder',
     'contentVideoPath', 'contentVideoTrimStart', 'contentVideoTrimEnd',
     'contentVideoScale', 'contentVideoX', 'contentVideoY', 'contentVideoVolume',
+    'contentVideoFlipH', 'contentVideoFlipV',
+    'contentVideoCrop', 'contentVideoBlurBg', 'contentVideoBlur', 'contentVideoBrightness',
     'overlays', 'cover', 'watermarks',
     'pipPath',
     'hookFile', 'hookTrimStart', 'hookTrimEnd', 'hookSpeed',
     'hookTransition', 'hookTransDuration', 'hook',
     'customDuration',
     '_overlayPresetName',
+    'firstSubtitleStyleOverride',
 ];
 
 function _clonePlain(value) {
     if (value === undefined) return undefined;
     try {
-        return JSON.parse(JSON.stringify(value));
-    } catch (_) {
+        // 使用 replacer 过滤掉 _ 开头的运行时临时属性
+        // (如 _allOverlays 造成循环引用, _renderedX/_renderedY 等渲染缓存)
+        return JSON.parse(JSON.stringify(value, (key, val) => {
+            if (key && key.startsWith('_') && key !== '_subtitlePreset' && key !== '_overlayPresetName') return undefined;
+            return val;
+        }));
+    } catch (e) {
+        console.warn('[Project] _clonePlain failed for value, stripping problematic keys:', e.message);
         return undefined;
     }
 }
@@ -95,16 +105,16 @@ function collectProjectData(state) {
             if (typeof task.timeline.toJSON === 'function') {
                 taskData.timeline = task.timeline.toJSON();
             } else {
-                taskData.timeline = JSON.parse(JSON.stringify(task.timeline));
+            taskData.timeline = _clonePlain(task.timeline);
             }
         }
 
         // 覆层
         if (task.textOverlays) {
-            taskData.textOverlays = JSON.parse(JSON.stringify(task.textOverlays));
+            taskData.textOverlays = _clonePlain(task.textOverlays);
         }
         if (task.imageOverlays) {
-            taskData.imageOverlays = JSON.parse(JSON.stringify(task.imageOverlays));
+            taskData.imageOverlays = _clonePlain(task.imageOverlays);
         }
 
         // 前置片段
@@ -409,6 +419,9 @@ function _sanitizeSegments(segments) {
         start: seg.start,
         end: seg.end,
         text: seg.text || '',
+        edited_text: seg.edited_text || undefined,
+        styled_ranges: seg.styled_ranges || undefined,
+        style_override: seg.style_override || undefined,
         words: seg.words || undefined,
     })).filter(s => typeof s.start === 'number' && typeof s.end === 'number');
 }

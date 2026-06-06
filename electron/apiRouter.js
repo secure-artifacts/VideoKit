@@ -27,6 +27,228 @@ const wav2lipService = require('./services/wav2lip');
 const geminiService = require('./services/gemini');
 const templateService = require('./services/templates');
 
+function normalizeNumbers(text) {
+    if (!text) return '';
+    let res = String(text);
+    // English number words
+    const engNums = {
+        'zero': '0', 'one': '1', 'two': '2', 'three': '3', 'four': '4',
+        'five': '5', 'six': '6', 'seven': '7', 'eight': '8', 'nine': '9', 'ten': '10'
+    };
+    for (const [word, num] of Object.entries(engNums)) {
+        res = res.replace(new RegExp(`\\b${word}\\b`, 'gi'), num);
+    }
+    // Chinese number words
+    const cnNums = {
+        '零': '0', '一': '1', '二': '2', '两': '2', '三': '3', '四': '4',
+        '五': '5', '六': '6', '七': '7', '八': '8', '九': '9', '十': '10'
+    };
+    for (const [word, num] of Object.entries(cnNums)) {
+        res = res.replace(new RegExp(word, 'g'), num);
+    }
+    return res;
+}
+
+function normalizeForStrictTextMatch(text) {
+    let clean = String(text || '')
+        .toLowerCase()
+        .normalize('NFKC');
+    clean = normalizeNumbers(clean);
+    return clean.replace(/[^\p{L}\p{N}]/gu, '');
+}
+
+
+function parseSourceTextCandidates(value) {
+    if (!value) return [];
+    if (Array.isArray(value)) return value;
+    if (typeof value === 'string') {
+        try {
+            const parsed = JSON.parse(value);
+            return Array.isArray(parsed) ? parsed : [];
+        } catch {
+            return [];
+        }
+    }
+    return [];
+}
+
+function getCandidateSourceText(candidate) {
+    if (typeof candidate === 'string') return candidate;
+    if (!candidate || typeof candidate !== 'object') return '';
+    return candidate.source_text ?? candidate.sourceText ?? candidate.text ?? '';
+}
+
+function getCandidateTranslateText(candidate) {
+    if (!candidate || typeof candidate !== 'object') return '';
+    return candidate.translate_text ?? candidate.translateText ?? candidate.translation ?? '';
+}
+
+function buildAudioCacheKey(filePath) {
+    const resolved = path.resolve(filePath);
+    let statPart = '';
+    try {
+        const stat = fs.statSync(resolved);
+        statPart = `${stat.size}:${stat.mtimeMs}`;
+    } catch {
+        statPart = 'missing';
+    }
+    return crypto.createHash('md5').update(`${resolved}:${statPart}`).digest('hex').slice(0, 12);
+}
+
+function pickExactSourceTextCandidate(recognizedText, candidates) {
+    const normalizedRecognized = normalizeForStrictTextMatch(recognizedText);
+    if (!normalizedRecognized || candidates.length === 0) return null;
+
+    const matches = [];
+    candidates.forEach((candidate, index) => {
+        const sourceText = getCandidateSourceText(candidate);
+        if (!sourceText) return;
+        if (normalizeForStrictTextMatch(sourceText) === normalizedRecognized) {
+            matches.push({
+                index,
+                candidate,
+                sourceText,
+                translateText: getCandidateTranslateText(candidate),
+            });
+        }
+    });
+
+    if (matches.length === 0) return null;
+    if (matches.length > 1) {
+        const uniqueSourceTexts = new Set(matches.map(m => normalizeForStrictTextMatch(m.sourceText)));
+        const uniqueTranslateTexts = new Set(matches.map(m => normalizeForStrictTextMatch(m.translateText || '')));
+        if (uniqueSourceTexts.size === 1 && uniqueTranslateTexts.size === 1) {
+            console.warn(`[字幕对齐] 自动匹配文案有 ${matches.length} 条重复完全一致候选，使用第一条`);
+            return matches[0];
+        }
+        const err = new Error(`自动匹配文案失败: 有 ${matches.length} 条文案完全一致，无法确定唯一文案`);
+        err.code = 'AUTO_SOURCE_MATCH_AMBIGUOUS';
+        throw err;
+    }
+    return matches[0];
+}
+
+function buildRecognizedText(generationSubtitleArray, fallbackText = '') {
+    if (!Array.isArray(generationSubtitleArray)) return fallbackText || '';
+    return generationSubtitleArray.map(p => {
+        if (p.text) return p.text;
+        if (Array.isArray(p.words)) return p.words.map(w => w.word).join(' ');
+        return '';
+    }).filter(Boolean).join('\n') || fallbackText || '';
+}
+
+function finiteNumber(value) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+}
+
+function buildWordCharTimeline(generationSubtitleArray) {
+    let text = '';
+    const charTimes = [];
+    for (const segment of generationSubtitleArray || []) {
+        for (const word of (segment.words || [])) {
+            const normalized = normalizeForStrictTextMatch(word.word || '');
+            if (!normalized) continue;
+            const start = finiteNumber(word.start) ?? finiteNumber(segment.audio_start);
+            const end = finiteNumber(word.end) ?? finiteNumber(segment.audio_end);
+            if (start === null || end === null) continue;
+            for (let i = 0; i < normalized.length; i++) {
+                text += normalized[i];
+                charTimes.push({ start, end });
+            }
+        }
+    }
+    return { text, charTimes };
+}
+
+function findSubtitleTextTime(text, timeline, fromEnd = false) {
+    const needle = normalizeForStrictTextMatch(text);
+    if (!needle || !timeline.text || needle.length > timeline.text.length) return null;
+    const index = fromEnd ? timeline.text.lastIndexOf(needle) : timeline.text.indexOf(needle);
+    if (index < 0) return null;
+    const first = timeline.charTimes[index];
+    const last = timeline.charTimes[index + needle.length - 1];
+    if (!first || !last) return null;
+    return { start: first.start, end: last.end, index };
+}
+
+function getGlobalVoiceBounds(generationSubtitleArray) {
+    let first = null;
+    let last = null;
+    for (const segment of generationSubtitleArray || []) {
+        for (const word of (segment.words || [])) {
+            const start = finiteNumber(word.start) ?? finiteNumber(segment.audio_start);
+            const end = finiteNumber(word.end) ?? finiteNumber(segment.audio_end);
+            if (start === null || end === null) continue;
+            if (!first) first = { start, end };
+            last = { start, end };
+        }
+    }
+    return first && last ? { start: first.start, end: last.end } : null;
+}
+
+function calibrateSrtTimingFromWordTimeline(sourceSrtPath, srtPaths, generationSubtitleArray) {
+    if (!sourceSrtPath || !fs.existsSync(sourceSrtPath)) return null;
+
+    const items = subtitleService.parseSRT(fs.readFileSync(sourceSrtPath, 'utf-8'));
+    if (items.length < 2) return null;
+
+    const firstItem = items[0];
+    const lastItem = items[items.length - 1];
+    const oldStart = firstItem.start / 1000;
+    const oldEnd = lastItem.end / 1000;
+    const oldSpan = oldEnd - oldStart;
+    if (oldSpan < 1) return null;
+
+    const timeline = buildWordCharTimeline(generationSubtitleArray);
+    const firstMatch = findSubtitleTextTime(firstItem.text, timeline, false);
+    const lastMatch = findSubtitleTextTime(lastItem.text, timeline, true);
+    const voiceBounds = getGlobalVoiceBounds(generationSubtitleArray);
+
+    const targetStart = firstMatch?.start ?? voiceBounds?.start;
+    const targetEnd = lastMatch?.end ?? voiceBounds?.end;
+    if (!Number.isFinite(targetStart) || !Number.isFinite(targetEnd)) return null;
+
+    const targetSpan = targetEnd - targetStart;
+    if (targetSpan < 1) return null;
+
+    const scale = targetSpan / oldSpan;
+    const startDelta = targetStart - oldStart;
+    const endDelta = targetEnd - oldEnd;
+    const shouldCalibrate = Math.abs(startDelta) >= 0.15 || Math.abs(endDelta) >= 0.25 || Math.abs(scale - 1) >= 0.01;
+    if (!shouldCalibrate) {
+        return {
+            applied: false,
+            reason: '字幕首尾与识别时间轴基本一致',
+            start_delta: startDelta,
+            end_delta: endDelta,
+            scale,
+        };
+    }
+
+    const uniqueSrtPaths = [...new Set((srtPaths || []).filter(p => p && p.toLowerCase().endsWith('.srt') && fs.existsSync(p)))];
+    for (const srtPath of uniqueSrtPaths) {
+        const currentItems = subtitleService.parseSRT(fs.readFileSync(srtPath, 'utf-8'));
+        const shifted = currentItems.map((item) => {
+            const newStart = Math.max(0, Math.round((targetStart + ((item.start / 1000) - oldStart) * scale) * 1000));
+            const newEnd = Math.max(newStart + 1, Math.round((targetStart + ((item.end / 1000) - oldStart) * scale) * 1000));
+            return { ...item, start: newStart, end: newEnd };
+        });
+        subtitleService.writeSRT(shifted, srtPath);
+    }
+
+    console.log(`[字幕对齐] 已自动校准 SRT 时间轴: start=${startDelta.toFixed(3)}s end=${endDelta.toFixed(3)}s scale=${scale.toFixed(5)}`);
+    return {
+        applied: true,
+        start_delta: startDelta,
+        end_delta: endDelta,
+        scale,
+        first_match: !!firstMatch,
+        last_match: !!lastMatch,
+        files: uniqueSrtPaths,
+    };
+}
+
 /**
  * 注册所有 IPC API 路由
  */
@@ -37,7 +259,7 @@ function registerAPIHandlers() {
             const result = await routeAPI(endpoint, data || {});
             return { success: true, data: result };
         } catch (error) {
-            const safeMsg = String(error.message || 'Unknown error').replace(/[a-zA-Z0-9_-]{20,}/g, '***');
+            const safeMsg = String(error.message || 'Unknown error').replace(/[a-zA-Z0-9_-]{20,}/g, (m) => /^(AUTO_SOURCE_MATCH_NOT_FOUND|AUTO_SOURCE_MATCH_REQUIRED|TEXT_MISMATCH)$/.test(m) ? m : '***');
             console.error(`[API Error] ${endpoint}: request failed`);
             return { success: false, error: safeMsg };
         }
@@ -49,7 +271,7 @@ function registerAPIHandlers() {
             const result = await routeUpload(endpoint, fileBuffer, fileName, formData || {});
             return { success: true, data: result };
         } catch (error) {
-            const safeMsg = String(error.message || 'Unknown error').replace(/[a-zA-Z0-9_-]{20,}/g, '***');
+            const safeMsg = String(error.message || 'Unknown error').replace(/[a-zA-Z0-9_-]{20,}/g, (m) => /^(AUTO_SOURCE_MATCH_NOT_FOUND|AUTO_SOURCE_MATCH_REQUIRED|TEXT_MISMATCH)$/.test(m) ? m : '***');
             console.error(`[Upload Error] ${endpoint}: request failed`);
             return { success: false, error: safeMsg };
         }
@@ -334,6 +556,21 @@ async function routeAPI(endpoint, data) {
                 ffmpegService.getResolution(data.file_path)
             ]);
             return { duration, frame_rate: frameRate, resolution };
+        }
+
+        case 'media/concat-clips': {
+            const clips = Array.isArray(data.clips) ? data.clips : [];
+            if (clips.length < 2) throw new Error('至少需要 2 个视频片段');
+            if (!data.output_path) throw new Error('缺少输出路径');
+            return await ffmpegService.concatClips({
+                clips,
+                outputPath: data.output_path,
+                targetWidth: parseInt(data.target_width || 1080, 10),
+                targetHeight: parseInt(data.target_height || 1920, 10),
+                fps: parseInt(data.fps || 30, 10),
+                crf: parseInt(data.crf || 18, 10),
+                preset: data.preset || 'fast',
+            });
         }
 
         case 'media/waveform': {
@@ -790,11 +1027,55 @@ async function routeAPI(endpoint, data) {
             );
 
         // ==================== 字幕生成（Gladia + 完整对齐） ====================
+        case 'subtitle/clear-cache': {
+            if (!data.audio_path && !data.audio_file_path) throw new Error('缺少音频文件路径');
+            const audioPath = data.audio_path || data.audio_file_path;
+            
+            const langInput = data.language || 'english';
+            let currentLanguage = langInput;
+            for (const [code, info] of Object.entries(subtitleUtils.LANGUAGES)) {
+                if (info.name === langInput) { currentLanguage = code; break; }
+            }
+            
+            const fileName = path.parse(audioPath).name;
+            const logDir = settingsService.getSecureTmpDir('videokit_log');
+            const audioCacheKey = buildAudioCacheKey(audioPath);
+            const jsonPath = path.join(logDir, `${currentLanguage}_${fileName}_${audioCacheKey}_audio_text_whittime.json`);
+            const txtPath = path.join(logDir, `${currentLanguage}_${fileName}_${audioCacheKey}_finally.txt`);
+            
+            let deletedJson = false;
+            let deletedTxt = false;
+            
+            try { if (fs.existsSync(jsonPath)) { fs.unlinkSync(jsonPath); deletedJson = true; } } catch {}
+            try { if (fs.existsSync(txtPath)) { fs.unlinkSync(txtPath); deletedTxt = true; } } catch {}
+            
+            return {
+                message: '清除缓存成功',
+                deletedJson,
+                deletedTxt,
+                jsonPath,
+                txtPath
+            };
+        }
+
+
         case 'subtitle/generate': {
             if (!data.audio_path && !data.audio_file_path) throw new Error('缺少音频文件路径');
             const audioPath = data.audio_path || data.audio_file_path;
             const gladiaKeysData = settingsService.loadGladiaKeys();
-            const gladiaKeys = gladiaKeysData.keys || [];
+            let gladiaKeys = gladiaKeysData.keys || [];
+            if (data.gladia_keys) {
+                if (Array.isArray(data.gladia_keys)) {
+                    gladiaKeys = data.gladia_keys.map(k => typeof k === 'string' ? k.trim() : '').filter(Boolean);
+                } else if (typeof data.gladia_keys === 'string') {
+                    try {
+                        const parsed = JSON.parse(data.gladia_keys);
+                        if (Array.isArray(parsed)) {
+                            gladiaKeys = parsed.map(k => typeof k === 'string' ? k.trim() : '').filter(Boolean);
+                        }
+                    } catch {}
+                }
+            }
             if (gladiaKeys.length === 0) throw new Error('未配置 Gladia API Key');
 
             // 确定语言
@@ -810,20 +1091,25 @@ async function routeAPI(endpoint, data) {
             const fileName = path.parse(audioPath).name;
             const logDir = settingsService.getSecureTmpDir('videokit_log');
             fs.mkdirSync(logDir, { recursive: true });
-            const jsonPath = path.join(logDir, `${currentLanguage}_${fileName}_audio_text_whittime.json`);
-            const txtPath = path.join(logDir, `${currentLanguage}_${fileName}_finally.txt`);
+            const audioCacheKey = buildAudioCacheKey(audioPath);
+            const jsonPath = path.join(logDir, `${currentLanguage}_${fileName}_${audioCacheKey}_audio_text_whittime.json`);
+            const txtPath = path.join(logDir, `${currentLanguage}_${fileName}_${audioCacheKey}_finally.txt`);
+            const forceTranscribe = data.force === true || data.force === 'true';
+            console.log(`[字幕对齐] 音频: ${audioPath}`);
+            console.log(`[字幕对齐] 转录缓存: ${path.basename(jsonPath)}`);
+            console.log(`[字幕对齐] 强制重新转录: ${forceTranscribe ? '是' : '否'}`);
 
             // JSON 文件输入
             let generationSubtitleArray;
             let generationSubtitleText;
             let transcriptionSource = 'unknown'; // 追踪转录数据来源
 
-            // 强制重新转录时，删除缓存文件
-            if (data.force) {
+            // 强制重新转录时，不允许继续读旧缓存。
+            if (forceTranscribe) {
                 const hadCache = fs.existsSync(jsonPath);
                 try { if (hadCache) fs.unlinkSync(jsonPath); } catch { }
                 try { if (fs.existsSync(txtPath)) fs.unlinkSync(txtPath); } catch { }
-                if (hadCache) console.log(`[字幕对齐] 强制模式: 已删除旧缓存 ${path.basename(jsonPath)}`);
+                console.log(`[字幕对齐] 强制模式: 不使用缓存 ${path.basename(jsonPath)}${hadCache ? '（已删除旧缓存）' : '（无旧缓存）'}`);
             }
 
             if (audioPath.toLowerCase().endsWith('.json')) {
@@ -845,9 +1131,9 @@ async function routeAPI(endpoint, data) {
                 fs.writeFileSync(jsonPath, JSON.stringify(generationSubtitleArray, null, 4), 'utf-8');
                 fs.writeFileSync(txtPath, generationSubtitleText, 'utf-8');
                 transcriptionSource = 'json_file';
-            } else if (!fs.existsSync(jsonPath)) {
+            } else if (forceTranscribe || !fs.existsSync(jsonPath)) {
                 // Gladia 转录
-                console.log(`[字幕对齐] 🎙️ 正在调用 Gladia 进行语音识别...`);
+                console.log(`[字幕对齐] 🎙️ 正在调用 Gladia 进行语音识别${forceTranscribe ? '（强制重新转录）' : ''}...`);
                 const cutLength = parseFloat(data.audio_cut_length || 5.0);
                 const result = await gladiaService.transcribeAudioFull(
                     audioPath, gladiaKeys, langEnName, jsonPath, txtPath, cutLength
@@ -863,15 +1149,84 @@ async function routeAPI(endpoint, data) {
                 console.log(`[字幕对齐] 📦 使用缓存转录数据: ${path.basename(jsonPath)}`);
             }
 
+            const sourceTextCandidates = parseSourceTextCandidates(data.source_text_candidates);
+            const requireAutoSourceMatch = data.require_auto_source_match === true || data.require_auto_source_match === 'true';
+            let selectedSourceText = data.source_text || '';
+            let selectedTranslateText = data.translate_text || '';
+            const ignoreMismatch = data.ignore_mismatch === true || data.ignore_mismatch === 'true';
+            let autoMatchedSource = null;
+
+            // Check if current row's text is 100% exact normalized match
+            let ownTextMatches = false;
+            if (selectedSourceText.trim()) {
+                const normSelected = normalizeForStrictTextMatch(selectedSourceText);
+                const normRecognized = normalizeForStrictTextMatch(generationSubtitleText);
+                if (normSelected && normRecognized && normSelected === normRecognized) {
+                    ownTextMatches = true;
+                    console.log(`[字幕对齐] 当前行文案符合100%归一化匹配，直接使用当前行文案`);
+                }
+            }
+
+            if (!ignoreMismatch && !ownTextMatches) {
+                if (sourceTextCandidates.length > 0) {
+                    autoMatchedSource = pickExactSourceTextCandidate(generationSubtitleText, sourceTextCandidates);
+                    if (!autoMatchedSource) {
+                        throw new Error(JSON.stringify({
+                            code: 'AUTO_SOURCE_MATCH_NOT_FOUND',
+                            similarity: 0,
+                            recognized_text: buildRecognizedText(generationSubtitleArray, generationSubtitleText),
+                            message: '自动匹配文案失败: 识别文本和候选文案没有完全一致项（已忽略大小写、标点、空格和换行）'
+                        }));
+                    }
+                    selectedSourceText = autoMatchedSource.sourceText;
+                    selectedTranslateText = autoMatchedSource.translateText || selectedTranslateText;
+                    console.log(`[字幕对齐] 自动匹配文案成功: 候选 #${autoMatchedSource.index + 1}`);
+                } else {
+                    const diff_match_patch = require('diff-match-patch');
+                    const dmp = new diff_match_patch();
+                    const cleanGen = normalizeForStrictTextMatch(generationSubtitleText);
+                    const cleanSource = normalizeForStrictTextMatch(selectedSourceText);
+                    const diffs = dmp.diff_main(cleanGen, cleanSource);
+                    let equalLen = 0;
+                    for (const [op, text] of diffs) {
+                        if (op === 0) equalLen += text.length;
+                    }
+                    const maxLen = Math.max(cleanGen.length, cleanSource.length);
+                    const similarity = maxLen === 0 ? 1 : equalLen / maxLen;
+
+                    throw new Error(JSON.stringify({
+                        code: 'TEXT_MISMATCH',
+                        similarity: Math.round(similarity * 100),
+                        recognized_text: buildRecognizedText(generationSubtitleArray, generationSubtitleText)
+                    }));
+                }
+            } else {
+                if (!ownTextMatches && sourceTextCandidates.length > 0) {
+                    autoMatchedSource = pickExactSourceTextCandidate(generationSubtitleText, sourceTextCandidates);
+                    if (autoMatchedSource) {
+                        selectedSourceText = autoMatchedSource.sourceText;
+                        selectedTranslateText = autoMatchedSource.translateText || selectedTranslateText;
+                        console.log(`[字幕对齐] 自动匹配文案成功: 候选 #${autoMatchedSource.index + 1}`);
+                    }
+                } else if (!ownTextMatches && requireAutoSourceMatch) {
+                    throw new Error(JSON.stringify({
+                        code: 'AUTO_SOURCE_MATCH_REQUIRED',
+                        similarity: 0,
+                        recognized_text: buildRecognizedText(generationSubtitleArray, generationSubtitleText),
+                        message: '自动匹配文案失败: 前端要求自动匹配，但候选池为空'
+                    }));
+                }
+            }
+
             // 如果提供了原文本，执行完整对齐
-            if (data.source_text) {
+            if (selectedSourceText) {
                 const sourceTextPath = settingsService.secureTmpFile('source', '.txt');
-                fs.writeFileSync(sourceTextPath, data.source_text, 'utf-8');
+                fs.writeFileSync(sourceTextPath, selectedSourceText, 'utf-8');
 
                 const translateTextDict = {};
-                if (data.translate_text) {
+                if (selectedTranslateText) {
                     const translatePath = settingsService.secureTmpFile('translate', '.txt');
-                    fs.writeFileSync(translatePath, data.translate_text, 'utf-8');
+                    fs.writeFileSync(translatePath, selectedTranslateText, 'utf-8');
                     translateTextDict['翻译文本'] = {
                         filename: '翻译文本',
                         filepath: translatePath,
@@ -920,6 +1275,15 @@ async function routeAPI(endpoint, data) {
                 const fcpxmlFile = path.join(outputDir, `${fileName}_${currentLanguage}.fcpxml`);
                 if (fs.existsSync(fcpxmlFile)) generatedFiles.push(fcpxmlFile);
 
+                const timingCalibration = calibrateSrtTimingFromWordTimeline(sourceSrt, generatedFiles, generationSubtitleArray);
+                if (timingCalibration?.applied && exportFcpxml && fs.existsSync(sourceSrt)) {
+                    const translateSrtList = Object.keys(translateTextDict)
+                        .map(k => path.join(outputDir, `${fileName}_${currentLanguage}_${k.replace('.txt', '')}_translate.srt`))
+                        .filter(p => fs.existsSync(p))
+                        .map(p => fs.readFileSync(p, 'utf-8'));
+                    fcpxmlService.SrtsToFcpxml(fs.readFileSync(sourceSrt, 'utf-8'), translateSrtList, fcpxmlFile, seamlessFcpxml);
+                }
+
                 // 清理
                 try { fs.unlinkSync(sourceTextPath); } catch { }
 
@@ -928,8 +1292,16 @@ async function routeAPI(endpoint, data) {
                     result: alignResult,
                     files: generatedFiles,
                     output_dir: outputDir,
+                    audio_path: audioPath,
+                    cache_key: audioCacheKey,
                     transcription_source: transcriptionSource,
                     aligned_at: new Date().toISOString(),
+                    timing_calibration: timingCalibration,
+                    recognized_text: buildRecognizedText(generationSubtitleArray, generationSubtitleText),
+                    auto_matched_source: autoMatchedSource ? {
+                        index: autoMatchedSource.index,
+                        source_text: autoMatchedSource.sourceText,
+                    } : null,
                 };
             }
 
@@ -1025,6 +1397,17 @@ async function routeAPI(endpoint, data) {
         // ==================== 别名兼容 ====================
         case 'settings/elevenlabs/keys':
             if (data._method === 'GET') return { keys: settingsService.loadElevenLabsKeysWithStatus() };
+            if (data._method === 'POST') {
+                settingsService.addElevenLabsKey(data.key || '');
+                return { message: '添加成功' };
+            }
+            if (data._method === 'DELETE') {
+                settingsService.deleteElevenLabsKey(data.index);
+                return { message: '删除成功' };
+            }
+            if (data._method === 'PUT') {
+                return settingsService.updateElevenLabsKeys(data);
+            }
             settingsService.saveElevenLabsKeysWithStatus(data.keys || data);
             return { message: '保存成功' };
 
@@ -1327,11 +1710,9 @@ async function routeUpload(endpoint, fileBuffer, fileName, formData) {
                     try { gladiaKeys = JSON.parse(formData.gladia_keys); } catch { }
                 }
 
-                const sourceText = formData.source_text || '';
-                const translateText = formData.translate_text || '';
+                let sourceText = formData.source_text || '';
+                let translateText = formData.translate_text || '';
                 const langInput = formData.language || 'en';
-
-                if (!sourceText) throw new Error('缺少原文本');
 
                 // 确定语言
                 let currentLanguage = langInput;
@@ -1344,14 +1725,46 @@ async function routeUpload(endpoint, fileBuffer, fileName, formData) {
                 const baseName = path.parse(fileName).name;
                 const logDir = settingsService.getSecureTmpDir('videokit_log');
                 fs.mkdirSync(logDir, { recursive: true });
-                const jsonPath = path.join(logDir, `${currentLanguage}_${baseName}_audio_text_whittime.json`);
-                const txtPath = path.join(logDir, `${currentLanguage}_${baseName}_finally.txt`);
+                const audioCacheKey = buildAudioCacheKey(tempPath);
+                const jsonPath = path.join(logDir, `${currentLanguage}_${baseName}_${audioCacheKey}_audio_text_whittime.json`);
+                const txtPath = path.join(logDir, `${currentLanguage}_${baseName}_${audioCacheKey}_finally.txt`);
 
                 // Gladia 转录
                 const cutLength = parseFloat(formData.audio_cut_length || 5.0);
                 const result = await gladiaService.transcribeAudioFull(
                     tempPath, gladiaKeys, langEnName, jsonPath, txtPath, cutLength
                 );
+
+                const sourceTextCandidates = parseSourceTextCandidates(formData.source_text_candidates);
+                let autoMatchedSource = null;
+
+                // Check if current row's text is 100% exact normalized match
+                let ownTextMatches = false;
+                if (sourceText.trim()) {
+                    const normSelected = normalizeForStrictTextMatch(sourceText);
+                    const normRecognized = normalizeForStrictTextMatch(result.fullText);
+                    if (normSelected && normRecognized && normSelected === normRecognized) {
+                        ownTextMatches = true;
+                        console.log(`[字幕对齐] 当前行文件文案符合100%归一化匹配，直接使用`);
+                    }
+                }
+
+                if (!ownTextMatches && sourceTextCandidates.length > 0) {
+                    autoMatchedSource = pickExactSourceTextCandidate(result.fullText, sourceTextCandidates);
+                    if (!autoMatchedSource) {
+                        throw new Error(JSON.stringify({
+                            code: 'AUTO_SOURCE_MATCH_NOT_FOUND',
+                            similarity: 0,
+                            recognized_text: buildRecognizedText(result.wordTimeInfo, result.fullText),
+                            message: '自动匹配文案失败: 识别文本和候选文案没有完全一致项（已忽略大小写、标点、空格和换行）'
+                        }));
+                    }
+                    sourceText = autoMatchedSource.sourceText;
+                    translateText = autoMatchedSource.translateText || translateText;
+                    console.log(`[字幕对齐] 自动匹配文案成功: 候选 #${autoMatchedSource.index + 1}`);
+                }
+
+                if (!sourceText) throw new Error('缺少原文本');
 
                 // 写入原文本到临时文件
                 const sourceTextPath = settingsService.secureTmpFile('source_upload', '.txt');
@@ -1403,6 +1816,15 @@ async function routeUpload(endpoint, fileBuffer, fileName, formData) {
                 const fcpxmlFile = path.join(outputDir, `${baseName}_${currentLanguage}.fcpxml`);
                 if (fs.existsSync(fcpxmlFile)) generatedFiles.push(fcpxmlFile);
 
+                const timingCalibration = calibrateSrtTimingFromWordTimeline(sourceSrt, generatedFiles, result.wordTimeInfo);
+                if (timingCalibration?.applied && exportFcpxml && fs.existsSync(sourceSrt)) {
+                    const translateSrtList = Object.keys(translateTextDict)
+                        .map(k => path.join(outputDir, `${baseName}_${currentLanguage}_${k.replace('.txt', '')}_translate.srt`))
+                        .filter(p => fs.existsSync(p))
+                        .map(p => fs.readFileSync(p, 'utf-8'));
+                    fcpxmlService.SrtsToFcpxml(fs.readFileSync(sourceSrt, 'utf-8'), translateSrtList, fcpxmlFile, seamlessFcpxml);
+                }
+
                 // 清理临时文件
                 try { fs.unlinkSync(tempPath); } catch { }
                 try { fs.unlinkSync(sourceTextPath); } catch { }
@@ -1412,6 +1834,11 @@ async function routeUpload(endpoint, fileBuffer, fileName, formData) {
                     result: alignResult,
                     files: generatedFiles,
                     output_dir: outputDir,
+                    timing_calibration: timingCalibration,
+                    auto_matched_source: autoMatchedSource ? {
+                        index: autoMatchedSource.index,
+                        source_text: autoMatchedSource.sourceText,
+                    } : null,
                 };
             } catch (e) {
                 try { fs.unlinkSync(tempPath); } catch { }

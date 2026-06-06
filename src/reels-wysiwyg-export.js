@@ -190,6 +190,80 @@ function _audioBufferToWav(buffer, maxSamples) {
     return wav;
 }
 
+function _parseCropString(cropStr) {
+    let cropX = 0, cropY = 0, cropW = 1, cropH = 1;
+    if (cropStr && typeof cropStr === 'string' && cropStr.trim() !== '') {
+        const parts = cropStr.split(',').map(p => parseFloat(p.trim()));
+        if (parts.length === 4 && parts.every(p => !isNaN(p))) {
+            cropX = Math.max(0, Math.min(100, parts[0])) / 100;
+            cropY = Math.max(0, Math.min(100, parts[1])) / 100;
+            cropW = Math.max(1, Math.min(100, parts[2])) / 100;
+            cropH = Math.max(1, Math.min(100, parts[3])) / 100;
+        }
+    }
+    return { cropX, cropY, cropW, cropH };
+}
+
+function _drawImageFlipped(ctx, img, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, flipH, flipV) {
+    if (!flipH && !flipV) {
+        if (arg5 !== undefined) {
+            ctx.drawImage(img, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
+        } else if (arg3 !== undefined) {
+            ctx.drawImage(img, arg1, arg2, arg3, arg4);
+        } else {
+            ctx.drawImage(img, arg1, arg2);
+        }
+        return;
+    }
+    
+    ctx.save();
+    let dx, dy, dw, dh;
+    if (arg5 !== undefined) {
+        // 9 arguments: img, sx, sy, sw, sh, dx, dy, dw, dh
+        dx = arg5; dy = arg6; dw = arg7; dh = arg8;
+        ctx.translate(dx + dw / 2, dy + dh / 2);
+        ctx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
+        ctx.drawImage(img, arg1, arg2, arg3, arg4, -dw / 2, -dh / 2, dw, dh);
+    } else if (arg3 !== undefined) {
+        // 5 arguments: img, dx, dy, dw, dh
+        dx = arg1; dy = arg2; dw = arg3; dh = arg4;
+        ctx.translate(dx + dw / 2, dy + dh / 2);
+        ctx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
+        ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
+    } else {
+        // 3 arguments: img, dx, dy
+        dx = arg1; dy = arg2; dw = img.naturalWidth || img.width || 0; dh = img.naturalHeight || img.height || 0;
+        ctx.translate(dx + dw / 2, dy + dh / 2);
+        ctx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
+        ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
+    }
+    ctx.restore();
+}
+
+function _drawCroppedVideoCover(ctx, videoEl, cropX, cropY, cropW, cropH, targetW, targetH, scalePct, offsetX = 0, offsetY = 0, flipH = false, flipV = false) {
+    if (!ctx || !videoEl || !(targetW > 0) || !(targetH > 0)) return;
+    const srcW = videoEl.videoWidth || videoEl.naturalWidth || targetW;
+    const srcH = videoEl.videoHeight || videoEl.naturalHeight || targetH;
+    if (!(srcW > 0) || !(srcH > 0)) {
+        _drawImageFlipped(ctx, videoEl, 0, 0, targetW, targetH, undefined, undefined, undefined, undefined, flipH, flipV);
+        return;
+    }
+    const sx = srcW * cropX;
+    const sy = srcH * cropY;
+    const sWidth = srcW * cropW;
+    const sHeight = srcH * cropH;
+
+    const userScale = (scalePct || 100) / 100;
+    const scale = Math.max(targetW / sWidth, targetH / sHeight) * userScale;
+    const drawW = sWidth * scale;
+    const drawH = sHeight * scale;
+    const maxShiftX = Math.abs(targetW - drawW) / 2;
+    const maxShiftY = Math.abs(targetH - drawH) / 2;
+    const drawX = (targetW - drawW) / 2 + maxShiftX * (offsetX / 100);
+    const drawY = (targetH - drawH) / 2 + maxShiftY * (offsetY / 100);
+    _drawImageFlipped(ctx, videoEl, sx, sy, sWidth, sHeight, drawX, drawY, drawW, drawH, flipH, flipV);
+}
+
 
 /**
  * WYSIWYG 导出一个 Reel 任务
@@ -203,6 +277,8 @@ async function reelsWysiwygExport(params) {
         backgroundPath,
         bgMode = 'single',       // 'single' | 'multi'
         bgClipPool = [],         // 多素材池路径列表
+        bgClipOrder = 'random',  // 'random' | 'sequence'
+        bgClipSeed = '',         // 随机顺序种子，与预览保持一致
         bgTransition = 'crossfade', // 多素材转场类型
         bgTransDur = 0.5,        // 多素材转场时长(秒)
         voicePath,
@@ -224,7 +300,17 @@ async function reelsWysiwygExport(params) {
         contentVideoX = 'center',
         contentVideoY = 'center',
         contentVideoVolume = 1.0,
+        contentVideoCrop = '',
+        contentVideoBlurBg = false,
+        contentVideoBlur = 40,
+        contentVideoBrightness = 60,
         bgScale = 100,       // 背景图片缩放 (50~300%)
+        bgX = 0,
+        bgY = 0,
+        bgFlipH = false,
+        bgFlipV = false,
+        contentVideoFlipH = false,
+        contentVideoFlipV = false,
         bgDurScale = 100,    // 背景素材时长缩放 (10~500%)
         audioDurScale = 100,  // 音频素材时长缩放 (10~500%)
         reverbEnabled = false,
@@ -241,7 +327,7 @@ async function reelsWysiwygExport(params) {
     const isMultiClip = bgMode === 'multi' && Array.isArray(bgClipPool) && bgClipPool.length > 0;
 
     if (!canvas) throw new Error('需要提供 canvas');
-    if (!backgroundPath && !isMultiClip) throw new Error('缺少背景素材');
+    if (!backgroundPath && !isMultiClip && !contentVideoBlurBg) throw new Error('缺少背景素材');
     if (!outputPath) throw new Error('缺少输出路径');
     if (!window.electronAPI || !window.electronAPI.reelsComposeWysiwyg) {
         throw new Error('需要 reelsComposeWysiwyg IPC 接口');
@@ -252,6 +338,41 @@ async function reelsWysiwygExport(params) {
 
     const log = (msg) => { if (onLog) onLog(msg); console.log(`[WYSIWYG] ${msg}`); };
     const progress = (v) => { if (onProgress) onProgress(v); };
+
+    // ── 确保所有覆层与字幕使用的字体全部预加载完成 ──
+    const fontsToLoad = new Set();
+    if (style && style.font_family) {
+        fontsToLoad.add(style.font_family);
+    }
+    if (Array.isArray(taskOverlays)) {
+        for (const ov of taskOverlays) {
+            if (ov.disabled) continue;
+            if (ov.type === 'textcard' || !ov.type || ov.type === '') {
+                if (ov.title_text && ov.title_font_family) fontsToLoad.add(ov.title_font_family);
+                if (ov.body_text && ov.body_font_family) fontsToLoad.add(ov.body_font_family);
+                if (ov.footer_text && ov.footer_font_family) fontsToLoad.add(ov.footer_font_family);
+            } else if (ov.type === 'text' || ov.type === 'scroll') {
+                if (ov.font_family) fontsToLoad.add(ov.font_family);
+            }
+        }
+    }
+    if (window.getFontManager && fontsToLoad.size > 0) {
+        log(`正在预加载字体: ${Array.from(fontsToLoad).join(', ')}`);
+        const fm = window.getFontManager();
+        for (const font of fontsToLoad) {
+            try {
+                await fm.loadGoogleFont(font);
+            } catch (e) {
+                console.warn(`[Export Font Load] Failed to load font "${font}":`, e);
+            }
+        }
+        try {
+            await document.fonts.ready;
+            log('字体全部加载完成');
+        } catch (e) {
+            console.warn(`[Export Font Load] document.fonts.ready error:`, e);
+        }
+    }
 
     canvas.width = targetWidth;
     canvas.height = targetHeight;
@@ -353,6 +474,7 @@ async function reelsWysiwygExport(params) {
     const totalFrames = Math.ceil(duration * fps);
     log(`时长: ${duration.toFixed(2)}s, 帧数: ${totalFrames}, FPS: ${fps}`);
     if (bgScale !== 100) log(`背景缩放: ${bgScale}%`);
+    if (bgX !== 0 || bgY !== 0) log(`背景偏移: X=${bgX}%, Y=${bgY}%`);
     if (bgDurScale !== 100) log(`背景时长缩放: ${bgDurScale}%`);
     if (audioDurScale !== 100) log(`音频时长缩放: ${audioDurScale}%`);
 
@@ -408,6 +530,9 @@ async function reelsWysiwygExport(params) {
     if (params.alphaOverlayBgPath) {
         log('⚡ Alpha Overlay 模式激活：全面跳过底图解压与多层内存搬运！');
         progress(18);
+    } else if (contentVideoBlurBg) {
+        log('使用内容视频做高斯模糊背景，跳过背景预处理');
+        progress(18);
     } else {
         if (isMultiClip) {
             log(`阶段1: FFmpeg 多素材拼接（${bgClipPool.length}个片段，转场: ${bgTransition} ${bgTransDur}s）...`);
@@ -420,6 +545,8 @@ async function reelsWysiwygExport(params) {
             backgroundPath: isMultiClip ? null : backgroundPath,
             bgMode: isMultiClip ? 'multi' : 'single',
             bgClipPool: isMultiClip ? bgClipPool : [],
+            bgClipOrder: isMultiClip ? bgClipOrder : 'random',
+            bgClipSeed: isMultiClip ? bgClipSeed : '',
             bgTransition: isMultiClip ? bgTransition : 'none',
             bgTransDur: isMultiClip ? bgTransDur : 0,
             voicePath,
@@ -430,6 +557,10 @@ async function reelsWysiwygExport(params) {
             loopFade: isMultiClip ? false : loopFade,
             loopFadeDur,
             bgScale: bgScale || 100,
+            bgX: bgX || 0,
+            bgY: bgY || 0,
+            bgFlipH: bgFlipH || false,
+            bgFlipV: bgFlipV || false,
             bgDurScale: bgDurScale || 100,
         });
 
@@ -524,6 +655,9 @@ async function reelsWysiwygExport(params) {
         bgHasAudio: isMultiClip ? false : ((voicePath && backgroundPath && voicePath === backgroundPath) ? false : !_isImageFile(backgroundPath)),
         bgmPath: bgmPath || '',
         bgmVolume: bgmVolume || 0,
+        bgScale: bgScale || 100,
+        bgX: bgX || 0,
+        bgY: bgY || 0,
         bgDurScale: bgDurScale || 100,
         audioDurScale: audioDurScale || 100,
         reverbEnabled,
@@ -534,6 +668,8 @@ async function reelsWysiwygExport(params) {
         useGPU,
         contentVideoPath: contentVideoPath || '',
         contentVideoVolume: contentVideoVolume,
+        contentVideoCrop: contentVideoCrop || '',
+        contentVideoBlurBg: contentVideoBlurBg || false,
     });
     if (!sessionId) throw new Error('FFmpeg 启动失败');
 
@@ -593,26 +729,55 @@ async function reelsWysiwygExport(params) {
             }
             const t = frameIdx / fps;
 
-            // 加载背景帧（兼容 jpg/png，优先使用内存预缓存）
-            const bgFrameIdx = Math.min(frameIdx, totalBgFrames - 1);
-            if (bgFrameIdx !== currentBgIdx) {
-                if (_bgFrameCache && _bgFrameCache[bgFrameIdx]) {
-                    // 🚀 内存命中
-                    currentBgImg = _bgFrameCache[bgFrameIdx];
-                    currentBgIdx = bgFrameIdx;
-                } else {
-                    const padRef = String(bgFrameIdx + 1).padStart(6, '0');
+            // ── 预加载内容视频帧 ──
+            if (contentVideoPath && cvFramesDir) {
+                // Clamped to the last frame to prevent 1-frame wrap-around glitch at the end
+                let frameIdxCv = frameIdx;
+                if (cvFrameCount > 0) {
+                    frameIdxCv = Math.min(frameIdxCv, cvFrameCount - 1);
+                }
+                if (frameIdxCv !== currentCvIdx) {
+                    let framePath;
+                    if (cvIsImageSequence && window._cvSeqFileList && window._cvSeqFileList.length > 0) {
+                        // 图片序列: 使用原始文件名
+                        const seqFile = window._cvSeqFileList[frameIdxCv];
+                        framePath = `file://${cvFramesDir}/${seqFile}`;
+                    } else {
+                        // FFmpeg 提取的帧: frame_000001.png 格式
+                        const frameName = `frame_${String(frameIdxCv + 1).padStart(6, '0')}.png`;
+                        framePath = `file://${cvFramesDir}/${frameName}`;
+                    }
                     try {
-                        currentBgImg = await _loadImage(`file://${framesDir}/frame_${padRef}.jpg`);
-                        currentBgIdx = bgFrameIdx;
+                        currentCvImg = await _loadImage(framePath);
+                        currentCvIdx = frameIdxCv;
                     } catch (e) {
+                        currentCvImg = null;
+                    }
+                }
+            }
+
+            // 加载背景帧（兼容 jpg/png，优先使用内存预缓存）
+            if (!contentVideoBlurBg) {
+                const bgFrameIdx = Math.min(frameIdx, totalBgFrames - 1);
+                if (bgFrameIdx !== currentBgIdx) {
+                    if (_bgFrameCache && _bgFrameCache[bgFrameIdx]) {
+                        // 🚀 内存命中
+                        currentBgImg = _bgFrameCache[bgFrameIdx];
+                        currentBgIdx = bgFrameIdx;
+                    } else {
+                        const padRef = String(bgFrameIdx + 1).padStart(6, '0');
                         try {
-                            currentBgImg = await _loadImage(`file://${framesDir}/frame_${padRef}.png`);
+                            currentBgImg = await _loadImage(`file://${framesDir}/frame_${padRef}.jpg`);
                             currentBgIdx = bgFrameIdx;
-                        } catch (e2) {
-                            if (!currentBgImg) {
-                                ctx.fillStyle = '#000000';
-                                ctx.fillRect(0, 0, targetWidth, targetHeight);
+                        } catch (e) {
+                            try {
+                                currentBgImg = await _loadImage(`file://${framesDir}/frame_${padRef}.png`);
+                                currentBgIdx = bgFrameIdx;
+                            } catch (e2) {
+                                if (!currentBgImg) {
+                                    ctx.fillStyle = '#000000';
+                                    ctx.fillRect(0, 0, targetWidth, targetHeight);
+                                }
                             }
                         }
                     }
@@ -659,77 +824,52 @@ async function reelsWysiwygExport(params) {
             } else {
                 ctx.fillStyle = '#000000';
                 ctx.fillRect(0, 0, targetWidth, targetHeight);
-                if (currentBgImg) {
-                    // 应用背景缩放
-                    const _userScale = (bgScale || 100) / 100;
-                    if (Math.abs(_userScale - 1.0) < 0.01) {
-                        // 无缩放，直接绘制（FFmpeg 已处理尺寸）
-                        ctx.drawImage(currentBgImg, 0, 0, targetWidth, targetHeight);
-                    } else {
-                        // 应用用户缩放: 放大/缩小后居中裁切
-                        const srcW = currentBgImg.naturalWidth || targetWidth;
-                        const srcH = currentBgImg.naturalHeight || targetHeight;
-                        const coverScale = Math.max(targetWidth / srcW, targetHeight / srcH) * _userScale;
-                        const drawW = srcW * coverScale;
-                        const drawH = srcH * coverScale;
-                        const drawX = (targetWidth - drawW) / 2;
-                        const drawY = (targetHeight - drawH) / 2;
-                        ctx.drawImage(currentBgImg, drawX, drawY, drawW, drawH);
-                    }
+                if (contentVideoBlurBg && currentCvImg) {
+                    const { cropX, cropY, cropW, cropH } = _parseCropString(contentVideoCrop);
+                    const blurVal = contentVideoBlur != null ? contentVideoBlur : 40;
+                    const brightnessVal = (contentVideoBrightness != null ? contentVideoBrightness : 60) / 100;
+                    ctx.save();
+                    ctx.filter = `blur(${blurVal}px) brightness(${brightnessVal})`;
+                    _drawCroppedVideoCover(ctx, currentCvImg, cropX, cropY, cropW, cropH, targetWidth, targetHeight, bgScale, bgX, bgY, bgFlipH, bgFlipV);
+                    ctx.restore();
+                } else if (currentBgImg) {
+                    // 直接绘制（FFmpeg 预处理时已完成缩放与裁切）
+                    ctx.drawImage(currentBgImg, 0, 0, targetWidth, targetHeight);
                 }
             }
 
 
             // ── 绘制合并内容视频 ──
-            if (contentVideoPath && cvFramesDir) {
-                // Loop video automatically
-                let frameIdxCv = frameIdx;
-                if (cvFrameCount > 0) {
-                    frameIdxCv = frameIdxCv % cvFrameCount;
+            if (contentVideoPath && currentCvImg) {
+                const imgW = currentCvImg.naturalWidth || targetWidth;
+                const imgH = currentCvImg.naturalHeight || targetHeight;
+                const { cropX, cropY, cropW, cropH } = _parseCropString(contentVideoCrop);
+                const sx = imgW * cropX;
+                const sy = imgH * cropY;
+                const sWidth = imgW * cropW;
+                const sHeight = imgH * cropH;
+
+                const cScale = (contentVideoScale || 100) / 100;
+                
+                // Default width-fit
+                const baseScale = targetWidth / sWidth;
+                const finalScale = baseScale * cScale;
+                const drawW = sWidth * finalScale;
+                const drawH = sHeight * finalScale;
+                
+                let drawX = (targetWidth - drawW) / 2;
+                let drawY = (targetHeight - drawH) / 2;
+                
+                if (contentVideoX && contentVideoX !== 'center') {
+                    const relX = parseFloat(contentVideoX);
+                    if (!isNaN(relX)) Math.abs(relX) <= 1 ? drawX += targetWidth * relX : drawX += relX;
                 }
-                if (frameIdxCv !== currentCvIdx) {
-                    let framePath;
-                    if (cvIsImageSequence && window._cvSeqFileList && window._cvSeqFileList.length > 0) {
-                        // 图片序列: 使用原始文件名
-                        const seqFile = window._cvSeqFileList[frameIdxCv];
-                        framePath = `file://${cvFramesDir}/${seqFile}`;
-                    } else {
-                        // FFmpeg 提取的帧: frame_000001.png 格式
-                        const frameName = `frame_${String(frameIdxCv + 1).padStart(6, '0')}.png`;
-                        framePath = `file://${cvFramesDir}/${frameName}`;
-                    }
-                    try {
-                        currentCvImg = await _loadImage(framePath);
-                        currentCvIdx = frameIdxCv;
-                    } catch (e) {
-                        currentCvImg = null;
-                    }
+                if (contentVideoY && contentVideoY !== 'center') {
+                    const relY = parseFloat(contentVideoY);
+                    if (!isNaN(relY)) Math.abs(relY) <= 1 ? drawY += targetHeight * relY : drawY += relY;
                 }
-                if (currentCvImg) {
-                    const imgW = currentCvImg.naturalWidth || targetWidth;
-                    const imgH = currentCvImg.naturalHeight || targetHeight;
-                    const cScale = (contentVideoScale || 100) / 100;
-                    
-                    // Default width-fit
-                    const baseScale = targetWidth / imgW;
-                    const finalScale = baseScale * cScale;
-                    const drawW = imgW * finalScale;
-                    const drawH = imgH * finalScale;
-                    
-                    let drawX = (targetWidth - drawW) / 2;
-                    let drawY = (targetHeight - drawH) / 2;
-                    
-                    if (contentVideoX && contentVideoX !== 'center') {
-                        const relX = parseFloat(contentVideoX);
-                        if (!isNaN(relX)) Math.abs(relX) <= 1 ? drawX += targetWidth * relX : drawX += relX;
-                    }
-                    if (contentVideoY && contentVideoY !== 'center') {
-                        const relY = parseFloat(contentVideoY);
-                        if (!isNaN(relY)) Math.abs(relY) <= 1 ? drawY += targetHeight * relY : drawY += relY;
-                    }
-                    
-                    ctx.drawImage(currentCvImg, drawX, drawY, drawW, drawH);
-                }
+                
+                _drawImageFlipped(ctx, currentCvImg, sx, sy, sWidth, sHeight, drawX, drawY, drawW, drawH, contentVideoFlipH, contentVideoFlipV);
             }
 
             // ── 全局蒙版 ──
@@ -743,11 +883,8 @@ async function reelsWysiwygExport(params) {
 
             // ── 覆盖层（文字卡片等）──
             if (taskOverlays && taskOverlays.length > 0 && window.ReelsOverlay) {
-                // 注入覆层列表引用（供跟随绑定），并确保 scroll 先渲染
-                const sortedOvs = taskOverlays.filter(ov => !ov.disabled).slice().sort((a, b) => {
-                    return (a.type === 'scroll' ? 0 : 1) - (b.type === 'scroll' ? 0 : 1);
-                });
-                for (const ov of sortedOvs) {
+                // 注入覆层列表引用（供跟随绑定），按面板图层顺序渲染。
+                for (const ov of taskOverlays.filter(ov => !ov.disabled)) {
                     ov._allOverlays = taskOverlays;
                     const ovStart = parseFloat(ov.start || 0);
                     const ovEnd = parseFloat(ov.end || 9999);
@@ -767,8 +904,8 @@ async function reelsWysiwygExport(params) {
 
             // ── 字幕（与预览完全相同的渲染器）──
             let activeSeg = segments.find(seg => t >= (seg.start || 0) && t <= (seg.end || 0));
-            // Scrolling mode: find nearest segment during gaps (same as preview logic)
-            if (!activeSeg && style.scrolling_mode && segments.length > 0) {
+            // Scrolling/typewriter mode: find nearest segment during gaps (same as preview logic)
+            if (!activeSeg && (style.scrolling_mode || style.fullpage_typewriter) && segments.length > 0) {
                 let best = segments[0];
                 for (const seg of segments) {
                     if ((seg.start || 0) <= t) best = seg;
@@ -821,7 +958,9 @@ async function reelsWysiwygExport(params) {
         if (_bgFrameCache) { _bgFrameCache = null; }
 
         // 清理背景帧（磁盘临时文件）
-        await window.electronAPI.reelsComposeWysiwyg('cleanup-bg', { framesDir });
+        if (framesDir) {
+            await window.electronAPI.reelsComposeWysiwyg('cleanup-bg', { framesDir });
+        }
         for (const ov of videoOverlays) {
             if (ov._framesDir) {
                 try { await window.electronAPI.reelsComposeWysiwyg('cleanup-bg', { framesDir: ov._framesDir }); } catch (_) { }
@@ -838,7 +977,9 @@ async function reelsWysiwygExport(params) {
 
     } catch (e) {
         try { await window.electronAPI.reelsComposeWysiwyg('abort', { sessionId }); } catch (_) { }
-        try { await window.electronAPI.reelsComposeWysiwyg('cleanup-bg', { framesDir }); } catch (_) { }
+        if (framesDir) {
+            try { await window.electronAPI.reelsComposeWysiwyg('cleanup-bg', { framesDir }); } catch (_) { }
+        }
         for (const ov of videoOverlays) {
             if (ov._framesDir) {
                 try { await window.electronAPI.reelsComposeWysiwyg('cleanup-bg', { framesDir: ov._framesDir }); } catch (_) { }

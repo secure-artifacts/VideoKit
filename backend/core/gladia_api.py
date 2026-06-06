@@ -213,7 +213,8 @@ def transcribe_local_audio(file_path, api_key="", language_behaviour="automatic 
                     print("错误详情:", error_info)
                     message = error_info.get("message", "")
 
-                    if "limit exceeded" in message:
+                    lower_msg = message.lower()
+                    if response.status_code == 429 or "limit exceeded" in lower_msg or "quota" in lower_msg or "rate limit" in lower_msg:
                         print("Gladia达到限制，切换下一个api key重试。")
                         cur_api_key = get_next_api_key()
                         if cur_api_key == "":

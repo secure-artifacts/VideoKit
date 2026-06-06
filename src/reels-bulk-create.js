@@ -1697,19 +1697,74 @@ function _bcLoadPreset() {
 }
 
 function _bcExportPreset() {
-    const data = {
-        type: 'bulk_create_preset',
-        version: 1,
-        columns: JSON.parse(JSON.stringify(_bulkState.columns)),
-        templates: _bulkState.templates.map(t => ({ task: t.task, label: t.label, bindings: { ...t.bindings }, bgCycle: t.bgCycle || null, source: t.source || null })),
-        exportedAt: new Date().toISOString(),
+    const presets = _bcGetSavedPresets();
+    const names = Object.keys(presets);
+    if (names.length === 0) { alert('暂无保存的大量制作模版可导出'); return; }
+
+    const modal = document.createElement('div');
+    modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:300000;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;';
+    let list = '';
+    names.forEach(n => {
+        const p = presets[n];
+        const tplCount = (p.templates || []).length;
+        const colCount = (p.columns || []).length;
+        const date = p.savedAt ? new Date(p.savedAt).toLocaleDateString() : '';
+        list += `<label style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid #222;cursor:pointer;">
+            <input type="checkbox" class="bc-export-cb" data-name="${_bcEsc(n)}" checked>
+            <div style="flex:1;">
+                <div style="color:#eee;font-size:12px;font-weight:600;">${_bcEsc(n)}</div>
+                <div style="color:#666;font-size:10px;">${colCount}列 · ${tplCount}模板 · ${date}</div>
+            </div>
+        </label>`;
+    });
+    modal.innerHTML = `<div style="background:#1a1a2e;border:1px solid #333;border-radius:10px;width:440px;max-height:65vh;display:flex;flex-direction:column;">
+        <div style="padding:12px 16px;border-bottom:1px solid #333;display:flex;justify-content:space-between;align-items:center;">
+            <span style="color:#fff;font-weight:600;">⬆ 选择要导出的模版</span>
+            <div style="display:flex;gap:6px;">
+                <button class="bc-export-all" style="padding:3px 10px;background:rgba(124,92,255,0.2);border:1px solid rgba(124,92,255,0.3);border-radius:5px;color:#b8a0ff;cursor:pointer;font-size:11px;">全选</button>
+                <button class="bc-export-none" style="padding:3px 10px;background:rgba(255,255,255,0.05);border:1px solid #333;border-radius:5px;color:#888;cursor:pointer;font-size:11px;">全不选</button>
+            </div>
+        </div>
+        <div style="overflow:auto;flex:1;">${list}</div>
+        <div style="padding:10px 16px;border-top:1px solid #333;display:flex;justify-content:space-between;align-items:center;">
+            <span class="bc-export-count" style="color:#888;font-size:11px;">已选 ${names.length}/${names.length}</span>
+            <div style="display:flex;gap:6px;">
+                <button class="bc-export-ok" style="padding:5px 18px;background:linear-gradient(135deg,#7c5cff,#a855f7);border:none;border-radius:5px;color:#fff;cursor:pointer;font-size:12px;font-weight:600;">导出</button>
+                <button class="bc-export-cancel" style="padding:3px 10px;background:rgba(255,255,255,0.05);border:1px solid #333;border-radius:5px;color:#888;cursor:pointer;font-size:11px;">取消</button>
+            </div>
+        </div>
+    </div>`;
+    document.body.appendChild(modal);
+
+    const updateCount = () => {
+        const checked = modal.querySelectorAll('.bc-export-cb:checked').length;
+        const total = modal.querySelectorAll('.bc-export-cb').length;
+        const countEl = modal.querySelector('.bc-export-count');
+        if (countEl) countEl.textContent = `已选 ${checked}/${total}`;
     };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `bulk_preset_${Date.now()}.json`;
-    a.click();
-    URL.revokeObjectURL(a.href);
+    modal.addEventListener('change', updateCount);
+    modal.querySelector('.bc-export-all').onclick = () => { modal.querySelectorAll('.bc-export-cb').forEach(cb => cb.checked = true); updateCount(); };
+    modal.querySelector('.bc-export-none').onclick = () => { modal.querySelectorAll('.bc-export-cb').forEach(cb => cb.checked = false); updateCount(); };
+    modal.querySelector('.bc-export-cancel').onclick = () => modal.remove();
+    modal.querySelector('.bc-export-ok').onclick = () => {
+        const selected = Array.from(modal.querySelectorAll('.bc-export-cb:checked')).map(cb => cb.dataset.name);
+        if (selected.length === 0) { alert('请至少选择一个模版'); return; }
+        const exportData = {};
+        selected.forEach(name => { if (presets[name]) exportData[name] = presets[name]; });
+        const data = {
+            type: 'bulk_create_preset',
+            version: 1,
+            presets: exportData,
+            exportedAt: new Date().toISOString(),
+        };
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `bulk_presets_${Date.now()}.json`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        modal.remove();
+    };
 }
 
 function _bcImportPreset() {
@@ -1722,7 +1777,25 @@ function _bcImportPreset() {
         reader.onload = ev => {
             try {
                 const data = JSON.parse(ev.target.result);
-                if (data.type !== 'bulk_create_preset' || !data.columns) { alert('不是有效的大量制作模版文件'); return; }
+                if (data.type !== 'bulk_create_preset') { alert('不是有效的大量制作模版文件'); return; }
+
+                // New multi-preset format: merge into preset library
+                if (data.presets && typeof data.presets === 'object') {
+                    const existing = _bcGetSavedPresets();
+                    const importNames = Object.keys(data.presets);
+                    let added = 0, updated = 0;
+                    for (const [name, preset] of Object.entries(data.presets)) {
+                        if (existing[name]) updated++;
+                        else added++;
+                        existing[name] = preset;
+                    }
+                    localStorage.setItem(BC_PRESETS_KEY, JSON.stringify(existing));
+                    alert(`✅ 已导入 ${importNames.length} 个模版到库中（新增 ${added}，覆盖 ${updated}）`);
+                    return;
+                }
+
+                // Legacy single-preset format: load directly into current state
+                if (!data.columns) { alert('不是有效的大量制作模版文件'); return; }
                 _bulkState.columns = data.columns;
                 _bulkState.templates = (data.templates || []).map(t => ({ task: t.task, label: t.label, bindings: { ...t.bindings }, bgCycle: t.bgCycle || null, source: t.source || null }));
                 _bulkState.rows.forEach(r => {
@@ -2278,7 +2351,20 @@ function _showBulkCreateModal() {
         }
 
         menu.appendChild(createItem('清理换行', '🧹', () => processItems(v => _bcCleanBreaks(v), 0)));
-        menu.appendChild(createItem('自动断行 (18字)', '↩️', () => processItems(v => _bcAutoWrapText(v), 0)));
+        const savedWrapWidth = parseInt(localStorage.getItem('bc_auto_wrap_width') || '18', 10) || 18;
+        menu.appendChild(createItem(`自动断行 (${savedWrapWidth}字)`, '↩️', () => processItems(v => _bcAutoWrapText(v, savedWrapWidth), 0)));
+        menu.appendChild(createItem('设置断行字数...', '⚙️', async () => {
+            const input = await _bcPrompt('设置自动断行字数', '当前字数: ' + savedWrapWidth);
+            if (input !== null) {
+                const newWidth = parseInt(input.trim(), 10);
+                if (!isNaN(newWidth) && newWidth > 0) {
+                    localStorage.setItem('bc_auto_wrap_width', newWidth);
+                    if (typeof showToast === 'function') showToast(`自动断行字数已设置为 ${newWidth}，再次右键生效`, 'success');
+                } else {
+                    if (typeof showToast === 'function') showToast('请输入有效的正整数', 'error');
+                }
+            }
+        }));
         const div = document.createElement('div'); div.style.cssText = 'height:1px;background:#333;margin:4px 0;';
         menu.appendChild(div);
         menu.appendChild(createItem('拆分两段 (标/内)', '✂️', () => processItems(v => _bcSplitTwoParts(v), 1)));

@@ -179,6 +179,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initMediaToolboxBeta();
     initBatchTTS();
     initSubtitleBatch();
+    initKeyTableManagers();
     loadSettings();
     loadWatermarkSettings();  // 加载保存的水印设置
     checkBackendHealth();
@@ -2064,6 +2065,311 @@ function setIndeterminateProgress(elementId, active) {
 function clearText(targetId) {
     document.getElementById(targetId).value = '';
     showToast('已清空', 'info');
+    refreshKeyTable(targetId);
+}
+
+// Global key manager storage
+window.keyTableManagers = {};
+
+class ApiKeyTableManager {
+    constructor(textareaId, options = {}) {
+        this.textarea = document.getElementById(textareaId);
+        if (!this.textarea) return;
+        
+        this.textareaId = textareaId;
+        this.title = options.title || 'API Key 列表';
+        this.mode = 'table'; // default mode
+        
+        // Keep track of mask/unmask states of keys (key inputs are masked by default)
+        this.visibleKeys = {}; // index -> boolean
+        
+        this.init();
+    }
+    
+    init() {
+        // Create container and insert it before the textarea
+        this.container = document.createElement('div');
+        this.container.className = 'key-manager-container';
+        
+        // Hide the original textarea styling or classes, but keep it in the DOM
+        this.textarea.style.display = 'none';
+        
+        // Insert container before the textarea
+        this.textarea.parentNode.insertBefore(this.container, this.textarea);
+        
+        // Render structure
+        this.renderHeader();
+        
+        this.tableView = document.createElement('div');
+        this.tableView.className = 'key-manager-table-view';
+        this.container.appendChild(this.tableView);
+        
+        this.textView = document.createElement('div');
+        this.textView.className = 'key-manager-text-view';
+        this.textView.style.display = 'none';
+        this.container.appendChild(this.textView);
+        
+        // Move the textarea inside the textView container
+        this.textView.appendChild(this.textarea);
+        
+        // Listen to change/input events of the textarea to update the table (when programmatically loaded)
+        this.textarea.addEventListener('input', () => {
+            if (this.mode === 'table') {
+                this.syncTableFromTextarea();
+            }
+        });
+        
+        // Populate table from textarea initially
+        this.syncTableFromTextarea();
+    }
+    
+    renderHeader() {
+        const header = document.createElement('div');
+        header.className = 'key-manager-header';
+        
+        const titleEl = document.createElement('div');
+        titleEl.className = 'key-manager-title';
+        titleEl.textContent = this.title;
+        header.appendChild(titleEl);
+        
+        const tabs = document.createElement('div');
+        tabs.className = 'key-manager-tabs';
+        
+        const tableTab = document.createElement('button');
+        tableTab.className = 'key-manager-tab active';
+        tableTab.textContent = '📋 表格模式';
+        tableTab.type = 'button';
+        tableTab.onclick = () => this.switchMode('table');
+        
+        const textTab = document.createElement('button');
+        textTab.className = 'key-manager-tab';
+        textTab.textContent = '✏️ 文本模式';
+        textTab.type = 'button';
+        textTab.onclick = () => this.switchMode('text');
+        
+        tabs.appendChild(tableTab);
+        tabs.appendChild(textTab);
+        header.appendChild(tabs);
+        
+        this.container.appendChild(header);
+        
+        this.tableTabBtn = tableTab;
+        this.textTabBtn = textTab;
+    }
+    
+    switchMode(mode) {
+        if (this.mode === mode) return;
+        this.mode = mode;
+        
+        if (mode === 'table') {
+            this.tableTabBtn.classList.add('active');
+            this.textTabBtn.classList.remove('active');
+            
+            // Sync table from text area first (in case user modified the textarea in text mode)
+            this.syncTableFromTextarea();
+            
+            this.tableView.style.display = 'block';
+            this.textView.style.display = 'none';
+            this.textarea.style.display = 'none';
+        } else {
+            this.tableTabBtn.classList.remove('active');
+            this.textTabBtn.classList.add('active');
+            
+            // Sync textarea from table inputs first
+            this.syncTextareaFromTable();
+            
+            this.tableView.style.display = 'none';
+            this.textView.style.display = 'block';
+            this.textarea.style.display = 'block';
+        }
+    }
+    
+    syncTableFromTextarea() {
+        const keysText = this.textarea.value || '';
+        const keys = keysText.split('\n').map(k => k.trim()).filter(Boolean);
+        
+        // Rebuild table body
+        let html = `
+            <table class="key-manager-table">
+                <thead>
+                    <tr>
+                        <th style="width: 50px; text-align: center;">序号</th>
+                        <th>API Key</th>
+                        <th style="width: 70px; text-align: center;">操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+        `;
+        
+        if (keys.length === 0) {
+            html += `
+                <tr>
+                    <td colspan="3" style="text-align: center; color: var(--text-muted); padding: 12px;">
+                        暂无 Key，请点击下方按钮添加或切换到文本模式导入
+                    </td>
+                </tr>
+            `;
+        } else {
+            keys.forEach((key, index) => {
+                const isVisible = !!this.visibleKeys[index];
+                const inputType = isVisible ? 'text' : 'password';
+                const eyeLabel = isVisible ? '隐藏' : '显示';
+                html += `
+                    <tr data-index="${index}">
+                        <td class="key-manager-row-num">${index + 1}</td>
+                        <td>
+                            <div class="key-manager-input-wrap">
+                                <input type="${inputType}" class="key-manager-key-input" value="${this.escapeHtml(key)}" placeholder="输入 API Key" data-index="${index}">
+                                <button type="button" class="key-manager-eye-btn" data-index="${index}" title="${eyeLabel}">${isVisible ? '🔒' : '👁️'}</button>
+                            </div>
+                        </td>
+                        <td>
+                            <button type="button" class="key-manager-delete-btn" data-index="${index}" title="删除">🗑️</button>
+                        </td>
+                    </tr>
+                `;
+            });
+        }
+        
+        html += `
+                </tbody>
+            </table>
+            <div class="key-manager-add-row">
+                <button type="button" class="key-manager-add-btn">➕ 添加 Key</button>
+            </div>
+        `;
+        
+        this.tableView.innerHTML = html;
+        
+        // Re-bind event listeners for table controls
+        this.bindTableEvents();
+    }
+    
+    bindTableEvents() {
+        // Eye buttons
+        this.tableView.querySelectorAll('.key-manager-eye-btn').forEach(btn => {
+            btn.onclick = (e) => {
+                const index = parseInt(btn.getAttribute('data-index'));
+                this.visibleKeys[index] = !this.visibleKeys[index];
+                
+                const input = this.tableView.querySelector(`input[data-index="${index}"]`);
+                if (input) {
+                    input.type = this.visibleKeys[index] ? 'text' : 'password';
+                }
+                btn.textContent = this.visibleKeys[index] ? '🔒' : '👁️';
+                btn.title = this.visibleKeys[index] ? '隐藏' : '显示';
+            };
+        });
+        
+        // Key inputs (update textarea on input)
+        this.tableView.querySelectorAll('.key-manager-key-input').forEach(input => {
+            input.oninput = () => {
+                this.syncTextareaFromTable();
+            };
+        });
+        
+        // Delete buttons
+        this.tableView.querySelectorAll('.key-manager-delete-btn').forEach(btn => {
+            btn.onclick = () => {
+                const index = parseInt(btn.getAttribute('data-index'));
+                
+                // Get current keys, remove the one at index
+                const keys = this.getKeysFromTable();
+                keys.splice(index, 1);
+                
+                // Update visible states map
+                const newVisible = {};
+                keys.forEach((_, idx) => {
+                    newVisible[idx] = this.visibleKeys[idx < index ? idx : idx + 1] || false;
+                });
+                this.visibleKeys = newVisible;
+                
+                // Write back to textarea
+                this.textarea.value = keys.join('\n');
+                
+                // Refresh table
+                this.syncTableFromTextarea();
+            };
+        });
+        
+        // Add button
+        const addBtn = this.tableView.querySelector('.key-manager-add-btn');
+        if (addBtn) {
+            addBtn.onclick = () => {
+                const keys = this.getKeysFromTable();
+                keys.push(''); // Add empty key
+                
+                this.textarea.value = keys.join('\n');
+                this.syncTableFromTextarea();
+                
+                // Focus on the newly added input
+                const inputs = this.tableView.querySelectorAll('.key-manager-key-input');
+                if (inputs.length > 0) {
+                    const lastInput = inputs[inputs.length - 1];
+                    lastInput.focus();
+                }
+            };
+        }
+    }
+    
+    getKeysFromTable() {
+        const inputs = this.tableView.querySelectorAll('.key-manager-key-input');
+        const keys = [];
+        inputs.forEach(input => {
+            const val = input.value.trim();
+            if (val) {
+                keys.push(val);
+            }
+        });
+        return keys;
+    }
+    
+    syncTextareaFromTable() {
+        // Simply collect all keys from input elements and set the textarea value
+        const inputs = this.tableView.querySelectorAll('.key-manager-key-input');
+        const keys = [];
+        inputs.forEach(input => {
+            keys.push(input.value.trim());
+        });
+        this.textarea.value = keys.filter(Boolean).join('\n');
+        
+        // Trigger input/change event on the original textarea to let any other listeners react
+        this.textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        this.textarea.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    
+    escapeHtml(text) {
+        if (!text) return '';
+        return text
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
+}
+
+// Function to safely initialize all key managers
+function initKeyTableManagers() {
+    const targets = [
+        { id: 'gladia-keys', title: 'Gladia API Key 轮询池' },
+        { id: 'gemini-keys', title: 'Gemini API Key 轮询池' },
+        { id: 'settings-elevenlabs-keys', title: 'ElevenLabs API Key 轮询池 (全局设置)' },
+        { id: 'elevenlabs-api-keys', title: 'ElevenLabs API Key 轮询池 (快捷栏)' }
+    ];
+    
+    targets.forEach(target => {
+        if (document.getElementById(target.id) && !window.keyTableManagers[target.id]) {
+            window.keyTableManagers[target.id] = new ApiKeyTableManager(target.id, { title: target.title });
+        }
+    });
+}
+
+// Helper to refresh a table programmatically
+function refreshKeyTable(id) {
+    if (window.keyTableManagers && window.keyTableManagers[id]) {
+        window.keyTableManagers[id].syncTableFromTextarea();
+    }
 }
 
 // 加载设置
@@ -2073,6 +2379,7 @@ async function loadSettings(autoLoadVoices = false) {
         const data = await response.json();
         if (data.keys) {
             document.getElementById('gladia-keys').value = data.keys.join('\n');
+            refreshKeyTable('gladia-keys');
         }
     } catch (error) {
         // 忽略
@@ -2083,6 +2390,7 @@ async function loadSettings(autoLoadVoices = false) {
         const data = await response.json();
         if (data.keys) {
             document.getElementById('gemini-keys').value = data.keys.join('\n');
+            refreshKeyTable('gemini-keys');
         }
         if (data.model) {
             const modelSelect = document.getElementById('gemini-model');
@@ -2109,6 +2417,7 @@ async function loadSettings(autoLoadVoices = false) {
         
         if (keyTextarea) {
             keyTextarea.value = keys.join('\n');
+            refreshKeyTable('elevenlabs-api-keys');
             if (data.use_web_token && radioWeb) {
                 radioWeb.checked = true;
             } else if (radioApi) {
@@ -2129,6 +2438,7 @@ async function loadSettings(autoLoadVoices = false) {
         // 同步填充到「总设置」面板
         if (settingsKeyTextarea) {
             settingsKeyTextarea.value = keys.join('\n');
+            refreshKeyTable('settings-elevenlabs-keys');
             const countEl = document.getElementById('settings-elevenlabs-key-count');
             if (countEl) countEl.textContent = keys.length > 0 ? `已配置 ${keys.length} 个密钥` : '';
         }
@@ -2625,6 +2935,17 @@ function clearSubtitleBatchList() {
 // 批量生成字幕
 let isSubtitleBatchProcessing = false;
 
+function formatSubtitleTimingCalibration(calibration) {
+    if (!calibration) return '未检测';
+    const start = Number(calibration.start_delta || 0).toFixed(2);
+    const end = Number(calibration.end_delta || 0).toFixed(2);
+    const scale = Number(calibration.scale || 1).toFixed(4);
+    if (calibration.applied) {
+        return `已校准 起点${start}s / 终点${end}s / 缩放${scale}`;
+    }
+    return `未校准 起点${start}s / 终点${end}s / 缩放${scale}`;
+}
+
 async function startBatchGeneration() {
     // 防止重复点击
     if (isSubtitleBatchProcessing) {
@@ -2656,7 +2977,7 @@ async function startBatchGeneration() {
     const mergeSrt = document.getElementById('merge-srt')?.checked || false;
 
     const gladiaKeysText = document.getElementById('gladia-keys')?.value || '';
-    const gladiaKeys = gladiaKeysText.split('\n').filter(k => k.trim());
+    const gladiaKeys = gladiaKeysText.split('\n').map(k => k.trim()).filter(Boolean);
 
     // 并行数 = Key 数量（至少1个）
     const concurrency = Math.max(gladiaKeys.length, 1);
@@ -2680,6 +3001,12 @@ async function startBatchGeneration() {
     }
 
     const totalTasks = readyTaskIndices.length;
+    const sourceTextCandidates = readyTaskIndices.map((idx) => ({
+        index: idx,
+        fileName: subtitleBatchTasks[idx].fileName,
+        sourceText: subtitleBatchTasks[idx].sourceText || '',
+        translateText: subtitleBatchTasks[idx].translateText || '',
+    }));
 
     // 处理单个任务
     async function processTask(taskIndex, keyIndex) {
@@ -2693,6 +3020,9 @@ async function startBatchGeneration() {
         formData.append('audio_file', task.file);
         formData.append('source_text', task.sourceText);
         formData.append('translate_text', task.translateText || '');
+        if (sourceTextCandidates.length > 1) {
+            formData.append('source_text_candidates', JSON.stringify(sourceTextCandidates));
+        }
         formData.append('language', language);
         formData.append('audio_cut_length', cutLength);
         formData.append('gladia_keys', JSON.stringify(keyToUse));
@@ -2714,6 +3044,7 @@ async function startBatchGeneration() {
                 subtitleBatchTasks[taskIndex].status = 'success';
                 const result = await response.json();
                 subtitleBatchTasks[taskIndex].files = result.files || [];
+                subtitleBatchTasks[taskIndex].timingCalibration = result.timing_calibration || null;
                 // 更新任务状态
                 const items = document.querySelectorAll('.subtitle-batch-item');
                 if (items[taskIndex]) {
@@ -2862,6 +3193,16 @@ function showSubtitleResultsPanel() {
         fileList.appendChild(item);
     });
 
+    const calibrationRows = subtitleBatchTasks
+        .filter(task => task.status === 'success' && task.timingCalibration)
+        .map(task => `${task.fileName}: ${formatSubtitleTimingCalibration(task.timingCalibration)}`);
+    if (calibrationRows.length > 0) {
+        const calibrationPanel = document.createElement('div');
+        calibrationPanel.style.cssText = 'margin-top: 12px; padding: 10px; background: var(--bg-tertiary); border-radius: 6px; font-size: 12px; color: var(--text-secondary); white-space: pre-wrap;';
+        calibrationPanel.textContent = `时间轴校准结果\n${calibrationRows.join('\n')}`;
+        panel.appendChild(calibrationPanel);
+    }
+
     // 下载按钮事件
     document.getElementById('download-all-subtitles-btn').onclick = async () => {
         try {
@@ -2950,12 +3291,23 @@ async function retrySingleSubtitleTask(index) {
     const sourceUp = document.getElementById('source-up')?.checked || false;
     const mergeSrt = document.getElementById('merge-srt')?.checked || false;
     const gladiaKeysText = document.getElementById('gladia-keys')?.value || '';
-    const gladiaKeys = gladiaKeysText.split('\n').filter(k => k.trim());
+    const gladiaKeys = gladiaKeysText.split('\n').map(k => k.trim()).filter(Boolean);
+    const sourceTextCandidates = subtitleBatchTasks
+        .map((t, idx) => ({
+            index: idx,
+            fileName: t.fileName,
+            sourceText: t.sourceText || '',
+            translateText: t.translateText || '',
+        }))
+        .filter(c => c.sourceText.trim());
 
     const formData = new FormData();
     formData.append('audio_file', task.file);
     formData.append('source_text', task.sourceText);
     formData.append('translate_text', task.translateText);
+    if (sourceTextCandidates.length > 1) {
+        formData.append('source_text_candidates', JSON.stringify(sourceTextCandidates));
+    }
     formData.append('language', language);
     formData.append('audio_cut_length', cutLength);
     formData.append('gladia_keys', JSON.stringify(gladiaKeys));
@@ -3066,7 +3418,7 @@ async function startGeneration() {
     const mergeSrt = document.getElementById('merge-srt').checked;
 
     const gladiaKeysText = document.getElementById('gladia-keys').value;
-    const gladiaKeys = gladiaKeysText.split('\n').filter(k => k.trim());
+    const gladiaKeys = gladiaKeysText.split('\n').map(k => k.trim()).filter(Boolean);
 
     const requestData = {
         audio_path: audioPath,
@@ -4418,6 +4770,9 @@ function _wrapTextSmart(text, maxLen) {
     const paragraphs = text.trim().split(/\n\s*\n/);
     const wrappedLines = [];
 
+    const _PUNCT_NO_SPACE_BEFORE = new Set("，。！？、：；,.!?;:…\u201D\u201E\uFF01\uFF1F）】）」”’)]}>");
+    const _PUNCT_NO_SPACE_AFTER = new Set("（【「“‘\u201C\u2018([{<");
+
     for (const para of paragraphs) {
         // 将段落规范为单行（段内换行 → 空格）
         const flat = para.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
@@ -4442,12 +4797,12 @@ function _wrapTextSmart(text, maxLen) {
 
         let currentLine = '';
         for (const tok of tokens) {
-            // 需要在两个 Latin token 之间加空格
+            // 在 Latin token 之间按规则加空格
             const needSpace = currentLine.length > 0
                 && !_isCJK(currentLine[currentLine.length - 1])
-                && !_isPunctuation(currentLine[currentLine.length - 1])
                 && !_isCJK(tok[0])
-                && !_isPunctuation(tok[0]);
+                && !_PUNCT_NO_SPACE_BEFORE.has(tok[0])
+                && !_PUNCT_NO_SPACE_AFTER.has(currentLine[currentLine.length - 1]);
             const sep = needSpace ? ' ' : '';
             const newLen = currentLine.length + sep.length + tok.length;
 
@@ -6514,7 +6869,10 @@ async function saveSettingsElevenLabsKeys() {
             showToast(`ElevenLabs Keys 已保存！(${keys.length} 个)`, 'success');
             // 同步到 ElevenLabs 面板
             const elTextarea = document.getElementById('elevenlabs-api-keys');
-            if (elTextarea) elTextarea.value = keys.join('\n');
+            if (elTextarea) {
+                elTextarea.value = keys.join('\n');
+                refreshKeyTable('elevenlabs-api-keys');
+            }
             const countEl = document.getElementById('settings-elevenlabs-key-count');
             if (countEl) countEl.textContent = keys.length > 0 ? `已配置 ${keys.length} 个密钥` : '';
         }
@@ -6925,7 +7283,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 async function saveGladiaKeys() {
     const keysText = document.getElementById('gladia-keys').value;
-    const keys = keysText.split('\n').filter(k => k.trim());
+    const keys = keysText.split('\n').map(k => k.trim()).filter(Boolean);
 
     try {
         const response = await apiFetch(`${API_BASE}/settings/gladia-keys`, {
@@ -6944,7 +7302,7 @@ async function saveGladiaKeys() {
 
 async function saveGeminiKeys() {
     const keysText = document.getElementById('gemini-keys').value;
-    const keys = keysText.split('\n').filter(k => k.trim());
+    const keys = keysText.split('\n').map(k => k.trim()).filter(Boolean);
     const prompt = document.getElementById('gemini-prompt').value;
     const model = document.getElementById('gemini-model')?.value || null;
 

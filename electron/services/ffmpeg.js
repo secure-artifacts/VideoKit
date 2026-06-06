@@ -1202,6 +1202,12 @@ async function composeReel({
 
     if (vcodec === 'h264_videotoolbox') {
         args.push('-b:v', '8M');
+    } else if (vcodec === 'h264_nvenc') {
+        args.push('-preset', preset || 'p4', '-cq', String(Math.max(1, Math.min(51, crf || 18))), '-b:v', '0');
+    } else if (vcodec === 'h264_amf') {
+        args.push('-quality', 'balanced', '-rc', 'cqp', '-qp_i', String(Math.max(0, Math.min(51, crf || 18))), '-qp_p', String(Math.max(0, Math.min(51, crf || 18))));
+    } else if (vcodec === 'h264_qsv') {
+        args.push('-global_quality', String(Math.max(1, Math.min(51, crf || 18))));
     } else {
         args.push('-crf', String(crf || 18));
         if (preset) args.push('-preset', preset);
@@ -1700,6 +1706,99 @@ async function applyWatermark(filePath, outDir, wmOpts = {}) {
     console.log('[Watermark] 完成:', outputPath);
     return [outputPath];
 }
+
+function _escapeConcatListPath(filePath) {
+    return String(filePath).replace(/'/g, "'\\''");
+}
+
+async function hasAudioTrack(filePath) {
+    try {
+        const { stdout } = await runCommand('ffprobe', [
+            '-v', 'error',
+            '-select_streams', 'a',
+            '-show_entries', 'stream=codec_type',
+            '-of', 'csv=p=0',
+            filePath
+        ], { timeout: PROBE_TIMEOUT });
+        return stdout.trim().length > 0;
+    } catch (_) {
+        return false;
+    }
+}
+
+async function concatClips(opts = {}) {
+    const {
+        clips = [],
+        outputPath,
+        targetWidth = 1080,
+        targetHeight = 1920,
+        fps = 30,
+        crf = 18,
+        preset = 'fast',
+    } = opts;
+
+    const validClips = (clips || []).filter(p => p && fs.existsSync(p));
+    if (validClips.length < 2) throw new Error('至少需要 2 个有效视频片段');
+    if (!outputPath) throw new Error('缺少输出路径');
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+
+    const sessionId = crypto.randomBytes(4).toString('hex');
+    const tmpDir = path.join(os.tmpdir(), `videokit_concat_${sessionId}`);
+    fs.mkdirSync(tmpDir, { recursive: true });
+
+    const normalized = [];
+    try {
+        for (let i = 0; i < validClips.length; i++) {
+            const src = validClips[i];
+            const out = path.join(tmpDir, `clip_${String(i + 1).padStart(4, '0')}.mp4`);
+            const hasAudio = await hasAudioTrack(src);
+            const args = ['-y', '-i', src];
+            let filterComplex;
+            if (hasAudio) {
+                filterComplex = `[0:v]scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=increase,crop=${targetWidth}:${targetHeight},fps=${fps},setsar=1[v];[0:a]aformat=sample_rates=48000:channel_layouts=stereo[a]`;
+            } else {
+                args.push('-f', 'lavfi', '-i', 'anullsrc=cl=stereo:r=48000');
+                filterComplex = `[0:v]scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=increase,crop=${targetWidth}:${targetHeight},fps=${fps},setsar=1[v];[1:a]aformat=sample_rates=48000:channel_layouts=stereo[a]`;
+            }
+            args.push(
+                '-filter_complex', filterComplex,
+                '-map', '[v]', '-map', '[a]',
+                '-c:v', 'libx264', '-crf', String(crf), '-preset', preset,
+                '-c:a', 'aac', '-b:a', '192k',
+                '-shortest',
+                out
+            );
+            console.log(`[ConcatClips] 归一化 ${i + 1}/${validClips.length}: ${path.basename(src)}`);
+            await runCommand('ffmpeg', args, { timeout: Math.max(DEFAULT_TIMEOUT, 1800000) });
+            normalized.push(out);
+        }
+
+        const listPath = path.join(tmpDir, 'concat_list.txt');
+        const listContent = normalized.map(p => `file '${_escapeConcatListPath(p)}'`).join('\n');
+        fs.writeFileSync(listPath, listContent, 'utf-8');
+
+        await runCommand('ffmpeg', [
+            '-y',
+            '-f', 'concat',
+            '-safe', '0',
+            '-i', listPath,
+            '-c', 'copy',
+            outputPath
+        ], { timeout: Math.max(DEFAULT_TIMEOUT, 1800000) });
+
+        const duration = await getDuration(outputPath);
+        return {
+            success: true,
+            outputPath,
+            output_path: outputPath,
+            clip_count: validClips.length,
+            duration,
+        };
+    } finally {
+        try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) { }
+    }
+}
+
 /**
  * 视频首尾拼接，处理 Hook 片段与正片的拼接（包含分辨率归一化、转场滤镜、音视频轨道同步）
  * @param {object} opts
@@ -1845,20 +1944,21 @@ async function concatVideo(opts) {
     };
     const xfadeName = FFMPEG_XFADE_MAP[transition] || transition;
 
-    // 构建音频引用：正片有音频用 [1:a]，否则用补的 [2:a]
-    const mainAudioRef = mainHasAudio ? '[1:a]' : '[2:a]';
+    const mainAudioLabel = mainHasAudio ? '1:a' : '2:a';
+    const hookVideoFilter = `[0:v]fps=${fps},settb=AVTB,setsar=1[v0]`;
+    const mainVideoFilter = `[1:v]scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2,fps=${fps},settb=AVTB,setsar=1[v1]`;
 
     if (transition === 'none' || finalTransDur <= 0 || hookDur <= finalTransDur) {
-        // 硬切拼接 — 也需要统一帧率避免 concat 问题
+        // 硬切拼接 — 统一画面、SAR 和音频参数，避免 FFmpeg 8 concat 严格校验失败
         concatArgs.push(
-            '-filter_complex', `[0:v]fps=${fps},settb=AVTB[v0];[1:v]fps=${fps},settb=AVTB[v1];[v0][0:a][v1]${mainAudioRef}concat=n=2:v=1:a=1[v][a]`,
+            '-filter_complex', `${hookVideoFilter};${mainVideoFilter};[0:a]aformat=sample_rates=48000:channel_layouts=stereo[a0];[${mainAudioLabel}]aformat=sample_rates=48000:channel_layouts=stereo[a1];[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]`,
             '-map', '[v]', '-map', '[a]'
         );
     } else {
         const offset = Math.max(0.1, hookDur - finalTransDur).toFixed(3);
-        // xfade 要求两个输入 timebase 完全一致 — 用 fps+settb 统一
+        // xfade 要求两个输入 timebase/SAR 完全一致 — 用 fps+settb+setsar 统一，并统一音频参数
         concatArgs.push(
-            '-filter_complex', `[0:v]fps=${fps},settb=AVTB[v0];[1:v]fps=${fps},settb=AVTB[v1];[v0][v1]xfade=transition=${xfadeName}:duration=${finalTransDur}:offset=${offset}[v];[0:a]${mainAudioRef}acrossfade=d=${finalTransDur}[a]`,
+            '-filter_complex', `${hookVideoFilter};${mainVideoFilter};[v0][v1]xfade=transition=${xfadeName}:duration=${finalTransDur}:offset=${offset}[v];[0:a]aformat=sample_rates=48000:channel_layouts=stereo[a0];[${mainAudioLabel}]aformat=sample_rates=48000:channel_layouts=stereo[a1];[a0][a1]acrossfade=d=${finalTransDur}[a]`,
             '-map', '[v]', '-map', '[a]'
         );
     }
@@ -1900,4 +2000,5 @@ module.exports = {
     batchCut,
     composeReel,
     concatVideo,
+    concatClips,
 };

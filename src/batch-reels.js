@@ -18,7 +18,10 @@
 const _reelsState = {
     tasks: [],
     selectedIdx: -1,
+    targetWidth: 1080,
+    targetHeight: 1920,
     renderer: null,
+
     previewRAF: null,
     previewFadeVideo: null,
     previewFadeVideoSrc: '',
@@ -43,6 +46,7 @@ const _reelsState = {
     hookPhase: false, // true = currently in hook phase during playback
     // Content Video Image Sequence Cache
     cvSequence: { path: '', files: [], loadedImages: {} },
+    previewMultiBg: { taskId: '', clipIndex: -1, path: '', image: null },
 };
 window._reelsState = _reelsState;
 
@@ -264,10 +268,11 @@ document.addEventListener('DOMContentLoaded', () => {
 function _initReelsModule() {
     const canvas = document.getElementById('reels-preview-canvas');
     if (canvas) {
-        canvas.width = 1080;
-        canvas.height = 1920;
+        canvas.width = _reelsState.targetWidth || 1080;
+        canvas.height = _reelsState.targetHeight || 1920;
         _reelsState.renderer = new ReelsCanvasRenderer(canvas);
     }
+
     
     // Probe GPU
     setTimeout(async () => {
@@ -346,8 +351,8 @@ function _initReelsModule() {
     for (const rid of reverbIds) {
         const el = document.getElementById(rid);
         if (el) {
-            el.addEventListener('change', _setupPreviewReverb);
-            el.addEventListener('input', _setupPreviewReverb);
+            el.addEventListener('change', _applyPreviewAudioMix);
+            el.addEventListener('input', _applyPreviewAudioMix);
         }
     }
 
@@ -626,6 +631,7 @@ function _initCvPosControl() {
         if (v > 1000) v = 1000;
         task.contentVideoScale = v;
         scaleVal.value = v;
+        _syncToTableInputs(task);
         if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
     });
 
@@ -730,6 +736,7 @@ function _initCvPosControl() {
                 if (!task) return;
                 task.contentVideoScale = newVal;
                 scaleVal.value = newVal;
+                _syncToTableInputs(task);
                 if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
             };
             const onUp = () => {
@@ -755,10 +762,11 @@ function _initCvPosControl() {
         if (!task) return;
         task.contentVideoScale = 100;
         _updateDisplay();
+        _syncToTableInputs(task);
         if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
     });
 
-    // 将修改同步回批量表格的输入框
+    // 将修改同步回批量表格的输入框和侧边栏
     function _syncToTableInputs(task) {
         if (!task || !window._reelsState) return;
         const idx = window._reelsState.tasks ? window._reelsState.tasks.indexOf(task) : -1;
@@ -767,6 +775,18 @@ function _initCvPosControl() {
         const yInput = document.querySelector(`.rbt-cvpos-y[data-idx="${idx}"]`);
         if (xInput) xInput.value = task.contentVideoX || 'center';
         if (yInput) yInput.value = task.contentVideoY || 'center';
+
+        const scaleVal = task.contentVideoScale || 100;
+        const scaleSlider = document.querySelector(`.rbt-cvscale-slider[data-idx="${idx}"]`);
+        const scaleInput = document.querySelector(`.rbt-cvscale-input[data-idx="${idx}"]`);
+        const scaleDisplay = document.querySelector(`.rbt-col-cvscale[data-idx="${idx}"] .rbt-scale-display`) || (document.querySelectorAll(`.rbt-col-cvscale`)[idx] ? document.querySelectorAll(`.rbt-col-cvscale`)[idx].querySelector('.rbt-scale-display') : null);
+        if (scaleSlider) scaleSlider.value = scaleVal;
+        if (scaleInput) scaleInput.value = scaleVal;
+        if (scaleDisplay) scaleDisplay.textContent = scaleVal + '%';
+
+        if (window.reelsSyncBackgroundTabUI) {
+            window.reelsSyncBackgroundTabUI(task);
+        }
     }
 
     // 移动位置
@@ -981,8 +1001,26 @@ async function _getSystemDownloadsPath() {
 
 async function _initReelsExportDefaults() {
     const outputEl = document.getElementById('reels-output-dir');
-    if (!outputEl || outputEl.value) return;
-    outputEl.value = await _getSystemDownloadsPath();
+    if (outputEl && !outputEl.value) {
+        outputEl.value = await _getSystemDownloadsPath();
+    }
+    
+    // Initialize export naming mode dropdown (outer)
+    const namingModeOuter = document.getElementById('reels-export-naming-mode-outer');
+    if (namingModeOuter) {
+        const storedVal = localStorage.getItem('reels_naming_mode') || 'text';
+        namingModeOuter.value = storedVal;
+        
+        // Add change event listener for synchronization
+        namingModeOuter.addEventListener('change', (e) => {
+            const val = e.target.value || 'text';
+            localStorage.setItem('reels_naming_mode', val);
+            const innerSelect = document.getElementById('reels-naming-mode');
+            if (innerSelect) {
+                innerSelect.value = val;
+            }
+        });
+    }
 }
 
 function _bindReelsHotkeys() {
@@ -1068,8 +1106,9 @@ function _ovGetBounds(ov) {
         const end = parseFloat(ov.end || 0);
         if (end > start) {
             const canvas = document.getElementById('reels-preview-canvas');
-            const canvasW = (canvas && canvas.width) ? canvas.width : 1080;
-            const canvasH = (canvas && canvas.height) ? canvas.height : 1920;
+            const canvasW = (canvas && canvas.width) ? canvas.width : (_reelsState.targetWidth || 1080);
+            const canvasH = (canvas && canvas.height) ? canvas.height : (_reelsState.targetHeight || 1920);
+
             const readAnimNumber = (value, fallback) => {
                 const n = parseFloat(value);
                 return Number.isFinite(n) ? n : fallback;
@@ -1982,6 +2021,29 @@ function _readStyleFromUI() {
         scrolling_mode: chk('reels-scrolling-mode'),
         scrolling_visible_lines: num('reels-scrolling-lines', 3),
         scrolling_opacity_context: num('reels-scrolling-opacity', 0.3),
+        // Fullpage Typewriter
+        fullpage_typewriter: chk('reels-fullpage-typewriter'),
+        fullpage_typewriter_reveal_type: val('reels-fullpage-typewriter-reveal-type') || 'char',
+        fullpage_typewriter_align: val('reels-fullpage-typewriter-align') || 'center',
+        fullpage_typewriter_cursor: chk('reels-fullpage-typewriter-cursor'),
+        fullpage_typewriter_cursor_char: val('reels-fullpage-typewriter-cursor-char') || '|',
+        fullpage_typewriter_cursor_color: val('reels-fullpage-typewriter-cursor-color') || '#FFD700',
+        tw_unrevealed_opacity: num('reels-tw-unrevealed-opacity', 0) / 255,
+        fullpage_typewriter_first_line_bold: chk('reels-fullpage-typewriter-first-line-bold'),
+        fullpage_typewriter_first_line_scale: num('reels-fullpage-typewriter-first-line-scale', 1.2),
+        fullpage_typewriter_first_line_color: chk('reels-fullpage-typewriter-first-line-color-enable') ? val('reels-fullpage-typewriter-first-line-color') : '',
+        // Scatter Pop
+        scatter_max_words: num('reels-scatter-max-words', 3),
+        scatter_accum_prob: num('reels-scatter-accum-prob', 0.5),
+        scatter_area_left: num('reels-scatter-area-left', 15),
+        scatter_area_right: num('reels-scatter-area-right', 85),
+        scatter_area_top: num('reels-scatter-area-top', 25),
+        scatter_area_bottom: num('reels-scatter-area-bottom', 75),
+        scatter_seed: num('reels-scatter-seed', 1),
+        scatter_min_scale: num('reels-scatter-min-scale', 0.8),
+        scatter_max_scale: num('reels-scatter-max-scale', 1.5),
+        scatter_min_rotate: num('reels-scatter-min-rotate', -10),
+        scatter_max_rotate: num('reels-scatter-max-rotate', 10),
     };
 
     // === Merge with existing hidden state (auto_color_rules etc.) ===
@@ -2271,6 +2333,34 @@ function _writeStyleToUI(style) {
     const scrollOpts = document.getElementById('reels-scrolling-options');
     if (scrollOpts) scrollOpts.style.display = style.scrolling_mode ? '' : 'none';
 
+    // Fullpage Typewriter
+    setChk('reels-fullpage-typewriter', style.fullpage_typewriter);
+    set('reels-fullpage-typewriter-reveal-type', style.fullpage_typewriter_reveal_type || 'char');
+    set('reels-fullpage-typewriter-align', style.fullpage_typewriter_align || 'center');
+    setChk('reels-fullpage-typewriter-cursor', style.fullpage_typewriter_cursor !== false);
+    set('reels-fullpage-typewriter-cursor-char', style.fullpage_typewriter_cursor_char || '|');
+    set('reels-fullpage-typewriter-cursor-color', style.fullpage_typewriter_cursor_color || '#FFD700');
+    set('reels-tw-unrevealed-opacity', Math.round((style.tw_unrevealed_opacity ?? 0) * 255));
+    setChk('reels-fullpage-typewriter-first-line-bold', style.fullpage_typewriter_first_line_bold !== false);
+    set('reels-fullpage-typewriter-first-line-scale', style.fullpage_typewriter_first_line_scale ?? 1.2);
+    set('reels-fullpage-typewriter-first-line-color', style.fullpage_typewriter_first_line_color || '#FFFFFF');
+    setChk('reels-fullpage-typewriter-first-line-color-enable', !!style.fullpage_typewriter_first_line_color);
+    const twOpts = document.getElementById('reels-fullpage-typewriter-options');
+    if (twOpts) twOpts.style.display = style.fullpage_typewriter ? '' : 'none';
+
+    // Scatter Pop
+    set('reels-scatter-max-words', style.scatter_max_words ?? 3);
+    set('reels-scatter-accum-prob', style.scatter_accum_prob ?? 0.5);
+    set('reels-scatter-area-left', style.scatter_area_left ?? 15);
+    set('reels-scatter-area-right', style.scatter_area_right ?? 85);
+    set('reels-scatter-area-top', style.scatter_area_top ?? 25);
+    set('reels-scatter-area-bottom', style.scatter_area_bottom ?? 75);
+    set('reels-scatter-seed', style.scatter_seed ?? 1);
+    set('reels-scatter-min-scale', style.scatter_min_scale ?? 0.8);
+    set('reels-scatter-max-scale', style.scatter_max_scale ?? 1.5);
+    set('reels-scatter-min-rotate', style.scatter_min_rotate ?? -10);
+    set('reels-scatter-max-rotate', style.scatter_max_rotate ?? 10);
+
     // Sync _reelsState.style so hidden props survive
     _reelsState.style = Object.assign({}, _reelsState.style || {}, style);
 
@@ -2302,13 +2392,15 @@ function reelsUpdatePreview() {
     const video = document.getElementById('reels-preview-video');
     const hookVideo = document.getElementById('reels-preview-hook-video');
     // Check for image background
-    const bgImg = _reelsState._previewBgImage;
-    const hasBgImg = bgImg && bgImg.complete && bgImg.naturalWidth > 0;
+    let bgImg = _reelsState._previewBgImage;
+    let hasBgImg = bgImg && bgImg.complete && bgImg.naturalWidth > 0;
 
     // Removed noisy debug logs
 
     const _selectedTask = _getSelectedTask();
     const _bgScalePct = _selectedTask ? (_selectedTask.bgScale || 100) : 100;
+    const _bgXPct = _selectedTask ? (_selectedTask.bgX || 0) : 0;
+    const _bgYPct = _selectedTask ? (_selectedTask.bgY || 0) : 0;
 
     // ── 检查并更新极速贴合提示 ──
     const fastAlphaCb = document.getElementById('reels-fast-alpha-mode');
@@ -2317,11 +2409,12 @@ function reelsUpdatePreview() {
         if (!fastAlphaCb.checked) {
             fastAlphaStatusEl.style.display = 'none';
         } else {
-            const bgPath = _reelsState.bgPath || (_selectedTask.bgClipPool && _selectedTask.bgClipPool[0]) || '';
+            const effectivePool = _getEffectiveBgClipPool(_selectedTask);
+            const bgPath = _reelsState.bgPath || effectivePool[0] || '';
             const isBgVideo = bgPath && !_isImageFile(bgPath);
             const loopFade = (document.getElementById('reels-loop-fade') || {}).checked !== false;
             
-            const isMultiClip = _selectedTask.bgClipPool && _selectedTask.bgClipPool.length > 0;
+            const isMultiClip = effectivePool.length > 0;
             const isCrossfadeVideo = isBgVideo && loopFade;
             
             if (isMultiClip) {
@@ -2363,17 +2456,58 @@ function reelsUpdatePreview() {
     const inHookPhase = !inCoverEditMode && (hookDur > 0 && totalTime >= coverDur && totalTime < (coverDur + hookDur));
     _reelsState.hookPhase = inHookPhase;
 
+    const contentTime = Math.max(0, totalTime - coverDur - hookDur);
+    if (_selectedTask && _selectedTask.bgMode === 'multi' && !inCoverPhase && !inHookPhase) {
+        _syncPreviewMultiBackground(_selectedTask, contentTime);
+        bgImg = _reelsState._previewBgImage;
+        hasBgImg = bgImg && bgImg.complete && bgImg.naturalWidth > 0;
+    }
+
+    // ── 准备内容视频源 (以防作为毛玻璃背景或前景使用) ──
+    let cvDrawSource = null;
+    let cvW = 0, cvH = 0;
+    if (_selectedTask && _selectedTask.contentVideoPath) {
+        const contentVideoEl = document.getElementById('reels-preview-contentvideo');
+        const contentImg = _reelsState.previewContentImage;
+        let seqImg = null;
+        if (_reelsState.cvSequence && _reelsState.cvSequence.path === _selectedTask.contentVideoPath && _reelsState.cvSequence.files.length > 0) {
+            const fps = 30;
+            let frameIdx = Math.floor(_getPreviewCurrentTime() * fps);
+            frameIdx = frameIdx % _reelsState.cvSequence.files.length;
+            const frameFile = _reelsState.cvSequence.files[frameIdx];
+            seqImg = _reelsState.cvSequence.loadedImages[frameFile];
+        }
+
+        if (seqImg && seqImg.complete && seqImg.naturalWidth > 0) {
+            cvDrawSource = seqImg;
+            cvW = seqImg.naturalWidth;
+            cvH = seqImg.naturalHeight;
+        } else if (contentImg && contentImg.complete && contentImg.naturalWidth > 0) {
+            cvDrawSource = contentImg;
+            cvW = contentImg.naturalWidth;
+            cvH = contentImg.naturalHeight;
+        } else if (contentVideoEl && contentVideoEl.src && contentVideoEl.readyState >= 1 && contentVideoEl.videoWidth > 0) {
+            cvDrawSource = contentVideoEl;
+            cvW = contentVideoEl.videoWidth;
+            cvH = contentVideoEl.videoHeight;
+        }
+    }
+
     // ── Cover 阶段渲染 ──
     if (inCoverPhase) {
         let coverBgScale = (_selectedTask && _selectedTask.cover && _selectedTask.cover.bgScale) || _bgScalePct;
+        let coverBgX = (_selectedTask && _selectedTask.cover && _selectedTask.cover.bgX) || _bgXPct;
+        let coverBgY = (_selectedTask && _selectedTask.cover && _selectedTask.cover.bgY) || _bgYPct;
+        let coverBgFlipH = (_selectedTask && _selectedTask.cover && _selectedTask.cover.bgFlipH) || (_selectedTask && _selectedTask.bgFlipH) || false;
+        let coverBgFlipV = (_selectedTask && _selectedTask.cover && _selectedTask.cover.bgFlipV) || (_selectedTask && _selectedTask.bgFlipV) || false;
         if (_reelsState._previewCoverImage && _reelsState._previewCoverImage.complete && _reelsState._previewCoverImage.naturalWidth > 0) {
-            _drawVideoCover(ctx, _reelsState._previewCoverImage, w, h, coverBgScale);
+            _drawVideoCover(ctx, _reelsState._previewCoverImage, w, h, coverBgScale, coverBgX, coverBgY, coverBgFlipH, coverBgFlipV);
         } else if (_reelsState._previewCoverVideo && _reelsState._previewCoverVideo.readyState >= 1) {
-            _drawVideoCover(ctx, _reelsState._previewCoverVideo, w, h, coverBgScale);
+            _drawVideoCover(ctx, _reelsState._previewCoverVideo, w, h, coverBgScale, coverBgX, coverBgY, coverBgFlipH, coverBgFlipV);
         } else if (hasBgImg) {
-            _drawVideoCover(ctx, bgImg, w, h, coverBgScale);            
+            _drawVideoCover(ctx, bgImg, w, h, coverBgScale, coverBgX, coverBgY, coverBgFlipH, coverBgFlipV);            
         } else if (video && video.readyState >= 1) {
-            _drawVideoCover(ctx, video, w, h, coverBgScale); 
+            _drawVideoCover(ctx, video, w, h, coverBgScale, coverBgX, coverBgY, coverBgFlipH, coverBgFlipV); 
         } else {
             ctx.fillStyle = '#000'; ctx.fillRect(0,0,w,h);
         }
@@ -2391,7 +2525,7 @@ function reelsUpdatePreview() {
         }
         _drawVideoCover(ctx, hookVideo, w, h, 100);
 
-        // Hook → Main 转场 (读取 task 配置的转场类型和时长，与导出一致)
+        // Hook → Main 转场 (读取 task 配置 of 转场类型 和 时长，与导出一致)
         const hookTransition = (_selectedTask && _selectedTask.hookTransition) || 'none';
         const transitionDur = hookTransition !== 'none' ? ((_selectedTask && _selectedTask.hookTransDuration) || 0.5) : 0;
         const timeToEnd = (coverDur + hookDur) - totalTime;
@@ -2399,16 +2533,37 @@ function reelsUpdatePreview() {
             const alpha = 1.0 - (timeToEnd / transitionDur);
             ctx.save();
             ctx.globalAlpha = Math.min(1, Math.max(0, alpha));
-            _drawVideoCover(ctx, video, w, h, _bgScalePct);
+            _drawVideoCover(ctx, video, w, h, _bgScalePct, _bgXPct, _bgYPct, _selectedTask.bgFlipH, _selectedTask.bgFlipV);
+            ctx.restore();
+        }
+    } else if (_selectedTask && _selectedTask.contentVideoBlurBg && cvDrawSource && cvW > 0) {
+        // 使用内容视频裁切后的毛玻璃背景
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(0, 0, w, h);
+
+        const { cropX, cropY, cropW, cropH } = _parseCropString(_selectedTask.contentVideoCrop);
+        ctx.save();
+        const blurVal = _selectedTask.contentVideoBlur != null ? _selectedTask.contentVideoBlur : 40;
+        const brightnessVal = (_selectedTask.contentVideoBrightness != null ? _selectedTask.contentVideoBrightness : 60) / 100;
+        ctx.filter = `blur(${blurVal}px) brightness(${brightnessVal})`;
+        _drawCroppedVideoCover(ctx, cvDrawSource, cropX, cropY, cropW, cropH, w, h, _bgScalePct, _bgXPct, _bgYPct, _selectedTask.bgFlipH, _selectedTask.bgFlipV);
+        ctx.restore();
+
+        // Draw global mask if enabled
+        if (style.global_mask_enabled) {
+            ctx.save();
+            ctx.globalAlpha = style.global_mask_opacity ?? 0.5;
+            ctx.fillStyle = style.global_mask_color || '#000000';
+            ctx.fillRect(0, 0, w, h);
             ctx.restore();
         }
     } else if (video && video.src && video.readyState >= 1 && video.videoWidth > 0) {
-        _drawVideoCover(ctx, video, w, h, _bgScalePct);
+        _drawVideoCover(ctx, video, w, h, _bgScalePct, _bgXPct, _bgYPct, _selectedTask.bgFlipH, _selectedTask.bgFlipV);
         const fadeFrame = _calcPreviewLoopFadeFrame();
         if (fadeFrame && fadeFrame.video && fadeFrame.video.readyState >= 2) {
             ctx.save();
             ctx.globalAlpha = fadeFrame.alpha;
-            _drawVideoCover(ctx, fadeFrame.video, w, h, _bgScalePct);
+            _drawVideoCover(ctx, fadeFrame.video, w, h, _bgScalePct, _bgXPct, _bgYPct, _selectedTask.bgFlipH, _selectedTask.bgFlipV);
             ctx.restore();
         }
 
@@ -2422,7 +2577,7 @@ function reelsUpdatePreview() {
         }
     } else if (hasBgImg) {
         // Draw image background using cover mode
-        _drawVideoCover(ctx, bgImg, w, h, _bgScalePct);
+        _drawVideoCover(ctx, bgImg, w, h, _bgScalePct, _bgXPct, _bgYPct, _selectedTask.bgFlipH, _selectedTask.bgFlipV);
 
         // Draw global mask if enabled
         if (style.global_mask_enabled) {
@@ -2481,14 +2636,20 @@ function reelsUpdatePreview() {
         }
 
         if (drawSource && cvW > 0) {
+            const { cropX, cropY, cropW, cropH } = _parseCropString(_selectedTask.contentVideoCrop);
+            const sx = cvW * cropX;
+            const sy = cvH * cropY;
+            const sWidth = cvW * cropW;
+            const sHeight = cvH * cropH;
+
             const cScale = (_selectedTask.contentVideoScale || 100) / 100;
             
             // Auto scale to fit width: width is 1080 -> canvas.width (w)
-            const baseScale = w / cvW;
+            const baseScale = w / sWidth;
             const finalScale = baseScale * cScale;
             
-            const drawW = cvW * finalScale;
-            const drawH = cvH * finalScale;
+            const drawW = sWidth * finalScale;
+            const drawH = sHeight * finalScale;
             
             // Default position: centered
             let drawX = (w - drawW) / 2;
@@ -2503,7 +2664,7 @@ function reelsUpdatePreview() {
                 if (!isNaN(relY)) Math.abs(relY) <= 1 ? drawY += h * relY : drawY += (relY / 1920) * h;
             }
             
-            ctx.drawImage(drawSource, drawX, drawY, drawW, drawH);
+            _drawImageFlipped(ctx, drawSource, sx, sy, sWidth, sHeight, drawX, drawY, drawW, drawH, _selectedTask.contentVideoFlipH, _selectedTask.contentVideoFlipV);
         }
     }
 
@@ -2573,8 +2734,8 @@ function reelsUpdatePreview() {
         const s = segs.find(s => audioCycleTime >= s.start && audioCycleTime <= s.end);
         if (s) {
             activeSegment = s;
-        } else if (style.scrolling_mode && segs.length > 0) {
-            // Scrolling mode: find nearest segment so lines stay visible between gaps
+        } else if ((style.scrolling_mode || style.fullpage_typewriter) && segs.length > 0) {
+            // Scrolling/typewriter mode: find nearest segment so lines stay visible between gaps
             let best = segs[0];
             for (let i = 1; i < segs.length; i++) {
                 if (segs[i].start <= audioCycleTime) best = segs[i];
@@ -2739,6 +2900,41 @@ function _drawSubtitlePreviewRange(ctx, style, canvasW, canvasH) {
     ctx.lineTo(cx, y + h);
     ctx.stroke();
     ctx.restore();
+}const watermarkImageCache = new Map();
+
+function _normalizeWatermarkPath(pathValue) {
+    if (!pathValue) return '';
+    if (/^file:\/\//i.test(pathValue)) {
+        return pathValue;
+    }
+    if (/^[a-zA-Z]:\\/.test(pathValue)) {
+        return `file:///${pathValue.replace(/\\/g, '/')}`;
+    }
+    if (pathValue.startsWith('/')) {
+        return `file://${pathValue}`;
+    }
+    return pathValue;
+}
+
+function _getWatermarkImage(pathValue, onLoadedCallback) {
+    if (!pathValue) return null;
+    const normalized = _normalizeWatermarkPath(pathValue);
+    let entry = watermarkImageCache.get(normalized);
+    if (!entry) {
+        const img = new Image();
+        entry = { img, status: 'loading', path: normalized };
+        img.onload = () => {
+            entry.status = 'loaded';
+            if (onLoadedCallback) onLoadedCallback();
+        };
+        img.onerror = () => {
+            entry.status = 'error';
+            if (onLoadedCallback) onLoadedCallback();
+        };
+        img.src = normalized;
+        watermarkImageCache.set(normalized, entry);
+    }
+    return entry;
 }
 
 /**
@@ -2747,71 +2943,151 @@ function _drawSubtitlePreviewRange(ctx, style, canvasW, canvasH) {
 function _drawWatermarks(ctx, canvasW, canvasH) {
     const watermarks = _reelsState.watermarks || [];
     for (const wm of watermarks) {
-        if (!wm.enabled || !wm.text) continue;
-        const fontSize = wm.fontSize || 20;
-        const padH = Math.round(fontSize * 0.5);
-        const padV = Math.round(fontSize * 0.35);
+        if (!wm.enabled) continue;
 
-        ctx.save();
-        ctx.font = `${fontSize}px Arial, sans-serif`;
-        const lines = wm.text.split('\n');
-        let maxTextW = 0;
-        for (const line of lines) {
-            maxTextW = Math.max(maxTextW, ctx.measureText(line).width);
+        if (wm.type === 'image') {
+            if (!wm.imagePath) continue;
+            const imgEntry = _getWatermarkImage(wm.imagePath, () => {
+                if (typeof reelsUpdatePreview === 'function') {
+                    reelsUpdatePreview();
+                }
+            });
+            if (!imgEntry || imgEntry.status !== 'loaded' || !imgEntry.img) continue;
+
+            const img = imgEntry.img;
+            const imgW = img.naturalWidth || img.width;
+            const imgH = img.naturalHeight || img.height;
+            if (imgW <= 0 || imgH <= 0) continue;
+
+            const scalePct = wm.imageScale || 100;
+            const scaledW = imgW * (scalePct / 100);
+            const scaledH = imgH * (scalePct / 100);
+
+            // 计算位置参考点 px, py
+            const margin = 16;
+            let px, py;
+            switch (wm.position || 'top-right') {
+                case 'top-left': px = margin; py = margin; break;
+                case 'top-center': px = canvasW / 2; py = margin; break;
+                case 'top-right': px = canvasW - margin; py = margin; break;
+                case 'center-left': px = margin; py = canvasH / 2; break;
+                case 'center': px = canvasW / 2; py = canvasH / 2; break;
+                case 'center-right': px = canvasW - margin; py = canvasH / 2; break;
+                case 'bottom-left': px = margin; py = canvasH - margin; break;
+                case 'bottom-center': px = canvasW / 2; py = canvasH - margin; break;
+                case 'bottom-right': px = canvasW - margin; py = canvasH - margin; break;
+                case 'custom': px = 0; py = 0; break;
+                default: px = canvasW - margin; py = margin; break;
+            }
+            px += (wm.x || 0);
+            py += (wm.y || 0);
+
+            // 根据缩放中心（anchor）计算实际 drawX, drawY
+            let drawX, drawY;
+            const anchor = wm.imageAnchor || 'center';
+            switch (anchor) {
+                case 'top-left':
+                    drawX = px; drawY = py;
+                    break;
+                case 'top-right':
+                    drawX = px - scaledW; drawY = py;
+                    break;
+                case 'bottom-left':
+                    drawX = px; drawY = py - scaledH;
+                    break;
+                case 'bottom-right':
+                    drawX = px - scaledW; drawY = py - scaledH;
+                    break;
+                case 'center':
+                default:
+                    drawX = px - scaledW / 2; drawY = py - scaledH / 2;
+                    break;
+            }
+
+            ctx.save();
+            ctx.globalAlpha = wm.opacity ?? 1.0;
+            _drawImageFlipped(ctx, img, drawX, drawY, scaledW, scaledH, undefined, undefined, undefined, undefined, wm.flipH, wm.flipV);
+            ctx.restore();
+        } else {
+            if (!wm.text) continue;
+            const fontSize = wm.fontSize || 20;
+            const padH = Math.round(fontSize * 0.5);
+            const padV = Math.round(fontSize * 0.35);
+
+            ctx.save();
+            ctx.font = `${fontSize}px Arial, sans-serif`;
+            const lines = wm.text.split('\n');
+            let maxTextW = 0;
+            for (const line of lines) {
+                maxTextW = Math.max(maxTextW, ctx.measureText(line).width);
+            }
+            const boxW = maxTextW + padH * 2;
+            const lineSpacing = 4;
+            const boxH = lines.length * fontSize + (lines.length - 1) * lineSpacing + padV * 2;
+
+            // 计算位置
+            const margin = 16;
+            let bx, by;
+            switch (wm.position || 'top-right') {
+                case 'top-left': bx = margin; by = margin; break;
+                case 'top-center': bx = (canvasW - boxW) / 2; by = margin; break;
+                case 'top-right': bx = canvasW - boxW - margin; by = margin; break;
+                case 'center-left': bx = margin; by = (canvasH - boxH) / 2; break;
+                case 'center': bx = (canvasW - boxW) / 2; by = (canvasH - boxH) / 2; break;
+                case 'center-right': bx = canvasW - boxW - margin; by = (canvasH - boxH) / 2; break;
+                case 'bottom-left': bx = margin; by = canvasH - boxH - margin; break;
+                case 'bottom-center': bx = (canvasW - boxW) / 2; by = canvasH - boxH - margin; break;
+                case 'bottom-right': bx = canvasW - boxW - margin; by = canvasH - boxH - margin; break;
+                case 'custom': bx = 0; by = 0; break;
+                default: bx = canvasW - boxW - margin; by = margin; break;
+            }
+            bx += (wm.x || 0);
+            by += (wm.y || 0);
+
+            // 半透明背景
+            ctx.globalAlpha = wm.bgOpacity ?? 0.5;
+            ctx.fillStyle = wm.bgColor || '#000000';
+            const r = Math.round(fontSize * 0.2);
+            ctx.beginPath();
+            ctx.roundRect(bx, by, boxW, boxH, r);
+            ctx.fill();
+
+            // 文字
+            ctx.globalAlpha = wm.textOpacity ?? 1.0;
+            ctx.fillStyle = wm.color || '#FFFFFF';
+            ctx.textBaseline = 'middle';
+            let currentY = by + padV + fontSize / 2;
+            for (const line of lines) {
+                ctx.fillText(line, bx + padH, currentY);
+                currentY += fontSize + lineSpacing;
+            }
+            ctx.restore();
         }
-        const boxW = maxTextW + padH * 2;
-        const lineSpacing = 4;
-        const boxH = lines.length * fontSize + (lines.length - 1) * lineSpacing + padV * 2;
-
-        // 计算位置
-        const margin = 16;
-        let bx, by;
-        switch (wm.position || 'top-right') {
-            case 'top-left': bx = margin; by = margin; break;
-            case 'top-center': bx = (canvasW - boxW) / 2; by = margin; break;
-            case 'top-right': bx = canvasW - boxW - margin; by = margin; break;
-            case 'center-left': bx = margin; by = (canvasH - boxH) / 2; break;
-            case 'center': bx = (canvasW - boxW) / 2; by = (canvasH - boxH) / 2; break;
-            case 'center-right': bx = canvasW - boxW - margin; by = (canvasH - boxH) / 2; break;
-            case 'bottom-left': bx = margin; by = canvasH - boxH - margin; break;
-            case 'bottom-center': bx = (canvasW - boxW) / 2; by = canvasH - boxH - margin; break;
-            case 'bottom-right': bx = canvasW - boxW - margin; by = canvasH - boxH - margin; break;
-            case 'custom': bx = 0; by = 0; break;
-            default: bx = canvasW - boxW - margin; by = margin; break;
-        }
-        bx += (wm.x || 0);
-        by += (wm.y || 0);
-
-        // 半透明背景
-        ctx.globalAlpha = wm.bgOpacity ?? 0.5;
-        ctx.fillStyle = wm.bgColor || '#000000';
-        const r = Math.round(fontSize * 0.2);
-        ctx.beginPath();
-        ctx.roundRect(bx, by, boxW, boxH, r);
-        ctx.fill();
-
-        // 文字
-        ctx.globalAlpha = wm.textOpacity ?? 1.0;
-        ctx.fillStyle = wm.color || '#FFFFFF';
-        ctx.textBaseline = 'middle';
-        let currentY = by + padV + fontSize / 2;
-        for (const line of lines) {
-            ctx.fillText(line, bx + padH, currentY);
-            currentY += fontSize + lineSpacing;
-        }
-        ctx.restore();
     }
 }
 
 const REELS_DEFAULT_WATERMARK = [
     {
+        type: 'text',
         text: 'AI Generated', fontSize: 25, color: '#FFFFFF', textOpacity: 0.8,
         bgColor: '#000000', bgOpacity: 0.5, position: 'top-right', enabled: true
     },
     {
+        type: 'text',
         text: 'Attribution to11.ai', fontSize: 20, color: '#FFFFFF', textOpacity: 1.0,
         bgColor: '#000000', bgOpacity: 0.5, position: 'bottom-left', enabled: true
     },
+    {
+        type: 'image',
+        imagePath: (window.electronAPI && window.electronAPI.resolveAssetUrl)
+            ? window.electronAPI.resolveAssetUrl('colossyan.png')
+            : 'assets/colossyan.png',
+        imageScale: 100,
+        imageAnchor: 'center',
+        opacity: 1.0,
+        position: 'center',
+        enabled: false
+    }
 ];
 
 function _reelsSaveWatermarks() {
@@ -2827,6 +3103,22 @@ function _reelsLoadWatermarks() {
             const parsed = JSON.parse(saved);
             if (Array.isArray(parsed)) {
                 _reelsState.watermarks = parsed;
+                // 确保用户已保存的列表中也包含新的 colossyan 默认预设
+                const hasColossyan = parsed.some(wm => wm.type === 'image' && wm.imagePath && wm.imagePath.includes('colossyan.png'));
+                if (!hasColossyan) {
+                    _reelsState.watermarks.push({
+                        type: 'image',
+                        imagePath: (window.electronAPI && window.electronAPI.resolveAssetUrl)
+                            ? window.electronAPI.resolveAssetUrl('colossyan.png')
+                            : 'assets/colossyan.png',
+                        imageScale: 100,
+                        imageAnchor: 'center',
+                        opacity: 1.0,
+                        position: 'center',
+                        enabled: false
+                    });
+                    _reelsSaveWatermarks();
+                }
                 return;
             }
         }
@@ -2837,6 +3129,7 @@ function _reelsLoadWatermarks() {
 
 function reelsAddWatermark() {
     _reelsState.watermarks.push({
+        type: 'text',
         text: 'Attribution to11.ai', fontSize: 20, color: '#FFFFFF', textOpacity: 1.0,
         bgColor: '#000000', bgOpacity: 0.5, position: 'bottom-left', enabled: true,
     });
@@ -2890,6 +3183,10 @@ async function reelsSaveWatermarkPreset() {
         const name = await _showInputDialog('保存水印组合预设', '请输入预设名称（包含所有启用的水印）');
         if (!name) return;
         const presets = _getWatermarkPresets();
+        if (presets[name]) {
+            const ok = confirm(`水印预设 "${name}" 已存在，是否覆盖？`);
+            if (!ok) return;
+        }
         presets[name] = JSON.parse(JSON.stringify(_reelsState.watermarks));
         _saveWatermarkPresets(presets);
         _refreshWatermarkPresetList();
@@ -2960,16 +3257,42 @@ function reelsImportWatermarkPresets() {
                 const imported = JSON.parse(ev.target.result);
                 if (typeof imported !== 'object' || imported === null) throw new Error('Invalid JSON');
                 const presets = _getWatermarkPresets();
-                let count = 0;
+                let addedCount = 0;
+                let overwrittenCount = 0;
+                const conflicts = [];
                 for (const k in imported) {
-                    if (Array.isArray(imported[k])) {
-                        presets[k] = imported[k];
-                        count++;
+                    if (Array.isArray(imported[k]) && presets[k]) {
+                        conflicts.push(k);
                     }
                 }
+
+                if (conflicts.length > 0) {
+                    const ok = confirm(`导入的水印预设中包含以下已存在的预设：\n${conflicts.join(', ')}\n\n是否覆盖它们？(点击「取消」将跳过这些冲突的预设)`);
+                    for (const k in imported) {
+                        if (Array.isArray(imported[k])) {
+                            if (presets[k]) {
+                                if (ok) {
+                                    presets[k] = imported[k];
+                                    overwrittenCount++;
+                                }
+                            } else {
+                                presets[k] = imported[k];
+                                addedCount++;
+                            }
+                        }
+                    }
+                } else {
+                    for (const k in imported) {
+                        if (Array.isArray(imported[k])) {
+                            presets[k] = imported[k];
+                            addedCount++;
+                        }
+                    }
+                }
+
                 _saveWatermarkPresets(presets);
                 _refreshWatermarkPresetList();
-                alert(`成功导入了 ${count} 个水印预设！`);
+                alert(`✅ 导入完成：新增了 ${addedCount} 个水印预设，覆盖了 ${overwrittenCount} 个水印预设。`);
             } catch (err) {
                 alert('导入失败，请检查是否是有效的水印预设 JSON 文件！');
             }
@@ -2979,6 +3302,17 @@ function reelsImportWatermarkPresets() {
     input.click();
 }
 
+async function reelsChooseWatermarkImage(idx) {
+    const path = await _pickSingleFile('选择水印图片', ['png', 'jpg', 'jpeg', 'webp', 'gif']);
+    if (path) {
+        if (_reelsState.watermarks && _reelsState.watermarks[idx]) {
+            _reelsState.watermarks[idx].imagePath = path;
+            _reelsRefreshWatermarkUI();
+            _reelsSyncWatermarkFromUI();
+        }
+    }
+}
+
 function _reelsSyncWatermarkFromUI() {
     const list = document.getElementById('reels-watermark-list');
     if (!list) return;
@@ -2986,20 +3320,35 @@ function _reelsSyncWatermarkFromUI() {
     rows.forEach((row, i) => {
         const wm = _reelsState.watermarks[i];
         if (!wm) return;
-        wm.text = row.querySelector('.wm-text')?.value || '';
-        wm.fontSize = parseInt(row.querySelector('.wm-fontsize')?.value) || 20;
-        wm.color = row.querySelector('.wm-color')?.value || '#FFFFFF';
-        wm.bgColor = row.querySelector('.wm-bgcolor')?.value || '#000000';
-        const rawBgOp = parseFloat(row.querySelector('.wm-bgopacity')?.value);
-        wm.bgOpacity = Number.isFinite(rawBgOp) ? rawBgOp / 100 : 0.5;
-        const rawTextOp = parseFloat(row.querySelector('.wm-textopacity')?.value);
-        wm.textOpacity = Number.isFinite(rawTextOp) ? rawTextOp / 100 : 1.0;
-        wm.position = row.querySelector('.wm-position')?.value || 'top-right';
         wm.enabled = row.querySelector('.wm-enabled')?.checked ?? true;
+        wm.type = row.querySelector('.wm-type')?.value || 'text';
+        wm.position = row.querySelector('.wm-position')?.value || 'top-right';
         wm.x = parseInt(row.querySelector('.wm-x')?.value) || 0;
         wm.y = parseInt(row.querySelector('.wm-y')?.value) || 0;
+
+        if (wm.type === 'image') {
+            wm.imagePath = row.querySelector('.wm-imagepath')?.value || '';
+            wm.imageScale = parseInt(row.querySelector('.wm-imagescale')?.value) || 100;
+            wm.imageAnchor = row.querySelector('.wm-imageanchor')?.value || 'center';
+            const rawOp = parseFloat(row.querySelector('.wm-opacity')?.value);
+            wm.opacity = Number.isFinite(rawOp) ? rawOp / 100 : 1.0;
+            wm.flipH = row.querySelector('.wm-fliph')?.checked ?? false;
+            wm.flipV = row.querySelector('.wm-flipv')?.checked ?? false;
+        } else {
+            wm.text = row.querySelector('.wm-text')?.value || '';
+            wm.fontSize = parseInt(row.querySelector('.wm-fontsize')?.value) || 20;
+            wm.color = row.querySelector('.wm-color')?.value || '#FFFFFF';
+            wm.bgColor = row.querySelector('.wm-bgcolor')?.value || '#000000';
+            const rawBgOp = parseFloat(row.querySelector('.wm-bgopacity')?.value);
+            wm.bgOpacity = Number.isFinite(rawBgOp) ? rawBgOp / 100 : 0.5;
+            const rawTextOp = parseFloat(row.querySelector('.wm-textopacity')?.value);
+            wm.textOpacity = Number.isFinite(rawTextOp) ? rawTextOp / 100 : 1.0;
+        }
     });
     _reelsSaveWatermarks();
+    if (typeof reelsUpdatePreview === 'function') {
+        reelsUpdatePreview();
+    }
 }
 
 function _reelsRefreshWatermarkUI() {
@@ -3015,27 +3364,72 @@ function _reelsRefreshWatermarkUI() {
         ['custom', '自定义坐标']
     ].map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
 
-    list.innerHTML = wms.map((wm, i) => `
-        <div class="wm-row" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:6px;padding:6px;background:var(--bg-tertiary);border-radius:6px;">
-            <div style="display:flex;gap:6px;width:100%;align-items:flex-start;">
-                <label style="display:flex;align-items:center;gap:3px;margin-top:4px;"><input type="checkbox" class="wm-enabled" ${wm.enabled ? 'checked' : ''} onchange="_reelsSyncWatermarkFromUI()"> 启用</label>
+    list.innerHTML = wms.map((wm, i) => {
+        const isImage = wm.type === 'image';
+        const typeSelectHtml = `
+            <select class="wm-type select" style="width:65px;font-size:11px;padding:2px;" onchange="_reelsSyncWatermarkFromUI(); _reelsRefreshWatermarkUI();">
+                <option value="text" ${!isImage ? 'selected' : ''}>文字</option>
+                <option value="image" ${isImage ? 'selected' : ''}>图片</option>
+            </select>
+        `;
+
+        let contentHtml = '';
+        let optionsHtml = '';
+
+        if (isImage) {
+            contentHtml = `
+                <div style="display:flex;align-items:center;gap:4px;flex:1;">
+                    <input type="text" class="wm-imagepath input" readonly value="${wm.imagePath || ''}" style="flex:1;font-size:11px;padding:4px 6px;" placeholder="未选择图片">
+                    <button class="btn btn-secondary" style="font-size:11px;padding:2px 6px;" onclick="reelsChooseWatermarkImage(${i})">选择</button>
+                </div>
+            `;
+            optionsHtml = `
+                 <label style="display:flex;align-items:center;gap:2px;">缩放中心:
+                    <select class="wm-imageanchor select" style="width:75px;font-size:11px;padding:3px;" onchange="_reelsSyncWatermarkFromUI()">
+                        <option value="top-left" ${wm.imageAnchor === 'top-left' ? 'selected' : ''}>左上</option>
+                        <option value="top-right" ${wm.imageAnchor === 'top-right' ? 'selected' : ''}>右上</option>
+                        <option value="bottom-left" ${wm.imageAnchor === 'bottom-left' ? 'selected' : ''}>左下</option>
+                        <option value="bottom-right" ${wm.imageAnchor === 'bottom-right' ? 'selected' : ''}>右下</option>
+                        <option value="center" ${wm.imageAnchor === 'center' || !wm.imageAnchor ? 'selected' : ''}>居中</option>
+                    </select>
+                </label>
+                <label style="display:flex;align-items:center;gap:2px;">缩放:<input type="range" class="wm-imagescale-slider" min="10" max="500" value="${wm.imageScale || 100}" style="width:50px;height:14px;accent-color:#4fc3f7;vertical-align:middle;" oninput="this.parentElement.querySelector('.wm-imagescale').value=this.value;_reelsSyncWatermarkFromUI()"><input class="wm-imagescale input input-small" type="number" value="${wm.imageScale || 100}" min="10" max="500" style="width:38px;font-size:10px;padding:2px;text-align:center;" oninput="this.parentElement.querySelector('.wm-imagescale-slider').value=this.value;_reelsSyncWatermarkFromUI()">%</label>
+                <label style="display:flex;align-items:center;gap:2px;">透明:<input type="range" class="wm-opacity-slider" min="0" max="100" value="${Math.round((wm.opacity ?? 1.0) * 100)}" style="width:50px;height:14px;accent-color:#9b59b6;vertical-align:middle;" oninput="this.parentElement.querySelector('.wm-opacity').value=this.value;_reelsSyncWatermarkFromUI()"><input class="wm-opacity input input-small" type="number" value="${Math.round((wm.opacity ?? 1.0) * 100)}" min="0" max="100" style="width:38px;font-size:10px;padding:2px;text-align:center;" oninput="this.parentElement.querySelector('.wm-opacity-slider').value=this.value;_reelsSyncWatermarkFromUI()">%</label>
+                <label style="display:flex;align-items:center;gap:3px;cursor:pointer;"><input type="checkbox" class="wm-fliph" ${wm.flipH ? 'checked' : ''} onchange="_reelsSyncWatermarkFromUI()"> 左右翻转</label>
+                <label style="display:flex;align-items:center;gap:3px;cursor:pointer;"><input type="checkbox" class="wm-flipv" ${wm.flipV ? 'checked' : ''} onchange="_reelsSyncWatermarkFromUI()"> 上下翻转</label>
+            `;
+        } else {
+            contentHtml = `
                 <textarea class="wm-text input" style="flex:1;font-size:11px;padding:4px 6px;resize:vertical;min-height:28px;" rows="1" oninput="_reelsSyncWatermarkFromUI()">${(wm.text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</textarea>
-                <button class="btn btn-secondary" style="font-size:10px;padding:2px 6px;color:#f87171;margin-top:4px;" onclick="reelsRemoveWatermark(${i})">✕</button>
-            </div>
-            <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;width:100%;">
+            `;
+            optionsHtml = `
                 <label style="display:flex;align-items:center;gap:2px;">字号:<input class="wm-fontsize input input-small" type="number" value="${wm.fontSize || 20}" min="8" max="80" style="width:48px;font-size:11px;padding:3px;" oninput="_reelsSyncWatermarkFromUI()"></label>
                 <label style="display:flex;align-items:center;gap:2px;">字色:<input class="wm-color" type="color" value="${wm.color || '#FFFFFF'}" style="width:24px;height:20px;border:none;cursor:pointer;" oninput="_reelsSyncWatermarkFromUI()"></label>
                 <label style="display:flex;align-items:center;gap:2px;">字透明:<input type="range" class="wm-textopacity-slider" min="0" max="100" value="${Math.round((wm.textOpacity ?? 1.0) * 100)}" style="width:50px;height:14px;accent-color:#4fc3f7;vertical-align:middle;" oninput="this.parentElement.querySelector('.wm-textopacity').value=this.value;_reelsSyncWatermarkFromUI()"><input class="wm-textopacity input input-small" type="number" value="${Math.round((wm.textOpacity ?? 1.0) * 100)}" min="0" max="100" style="width:38px;font-size:10px;padding:2px;text-align:center;" oninput="this.parentElement.querySelector('.wm-textopacity-slider').value=this.value;_reelsSyncWatermarkFromUI()">%</label>
                 <label style="display:flex;align-items:center;gap:2px;">底色:<input class="wm-bgcolor" type="color" value="${wm.bgColor || '#000000'}" style="width:24px;height:20px;border:none;cursor:pointer;" oninput="_reelsSyncWatermarkFromUI()"></label>
                 <label style="display:flex;align-items:center;gap:2px;">底透明:<input type="range" class="wm-bgopacity-slider" min="0" max="100" value="${Math.round((wm.bgOpacity ?? 0.5) * 100)}" style="width:50px;height:14px;accent-color:#9b59b6;vertical-align:middle;" oninput="this.parentElement.querySelector('.wm-bgopacity').value=this.value;_reelsSyncWatermarkFromUI()"><input class="wm-bgopacity input input-small" type="number" value="${Math.round((wm.bgOpacity ?? 0.5) * 100)}" min="0" max="100" style="width:38px;font-size:10px;padding:2px;text-align:center;" oninput="this.parentElement.querySelector('.wm-bgopacity-slider').value=this.value;_reelsSyncWatermarkFromUI()">%</label>
+            `;
+        }
+
+        return `
+            <div class="wm-row" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:6px;padding:6px;background:var(--bg-tertiary);border-radius:6px;">
+                <div style="display:flex;gap:6px;width:100%;align-items:flex-start;">
+                    <label style="display:flex;align-items:center;gap:3px;margin-top:4px;"><input type="checkbox" class="wm-enabled" ${wm.enabled ? 'checked' : ''} onchange="_reelsSyncWatermarkFromUI()"> 启用</label>
+                    <label style="display:flex;align-items:center;gap:3px;margin-top:4px;">类型: ${typeSelectHtml}</label>
+                    ${contentHtml}
+                    <button class="btn btn-secondary" style="font-size:10px;padding:2px 6px;color:#f87171;margin-top:4px;" onclick="reelsRemoveWatermark(${i})">✕</button>
+                </div>
+                <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;width:100%;">
+                    ${optionsHtml}
+                </div>
+                <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;width:100%;">
+                    <label style="display:flex;align-items:center;gap:4px;">位置: <select class="wm-position select" style="width:85px;font-size:11px;padding:3px;" onchange="_reelsSyncWatermarkFromUI()">${posOptions.replace(`value="${wm.position || 'top-right'}"`, `value="${wm.position || 'top-right'}" selected`)}</select></label>
+                    <label style="display:flex;align-items:center;gap:2px;margin-left:4px;" title="偏移值（可填负数）">偏移X:<input class="wm-x input input-small" type="number" value="${wm.x || 0}" style="width:48px;font-size:11px;padding:3px;" oninput="_reelsSyncWatermarkFromUI()"></label>
+                    <label style="display:flex;align-items:center;gap:2px;">Y:<input class="wm-y input input-small" type="number" value="${wm.y || 0}" style="width:48px;font-size:11px;padding:3px;" oninput="_reelsSyncWatermarkFromUI()"></label>
+                </div>
             </div>
-            <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;width:100%;">
-                <label style="display:flex;align-items:center;gap:4px;">位置: <select class="wm-position select" style="width:85px;font-size:11px;padding:3px;" onchange="_reelsSyncWatermarkFromUI()">${posOptions.replace(`value="${wm.position || 'top-right'}"`, `value="${wm.position || 'top-right'}" selected`)}</select></label>
-                <label style="display:flex;align-items:center;gap:2px;margin-left:4px;" title="偏移值（可填负数）">偏移X:<input class="wm-x input input-small" type="number" value="${wm.x || 0}" style="width:48px;font-size:11px;padding:3px;" oninput="_reelsSyncWatermarkFromUI()"></label>
-                <label style="display:flex;align-items:center;gap:2px;">Y:<input class="wm-y input input-small" type="number" value="${wm.y || 0}" style="width:48px;font-size:11px;padding:3px;" oninput="_reelsSyncWatermarkFromUI()"></label>
-            </div>
-        </div>
-    `).join('');
+        `;
+    }).join('');
 
     // 添加鼠标左右拖拽调整数值功能
     list.querySelectorAll('input[type="number"]').forEach(el => {
@@ -3090,21 +3484,97 @@ document.addEventListener('DOMContentLoaded', () => {
     }, 500);
 });
 
-function _drawVideoCover(ctx, videoEl, targetW, targetH, scalePct) {
+function _drawImageFlipped(ctx, img, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, flipH, flipV) {
+    if (!flipH && !flipV) {
+        if (arg5 !== undefined) {
+            ctx.drawImage(img, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
+        } else if (arg3 !== undefined) {
+            ctx.drawImage(img, arg1, arg2, arg3, arg4);
+        } else {
+            ctx.drawImage(img, arg1, arg2);
+        }
+        return;
+    }
+    
+    ctx.save();
+    let dx, dy, dw, dh;
+    if (arg5 !== undefined) {
+        // 9 arguments: img, sx, sy, sw, sh, dx, dy, dw, dh
+        dx = arg5; dy = arg6; dw = arg7; dh = arg8;
+        ctx.translate(dx + dw / 2, dy + dh / 2);
+        ctx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
+        ctx.drawImage(img, arg1, arg2, arg3, arg4, -dw / 2, -dh / 2, dw, dh);
+    } else if (arg3 !== undefined) {
+        // 5 arguments: img, dx, dy, dw, dh
+        dx = arg1; dy = arg2; dw = arg3; dh = arg4;
+        ctx.translate(dx + dw / 2, dy + dh / 2);
+        ctx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
+        ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
+    } else {
+        // 3 arguments: img, dx, dy
+        dx = arg1; dy = arg2; dw = img.naturalWidth || img.width || 0; dh = img.naturalHeight || img.height || 0;
+        ctx.translate(dx + dw / 2, dy + dh / 2);
+        ctx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
+        ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
+    }
+    ctx.restore();
+}
+
+function _drawVideoCover(ctx, videoEl, targetW, targetH, scalePct, offsetX = 0, offsetY = 0, flipH = false, flipV = false) {
     if (!ctx || !videoEl || !(targetW > 0) || !(targetH > 0)) return;
     const srcW = videoEl.videoWidth || videoEl.naturalWidth || targetW;
     const srcH = videoEl.videoHeight || videoEl.naturalHeight || targetH;
     if (!(srcW > 0) || !(srcH > 0)) {
-        ctx.drawImage(videoEl, 0, 0, targetW, targetH);
+        _drawImageFlipped(ctx, videoEl, 0, 0, targetW, targetH, undefined, undefined, undefined, undefined, flipH, flipV);
         return;
     }
     const userScale = (scalePct || 100) / 100;
     const scale = Math.max(targetW / srcW, targetH / srcH) * userScale;
     const drawW = srcW * scale;
     const drawH = srcH * scale;
-    const drawX = (targetW - drawW) / 2;
-    const drawY = (targetH - drawH) / 2;
-    ctx.drawImage(videoEl, drawX, drawY, drawW, drawH);
+    const maxShiftX = Math.abs(targetW - drawW) / 2;
+    const maxShiftY = Math.abs(targetH - drawH) / 2;
+    const drawX = (targetW - drawW) / 2 + maxShiftX * (offsetX / 100);
+    const drawY = (targetH - drawH) / 2 + maxShiftY * (offsetY / 100);
+    _drawImageFlipped(ctx, videoEl, drawX, drawY, drawW, drawH, undefined, undefined, undefined, undefined, flipH, flipV);
+}
+
+function _parseCropString(cropStr) {
+    let cropX = 0, cropY = 0, cropW = 1, cropH = 1;
+    if (cropStr && typeof cropStr === 'string' && cropStr.trim() !== '') {
+        const parts = cropStr.split(',').map(p => parseFloat(p.trim()));
+        if (parts.length === 4 && parts.every(p => !isNaN(p))) {
+            cropX = Math.max(0, Math.min(100, parts[0])) / 100;
+            cropY = Math.max(0, Math.min(100, parts[1])) / 100;
+            cropW = Math.max(1, Math.min(100, parts[2])) / 100;
+            cropH = Math.max(1, Math.min(100, parts[3])) / 100;
+        }
+    }
+    return { cropX, cropY, cropW, cropH };
+}
+
+function _drawCroppedVideoCover(ctx, videoEl, cropX, cropY, cropW, cropH, targetW, targetH, scalePct, offsetX = 0, offsetY = 0, flipH = false, flipV = false) {
+    if (!ctx || !videoEl || !(targetW > 0) || !(targetH > 0)) return;
+    const srcW = videoEl.videoWidth || videoEl.naturalWidth || targetW;
+    const srcH = videoEl.videoHeight || videoEl.naturalHeight || targetH;
+    if (!(srcW > 0) || !(srcH > 0)) {
+        _drawImageFlipped(ctx, videoEl, 0, 0, targetW, targetH, undefined, undefined, undefined, undefined, flipH, flipV);
+        return;
+    }
+    const sx = srcW * cropX;
+    const sy = srcH * cropY;
+    const sWidth = srcW * cropW;
+    const sHeight = srcH * cropH;
+
+    const userScale = (scalePct || 100) / 100;
+    const scale = Math.max(targetW / sWidth, targetH / sHeight) * userScale;
+    const drawW = sWidth * scale;
+    const drawH = sHeight * scale;
+    const maxShiftX = Math.abs(targetW - drawW) / 2;
+    const maxShiftY = Math.abs(targetH - drawH) / 2;
+    const drawX = (targetW - drawW) / 2 + maxShiftX * (offsetX / 100);
+    const drawY = (targetH - drawH) / 2 + maxShiftY * (offsetY / 100);
+    _drawImageFlipped(ctx, videoEl, sx, sy, sWidth, sHeight, drawX, drawY, drawW, drawH, flipH, flipV);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -3184,6 +3654,179 @@ function _isImageFile(filePath) {
     return ['jpg', 'jpeg', 'png', 'webp', 'bmp', 'gif'].includes(ext);
 }
 
+function _resolvePreviewBackgroundPath(task) {
+    if (!task) return { path: '', isMulti: false };
+    const activePool = _getEffectiveBgClipPool(task);
+    const isMulti = task.bgMode === 'multi' && activePool.length > 0;
+    if (isMulti) {
+        const previewPath = activePool.find(p => p && _reelsFileExists(p)) || activePool[0] || '';
+        return { path: previewPath, isMulti: true };
+    }
+    return { path: task.bgPath || task.videoPath || '', isMulti: false };
+}
+
+function _getEffectiveBgClipPool(task) {
+    if (!task || !Array.isArray(task.bgClipPool)) return [];
+    const pool = task.bgClipPool.filter(Boolean);
+    const active = Array.isArray(task.bgClipActivePool)
+        ? task.bgClipActivePool.filter(p => p && pool.includes(p))
+        : [];
+    return active.length > 0 ? active : pool;
+}
+
+function _getEffectiveBgmClipPool(task) {
+    if (!task || !Array.isArray(task.bgmClipPool)) return [];
+    const pool = task.bgmClipPool.filter(Boolean);
+    const active = Array.isArray(task.bgmClipActivePool)
+        ? task.bgmClipActivePool.filter(p => p && pool.includes(p))
+        : [];
+    return active.length > 0 ? active : pool;
+}
+
+function _getEffectiveBgmPath(task, taskIdx) {
+    if (!task) return '';
+    if (task.bgmMode === 'multi') {
+        const pool = _getEffectiveBgmClipPool(task).filter(p => p && _reelsFileExists(p));
+        if (pool.length > 0) {
+            if (task.bgmClipOrder === 'sequence') {
+                return pool[taskIdx % pool.length];
+            } else {
+                const seedText = `${task.id || task.fileName || ''}|${taskIdx}|bgm-seed`;
+                let seed = 2166136261;
+                for (let i = 0; i < seedText.length; i++) {
+                    seed ^= seedText.charCodeAt(i);
+                    seed += (seed << 1) + (seed << 4) + (seed << 7) + (seed << 8) + (seed << 24);
+                }
+                const randIdx = Math.abs(seed) % pool.length;
+                return pool[randIdx];
+            }
+        }
+        return '';
+    }
+    return task.bgmPath || '';
+}
+
+window._getEffectiveBgmClipPool = _getEffectiveBgmClipPool;
+window._getEffectiveBgmPath = _getEffectiveBgmPath;
+
+
+function _getPreviewMultiClipPool(task) {
+    if (!task || task.bgMode !== 'multi') return [];
+    const pool = _getEffectiveBgClipPool(task).filter(p => p && _reelsFileExists(p));
+    if ((task.bgClipOrder || 'random') !== 'random' || pool.length <= 1) return pool;
+
+    const seedText = `${task.id || task.fileName || ''}|${pool.join('|')}`;
+    let seed = 2166136261;
+    for (let i = 0; i < seedText.length; i++) {
+        seed ^= seedText.charCodeAt(i);
+        seed = Math.imul(seed, 16777619);
+    }
+    const rng = _mulberry32(seed >>> 0);
+    const shuffled = pool.slice();
+    for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(rng() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled;
+}
+
+function _getPreviewMultiClipDuration(path, videoEl, task) {
+    const bgDurFactor = (task && task.bgDurScale ? task.bgDurScale : 100) / 100;
+    if (_isImagePath(path)) return 5 * bgDurFactor;
+    if (videoEl && videoEl.dataset && videoEl.dataset.multiBgPath === path && isFinite(videoEl.duration) && videoEl.duration > 0) {
+        return Math.max(0.5, videoEl.duration * bgDurFactor);
+    }
+    return 5 * bgDurFactor;
+}
+
+function _resolvePreviewMultiClipAtTime(task, timeSec) {
+    const pool = _getPreviewMultiClipPool(task);
+    if (pool.length === 0) return null;
+
+    const videoEl = document.getElementById('reels-preview-video');
+    const durations = pool.map(path => _getPreviewMultiClipDuration(path, videoEl, task));
+    const total = durations.reduce((sum, dur) => sum + dur, 0) || pool.length * 5;
+    const loopTime = _isPreviewLoopEnabled() && total > 0
+        ? (((timeSec || 0) % total) + total) % total
+        : Math.min(timeSec || 0, Math.max(0, total - 0.001));
+
+    let cursor = 0;
+    for (let i = 0; i < pool.length; i++) {
+        const dur = durations[i] || 5;
+        if (loopTime < cursor + dur || i === pool.length - 1) {
+            return {
+                index: i,
+                path: pool[i],
+                isImage: _isImagePath(pool[i]),
+                localTime: Math.max(0, loopTime - cursor),
+                duration: dur,
+                totalDuration: total,
+            };
+        }
+        cursor += dur;
+    }
+    return null;
+}
+
+function _syncPreviewMultiBackground(task, contentTime) {
+    const clip = _resolvePreviewMultiClipAtTime(task, contentTime);
+    const video = document.getElementById('reels-preview-video');
+    if (!clip || !video) return null;
+
+    const taskId = task.id || task.fileName || String(_reelsState.selectedIdx);
+    const state = _reelsState.previewMultiBg || (_reelsState.previewMultiBg = {});
+    if (state.taskId !== taskId) {
+        state.taskId = taskId;
+        state.clipIndex = -1;
+        state.path = '';
+        state.image = null;
+    }
+
+    if (clip.isImage) {
+        video.pause();
+        video.removeAttribute('src');
+        video.dataset.multiBgPath = '';
+        _resetPreviewFadeVideo();
+        video.style.display = 'none';
+        if (state.path !== clip.path || !state.image) {
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            img.onload = () => { if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview(); };
+            img.src = _toPlayablePath(clip.path, null);
+            state.path = clip.path;
+            state.clipIndex = clip.index;
+            state.image = img;
+        }
+        _reelsState._previewBgImage = state.image;
+        return { ...clip, image: state.image };
+    }
+
+    _reelsState._previewBgImage = null;
+    const url = _toPlayablePath(clip.path, null);
+    if (state.path !== clip.path || video.dataset.multiBgPath !== clip.path || video.src !== url) {
+        video.pause();
+        video.src = url;
+        video.dataset.multiBgPath = clip.path;
+        video.load();
+        state.path = clip.path;
+        state.clipIndex = clip.index;
+        state.image = null;
+    }
+
+    const targetTime = video.duration > 0 ? Math.min(clip.localTime, Math.max(0, video.duration - 0.03)) : clip.localTime;
+    if (video.readyState >= 1 && Math.abs((video.currentTime || 0) - targetTime) > 0.25) {
+        try { video.currentTime = targetTime; } catch (_) { }
+    }
+    const audio = document.getElementById('reels-preview-audio');
+    const shouldPlay = !!_reelsState.mockPlaying || !!(audio && audio.src && !audio.paused);
+    if (shouldPlay && video.paused) {
+        video.play().catch(() => { });
+    } else if (!shouldPlay && !video.paused) {
+        video.pause();
+    }
+    return clip;
+}
+
 /**
  * 解析任务的 Hook（前置视频）路径。
  * 优先级: task.hookFile → task.hook.path → 全局前置路径。
@@ -3237,8 +3880,10 @@ function _getPreviewMasterElement() {
     if (!task) return null;
     const audio = document.getElementById('reels-preview-audio');
     if (task.audioPath && audio && audio.src && audio.readyState >= 1) return audio;
+    const previewBg = _resolvePreviewBackgroundPath(task);
+    if (previewBg.isMulti) return null;
     const video = document.getElementById('reels-preview-video');
-    const isVideo = task.bgPath && !_isImagePath(task.bgPath);
+    const isVideo = previewBg.path && !_isImagePath(previewBg.path);
     if (isVideo && video && video.src && video.readyState >= 1) return video;
     // 内容视频作为时钟源（当没有单独配音和背景视频时）
     const cvVideo = document.getElementById('reels-preview-contentvideo');
@@ -3262,7 +3907,8 @@ function _applyPreviewLoopMode() {
     const bgm = _reelsState._bgmAudioEl;
 
     const hasAudio = !!(task && task.audioPath && audio && audio.src);
-    const hasVideo = !!(task && task.bgPath && !_isImagePath(task.bgPath || task.videoPath) && video && video.src);
+    const previewBg = _resolvePreviewBackgroundPath(task);
+    const hasVideo = !!(task && !previewBg.isMulti && previewBg.path && !_isImagePath(previewBg.path) && video && video.src);
     const hasCvVideo = !!(task && task.contentVideoPath && cvVideo && cvVideo.src);
 
     if (audio) audio.loop = enabled && hasAudio;
@@ -3359,6 +4005,14 @@ function _getPreviewDuration() {
         return Math.max(cvDur, subDur) + offsetDur;
     }
 
+    if (task && task.bgMode === 'multi' && _getEffectiveBgClipPool(task).length > 0) {
+        const pool = _getPreviewMultiClipPool(task);
+        const multiDur = pool.reduce((sum, path) => {
+            return sum + _getPreviewMultiClipDuration(path, video, task);
+        }, 0);
+        if (multiDur > 0) return Math.max(multiDur, subDur) + offsetDur;
+    }
+
     // 无音频、无覆层视频时以背景视频时长为准，若仍无时长则推算虚拟进度
     const bDurScale = (task && task.bgDurScale) ? (task.bgDurScale / 100) : 1;
     const baseDur = Math.max(vDur * bDurScale, subDur, 0);
@@ -3395,12 +4049,21 @@ function _getPreviewAudioMixConfig() {
     let bgVolume = parseFloat((document.getElementById('reels-bg-volume') || {}).value || '100');
     if (!Number.isFinite(voiceVolume)) voiceVolume = 100;
     if (!Number.isFinite(bgVolume)) bgVolume = 100;
-    voiceVolume = Math.max(0, Math.min(200, voiceVolume));
-    bgVolume = Math.max(0, Math.min(200, bgVolume));
+    voiceVolume = Math.max(0, voiceVolume);
+    bgVolume = Math.max(0, bgVolume);
     return { voiceGain: voiceVolume / 100, bgGain: bgVolume / 100 };
 }
 
 function _applyPreviewAudioMix() {
+    // ── 确保 Web Audio 拓扑建立 ──
+    _setupPreviewReverb();
+
+    const ctx = _reelsState._audioCtx;
+    if (ctx && ctx.state === 'suspended') {
+        ctx.resume().catch(e => {});
+    }
+    const useWebAudio = !!(ctx && _reelsState._gainNodes);
+
     const task = _getSelectedTask();
     const audio = document.getElementById('reels-preview-audio');
     const video = document.getElementById('reels-preview-video');
@@ -3412,21 +4075,43 @@ function _applyPreviewAudioMix() {
     const effectiveBgGain = (task && task.bgVideoVolume != null) ? task.bgVideoVolume / 100 : cfg.bgGain;
 
     if (audio) {
-        // HTMLMediaElement.volume 仅允许 [0,1]，超过100%的增益仅在 FFmpeg 导出时生效
-        audio.volume = hasVoice ? Math.min(1.0, effectiveVoiceGain) : 1.0;
-        audio.muted = hasVoice ? (effectiveVoiceGain <= 0.0001) : false;
+        const vol = hasVoice ? effectiveVoiceGain : 1.0;
+        if (useWebAudio && _reelsState._gainNodes.has(audio)) {
+            const gainNode = _reelsState._gainNodes.get(audio);
+            gainNode.gain.setValueAtTime(vol, ctx.currentTime);
+            audio.volume = vol > 0 ? 1.0 : 0;
+            audio.muted = vol <= 0.0001;
+        } else {
+            audio.volume = Math.min(1.0, vol);
+            audio.muted = hasVoice ? (vol <= 0.0001) : false;
+        }
     }
     if (video) {
-        video.volume = Math.min(1.0, effectiveBgGain);
-        video.muted = effectiveBgGain <= 0.0001;
+        const vol = effectiveBgGain;
+        if (useWebAudio && _reelsState._gainNodes.has(video)) {
+            const gainNode = _reelsState._gainNodes.get(video);
+            gainNode.gain.setValueAtTime(vol, ctx.currentTime);
+            video.volume = vol > 0 ? 1.0 : 0;
+            video.muted = vol <= 0.0001;
+        } else {
+            video.volume = Math.min(1.0, vol);
+            video.muted = vol <= 0.0001;
+        }
     }
 
     // ── 覆层视频 (Content Video) 音量 ──
     if (contentVideoEl && task) {
         const cvVolRaw = task.contentVideoVolume != null ? task.contentVideoVolume : 100;
-        const cvVol = Math.max(0, Math.min(2.0, cvVolRaw / 100)); // 可以最大 200%
-        contentVideoEl.volume = Math.min(1.0, cvVol); // 浏览器预览最大只能 1.0
-        contentVideoEl.muted = cvVol <= 0.001;
+        const cvVol = Math.max(0, cvVolRaw / 100); // 允许无上限
+        if (useWebAudio && _reelsState._gainNodes.has(contentVideoEl)) {
+            const gainNode = _reelsState._gainNodes.get(contentVideoEl);
+            gainNode.gain.setValueAtTime(cvVol, ctx.currentTime);
+            contentVideoEl.volume = cvVol > 0 ? 1.0 : 0;
+            contentVideoEl.muted = cvVol <= 0.001;
+        } else {
+            contentVideoEl.volume = Math.min(1.0, cvVol);
+            contentVideoEl.muted = cvVol <= 0.001;
+        }
     }
 
     // ── BGM 音量 ──
@@ -3434,9 +4119,20 @@ function _applyPreviewAudioMix() {
     if (bgmAudio) {
         if (task && task.bgmPath && bgmAudio.src) {
             const bgmVol = (task.bgmVolume != null ? task.bgmVolume : 10) / 100;
-            bgmAudio.volume = Math.max(0, Math.min(1, bgmVol));
-            bgmAudio.muted = bgmVol <= 0.001;
+            if (useWebAudio && _reelsState._gainNodes.has(bgmAudio)) {
+                const gainNode = _reelsState._gainNodes.get(bgmAudio);
+                gainNode.gain.setValueAtTime(bgmVol, ctx.currentTime);
+                bgmAudio.volume = bgmVol > 0 ? 1.0 : 0;
+                bgmAudio.muted = bgmVol <= 0.001;
+            } else {
+                bgmAudio.volume = Math.max(0, Math.min(1.0, bgmVol));
+                bgmAudio.muted = bgmVol <= 0.001;
+            }
         } else {
+            if (useWebAudio && _reelsState._gainNodes.has(bgmAudio)) {
+                const gainNode = _reelsState._gainNodes.get(bgmAudio);
+                gainNode.gain.setValueAtTime(0, ctx.currentTime);
+            }
             bgmAudio.volume = 0;
             bgmAudio.muted = true;
         }
@@ -3497,8 +4193,9 @@ function _generateImpulseResponse(ctx, preset) {
 function _setupPreviewReverb() {
     const audio = document.getElementById('reels-preview-audio');
     const video = document.getElementById('reels-preview-video');
+    const contentVideoEl = document.getElementById('reels-preview-contentvideo');
     const bgm = _reelsState._bgmAudioEl;
-    if (!audio && !video && !bgm) return;
+    if (!audio && !video && !contentVideoEl && !bgm) return;
 
     const enabled = document.getElementById('reels-reverb-enabled')?.checked || false;
     const targetFx = document.getElementById('reels-audio-fx-target')?.value || 'all';
@@ -3510,17 +4207,17 @@ function _setupPreviewReverb() {
     if (!_reelsState._audioCtx) {
         try {
             _reelsState._audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            _reelsState._mediaSources = new Map();
         } catch (e) {
             console.warn('[Reverb] Web Audio not supported', e);
             return;
         }
     }
     if (!_reelsState._mediaSources) _reelsState._mediaSources = new Map();
+    if (!_reelsState._gainNodes) _reelsState._gainNodes = new Map();
     const ctx = _reelsState._audioCtx;
 
     // Attach MediaElementSource for any new elements
-    const els = [audio, video, bgm].filter(Boolean);
+    const els = [audio, video, contentVideoEl, bgm].filter(Boolean);
     for (const el of els) {
         if (!_reelsState._mediaSources.has(el)) {
             try {
@@ -3530,11 +4227,23 @@ function _setupPreviewReverb() {
                 console.warn('[Reverb] Failed to create source for', el, e);
             }
         }
+        if (!_reelsState._gainNodes.has(el)) {
+            try {
+                const gainNode = ctx.createGain();
+                gainNode.gain.setValueAtTime(1.0, ctx.currentTime);
+                _reelsState._gainNodes.set(el, gainNode);
+            } catch (e) {
+                console.warn('[Reverb] Failed to create gain node for', el, e);
+            }
+        }
     }
 
     // Disconnect everything fully before rewiring
     for (const source of _reelsState._mediaSources.values()) {
         try { source.disconnect(); } catch (e) { }
+    }
+    for (const gainNode of _reelsState._gainNodes.values()) {
+        try { gainNode.disconnect(); } catch (e) { }
     }
     if (_reelsState._reverbGainWet) { try { _reelsState._reverbGainWet.disconnect(); } catch(e){} }
     if (_reelsState._reverbGainDry) { try { _reelsState._reverbGainDry.disconnect(); } catch(e){} }
@@ -3549,9 +4258,17 @@ function _setupPreviewReverb() {
         } catch (e) {}
     }
 
-    // Determine target element
+    // Wire each source node to its corresponding Volume GainNode
+    for (const [el, source] of _reelsState._mediaSources.entries()) {
+        const gainNode = _reelsState._gainNodes.get(el);
+        if (gainNode) {
+            source.connect(gainNode);
+        }
+    }
+
+    // Determine target element for FX
     let targetEl = null;
-    let targetSource = null;
+    let targetGainNode = null;
     
     if (needsFx) {
         if ((targetFx === 'voice' || targetFx === 'all') && audio?.src) targetEl = audio;
@@ -3563,19 +4280,19 @@ function _setupPreviewReverb() {
             else if (video?.src) targetEl = video;
             else if (bgm?.src) targetEl = bgm;
         }
-        if (targetEl) targetSource = _reelsState._mediaSources.get(targetEl);
+        if (targetEl) targetGainNode = _reelsState._gainNodes.get(targetEl);
     }
 
-    // Connect non-targets directly to destination
-    for (const [el, source] of _reelsState._mediaSources.entries()) {
-        if (source !== targetSource) {
-            source.connect(ctx.destination);
+    // Connect non-target GainNodes directly to destination
+    for (const [el, gainNode] of _reelsState._gainNodes.entries()) {
+        if (gainNode && el !== targetEl) {
+            gainNode.connect(ctx.destination);
         }
     }
 
-    // If no FX or no target, clean up and exit
-    if (!needsFx || !targetSource) {
-        if (targetSource) targetSource.connect(ctx.destination);
+    // If no FX or no target gain node, target gain node also connects directly to destination
+    if (!needsFx || !targetGainNode) {
+        if (targetGainNode) targetGainNode.connect(ctx.destination);
         return;
     }
 
@@ -3598,12 +4315,14 @@ function _setupPreviewReverb() {
 
     const masterGain = ctx.createGain();
     masterGain.gain.value = 1.0;
+    masterGain.channelCount = 2;
+    masterGain.channelCountMode = 'explicit';
 
-    targetSource.connect(dryGain);
+    targetGainNode.connect(dryGain);
     dryGain.connect(masterGain);
 
     if (enabled) {
-        targetSource.connect(convolver);
+        targetGainNode.connect(convolver);
         convolver.connect(wetGain);
         wetGain.connect(masterGain);
     }
@@ -3684,6 +4403,7 @@ function _calcPreviewLoopFadeFrame() {
     const video = document.getElementById('reels-preview-video');
     const audio = document.getElementById('reels-preview-audio');
     if (!task || !video || !video.src || video.readyState < 2) return null;
+    if (task.bgMode === 'multi') return null;
     if (!task.audioPath || _isImagePath(task.bgPath || task.videoPath)) return null;
 
     const cfg = _getPreviewLoopFadeConfig();
@@ -3766,6 +4486,7 @@ function _syncBackgroundVideoToMaster() {
     // --- Sync Background Video ---
     const video = document.getElementById('reels-preview-video');
     const audio = document.getElementById('reels-preview-audio');
+    if (task.bgMode === 'multi') return;
     if (!video || !video.src || video.readyState < 1 || _isImagePath(task.bgPath || task.videoPath)) return;
     if (video.duration > 0) {
         const target = masterTime % video.duration;
@@ -3798,10 +4519,25 @@ function _syncBackgroundVideoToMaster() {
 
 function _updatePreviewTimeUI(currentTime, duration) {
     const seekBar = document.getElementById('reels-preview-seek');
-    if (seekBar && !window._hasBoundSeekbarEvents) {
-        window._hasBoundSeekbarEvents = true;
-        seekBar.addEventListener('pointerdown', () => window._isScrubbingSeekbar = true);
-        window.addEventListener('pointerup', () => window._isScrubbingSeekbar = false);
+    if (seekBar && !seekBar._hasBoundSeekbarEvents) {
+        seekBar._hasBoundSeekbarEvents = true;
+        
+        const startScrubbing = () => { window._isScrubbingSeekbar = true; };
+        const stopScrubbing = () => { window._isScrubbingSeekbar = false; };
+        
+        seekBar.addEventListener('pointerdown', startScrubbing);
+        seekBar.addEventListener('mousedown', startScrubbing);
+        seekBar.addEventListener('touchstart', startScrubbing);
+        
+        seekBar.addEventListener('pointerup', stopScrubbing);
+        seekBar.addEventListener('pointercancel', stopScrubbing);
+        seekBar.addEventListener('mouseup', stopScrubbing);
+        seekBar.addEventListener('touchend', stopScrubbing);
+        seekBar.addEventListener('change', stopScrubbing);
+        
+        window.addEventListener('pointerup', stopScrubbing);
+        window.addEventListener('mouseup', stopScrubbing);
+        window.addEventListener('touchend', stopScrubbing);
     }
     const timeLabel = document.getElementById('reels-preview-time');
     if (seekBar && duration > 0 && !window._isScrubbingSeekbar) {
@@ -3856,6 +4592,7 @@ function _getOrCreateTaskByBase(baseName, fallbackName = '') {
     if (task) return task;
 
     task = {
+        id: 'task_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now(),
         baseName: normalized,
         fileName: fallbackName || `${normalized || 'reel'}.mp4`,
         bgPath: null,
@@ -4017,7 +4754,145 @@ function _showTextareaDialog(title, placeholder, defaultVal) {
 // Subtitle alignment (call existing subtitle/generate API)
 // ═══════════════════════════════════════════════════════
 
-async function _reelsAlignSubtitles(task) {
+function reelsShowMismatchDialog(taskName, mismatchData, sourceText) {
+    return new Promise((resolve) => {
+        const modal = document.createElement('div');
+        modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;z-index:99999;';
+
+        const content = document.createElement('div');
+        content.style.cssText = 'background:var(--bg-secondary,#1e1e2e);width:600px;max-width:90%;border-radius:12px;padding:24px;border:1px solid rgba(255,255,255,0.1);box-shadow:0 10px 40px rgba(0,0,0,0.5);display:flex;flex-direction:column;gap:16px;font-family:system-ui,-apple-system,sans-serif;color:var(--text-primary,#eee);';
+
+        const escapeHtml = (str) => {
+            return String(str).replace(/[&<>'"]/g, match => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[match]));
+        };
+
+        content.innerHTML = `
+            <div style="display:flex;align-items:center;gap:10px;">
+                <span style="font-size:24px;">⚠️</span>
+                <h3 style="margin:0;color:var(--text-primary,#eee);font-size:18px;">文案匹配度警告 (匹配度: ${mismatchData.similarity}%)</h3>
+            </div>
+            <div style="font-size:14px;color:var(--text-secondary,#bbb);line-height:1.5;">
+                任务 <b style="color:var(--text-primary,#eee);">${escapeHtml(taskName)}</b> 提取到的声音与您提供的参考文案差异极大。<br/>
+                强行对齐将导致字幕时间轴严重错乱。
+            </div>
+            <div style="display:flex;gap:12px;margin-top:8px;">
+                <div style="flex:1;background:rgba(255,255,255,0.03);padding:12px;border-radius:8px;border:1px solid rgba(255,255,255,0.05);min-width:0;">
+                    <div style="font-size:12px;color:var(--text-secondary,#bbb);margin-bottom:8px;font-weight:bold;">📝 您提供的原文案</div>
+                    <div style="font-size:13px;color:var(--text-primary,#eee);max-height:150px;overflow-y:auto;line-height:1.5;white-space:pre-wrap;word-break:break-all;">${escapeHtml(sourceText || '')}</div>
+                </div>
+                <div style="flex:1;background:rgba(255,255,255,0.03);padding:12px;border-radius:8px;border:1px solid rgba(255,255,255,0.05);min-width:0;">
+                    <div style="font-size:12px;color:var(--text-secondary,#bbb);margin-bottom:8px;font-weight:bold;">🎙️ AI 实际识别到的声音</div>
+                    <div style="font-size:13px;color:var(--text-primary,#eee);max-height:150px;overflow-y:auto;line-height:1.5;white-space:pre-wrap;word-break:break-all;">${escapeHtml(mismatchData.recognized_text || '')}</div>
+                </div>
+            </div>
+            <div style="font-size:13px;color:var(--text-secondary,#bbb);margin-top:10px;">请选择如何处理此任务：</div>
+            <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px;">
+                <button id="reels-mismatch-btn-force" class="btn btn-secondary" style="flex:1;font-size:12px;padding:8px 12px;cursor:pointer;">⚠️ 强制使用原文案</button>
+                <button id="reels-mismatch-btn-skip" class="btn btn-secondary" style="flex:1;font-size:12px;padding:8px 12px;cursor:pointer;">⏭️ 跳过此任务</button>
+                <button id="reels-mismatch-btn-use" class="btn btn-primary" style="flex:1.5;background:var(--accent,#7b8bef);color:white;border:none;font-size:12px;padding:8px 12px;cursor:pointer;border-radius:6px;">🚀 使用识别文案 (推荐)</button>
+            </div>
+        `;
+
+        modal.appendChild(content);
+        document.body.appendChild(modal);
+
+        const cleanup = () => document.body.removeChild(modal);
+
+        modal.querySelector('#reels-mismatch-btn-force').addEventListener('click', () => { cleanup(); resolve('FORCE'); });
+        modal.querySelector('#reels-mismatch-btn-skip').addEventListener('click', () => { cleanup(); resolve('SKIP'); });
+        modal.querySelector('#reels-mismatch-btn-use').addEventListener('click', () => { cleanup(); resolve('USE_RECOGNIZED'); });
+    });
+}
+
+function reelsShowAlignSummaryModal(results) {
+    return new Promise((resolve) => {
+        const modal = document.createElement('div');
+        modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;z-index:99999;';
+
+        const content = document.createElement('div');
+        content.style.cssText = 'background:var(--bg-secondary,#1e1e2e);width:650px;max-width:90%;border-radius:12px;padding:24px;border:1px solid rgba(255,255,255,0.1);box-shadow:0 10px 40px rgba(0,0,0,0.5);display:flex;flex-direction:column;gap:16px;font-family:system-ui,-apple-system,sans-serif;color:var(--text-primary,#eee);';
+
+        const total = results.length;
+        const okCount = results.filter(r => r.status !== 'SKIPPED' && r.status !== 'FAILED').length;
+        const failCount = total - okCount;
+
+        const escapeHtml = (str) => {
+            return String(str).replace(/[&<>'"]/g, match => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[match]));
+        };
+
+        let rowsHtml = '';
+        results.forEach((r, idx) => {
+            let statusBadge = '';
+            if (r.status === 'SUCCESS') statusBadge = '<span style="background:rgba(74,222,128,0.15);color:#4ade80;padding:2px 6px;border-radius:4px;font-size:11px;">✅ 对齐成功</span>';
+            else if (r.status === 'FORCE') statusBadge = '<span style="background:rgba(251,191,36,0.15);color:#fbbf24;padding:2px 6px;border-radius:4px;font-size:11px;">⚠️ 强行对齐</span>';
+            else if (r.status === 'CORRECTED') statusBadge = '<span style="background:rgba(96,165,250,0.15);color:#60a5fa;padding:2px 6px;border-radius:4px;font-size:11px;">🎙️ 自动修正</span>';
+            else if (r.status === 'SKIPPED') statusBadge = '<span style="background:rgba(156,163,175,0.15);color:#9ca3af;padding:2px 6px;border-radius:4px;font-size:11px;">⏭️ 已跳过</span>';
+            else statusBadge = `<span style="background:rgba(239,68,68,0.15);color:#ef4444;padding:2px 6px;border-radius:4px;font-size:11px;" title="${escapeHtml(r.err || '')}">❌ 失败</span>`;
+
+            rowsHtml += `
+                <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+                    <td style="padding:10px 8px;font-size:13px;color:var(--text-secondary,#bbb);">${idx + 1}</td>
+                    <td style="padding:10px 8px;font-size:13px;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px;" title="${escapeHtml(r.fileName)}">${escapeHtml(r.fileName)}</td>
+                    <td style="padding:10px 8px;font-size:13px;">${statusBadge}</td>
+                    <td style="padding:10px 8px;font-size:12px;color:var(--text-secondary,#bbb);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(r.text || '')}">${escapeHtml(r.text || '')}</td>
+                </tr>
+            `;
+        });
+
+        content.innerHTML = `
+            <div style="display:flex;align-items:center;gap:10px;">
+                <span style="font-size:24px;">📊</span>
+                <h3 style="margin:0;color:var(--text-primary,#eee);font-size:18px;">批量对齐字幕报告</h3>
+            </div>
+            <div style="display:flex;gap:16px;background:rgba(255,255,255,0.03);padding:12px;border-radius:8px;border:1px solid rgba(255,255,255,0.05);justify-content:space-around;text-align:center;">
+                <div>
+                    <div style="font-size:12px;color:var(--text-secondary,#bbb);">总任务数</div>
+                    <div style="font-size:20px;font-weight:bold;color:var(--text-primary,#eee);">${total}</div>
+                </div>
+                <div style="border-left:1px solid rgba(255,255,255,0.1);height:30px;align-self:center;"></div>
+                <div>
+                    <div style="font-size:12px;color:var(--text-secondary,#bbb);color:#4ade80;">对齐成功</div>
+                    <div style="font-size:20px;font-weight:bold;color:#4ade80;">${okCount}</div>
+                </div>
+                <div style="border-left:1px solid rgba(255,255,255,0.1);height:30px;align-self:center;"></div>
+                <div>
+                    <div style="font-size:12px;color:var(--text-secondary,#bbb);color:#ef4444;">失败/跳过</div>
+                    <div style="font-size:20px;font-weight:bold;color:#ef4444;">${failCount}</div>
+                </div>
+            </div>
+            <div style="max-height:250px;overflow-y:auto;border:1px solid rgba(255,255,255,0.08);border-radius:8px;">
+                <table style="width:100%;border-collapse:collapse;text-align:left;">
+                    <thead>
+                        <tr style="background:rgba(255,255,255,0.02);border-bottom:1px solid rgba(255,255,255,0.08);">
+                            <th style="padding:8px;font-size:12px;font-weight:bold;color:var(--text-secondary,#bbb);width:30px;">#</th>
+                            <th style="padding:8px;font-size:12px;font-weight:bold;color:var(--text-secondary,#bbb);width:180px;">任务名称</th>
+                            <th style="padding:8px;font-size:12px;font-weight:bold;color:var(--text-secondary,#bbb);width:100px;">对齐状态</th>
+                            <th style="padding:8px;font-size:12px;font-weight:bold;color:var(--text-secondary,#bbb);">对齐文案内容</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${rowsHtml}
+                    </tbody>
+                </table>
+            </div>
+            <div style="display:flex;justify-content:flex-end;margin-top:8px;">
+                <button id="reels-summary-close-btn" class="btn btn-primary" style="background:var(--accent,#7b8bef);color:white;border:none;font-size:13px;padding:8px 24px;cursor:pointer;border-radius:6px;">我知道了</button>
+            </div>
+        `;
+
+        modal.appendChild(content);
+        document.body.appendChild(modal);
+
+        const cleanup = () => {
+            document.body.removeChild(modal);
+            resolve();
+        };
+
+        modal.querySelector('#reels-summary-close-btn').addEventListener('click', cleanup);
+    });
+}
+
+async function _reelsAlignSubtitles(task, ignoreMismatch = false) {
     const txtContent = task.txtContent || task.manualText || '';
     if (!txtContent.trim()) throw new Error('没有字幕文本');
 
@@ -4044,6 +4919,7 @@ async function _reelsAlignSubtitles(task) {
             language: language,
             audio_cut_length: 5.0,
             output_dir: audioDir,
+            ignore_mismatch: ignoreMismatch
         }),
     });
 
@@ -4089,17 +4965,64 @@ async function reelsAlignAllTasks() {
 
     const statusEl = document.getElementById('reels-export-status');
     let ok = 0, fail = 0;
+    const alignResults = [];
 
     for (let i = 0; i < tasksToAlign.length; i++) {
         const task = tasksToAlign[i];
         if (statusEl) statusEl.textContent = `对齐中 ${i + 1}/${tasksToAlign.length}: ${task.fileName}`;
-        try {
-            await _reelsAlignSubtitles(task);
-            ok++;
-        } catch (err) {
-            console.error('[Reels] Align failed:', task.fileName, err);
-            fail++;
+
+        let retryAlign = true;
+        let ignoreMismatch = false;
+        let finalStatus = 'FAILED';
+        let errMsg = '';
+
+        while (retryAlign) {
+            retryAlign = false;
+            try {
+                await _reelsAlignSubtitles(task, ignoreMismatch);
+                ok++;
+                finalStatus = ignoreMismatch ? 'FORCE' : 'SUCCESS';
+            } catch (err) {
+                const message = err.message;
+                if (message.includes('"code":"TEXT_MISMATCH"')) {
+                    try {
+                        const mismatchData = JSON.parse(message);
+                        const choice = await reelsShowMismatchDialog(task.fileName, mismatchData, task.txtContent || task.manualText || '');
+                        if (choice === 'USE_RECOGNIZED') {
+                            task.txtContent = mismatchData.recognized_text;
+                            retryAlign = true;
+                            finalStatus = 'CORRECTED';
+                            continue;
+                        } else if (choice === 'FORCE') {
+                            ignoreMismatch = true;
+                            retryAlign = true;
+                            continue;
+                        } else {
+                            // SKIP
+                            fail++;
+                            finalStatus = 'SKIPPED';
+                        }
+                    } catch (e) {
+                        console.error('[Reels] Failed to parse mismatch err:', e);
+                        fail++;
+                        finalStatus = 'FAILED';
+                        errMsg = message;
+                    }
+                } else {
+                    console.error('[Reels] Align failed:', task.fileName, err);
+                    fail++;
+                    finalStatus = 'FAILED';
+                    errMsg = message;
+                }
+            }
         }
+
+        alignResults.push({
+            fileName: task.fileName,
+            status: finalStatus,
+            text: task.txtContent || task.manualText || '',
+            err: errMsg
+        });
     }
 
     _renderTaskList();
@@ -4108,9 +5031,9 @@ async function reelsAlignAllTasks() {
             ? `⚠️ 对齐完成 ${ok}/${tasksToAlign.length}，失败 ${fail}`
             : `✅ 对齐完成 (${ok}个任务)`;
     }
-    if (fail === 0 && ok > 0) {
-        alert(`字幕对齐完成 ${ok} 个任务`);
-    }
+    
+    // Show summary modal
+    await reelsShowAlignSummaryModal(alignResults);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -4538,9 +5461,10 @@ function _renderTaskList() {
             }
         }
 
-        const isMultiClip = task.bgClipPool && task.bgClipPool.length > 0;
+        const effectivePool = _getEffectiveBgClipPool(task);
+        const isMultiClip = effectivePool.length > 0;
         const isCrossfadeVideo = (task.bgPath && !_isImageFile(task.bgPath)) && (document.getElementById('reels-loop-fade') || {}).checked !== false;
-        const bgValid = task.bgPath || (task.bgClipPool && task.bgClipPool[0]);
+        const bgValid = task.bgPath || effectivePool[0];
         const canAlpha = bgValid && !isMultiClip && (!task.bgMode || task.bgMode === 'single') && !isCrossfadeVideo;
         const fastAlphaEnabled = (document.getElementById('reels-fast-alpha-mode') || {}).checked !== false;
 
@@ -4571,7 +5495,7 @@ function _renderTaskList() {
                         opacity: ${rowOpacity};
                         ${selected ? 'box-shadow: inset 0 0 0 1px rgba(0,212,255,0.3);' : ''}">
                 <input type="checkbox" class="reels-export-cb" data-task-idx="${i}" ${exportChecked ? 'checked' : ''}
-                    style="accent-color:var(--accent-color,#7b8bef);transform:scale(0.8);margin:0;flex-shrink:0;cursor:pointer;"
+                    style="accent-color:var(--accent-color,#7b8bef);transform:scale(1.25);margin:0 6px 0 4px;flex-shrink:0;cursor:pointer;"
                     onclick="event.stopPropagation(); reelsToggleExportSelect(${i}, this.checked)"
                     title="勾选以包含在批量导出中">
                 <span style="font-size:12px; font-weight:${selected ? '600' : '400'}; color:${selected ? '#fff' : 'var(--text-primary)'}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:60px; max-width:120px;">${shortName}</span>
@@ -4631,6 +5555,8 @@ function reelsSelectTask(idx) {
     if (!task) return;
     const taskStyle = _resolveSubtitleStyleForTask(task);
     if (taskStyle) _writeStyleToUI(taskStyle);
+    if (window.reelsSyncBackgroundTabUI) window.reelsSyncBackgroundTabUI(task);
+    _reelsState.previewMultiBg = { taskId: task.id || task.fileName || String(idx), clipIndex: -1, path: '', image: null };
     
     // Sync subtitle preset UI with the selected task. Do not fall back to the
     // default preset here: after manual edits, an empty task preset means the
@@ -4663,7 +5589,8 @@ function reelsSelectTask(idx) {
     const audio = document.getElementById('reels-preview-audio');
     const playBtn = document.getElementById('reels-preview-play');
     const placeholder = document.getElementById('reels-preview-placeholder');
-    const bgPath = task.bgPath || task.videoPath;
+    const previewBg = _resolvePreviewBackgroundPath(task);
+    const bgPath = previewBg.path;
     // Safety: if bgSrcUrl/srcUrl is a file:// URL that doesn't correspond to the
     // current bgPath, it's stale (left over from a previous file assignment). Clear it
     // so _toPlayablePath generates a fresh URL from the new bgPath.
@@ -4704,8 +5631,9 @@ function reelsSelectTask(idx) {
     const bgmAudio = _reelsState._bgmAudioEl;
     if (bgmAudio) {
         bgmAudio.pause();
-        if (task.bgmPath) {
-            const bgmUrl = _toPlayablePath(task.bgmPath, null);
+        const finalBgmPath = _getEffectiveBgmPath(task, _reelsState.selectedIdx);
+        if (finalBgmPath) {
+            const bgmUrl = _toPlayablePath(finalBgmPath, null);
             if (bgmUrl) {
                 if (bgmAudio.src !== bgmUrl) bgmAudio.src = bgmUrl;
             } else {
@@ -4743,6 +5671,9 @@ function reelsSelectTask(idx) {
             if (placeholder) {
                 placeholder.style.display = 'none';
             }
+            if (previewBg.isMulti) {
+                console.log('[Preview] 多素材模式预览使用素材池代表帧:', bgPath);
+            }
         } else {
             _reelsState._previewBgImage = null; // Clear image bg
             const filePath = _toPlayablePath(bgPath, bgSrc);
@@ -4761,10 +5692,13 @@ function reelsSelectTask(idx) {
                 fadeVideo.pause();
                 try { fadeVideo.currentTime = 0; } catch (e) { }
             }
-            video.style.display = 'block';
+            video.style.display = 'none';
             if (placeholder) {
                 placeholder.style.display = 'none';
                 placeholder.textContent = '选择视频任务后可实时预览字幕效果';
+            }
+            if (previewBg.isMulti) {
+                console.log('[Preview] 多素材模式预览使用素材池代表视频:', bgPath);
             }
         }
     } else if (video) {
@@ -4890,8 +5824,13 @@ function reelsSelectTask(idx) {
         }
         // 设置覆层视频音量（预览+导出）
         const cvVol = task.contentVideoVolume != null ? task.contentVideoVolume : 100;
-        cvVideo.volume = Math.min(1.0, cvVol / 100);
-        cvVideo.muted = cvVol === 0;
+        if (_reelsState._audioCtx && _reelsState._gainNodes?.has(cvVideo)) {
+            cvVideo.volume = cvVol > 0 ? 1.0 : 0;
+            cvVideo.muted = cvVol <= 0.001;
+        } else {
+            cvVideo.volume = Math.min(1.0, cvVol / 100);
+            cvVideo.muted = cvVol <= 0.001;
+        }
     }
 
     // ── 加载 Cover 素材 ──
@@ -4988,7 +5927,8 @@ function reelsTogglePlay() {
     _applyPreviewLoopMode();
 
     const hasAudio = !!(task && task.audioPath && audio && audio.src);
-    const hasVideo = !!(task && task.bgPath && !_isImagePath(task.bgPath) && video && video.src);
+    const previewBg = _resolvePreviewBackgroundPath(task);
+    const hasVideo = !!(task && !previewBg.isMulti && previewBg.path && !_isImagePath(previewBg.path) && video && video.src);
     // 与导出一致：task.hookFile 优先，全局前置回退
     const hasHook = !!(hookVideo && hookVideo.src && _reelsState.hookDuration > 0);
     const master = _getPreviewMasterElement();
@@ -5137,7 +6077,8 @@ function _syncHookPhaseTransition() {
         const video = document.getElementById('reels-preview-video');
         const fadeVideo = _reelsState.previewFadeVideo;
         const hasAudio = !!(task && task.audioPath && audio && audio.src);
-        const hasVideo = !!(task && task.bgPath && !_isImagePath(task.bgPath) && video && video.src);
+        const previewBg = _resolvePreviewBackgroundPath(task);
+        const hasVideo = !!(task && !previewBg.isMulti && previewBg.path && !_isImagePath(previewBg.path) && video && video.src);
 
         const hookTransition = task.hookTransition || 'none';
         const transDur = hookTransition !== 'none' ? (task.hookTransDuration || 0.5) : 0;
@@ -5223,7 +6164,8 @@ function _onSeek(e) {
     if (task && task.audioPath && audio && audio.src && isFinite(audio.duration) && audio.duration > 0) {
         audio.currentTime = Math.max(0, Math.min(contentTarget, audio.duration));
     }
-    if (video && video.duration > 0) {
+    const previewBg = _resolvePreviewBackgroundPath(task);
+    if (video && video.duration > 0 && !previewBg.isMulti) {
         video.currentTime = (task && task.audioPath) ? (contentTarget % video.duration) : Math.max(0, Math.min(contentTarget, video.duration));
         const fadeVideo = _reelsState.previewFadeVideo;
         if (fadeVideo && task && task.audioPath) {
@@ -5231,6 +6173,8 @@ function _onSeek(e) {
             const fadeDur = Math.min(cfg.duration, Math.max(0.1, video.duration * 0.45));
             try { fadeVideo.currentTime = (video.currentTime + fadeDur) % video.duration; } catch (e2) { }
         }
+    } else if (task && previewBg.isMulti) {
+        _syncPreviewMultiBackground(task, contentTarget);
     }
     // ── 同步 BGM seek ──
     const bgmAudio = _reelsState._bgmAudioEl;
@@ -5273,9 +6217,10 @@ function _onVideoLoaded() {
     if (!video) return;
     const canvas = document.getElementById('reels-preview-canvas');
     if (canvas) {
-        canvas.width = 1080;
-        canvas.height = 1920;
+        canvas.width = _reelsState.targetWidth || 1080;
+        canvas.height = _reelsState.targetHeight || 1920;
     }
+
     _ensurePreviewFadeVideo(video);
     _applyPreviewLoopMode();
     _applyPreviewAudioMix();
@@ -5429,6 +6374,11 @@ async function reelsSavePreset() {
         if (!name) return;
         const style = _readStyleFromUI();
         if (window.ReelsStyleEngine) {
+            const allPresets = ReelsStyleEngine.loadSubtitlePresets().presets || {};
+            if (allPresets[name]) {
+                const ok = confirm(`预设 "${name}" 已存在，是否覆盖？`);
+                if (!ok) return;
+            }
             const result = ReelsStyleEngine.saveNamedSubtitlePreset(name, style);
             if (result) {
                 _reelsRefreshPresetList();
@@ -5507,9 +6457,29 @@ function reelsImportPresets() {
         const reader = new FileReader();
         reader.onload = (ev) => {
             if (window.ReelsStyleEngine) {
-                const result = ReelsStyleEngine.importSubtitlePresets(ev.target.result);
+                let overwriteConflicts = false;
+                try {
+                    const incoming = JSON.parse(ev.target.result);
+                    if (incoming && typeof incoming === 'object' && incoming.presets) {
+                        const data = ReelsStyleEngine.loadSubtitlePresets();
+                        const existingPresets = data.presets || {};
+                        const conflicts = [];
+                        for (const name of Object.keys(incoming.presets)) {
+                            if (name in existingPresets) {
+                                conflicts.push(name);
+                            }
+                        }
+                        if (conflicts.length > 0) {
+                            overwriteConflicts = confirm(`导入的预设中包含以下已存在的字幕预设：\n${conflicts.join(', ')}\n\n是否覆盖它们？(点击「取消」将跳过这些冲突的预设)`);
+                        }
+                    }
+                } catch(err) {
+                    console.error('解析导入预设JSON出错:', err);
+                }
+
+                const result = ReelsStyleEngine.importSubtitlePresets(ev.target.result, overwriteConflicts);
                 _reelsRefreshPresetList();
-                alert(`导入完成：新增 ${result.added.length} 个，覆盖 ${result.conflicts.length} 个，跳过 ${result.skipped.length} 个`);
+                alert(`✅ 导入完成：新增 ${result.added.length} 个，覆盖 ${result.conflicts.length} 个，跳过 ${result.skipped.length} 个`);
             }
         };
         reader.readAsText(file);
@@ -5758,6 +6728,10 @@ function _reelsTaskBackgroundBaseName(task) {
     return _reelsPathBaseName(task?.bgPath || task?.videoPath || '');
 }
 
+function _reelsTaskAudioBaseName(task) {
+    return _reelsPathBaseName(task?.audioPath || '');
+}
+
 function _reelsTaskCardBaseName(task) {
     return _sanitizeReelsFileBaseName(task?.baseName || task?.fileName || '', '');
 }
@@ -5769,15 +6743,18 @@ function _resolveReelsExportBaseName(task, namingMode = 'text') {
     const mode = namingMode || 'text';
     const byMode = mode === 'background'
         ? _reelsTaskBackgroundBaseName(task)
-        : mode === 'card'
-            ? _reelsTaskCardBaseName(task)
-            : mode === 'custom'
-                ? ''
-                : _reelsTaskTextBaseName(task);
+        : mode === 'audio'
+            ? _reelsTaskAudioBaseName(task)
+            : mode === 'card'
+                ? _reelsTaskCardBaseName(task)
+                : mode === 'custom'
+                    ? ''
+                    : _reelsTaskTextBaseName(task);
     if (byMode) return byMode;
 
     return _reelsTaskTextBaseName(task)
         || _reelsTaskBackgroundBaseName(task)
+        || _reelsTaskAudioBaseName(task)
         || _reelsTaskCardBaseName(task)
         || _sanitizeReelsFileBaseName(task?.fileName || task?.baseName || 'reel');
 }
@@ -5789,9 +6766,11 @@ async function _exportSaveCoverPng(task, outputDirTrimmed, baseName) {
     if (!task.cover || !task.cover.enabled || task.cover.exportSeparate === false) return null;
 
     try {
+        const tw = _reelsState.targetWidth || 1080;
+        const th = _reelsState.targetHeight || 1920;
         const offCanvas = document.createElement('canvas');
-        offCanvas.width = 1080;
-        offCanvas.height = 1920;
+        offCanvas.width = tw;
+        offCanvas.height = th;
         const ctx = offCanvas.getContext('2d');
 
         // Draw cover background
@@ -5820,9 +6799,9 @@ async function _exportSaveCoverPng(task, outputDirTrimmed, baseName) {
         }
         
         ctx.fillStyle = '#000';
-        ctx.fillRect(0, 0, 1080, 1920);
+        ctx.fillRect(0, 0, tw, th);
         if (bgImg) {
-            _drawVideoCover(ctx, bgImg, 1080, 1920, task.cover.bgScale || task.bgScale || 100);
+            _drawVideoCover(ctx, bgImg, tw, th, task.cover.bgScale || task.bgScale || 100, task.cover.bgX || task.bgX || 0, task.cover.bgY || task.bgY || 0);
         }
 
         // Draw Cover overlays
@@ -5830,14 +6809,15 @@ async function _exportSaveCoverPng(task, outputDirTrimmed, baseName) {
             for (const ov of task.cover.overlays) {
                 if (ov.disabled) continue;
                 ov._exporting = true;
-                ReelsOverlay.drawOverlay(ctx, ov, 0, 1080, 1920);
+                ReelsOverlay.drawOverlay(ctx, ov, 0, tw, th);
                 ov._exporting = false;
             }
         }
 
         if (typeof _drawWatermarks === 'function') {
-            _drawWatermarks(ctx, 1080, 1920);
+            _drawWatermarks(ctx, tw, th);
         }
+
 
         const dataUrl = offCanvas.toDataURL('image/png');
         const outputPath = `${outputDirTrimmed}/${baseName}_封面.png`;
@@ -5858,9 +6838,11 @@ async function _exportSaveCoverPng(task, outputDirTrimmed, baseName) {
 async function _exportCoverVideo(task, taskStyle, outputDirTrimmed, baseName) {
     if (!task.cover || !task.cover.enabled || !task.cover.duration || parseFloat(task.cover.duration) <= 0) return null;
     try {
+        const tw = _reelsState.targetWidth || 1080;
+        const th = _reelsState.targetHeight || 1920;
         const offCanvas = document.createElement('canvas');
-        offCanvas.width = 1080;
-        offCanvas.height = 1920;
+        offCanvas.width = tw;
+        offCanvas.height = th;
         const outputPath = `${outputDirTrimmed}/temp_${baseName}_cover_piece.mp4`;
         
         await window.reelsWysiwygExport({
@@ -5876,6 +6858,12 @@ async function _exportCoverVideo(task, taskStyle, outputDirTrimmed, baseName) {
             voiceVolume: 0,
             bgVolume: 0,
             bgScale: task.cover.bgScale || task.bgScale || 100,
+            bgX: task.cover.bgX || task.bgX || 0,
+            bgY: task.cover.bgY || task.bgY || 0,
+            bgFlipH: task.cover.bgFlipH || task.bgFlipH || false,
+            bgFlipV: task.cover.bgFlipV || task.bgFlipV || false,
+            targetWidth: tw,
+            targetHeight: th,
         });
         return outputPath;
     } catch (e) {
@@ -6070,7 +7058,7 @@ async function reelsStartExport() {
     const tasks = selectedForExport.filter((t, idx) => {
         const hasSub = !!t.srtPath && (t.segments || []).length > 0;
         const bgPath = t.bgPath || t.videoPath;
-        const hasMultiClip = t.bgMode === 'multi' && Array.isArray(t.bgClipPool) && t.bgClipPool.length > 0;
+        const hasMultiClip = t.bgMode === 'multi' && _getEffectiveBgClipPool(t).length > 0;
         const hasBg = !!bgPath || hasMultiClip;
         const hasVoice = !!t.audioPath;
         // 有覆层（文字卡片 或 滚动字幕）则不强制要求字幕
@@ -6143,7 +7131,7 @@ async function reelsStartExport() {
 
     const quality = document.getElementById('reels-quality').value;
     const suffix = document.getElementById('reels-suffix').value || '_subtitled';
-    const namingMode = (document.getElementById('reels-naming-mode') || {}).value || localStorage.getItem('reels_naming_mode') || 'text';
+    const namingMode = (document.getElementById('reels-export-naming-mode-outer') || {}).value || (document.getElementById('reels-naming-mode') || {}).value || localStorage.getItem('reels_naming_mode') || 'text';
     _persistSubtitleStyleByScope(_readStyleFromUI());
     const crfMap = { high: 15, medium: 18, low: 23, ultrafast: 26 };
     const presetMap = { high: 'medium', medium: 'fast', low: 'faster', ultrafast: 'ultrafast' };
@@ -6155,8 +7143,8 @@ async function reelsStartExport() {
     let bgVolume = parseFloat((document.getElementById('reels-bg-volume') || {}).value || '100');
     if (!Number.isFinite(voiceVolume)) voiceVolume = 100;
     if (!Number.isFinite(bgVolume)) bgVolume = 100;
-    voiceVolume = Math.max(0, Math.min(200, voiceVolume));
-    bgVolume = Math.max(0, Math.min(200, bgVolume));
+    voiceVolume = Math.max(0, voiceVolume);
+    bgVolume = Math.max(0, bgVolume);
     const loopFadeEl = document.getElementById('reels-loop-fade');
     const loopFade = loopFadeEl ? loopFadeEl.checked : true;
     const loopFadeDurEl = document.getElementById('reels-loop-fade-dur');
@@ -6273,6 +7261,8 @@ async function reelsStartExport() {
             const i = currentIndex++;
             const job = exportJobs[i];
             const task = job.task;
+            const tw = _reelsState.targetWidth || 1080;
+            const th = _reelsState.targetHeight || 1920;
 
             // ── 多模板模式：临时覆盖 task.overlays ──
             let originalOverlays = null;
@@ -6284,6 +7274,47 @@ async function reelsStartExport() {
 
         const taskStyle = _resolveSubtitleStyleForTask(task);
         const presetLabel = job.presetName ? ` [${job.presetName}]` : '';
+
+        // ── 确保当前任务的所有覆层与字幕使用的字体全部预加载完成 ──
+        if (statusEl) statusEl.textContent = `加载字体中 ${i + 1}/${totalJobs}: ${task.fileName}${presetLabel}`;
+        const fontsToLoad = new Set();
+        if (taskStyle && taskStyle.font_family) {
+            fontsToLoad.add(taskStyle.font_family);
+        }
+        const collectOverlaysFonts = (ovs) => {
+            if (!Array.isArray(ovs)) return;
+            for (const ov of ovs) {
+                if (ov.disabled) continue;
+                if (ov.type === 'textcard' || !ov.type || ov.type === '') {
+                    if (ov.title_text && ov.title_font_family) fontsToLoad.add(ov.title_font_family);
+                    if (ov.body_text && ov.body_font_family) fontsToLoad.add(ov.body_font_family);
+                    if (ov.footer_text && ov.footer_font_family) fontsToLoad.add(ov.footer_font_family);
+                } else if (ov.type === 'text' || ov.type === 'scroll') {
+                    if (ov.font_family) fontsToLoad.add(ov.font_family);
+                }
+            }
+        };
+        collectOverlaysFonts(task.overlays);
+        if (task.cover && task.cover.enabled) {
+            collectOverlaysFonts(task.cover.overlays);
+        }
+        if (window.getFontManager && fontsToLoad.size > 0) {
+            const fm = window.getFontManager();
+            for (const font of fontsToLoad) {
+                try {
+                    await fm.loadGoogleFont(font);
+                } catch (e) {
+                    console.warn(`[Export Font Load] Failed to load font "${font}":`, e);
+                }
+            }
+            try {
+                await document.fonts.ready;
+                console.log(`[Export Font Load] Fonts loaded successfully:`, Array.from(fontsToLoad));
+            } catch (e) {
+                console.warn(`[Export Font Load] document.fonts.ready error:`, e);
+            }
+        }
+
         if (statusEl) statusEl.textContent = `导出中 ${i + 1}/${totalJobs}: ${task.fileName}${presetLabel}`;
 
         try {
@@ -6405,9 +7436,11 @@ async function reelsStartExport() {
 
             // ═══ PNG 分层序列导出 ═══
             if (doPng && typeof window.reelsLayeredExport === 'function') {
+                const tw = _reelsState.targetWidth || 1080;
+                const th = _reelsState.targetHeight || 1920;
                 const offCanvas = document.createElement('canvas');
-                offCanvas.width = 1080;
-                offCanvas.height = 1920;
+                offCanvas.width = tw;
+                offCanvas.height = th;
 
                 const layeredResult = await window.reelsLayeredExport({
                     canvas: offCanvas,
@@ -6416,7 +7449,9 @@ async function reelsStartExport() {
                     overlays: task.overlays || [],
                     backgroundPath: bgPath,
                     bgMode: task.bgMode || 'single',
-                    bgClipPool: task.bgClipPool || [],
+                    bgClipPool: _getEffectiveBgClipPool(task),
+                    bgClipOrder: task.bgClipOrder || 'random',
+                    bgClipSeed: task.id || task.fileName || '',
                     bgTransition: task.bgTransition || 'crossfade',
                     bgTransDur: task.bgTransDur || 0.5,
                     contentVideoPath: task.contentVideoPath || null,
@@ -6426,20 +7461,31 @@ async function reelsStartExport() {
                     contentVideoX: task.contentVideoX || 'center',
                     contentVideoY: task.contentVideoY || 'center',
                     contentVideoVolume: (task.contentVideoVolume != null ? task.contentVideoVolume : 100) / 100,
+                    contentVideoCrop: task.contentVideoCrop || '',
+                    contentVideoBlurBg: task.contentVideoBlurBg || false,
+                    contentVideoBlur: task.contentVideoBlur != null ? task.contentVideoBlur : 40,
+                    contentVideoBrightness: task.contentVideoBrightness != null ? task.contentVideoBrightness : 60,
                     voicePath: voiceSource || null,
                     outputDir: outputDirTrimmed,
                     taskName: baseName,
-                    targetWidth: 1080,
-                    targetHeight: 1920,
+                    targetWidth: tw,
+                    targetHeight: th,
                     fps: 30,
+
                     voiceVolume: (workMode === 'voiced_bg' && !task.audioPath) ? (task.bgVideoVolume != null ? task.bgVideoVolume : bgVolume) / 100 : (task.voiceVolume != null ? task.voiceVolume : voiceVolume) / 100,
                     bgVolume: (task.bgVideoVolume != null ? task.bgVideoVolume : bgVolume) / 100,
                     loopFade,
                     loopFadeDur,
                     customDuration: task.customDuration || customDuration || 0,
-                    bgmPath: task.bgmPath || '',
+                    bgmPath: _getEffectiveBgmPath(task, i) || '',
                     bgmVolume: (task.bgmVolume != null ? task.bgmVolume : 10) / 100,
                     bgScale: task.bgScale || 100,
+                    bgX: task.bgX || 0,
+                    bgY: task.bgY || 0,
+                    bgFlipH: task.bgFlipH || false,
+                    bgFlipV: task.bgFlipV || false,
+                    contentVideoFlipH: task.contentVideoFlipH || false,
+                    contentVideoFlipV: task.contentVideoFlipV || false,
                     bgDurScale: task.bgDurScale || 100,
                     audioDurScale: task.audioDurScale || 100,
                     isCancelled: () => !_reelsState.isExporting,
@@ -6484,6 +7530,8 @@ async function reelsStartExport() {
                 }
 
                 if (taskOverlays.length > 0 && taskOverlays.some(o => !o.disabled)) {
+                    const tw = _reelsState.targetWidth || 1080;
+                    const th = _reelsState.targetHeight || 1920;
                     if (hasTimeSlice) {
                         // ⏱️ 时间切片模式：为每个切片生成独立的 PNG
                         overlayPngSlices = [];
@@ -6492,10 +7540,10 @@ async function reelsStartExport() {
                             const source = slice.source || 'all';
                             try {
                                 const offCanvas = document.createElement('canvas');
-                                offCanvas.width = 1080;
-                                offCanvas.height = 1920;
+                                offCanvas.width = tw;
+                                offCanvas.height = th;
                                 const offCtx = offCanvas.getContext('2d');
-                                offCtx.clearRect(0, 0, 1080, 1920);
+                                offCtx.clearRect(0, 0, tw, th);
                                 if (window.ReelsOverlay && typeof window.ReelsOverlay.drawOverlay === 'function') {
                                     // ── 时间切片渲染: 整体控制所有覆层的文字字段 ──
                                     // 保存所有覆层的原始文字字段
@@ -6508,6 +7556,16 @@ async function reelsStartExport() {
                                     }));
 
                                     try {
+                                        for (const ov of taskOverlays) {
+                                            const isCard = !ov.type || ov.type === '' || ov.type === 'textcard';
+                                            if (isCard) {
+                                                ov._original_title_text = ov.title_text;
+                                                ov._original_body_text = ov.body_text;
+                                                ov._original_footer_text = ov.footer_text;
+                                            }
+                                            ov._fcpxml_generating = true;
+                                        }
+
                                         if (source === 'title') {
                                             // 标题模式: 只保留第一个有 title_text 的 textcard 的标题
                                             for (const ov of taskOverlays) {
@@ -6556,7 +7614,7 @@ async function reelsStartExport() {
                                             if (source === 'scroll_title' && ov.type !== 'scroll') continue;
                                             if (source === 'scroll_body' && ov.type !== 'scroll') continue;
                                             ov._exporting = true;
-                                            window.ReelsOverlay.drawOverlay(offCtx, ov, 0, 1080, 1920);
+                                            window.ReelsOverlay.drawOverlay(offCtx, ov, 0, tw, th);
                                             delete ov._exporting;
                                         }
                                     } finally {
@@ -6567,6 +7625,10 @@ async function reelsStartExport() {
                                             ov.footer_text = savedFields[idx].footer_text;
                                             ov.content = savedFields[idx].content;
                                             ov.disabled = savedFields[idx].disabled;
+                                            delete ov._original_title_text;
+                                            delete ov._original_body_text;
+                                            delete ov._original_footer_text;
+                                            delete ov._fcpxml_generating;
                                         });
                                     }
                                 }
@@ -6586,8 +7648,8 @@ async function reelsStartExport() {
                                     const saveResult = await window.electronAPI.savePngFrame({
                                         outputPath: pngPath,
                                         rawRGBA: pngBytes.buffer,
-                                        width: 1080,
-                                        height: 1920,
+                                        width: tw,
+                                        height: th,
                                         isPng: true
                                     });
                                     if (saveResult && saveResult.ok) {
@@ -6608,15 +7670,15 @@ async function reelsStartExport() {
                         // 常规模式：单张 PNG
                     try {
                         const offCanvas = document.createElement('canvas');
-                        offCanvas.width = 1080;
-                        offCanvas.height = 1920;
+                        offCanvas.width = tw;
+                        offCanvas.height = th;
                         const offCtx = offCanvas.getContext('2d');
-                        offCtx.clearRect(0, 0, 1080, 1920);
+                        offCtx.clearRect(0, 0, tw, th);
                         if (window.ReelsOverlay && typeof window.ReelsOverlay.drawOverlay === 'function') {
                             for (const ov of taskOverlays) {
                                 if (ov.disabled) continue;
                                 ov._exporting = true;
-                                window.ReelsOverlay.drawOverlay(offCtx, ov, 0, 1080, 1920);
+                                window.ReelsOverlay.drawOverlay(offCtx, ov, 0, tw, th);
                                 delete ov._exporting;
                             }
                         }
@@ -6635,8 +7697,8 @@ async function reelsStartExport() {
                             const saveResult = await window.electronAPI.savePngFrame({
                                 outputPath: pngPath,
                                 rawRGBA: pngBytes.buffer,
-                                width: 1080,
-                                height: 1920,
+                                width: tw,
+                                height: th,
                                 isPng: true
                             });
                             if (saveResult && saveResult.ok) {
@@ -6665,7 +7727,7 @@ async function reelsStartExport() {
                     contentVideoTrimStart: task.contentVideoTrimStart != null ? task.contentVideoTrimStart : null,
                     contentVideoTrimEnd: task.contentVideoTrimEnd != null ? task.contentVideoTrimEnd : null,
                     voicePath: voiceSource || null,
-                    bgmPath: task.bgmPath || '',
+                    bgmPath: _getEffectiveBgmPath(task, i) || '',
                     customDuration: task.customDuration || customDuration || 0,
                     taskName: baseName,
                     subtitleTimeMode: task.subtitleTimeMode || 'full',
@@ -6689,9 +7751,11 @@ async function reelsStartExport() {
             if (doMp4 && (typeof window.reelsWysiwygExport === 'function')
                 && window.electronAPI && window.electronAPI.reelsComposeWysiwyg) {
                 // 创建离屏 canvas
+                const tw = _reelsState.targetWidth || 1080;
+                const th = _reelsState.targetHeight || 1920;
                 const offCanvas = document.createElement('canvas');
-                offCanvas.width = 1080;
-                offCanvas.height = 1920;
+                offCanvas.width = tw;
+                offCanvas.height = th;
 
                 // ═══ V3 并行影子窗口检测 ═══
                 const cpuCores = navigator.hardwareConcurrency || 4;
@@ -6722,7 +7786,7 @@ async function reelsStartExport() {
                     && memoryDecoderEnabled
                     && parallelConcurrency >= 2
                     && estimatedDuration > 0
-                    && !(task.bgClipPool && task.bgClipPool.length > 0)
+                    && _getEffectiveBgClipPool(task).length === 0
                     && !hasVideoOverlays
                     && !contentVideoIsDirSequence
                     && window.electronAPI.parallelWysiwygExport;
@@ -6743,6 +7807,8 @@ async function reelsStartExport() {
                                 backgroundPath: bgPath,
                                 bgMode: task.bgMode || 'single',
                                 bgScale: task.bgScale || 100,
+                                bgX: task.bgX || 0,
+                                bgY: task.bgY || 0,
                                 contentVideoPath: task.contentVideoPath || null,
                                 contentVideoTrimStart: task.contentVideoTrimStart,
                                 contentVideoTrimEnd: task.contentVideoTrimEnd,
@@ -6750,12 +7816,16 @@ async function reelsStartExport() {
                                 contentVideoX: task.contentVideoX || 'center',
                                 contentVideoY: task.contentVideoY || 'center',
                                 contentVideoVolume: (task.contentVideoVolume != null ? task.contentVideoVolume : 100) / 100,
+                                contentVideoCrop: task.contentVideoCrop || '',
+                                contentVideoBlurBg: task.contentVideoBlurBg || false,
+                                contentVideoBlur: task.contentVideoBlur != null ? task.contentVideoBlur : 40,
+                                contentVideoBrightness: task.contentVideoBrightness != null ? task.contentVideoBrightness : 60,
                                 voicePath: voiceSource || null,
-                                targetWidth: 1080, targetHeight: 1920, fps: 30,
+                                targetWidth: tw, targetHeight: th, fps: 30,
                                 voiceVolume: (workMode === 'voiced_bg' && !task.audioPath) ? (task.bgVideoVolume != null ? task.bgVideoVolume : bgVolume) / 100 : (task.voiceVolume != null ? task.voiceVolume : voiceVolume) / 100,
                                 bgVolume: (task.bgVideoVolume != null ? task.bgVideoVolume : bgVolume) / 100,
                                 loopFade, loopFadeDur,
-                                bgmPath: task.bgmPath || '',
+                                bgmPath: _getEffectiveBgmPath(task, i) || '',
                                 bgmVolume: (task.bgmVolume != null ? task.bgmVolume : 10) / 100,
                                 bgDurScale: task.bgDurScale || 100,
                                 audioDurScale: effectiveAudioDurScale,
@@ -6791,7 +7861,7 @@ async function reelsStartExport() {
                 const canUseAlpha = fastAlphaEnabled 
                     && bgPath 
                     && Math.abs((task.bgDurScale || 100) - 100) < 0.01
-                    && !(task.bgClipPool && task.bgClipPool.length > 0)
+                    && _getEffectiveBgClipPool(task).length === 0
                     && (!task.bgMode || task.bgMode === 'single')
                     && !(isBgVideo && loopFade); // 如果是视频且开启了首尾过渡转场，回退稳定模式
 
@@ -6805,7 +7875,9 @@ async function reelsStartExport() {
                     backgroundPath: bgPath,
                     alphaOverlayBgPath: canUseAlpha ? bgPath : null,
                     bgMode: task.bgMode || 'single',
-                    bgClipPool: task.bgClipPool || [],
+                    bgClipPool: _getEffectiveBgClipPool(task),
+                    bgClipOrder: task.bgClipOrder || 'random',
+                    bgClipSeed: task.id || task.fileName || '',
                     bgTransition: task.bgTransition || 'crossfade',
                     bgTransDur: task.bgTransDur || 0.5,
                     contentVideoPath: task.contentVideoPath || null,
@@ -6815,10 +7887,14 @@ async function reelsStartExport() {
                     contentVideoX: task.contentVideoX || 'center',
                     contentVideoY: task.contentVideoY || 'center',
                     contentVideoVolume: (task.contentVideoVolume != null ? task.contentVideoVolume : 100) / 100,
+                    contentVideoCrop: task.contentVideoCrop || '',
+                    contentVideoBlurBg: task.contentVideoBlurBg || false,
+                    contentVideoBlur: task.contentVideoBlur != null ? task.contentVideoBlur : 40,
+                    contentVideoBrightness: task.contentVideoBrightness != null ? task.contentVideoBrightness : 60,
                     voicePath: voiceSource || null,
                     outputPath,
-                    targetWidth: 1080,
-                    targetHeight: 1920,
+                    targetWidth: tw,
+                    targetHeight: th,
                     fps: 30,
                     // voiced_bg 模式: 背景音频作为主音轨，用 bgVolume 控制
                     voiceVolume: (workMode === 'voiced_bg' && !task.audioPath) ? (task.bgVideoVolume != null ? task.bgVideoVolume : bgVolume) / 100 : (task.voiceVolume != null ? task.voiceVolume : voiceVolume) / 100,
@@ -6826,9 +7902,15 @@ async function reelsStartExport() {
                     loopFade,
                     loopFadeDur,
                     customDuration: task.customDuration || customDuration || 0,
-                    bgmPath: task.bgmPath || '',
+                    bgmPath: _getEffectiveBgmPath(task, i) || '',
                     bgmVolume: (task.bgmVolume != null ? task.bgmVolume : 10) / 100,
                     bgScale: task.bgScale || 100,
+                    bgX: task.bgX || 0,
+                    bgY: task.bgY || 0,
+                    bgFlipH: task.bgFlipH || false,
+                    bgFlipV: task.bgFlipV || false,
+                    contentVideoFlipH: task.contentVideoFlipH || false,
+                    contentVideoFlipV: task.contentVideoFlipV || false,
                     bgDurScale: task.bgDurScale || 100,
                     audioDurScale: effectiveAudioDurScale,
                     reverbEnabled: (() => { const rc = _getReverbConfig(); console.log('[Export] Reverb config:', JSON.stringify(rc)); return rc.enabled; })(),
@@ -6868,8 +7950,8 @@ async function reelsStartExport() {
                 const assContent = window.ReelsSubtitleProcessor
                     ? ReelsSubtitleProcessor.generateEnhancedASS(scaledSegments, taskStyle, {
                         karaokeHighlight: karaokeHL,
-                        videoW: 1080,
-                        videoH: 1920,
+                        videoW: tw,
+                        videoH: th,
                     })
                     : generateASS(task.segments, taskStyle);
 
@@ -6897,8 +7979,8 @@ async function reelsStartExport() {
                 const assContent = window.ReelsSubtitleProcessor
                     ? ReelsSubtitleProcessor.generateEnhancedASS(scaledSegments, taskStyle, {
                         karaokeHighlight: karaokeHL,
-                        videoW: 1080,
-                        videoH: 1920,
+                        videoW: tw,
+                        videoH: th,
                     })
                     : generateASS(task.segments, taskStyle);
                 await window.electronAPI.burnSubtitles({
@@ -6924,8 +8006,8 @@ async function reelsStartExport() {
                     trimEnd: task.hookTrimEnd !== undefined ? task.hookTrimEnd : null,
                     transition: task.hookTransition || 'none',
                     transDuration: task.hookTransDuration || 0.5,
-                    targetWidth: 1080,
-                    targetHeight: 1920,
+                    targetWidth: tw,
+                    targetHeight: th,
                     fps: 30
                 });
                 currentOutputToConcat = concatOutput;
@@ -6942,8 +8024,8 @@ async function reelsStartExport() {
                     speed: 1.0,
                     transition: 'none',
                     transDuration: 0,
-                    targetWidth: 1080,
-                    targetHeight: 1920,
+                    targetWidth: tw,
+                    targetHeight: th,
                     fps: 30
                 });
                 currentOutputToConcat = coverConcatOutput;
@@ -7066,8 +8148,9 @@ function reelsResegment() {
         alert('字幕处理器未加载');
         return;
     }
-    const videoW = 1080; // Reels 竖屏
+    const videoW = _reelsState.targetWidth || 1080;
     let totalProcessed = 0;
+
 
     for (const task of _reelsState.tasks) {
         if (!task.segments || task.segments.length === 0) continue;
@@ -7149,7 +8232,7 @@ function collectCurrentProjectState() {
         outputDir: (document.getElementById('reels-output-dir') || {}).value || '',
         quality: (document.getElementById('reels-quality') || {}).value || 'medium',
         suffix: (document.getElementById('reels-suffix') || {}).value || '_subtitled',
-        namingMode: (document.getElementById('reels-naming-mode') || {}).value || localStorage.getItem('reels_naming_mode') || 'text',
+        namingMode: (document.getElementById('reels-export-naming-mode-outer') || {}).value || (document.getElementById('reels-naming-mode') || {}).value || localStorage.getItem('reels_naming_mode') || 'text',
         voiceVolume: parseFloat((document.getElementById('reels-voice-volume') || {}).value || '100') || 100,
         bgVolume: parseFloat((document.getElementById('reels-bg-volume') || {}).value || '100') || 100,
         useGPU: (document.getElementById('reels-use-gpu') || {}).checked || false,
@@ -7233,6 +8316,7 @@ function applyRestoredProject(result) {
         if (opts.suffix) setVal('reels-suffix', opts.suffix);
         if (opts.namingMode) {
             setVal('reels-naming-mode', opts.namingMode);
+            setVal('reels-export-naming-mode-outer', opts.namingMode);
             localStorage.setItem('reels_naming_mode', opts.namingMode);
         }
         if (opts.voiceVolume !== undefined && opts.voiceVolume !== null) setVal('reels-voice-volume', String(opts.voiceVolume));
@@ -7253,8 +8337,48 @@ function applyRestoredProject(result) {
         if (opts.stereoWidth !== undefined) setVal('reels-stereo-width', String(opts.stereoWidth));
         if (opts.audioFxTarget !== undefined) setVal('reels-audio-fx-target', opts.audioFxTarget);
         setCheck('reels-style-apply-all', opts.subtitleStyleApplyAll !== false);
+
+
+        
+        // 恢复分辨率设置
+        const tw = opts.targetWidth || 1080;
+        const th = opts.targetHeight || 1920;
+        _reelsState.targetWidth = tw;
+        _reelsState.targetHeight = th;
+        
+        const resSelect = document.getElementById('reels-resolution-select');
+        const customDiv = document.getElementById('reels-custom-res-inputs');
+        const wVal = `${tw}x${th}`;
+        if (resSelect) {
+            let optionExists = false;
+            for (let i = 0; i < resSelect.options.length; i++) {
+                if (resSelect.options[i].value === wVal) {
+                    resSelect.value = wVal;
+                    optionExists = true;
+                    break;
+                }
+            }
+            if (!optionExists) {
+                resSelect.value = 'custom';
+                if (customDiv) customDiv.style.display = 'inline-flex';
+                const wInput = document.getElementById('reels-custom-width');
+                const hInput = document.getElementById('reels-custom-height');
+                if (wInput) wInput.value = tw;
+                if (hInput) hInput.value = th;
+            } else {
+                if (customDiv) customDiv.style.display = 'none';
+            }
+        }
+        _reelsUpdateResolutionUI(tw, th);
+        const canvas = document.getElementById('reels-preview-canvas');
+        if (canvas) {
+            canvas.width = tw;
+            canvas.height = th;
+        }
+
         _applyPreviewLoopMode();
     }
+
 
     const selectedTask = _reelsState.tasks[_reelsState.selectedIdx] || null;
     const styleToShow = _resolveSubtitleStyleForTask(selectedTask);
@@ -7302,7 +8426,7 @@ function reelsSaveProject() {
         outputDir: (document.getElementById('reels-output-dir') || {}).value || '',
         quality: (document.getElementById('reels-quality') || {}).value || 'medium',
         suffix: (document.getElementById('reels-suffix') || {}).value || '_subtitled',
-        namingMode: (document.getElementById('reels-naming-mode') || {}).value || localStorage.getItem('reels_naming_mode') || 'text',
+        namingMode: (document.getElementById('reels-export-naming-mode-outer') || {}).value || (document.getElementById('reels-naming-mode') || {}).value || localStorage.getItem('reels_naming_mode') || 'text',
         voiceVolume: parseFloat((document.getElementById('reels-voice-volume') || {}).value || '100') || 100,
         bgVolume: parseFloat((document.getElementById('reels-bg-volume') || {}).value || '100') || 100,
         useGPU: (document.getElementById('reels-use-gpu') || {}).checked || false,
@@ -7318,7 +8442,10 @@ function reelsSaveProject() {
         stereoWidth: parseFloat((document.getElementById('reels-stereo-width') || {}).value || '100') || 100,
         audioFxTarget: (document.getElementById('reels-audio-fx-target') || {}).value || 'all',
         subtitleStyleApplyAll: _isStyleApplyAllEnabled(),
+        targetWidth: _reelsState.targetWidth || 1080,
+        targetHeight: _reelsState.targetHeight || 1920,
     };
+
     ReelsProject.saveProject({
         tasks: _reelsState.tasks,
         style: globalStyle,
@@ -7570,5 +8697,676 @@ function reelsMarkStyleDirty(e) {
         }
     }
 }
+
+// ═══════════════════════════════════════════════════════
+// Resolution Customization
+// ═══════════════════════════════════════════════════════
+window.reelsHandleResolutionChange = function(val) {
+    const customDiv = document.getElementById('reels-custom-res-inputs');
+    if (val === 'custom') {
+        if (customDiv) customDiv.style.display = 'inline-flex';
+        reelsHandleCustomResolutionChange();
+    } else {
+        if (customDiv) customDiv.style.display = 'none';
+        const parts = val.split('x');
+        const w = parseInt(parts[0], 10);
+        const h = parseInt(parts[1], 10);
+        _reelsUpdateResolution(w, h);
+    }
+};
+
+window.reelsHandleCustomResolutionChange = function() {
+    const wInput = document.getElementById('reels-custom-width');
+    const hInput = document.getElementById('reels-custom-height');
+    if (wInput && hInput) {
+        const w = parseInt(wInput.value, 10) || 1080;
+        const h = parseInt(hInput.value, 10) || 1920;
+        _reelsUpdateResolution(w, h);
+    }
+};
+
+function _reelsUpdateResolution(w, h) {
+    _reelsState.targetWidth = w;
+    _reelsState.targetHeight = h;
+
+    const canvas = document.getElementById('reels-preview-canvas');
+    if (canvas) {
+        canvas.width = w;
+        canvas.height = h;
+    }
+
+    _reelsUpdateResolutionUI(w, h);
+
+    if (typeof reelsSaveProject === 'function') {
+        reelsSaveProject();
+    }
+
+    reelsUpdatePreview();
+    _fitPreviewWhenReady();
+}
+
+function _reelsUpdateResolutionUI(w, h) {
+    const container = document.getElementById('reels-preview-container');
+    if (container) {
+        container.style.aspectRatio = `${w}/${h}`;
+        if (w >= h) {
+            container.style.width = '380px';
+        } else {
+            container.style.width = '270px';
+        }
+    }
+}
+
 document.addEventListener('input', reelsMarkStyleDirty, true);
 document.addEventListener('change', reelsMarkStyleDirty, true);
+
+// ─── 统一的文件选择器辅助函数 ───
+async function _pickSingleFile(title, extensions) {
+    if (window.electronAPI && window.electronAPI.showOpenDialog) {
+        try {
+            const result = await window.electronAPI.showOpenDialog({
+                title: title,
+                properties: ['openFile'],
+                filters: [{ name: '媒体文件', extensions: extensions }]
+            });
+            if (result && result.filePaths && result.filePaths.length > 0) {
+                return result.filePaths[0];
+            }
+        } catch (e) {
+            console.error('electronAPI showOpenDialog error:', e);
+        }
+    }
+    if (window.require) {
+        try {
+            const { dialog, getCurrentWindow } = window.require('@electron/remote');
+            const result = await dialog.showOpenDialog(getCurrentWindow(), {
+                title: title,
+                properties: ['openFile'],
+                filters: [{ name: '媒体文件', extensions: extensions }]
+            });
+            if (!result.canceled && result.filePaths && result.filePaths.length > 0) {
+                return result.filePaths[0];
+            }
+        } catch (e) {
+            console.warn('remote dialog failed', e);
+        }
+    }
+    // Web Fallback
+    return new Promise((resolve) => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = extensions.map(ext => '.' + ext).join(',');
+        input.onchange = (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                resolve(file.path || file.name);
+            } else {
+                resolve(null);
+            }
+        };
+        input.click();
+    });
+}
+
+// ─── 背景与内容视频双向同步与保存逻辑 ───
+window.reelsSyncBackgroundTabUI = function(task) {
+    if (!task) return;
+
+    const bgPathEl = document.getElementById('reels-bg-path-ui');
+    if (!bgPathEl) return;
+
+    // 背景模式与面板显示切换
+    const bgMode = task.bgMode || 'single';
+    document.getElementById('reels-bg-mode-ui').value = bgMode;
+    
+    const singleContainer = document.getElementById('reels-bg-single-container');
+    const multiContainer = document.getElementById('reels-bg-multi-container');
+    if (singleContainer) singleContainer.style.display = bgMode === 'single' ? 'flex' : 'none';
+    if (multiContainer) multiContainer.style.display = bgMode === 'multi' ? 'flex' : 'none';
+
+    // 背景单素材文件路径
+    bgPathEl.value = task.bgPath || '';
+    
+    // 背景多素材池统计与转场设置
+    const poolCount = task.bgClipPool ? task.bgClipPool.length : 0;
+    const activePoolCount = Array.isArray(task.bgClipActivePool) && task.bgClipActivePool.length > 0
+        ? task.bgClipActivePool.filter(p => (task.bgClipPool || []).includes(p)).length
+        : poolCount;
+    const poolCountEl = document.getElementById('reels-bg-pool-count');
+    if (poolCountEl) poolCountEl.textContent = `已添加 ${poolCount} 个素材 · 启用 ${activePoolCount} 个`;
+
+    const transitionSelect = document.getElementById('reels-bg-transition-ui');
+    if (transitionSelect) transitionSelect.value = task.bgTransition || 'crossfade';
+
+    const clipOrderSelect = document.getElementById('reels-bg-cliporder-ui');
+    if (clipOrderSelect) clipOrderSelect.value = task.bgClipOrder || 'random';
+
+    const transDur = task.bgTransDur != null ? task.bgTransDur : 0.5;
+    const transDurRange = document.getElementById('reels-bg-transdur-range');
+    const transDurNum = document.getElementById('reels-bg-transdur-num');
+    if (transDurRange) transDurRange.value = transDur;
+    if (transDurNum) transDurNum.value = transDur;
+
+    // 背景缩放百分比
+    const bgScale = task.bgScale != null ? task.bgScale : 100;
+    document.getElementById('reels-bg-scale-num').value = bgScale;
+    document.getElementById('reels-bg-scale-range').value = bgScale;
+
+    // 背景X偏移
+    const bgX = task.bgX != null ? task.bgX : 0;
+    document.getElementById('reels-bg-x-num').value = bgX;
+    document.getElementById('reels-bg-x-range').value = bgX;
+
+    // 背景Y偏移
+    const bgY = task.bgY != null ? task.bgY : 0;
+    document.getElementById('reels-bg-y-num').value = bgY;
+    document.getElementById('reels-bg-y-range').value = bgY;
+
+    // 背景音量
+    const bgVol = task.bgVideoVolume != null ? task.bgVideoVolume : 100;
+    document.getElementById('reels-bg-volume-num').value = bgVol;
+    document.getElementById('reels-bg-volume-range').value = bgVol;
+
+    // 背景变速
+    const bgDur = task.bgDurScale != null ? task.bgDurScale : 100;
+    document.getElementById('reels-bg-dur-scale-num').value = bgDur;
+    document.getElementById('reels-bg-dur-scale-range').value = bgDur;
+
+    // 内容视频文件路径与毛玻璃开关
+    document.getElementById('reels-cv-path-ui').value = task.contentVideoPath || '';
+    const cvBlurBg = !!task.contentVideoBlurBg;
+    document.getElementById('reels-cv-blur-bg-ui').checked = cvBlurBg;
+
+    const blurParamsContainer = document.getElementById('reels-cv-blur-params-container');
+    if (blurParamsContainer) {
+        blurParamsContainer.style.display = cvBlurBg ? 'flex' : 'none';
+    }
+    const cvBlur = task.contentVideoBlur != null ? task.contentVideoBlur : 40;
+    const cvBrightness = task.contentVideoBrightness != null ? task.contentVideoBrightness : 60;
+    const blurRange = document.getElementById('reels-cv-blur-range');
+    const blurNum = document.getElementById('reels-cv-blur-num');
+    const brightRange = document.getElementById('reels-cv-brightness-range');
+    const brightNum = document.getElementById('reels-cv-brightness-num');
+    if (blurRange) blurRange.value = cvBlur;
+    if (blurNum) blurNum.value = cvBlur;
+    if (brightRange) brightRange.value = cvBrightness;
+    if (brightNum) brightNum.value = cvBrightness;
+
+    // 视频音量
+    const cvVol = task.contentVideoVolume != null ? task.contentVideoVolume : 100;
+    document.getElementById('reels-cv-volume-num').value = cvVol;
+    document.getElementById('reels-cv-volume-range').value = cvVol;
+
+    // 视频缩放
+    const cvScale = task.contentVideoScale != null ? task.contentVideoScale : 100;
+    document.getElementById('reels-cv-scale-num').value = cvScale;
+    document.getElementById('reels-cv-scale-range').value = cvScale;
+
+    // 视频翻转与背景翻转
+    document.getElementById('reels-bg-fliph-ui').checked = !!task.bgFlipH;
+    document.getElementById('reels-bg-flipv-ui').checked = !!task.bgFlipV;
+    document.getElementById('reels-cv-fliph-ui').checked = !!task.contentVideoFlipH;
+    document.getElementById('reels-cv-flipv-ui').checked = !!task.contentVideoFlipV;
+
+    // 裁剪时长
+    document.getElementById('reels-cv-trim-start').value = task.contentVideoTrimStart != null ? task.contentVideoTrimStart : '';
+    document.getElementById('reels-cv-trim-end').value = task.contentVideoTrimEnd != null ? task.contentVideoTrimEnd : '';
+
+    // 空间画面裁切 (Spatial Crop) - 包含文本框与滑杆的双向同步
+    let cropVal = task.contentVideoCrop || '0,0,100,100';
+    let parts = cropVal.split(',').map(p => parseFloat(p.trim()));
+    if (parts.length !== 4 || parts.some(isNaN)) {
+        parts = [0, 0, 100, 100];
+    }
+    const [cLeft, cTop, cWidth, cHeight] = parts;
+    document.getElementById('reels-cv-crop-left').value = cLeft;
+    document.getElementById('reels-cv-crop-left-range').value = cLeft;
+    
+    document.getElementById('reels-cv-crop-top').value = cTop;
+    document.getElementById('reels-cv-crop-top-range').value = cTop;
+    
+    document.getElementById('reels-cv-crop-width').value = cWidth;
+    document.getElementById('reels-cv-crop-width-range').value = cWidth;
+    
+    document.getElementById('reels-cv-crop-height').value = cHeight;
+    document.getElementById('reels-cv-crop-height-range').value = cHeight;
+
+    // 片段池拼接设置同步
+    const clipPoolDir = task.clipPoolDir || '';
+    const clipPoolDirEl = document.getElementById('reels-bg-clippool-dir-ui');
+    if (clipPoolDirEl) {
+        clipPoolDirEl.value = clipPoolDir;
+    }
+    
+    const clipOrderEl = document.getElementById('reels-bg-clippool-order-ui');
+    if (clipOrderEl) {
+        clipOrderEl.value = task.clipOrder || 'name';
+    }
+    
+    const clipStatusEl = document.getElementById('reels-bg-clippool-status-ui');
+    if (clipStatusEl) {
+        if (task.concatStatus === 'generating') {
+            clipStatusEl.textContent = '⏳ 拼接中...';
+        } else if (task.concatVideoPath) {
+            const shortName = task.concatVideoPath.split(/[\\/]/).pop();
+            clipStatusEl.textContent = `✅ ${shortName}`;
+            clipStatusEl.title = task.concatVideoPath;
+        } else {
+            const clipCount = Array.isArray(task.clipPool) ? task.clipPool.length : 0;
+            clipStatusEl.textContent = `${clipCount} 个片段`;
+        }
+    }
+};
+
+window.reelsSaveBgConfigUI = function() {
+    const idx = _reelsState.selectedIdx;
+    if (idx < 0) return;
+    const task = _reelsState.tasks[idx];
+    if (!task) return;
+
+    // 背景基本配置
+    task.bgScale = parseInt(document.getElementById('reels-bg-scale-num').value) || 100;
+    task.bgX = parseInt(document.getElementById('reels-bg-x-num').value) || 0;
+    task.bgY = parseInt(document.getElementById('reels-bg-y-num').value) || 0;
+    task.bgFlipH = document.getElementById('reels-bg-fliph-ui').checked;
+    task.bgFlipV = document.getElementById('reels-bg-flipv-ui').checked;
+    
+    const bgVolVal = parseInt(document.getElementById('reels-bg-volume-num').value);
+    task.bgVideoVolume = isNaN(bgVolVal) ? 100 : bgVolVal;
+
+    task.bgDurScale = parseInt(document.getElementById('reels-bg-dur-scale-num').value) || 100;
+
+    // 背景多素材转场配置
+    task.bgTransition = document.getElementById('reels-bg-transition-ui').value || 'crossfade';
+    task.bgTransDur = parseFloat(document.getElementById('reels-bg-transdur-num').value) || 0.5;
+    const clipOrderEl = document.getElementById('reels-bg-cliporder-ui');
+    task.bgClipOrder = clipOrderEl ? (clipOrderEl.value || 'random') : (task.bgClipOrder || 'random');
+
+    // 内容视频属性
+    task.contentVideoBlurBg = document.getElementById('reels-cv-blur-bg-ui').checked;
+    const blurParamsContainer = document.getElementById('reels-cv-blur-params-container');
+    if (blurParamsContainer) {
+        blurParamsContainer.style.display = task.contentVideoBlurBg ? 'flex' : 'none';
+    }
+    const blurNum = document.getElementById('reels-cv-blur-num');
+    task.contentVideoBlur = blurNum ? (parseInt(blurNum.value) ?? 40) : 40;
+    const brightNum = document.getElementById('reels-cv-brightness-num');
+    task.contentVideoBrightness = brightNum ? (parseInt(brightNum.value) ?? 60) : 60;
+    
+    const cvVolVal = parseInt(document.getElementById('reels-cv-volume-num').value);
+    task.contentVideoVolume = isNaN(cvVolVal) ? 100 : cvVolVal;
+
+    task.contentVideoScale = parseInt(document.getElementById('reels-cv-scale-num').value) || 100;
+    task.contentVideoFlipH = document.getElementById('reels-cv-fliph-ui').checked;
+    task.contentVideoFlipV = document.getElementById('reels-cv-flipv-ui').checked;
+    
+    const trimStartVal = document.getElementById('reels-cv-trim-start').value.trim();
+    task.contentVideoTrimStart = trimStartVal === '' ? null : parseFloat(trimStartVal);
+    
+    const trimEndVal = document.getElementById('reels-cv-trim-end').value.trim();
+    task.contentVideoTrimEnd = trimEndVal === '' ? null : parseFloat(trimEndVal);
+
+    // 空间画面裁切
+    const cLeft = parseFloat(document.getElementById('reels-cv-crop-left').value) || 0;
+    const cTop = parseFloat(document.getElementById('reels-cv-crop-top').value) || 0;
+    const cWidth = parseFloat(document.getElementById('reels-cv-crop-width').value) || 100;
+    const cHeight = parseFloat(document.getElementById('reels-cv-crop-height').value) || 100;
+    
+    if (cLeft !== 0 || cTop !== 0 || cWidth !== 100 || cHeight !== 100) {
+        task.contentVideoCrop = `${cLeft},${cTop},${cWidth},${cHeight}`;
+    } else {
+        task.contentVideoCrop = '';
+    }
+
+    console.log('[BgConfigUI] Saved config: bgScale=' + task.bgScale + ' bgVideoVolume=' + task.bgVideoVolume + ' bgDurScale=' + task.bgDurScale + ' bgMode=' + task.bgMode + ' bgTransition=' + task.bgTransition + ' bgTransDur=' + task.bgTransDur + ' contentVideoBlurBg=' + task.contentVideoBlurBg + ' contentVideoVolume=' + task.contentVideoVolume + ' crop=' + task.contentVideoCrop);
+
+    // 重新渲染批量表和预览
+    if (typeof _renderBatchTable === 'function') {
+        if (typeof _skipNextApply !== 'undefined') _skipNextApply = true;
+        _renderBatchTable();
+    }
+    if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
+    if (typeof window.reelsSaveHistory === 'function') window.reelsSaveHistory();
+};
+
+window.reelsToggleBgModeUI = function(mode) {
+    const idx = _reelsState.selectedIdx;
+    if (idx < 0) return;
+    const task = _reelsState.tasks[idx];
+    if (!task) return;
+
+    task.bgMode = mode;
+    if (mode === 'single') {
+        task.bgClipPool = [];
+        task.bgClipActivePool = [];
+        task.bgClipOrder = 'random';
+    } else if (mode === 'multi') {
+        task.bgPath = '';
+        task.videoPath = '';
+        task.bgSrcUrl = '';
+        task.bgClipPool = Array.isArray(task.bgClipPool) ? task.bgClipPool : [];
+        task.bgClipActivePool = Array.isArray(task.bgClipActivePool) ? task.bgClipActivePool : [];
+        task.bgClipOrder = task.bgClipOrder || 'random';
+    }
+    
+    // 面板显示切换
+    const singleContainer = document.getElementById('reels-bg-single-container');
+    const multiContainer = document.getElementById('reels-bg-multi-container');
+    if (singleContainer) singleContainer.style.display = mode === 'single' ? 'flex' : 'none';
+    if (multiContainer) multiContainer.style.display = mode === 'multi' ? 'flex' : 'none';
+
+    if (typeof _renderBatchTable === 'function') {
+        if (typeof _skipNextApply !== 'undefined') _skipNextApply = true;
+        _renderBatchTable();
+    }
+    if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
+    if (typeof window.reelsSaveHistory === 'function') window.reelsSaveHistory();
+};
+
+window.reelsManageBgPoolUI = function() {
+    const idx = _reelsState.selectedIdx;
+    if (idx < 0) return;
+    if (window.reelsShowBgPoolDialog) {
+        window.reelsShowBgPoolDialog(idx);
+    }
+};
+
+window.reelsSelectClipPoolUI = async function() {
+    const idx = _reelsState.selectedIdx;
+    if (idx < 0) return;
+    if (window.reelsPickClipPool) {
+        await window.reelsPickClipPool(idx);
+        const task = _reelsState.tasks[idx];
+        window.reelsSyncBackgroundTabUI(task);
+    }
+};
+
+window.reelsClearClipPoolUI = function() {
+    const idx = _reelsState.selectedIdx;
+    if (idx < 0) return;
+    const task = _reelsState.tasks[idx];
+    if (!task) return;
+    task.clipPoolDir = '';
+    task.clipPool = [];
+    task.concatStatus = '';
+    task.concatVideoPath = '';
+    
+    if (typeof _renderBatchTable === 'function') {
+        if (typeof _skipNextApply !== 'undefined') _skipNextApply = true;
+        _renderBatchTable();
+    }
+    window.reelsSyncBackgroundTabUI(task);
+    if (typeof window.reelsSaveHistory === 'function') window.reelsSaveHistory();
+};
+
+window.reelsChangeClipOrderUI = function(order) {
+    const idx = _reelsState.selectedIdx;
+    if (idx < 0) return;
+    const task = _reelsState.tasks[idx];
+    if (!task) return;
+    task.clipOrder = order;
+    
+    if (typeof _renderBatchTable === 'function') {
+        if (typeof _skipNextApply !== 'undefined') _skipNextApply = true;
+        _renderBatchTable();
+    }
+    if (typeof window.reelsSaveHistory === 'function') window.reelsSaveHistory();
+};
+
+window.reelsConcatClipPoolUI = async function() {
+    const idx = _reelsState.selectedIdx;
+    if (idx < 0) return;
+    if (window.reelsConcatTaskClipPool) {
+        const statusEl = document.getElementById('reels-bg-clippool-status-ui');
+        if (statusEl) statusEl.textContent = '⏳ 拼接中...';
+        const btn = document.getElementById('reels-bg-clippool-concat-btn');
+        if (btn) btn.disabled = true;
+        
+        try {
+            await window.reelsConcatTaskClipPool(idx);
+        } finally {
+            if (btn) btn.disabled = false;
+            const task = _reelsState.tasks[idx];
+            window.reelsSyncBackgroundTabUI(task);
+        }
+    }
+};
+
+window.reelsSelectBgPathUI = async function() {
+    const idx = _reelsState.selectedIdx;
+    if (idx < 0) return;
+    const task = _reelsState.tasks[idx];
+    if (!task) return;
+
+    const path = await _pickSingleFile('选择背景素材 (图片/视频)', ['mp4', 'mov', 'avi', 'mkv', 'webm', 'jpg', 'jpeg', 'png', 'webp', 'gif']);
+    if (path) {
+        task.bgPath = path;
+        task.bgSrcUrl = null;
+        task.srcUrl = null;
+        document.getElementById('reels-bg-path-ui').value = path;
+        
+        if (typeof _renderBatchTable === 'function') {
+            if (typeof _skipNextApply !== 'undefined') _skipNextApply = true;
+            _renderBatchTable();
+        }
+        if (typeof reelsSelectTask === 'function') reelsSelectTask(idx);
+        if (typeof window.reelsSaveHistory === 'function') window.reelsSaveHistory();
+    }
+};
+
+window.reelsClearBgPathUI = function() {
+    const idx = _reelsState.selectedIdx;
+    if (idx < 0) return;
+    const task = _reelsState.tasks[idx];
+    if (!task) return;
+
+    task.bgPath = '';
+    task.bgSrcUrl = null;
+    task.srcUrl = null;
+    document.getElementById('reels-bg-path-ui').value = '';
+
+    if (typeof _renderBatchTable === 'function') {
+        if (typeof _skipNextApply !== 'undefined') _skipNextApply = true;
+        _renderBatchTable();
+    }
+    if (typeof reelsSelectTask === 'function') reelsSelectTask(idx);
+    if (typeof window.reelsSaveHistory === 'function') window.reelsSaveHistory();
+};
+
+window.reelsSelectCvPathUI = async function() {
+    const idx = _reelsState.selectedIdx;
+    if (idx < 0) return;
+    const task = _reelsState.tasks[idx];
+    if (!task) return;
+
+    const path = await _pickSingleFile('选择内容视频', ['mp4', 'mov', 'avi', 'mkv', 'webm']);
+    if (path) {
+        task.contentVideoPath = path;
+        document.getElementById('reels-cv-path-ui').value = path;
+
+        if (typeof _renderBatchTable === 'function') {
+            if (typeof _skipNextApply !== 'undefined') _skipNextApply = true;
+            _renderBatchTable();
+        }
+        if (typeof reelsSelectTask === 'function') reelsSelectTask(idx);
+        if (typeof window.reelsSaveHistory === 'function') window.reelsSaveHistory();
+    }
+};
+
+window.reelsClearCvPathUI = function() {
+    const idx = _reelsState.selectedIdx;
+    if (idx < 0) return;
+    const task = _reelsState.tasks[idx];
+    if (!task) return;
+
+    task.contentVideoPath = '';
+    document.getElementById('reels-cv-path-ui').value = '';
+
+    if (typeof _renderBatchTable === 'function') {
+        if (typeof _skipNextApply !== 'undefined') _skipNextApply = true;
+        _renderBatchTable();
+    }
+    if (typeof reelsSelectTask === 'function') reelsSelectTask(idx);
+    if (typeof window.reelsSaveHistory === 'function') window.reelsSaveHistory();
+};
+
+window.reelsResetCvCropUI = function() {
+    const setVal = (id, val) => {
+        const el = document.getElementById(id);
+        const elRange = document.getElementById(id + '-range');
+        if (el) el.value = val;
+        if (elRange) elRange.value = val;
+    };
+    setVal('reels-cv-crop-left', 0);
+    setVal('reels-cv-crop-top', 0);
+    setVal('reels-cv-crop-width', 100);
+    setVal('reels-cv-crop-height', 100);
+    window.reelsSaveBgConfigUI();
+};
+
+window.reelsApplyCropPresetUI = function(preset) {
+    const idx = _reelsState.selectedIdx;
+    if (idx < 0) return;
+    const task = _reelsState.tasks[idx];
+    if (!task) return;
+
+    let left = 0, top = 0, width = 100, height = 100;
+
+    if (preset === 'full') {
+        left = 0; top = 0; width = 100; height = 100;
+    } else if (preset === 'half_height') {
+        left = 0; top = 25; width = 100; height = 50;
+    } else {
+        let targetRatio = 16/9;
+        if (preset === '16_9') targetRatio = 16 / 9;
+        else if (preset === '4_5') targetRatio = 4 / 5;
+        else if (preset === '1_1') targetRatio = 1 / 1;
+        else if (preset === '9_16') targetRatio = 9 / 16;
+        else if (preset === '1_2') targetRatio = 1 / 2;
+
+        let srcW = 1080, srcH = 1920;
+        const cvVideo = document.getElementById('reels-preview-contentvideo');
+        const img = window._reelsState.previewContentImage;
+        const seq = window._reelsState.cvSequence;
+
+        if (cvVideo && cvVideo.videoWidth > 0) {
+            srcW = cvVideo.videoWidth;
+            srcH = cvVideo.videoHeight;
+        } else if (img && img.naturalWidth > 0) {
+            srcW = img.naturalWidth;
+            srcH = img.naturalHeight;
+        } else if (seq && seq.files && seq.files.length > 0) {
+            const firstFile = seq.files[0];
+            const firstImg = seq.loadedImages?.[firstFile];
+            if (firstImg && firstImg.naturalWidth > 0) {
+                srcW = firstImg.naturalWidth;
+                srcH = firstImg.naturalHeight;
+            }
+        } else {
+            const renderer = window._reelsState.renderer;
+            if (renderer && renderer.canvas) {
+                srcW = renderer.canvas.width;
+                srcH = renderer.canvas.height;
+            }
+        }
+
+        const srcRatio = srcW / srcH;
+        if (targetRatio > srcRatio) {
+            const newH = srcW / targetRatio;
+            const hPct = Math.round((newH / srcH) * 100);
+            left = 0;
+            width = 100;
+            height = Math.max(1, Math.min(100, hPct));
+            top = Math.round((100 - height) / 2);
+        } else {
+            const newW = srcH * targetRatio;
+            const wPct = Math.round((newW / srcW) * 100);
+            top = 0;
+            height = 100;
+            width = Math.max(1, Math.min(100, wPct));
+            left = Math.round((100 - width) / 2);
+        }
+    }
+
+    const setVal = (id, val) => {
+        const el = document.getElementById(id);
+        const elRange = document.getElementById(id + '-range');
+        if (el) el.value = val;
+        if (elRange) elRange.value = val;
+    };
+
+    setVal('reels-cv-crop-left', left);
+    setVal('reels-cv-crop-top', top);
+    setVal('reels-cv-crop-width', width);
+    setVal('reels-cv-crop-height', height);
+
+    window.reelsSaveBgConfigUI();
+};
+
+window.reelsCopyCvToBgUI = function() {
+    const idx = _reelsState.selectedIdx;
+    if (idx < 0) return;
+    const task = _reelsState.tasks[idx];
+    if (!task) return;
+
+    if (!task.contentVideoPath) {
+        alert('当前任务没有设置内容视频');
+        return;
+    }
+
+    task.bgPath = task.contentVideoPath;
+    task.bgSrcUrl = null;
+    task.srcUrl = null;
+    document.getElementById('reels-bg-path-ui').value = task.bgPath;
+
+    if (typeof _renderBatchTable === 'function') {
+        if (typeof _skipNextApply !== 'undefined') _skipNextApply = true;
+        _renderBatchTable();
+    }
+    if (typeof reelsSelectTask === 'function') reelsSelectTask(idx);
+    if (typeof window.reelsSaveHistory === 'function') window.reelsSaveHistory();
+};
+
+window.reelsCopyBgToCvUI = function() {
+    const idx = _reelsState.selectedIdx;
+    if (idx < 0) return;
+    const task = _reelsState.tasks[idx];
+    if (!task) return;
+
+    if (!task.bgPath) {
+        alert('当前任务没有设置背景文件');
+        return;
+    }
+
+    task.contentVideoPath = task.bgPath;
+    document.getElementById('reels-cv-path-ui').value = task.contentVideoPath;
+
+    if (typeof _renderBatchTable === 'function') {
+        if (typeof _skipNextApply !== 'undefined') _skipNextApply = true;
+        _renderBatchTable();
+    }
+    if (typeof reelsSelectTask === 'function') reelsSelectTask(idx);
+    if (typeof window.reelsSaveHistory === 'function') window.reelsSaveHistory();
+};
+
+window.reelsResetParamUI = function(idPrefix, defaultValue) {
+    const el = document.getElementById(idPrefix + '-num');
+    const elRange = document.getElementById(idPrefix + '-range');
+    if (el) el.value = defaultValue;
+    if (elRange) elRange.value = defaultValue;
+    window.reelsSaveBgConfigUI();
+};
+
+window.reelsResetTrimUI = function(id) {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+    window.reelsSaveBgConfigUI();
+};
+
+window.reelsSetBgOffsetUI = function(axis, value) {
+    const el = document.getElementById('reels-bg-' + axis + '-num');
+    const elRange = document.getElementById('reels-bg-' + axis + '-range');
+    if (el) el.value = value;
+    if (elRange) elRange.value = value;
+    window.reelsSaveBgConfigUI();
+};

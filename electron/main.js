@@ -91,23 +91,42 @@ function getResourcePath(relativePath) {
 function setupFFmpegPath() {
     // macOS: 检查打包的 FFmpeg
     if (process.platform === 'darwin') {
-        const vendorFfmpeg = path.join(getResourcePath('vendor'), 'ffmpeg');
-        if (fs.existsSync(vendorFfmpeg) && fs.existsSync(path.join(vendorFfmpeg, 'ffmpeg'))) {
-            log(`Using vendor FFmpeg on macOS: ${vendorFfmpeg}`);
-            process.env.PATH = `${vendorFfmpeg}${path.delimiter}${process.env.PATH || ''}`;
-            return;
-        }
-
-        // 回退到系统安装的 FFmpeg
-        const macPaths = [
-            '/opt/homebrew/bin',
-            '/usr/local/bin',
-            '/opt/local/bin',
+        const candidates = [
+            path.join(getResourcePath('vendor'), 'ffmpeg'),
+            path.join(getResourcePath('vendor'), 'darwin', 'ffmpeg'),
         ];
-        const existingPath = process.env.PATH || '';
-        const additionalPaths = macPaths.filter(p => !existingPath.includes(p)).join(path.delimiter);
-        if (additionalPaths) {
-            process.env.PATH = `${additionalPaths}${path.delimiter}${existingPath}`;
+        log(`[FFmpeg] macOS resource path: ${getResourcePath('vendor')}`);
+        let found = false;
+        for (const vendorFfmpeg of candidates) {
+            log(`[FFmpeg] Checking candidate: ${vendorFfmpeg} exists=${fs.existsSync(vendorFfmpeg)}`);
+            if (fs.existsSync(vendorFfmpeg)) {
+                const ffmpegExe = path.join(vendorFfmpeg, 'ffmpeg');
+                const ffprobeExe = path.join(vendorFfmpeg, 'ffprobe');
+                log(`[FFmpeg]   ffmpeg: ${ffmpegExe} exists=${fs.existsSync(ffmpegExe)}`);
+                log(`[FFmpeg]   ffprobe: ${ffprobeExe} exists=${fs.existsSync(ffprobeExe)}`);
+                if (fs.existsSync(ffmpegExe) || fs.existsSync(ffprobeExe)) {
+                    log(`Using vendor FFmpeg on macOS: ${vendorFfmpeg}`);
+                    process.env.PATH = `${vendorFfmpeg}${path.delimiter}${process.env.PATH || ''}`;
+                    if (fs.existsSync(ffmpegExe)) process.env.FFMPEG_PATH = ffmpegExe;
+                    if (fs.existsSync(ffprobeExe)) process.env.FFPROBE_PATH = ffprobeExe;
+                    found = true;
+                    break;
+                }
+            }
+        }
+        if (!found) {
+            // 回退到系统安装的 FFmpeg
+            const macPaths = [
+                '/opt/homebrew/bin',
+                '/usr/local/bin',
+                '/opt/local/bin',
+            ];
+            const existingPath = process.env.PATH || '';
+            const additionalPaths = macPaths.filter(p => !existingPath.includes(p)).join(path.delimiter);
+            if (additionalPaths) {
+                process.env.PATH = `${additionalPaths}${path.delimiter}${existingPath}`;
+            }
+            log(`[FFmpeg] WARNING: ffmpeg/ffprobe not found in any candidate path! Fallback to system PATH: ${process.env.PATH}`);
         }
     } else if (process.platform === 'win32') {
         // Packaged: extraResources maps vendor/windows/ffmpeg → vendor/ffmpeg
@@ -364,9 +383,8 @@ app.whenReady().then(async () => {
     });
 
     // IPC: 批量Reels - 烧录字幕到视频
-    ipcMain.handle('burn-subtitles', async (event, { videoPath, assContent, outputPath, crf }) => {
-        const os = require('os');
-        const { execFile } = require('child_process');
+    ipcMain.handle('burn-subtitles', async (event, { videoPath, assContent, outputPath, crf, useGPU }) => {
+        const { execFile, spawnSync } = require('child_process');
         const settingsService = require('./services/settings');
         const assPath = settingsService.secureTmpFile('reels_sub', '.ass');
 
@@ -375,17 +393,46 @@ app.whenReady().then(async () => {
         log(`[Reels] Burning subtitles: ${videoPath} → ${outputPath}`);
 
         return new Promise((resolve, reject) => {
+            const ffmpegBin = ffmpegService.resolveCommand ? ffmpegService.resolveCommand('ffmpeg') : 'ffmpeg';
+            const platform = process.platform;
+            let vcodec = 'libx264';
+            let encoderArgs = ['-crf', String(crf || 23), '-preset', 'medium'];
+
+            if (useGPU) {
+                if (platform === 'darwin') {
+                    vcodec = 'h264_videotoolbox';
+                    encoderArgs = ['-b:v', '8M'];
+                } else if (platform === 'win32') {
+                    const candidates = [
+                        { codec: 'h264_nvenc', args: ['-preset', 'p4', '-cq', String(crf || 23), '-b:v', '0'] },
+                        { codec: 'h264_amf', args: ['-quality', 'balanced', '-rc', 'cqp', '-qp_i', String(crf || 23), '-qp_p', String(crf || 23)] },
+                        { codec: 'h264_qsv', args: ['-global_quality', String(crf || 23)] },
+                    ];
+                    for (const enc of candidates) {
+                        const probe = spawnSync(ffmpegBin, [
+                            '-y', '-f', 'lavfi', '-i', 'color=c=black:s=256x256:d=0.1',
+                            '-c:v', enc.codec, '-frames:v', '1', '-f', 'null', '-'
+                        ], { timeout: 10000, stdio: ['ignore', 'ignore', 'pipe'] });
+                        if (probe.status === 0) {
+                            vcodec = enc.codec;
+                            encoderArgs = enc.args;
+                            log(`[Reels] burn-subtitles GPU encoder: ${enc.codec}`);
+                            break;
+                        }
+                    }
+                }
+            }
+
             const args = [
                 '-i', videoPath,
                 '-vf', `ass='${assPath.replace(/'/g, "'\\''")}' `,
                 '-c:a', 'copy',
-                '-c:v', 'libx264',
-                '-crf', String(crf || 23),
-                '-preset', 'medium',
+                '-c:v', vcodec,
+                ...encoderArgs,
                 '-y',
                 outputPath
             ];
-            execFile('ffmpeg', args, { maxBuffer: 50 * 1024 * 1024 }, (err, stdout, stderr) => {
+            execFile(ffmpegBin, args, { maxBuffer: 50 * 1024 * 1024 }, (err, stdout, stderr) => {
                 // Clean up temp ASS file
                 try { fs.unlinkSync(assPath); } catch (e) { /* ignore */ }
                 if (err) {

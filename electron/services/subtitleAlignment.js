@@ -584,7 +584,7 @@ function audioSubtitleSearchDifferentStrong(
         const maxLen = Math.max(cleanedGenText.length, cleanedSourceText.length);
         const similarity = maxLen === 0 ? 1 : equalLen / maxLen;
 
-        if (similarity < 0.60) {
+        if (similarity < 0.85) {
             // 构建带换行的原始识别文案，方便前端展示或替换
             let recognizedText = '';
             if (Array.isArray(generationSubtitleArray)) {

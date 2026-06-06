@@ -22,6 +22,7 @@ const DEFAULT_SUBTITLE_STYLE = {
     bold: true,
     italic: false,
     letter_spacing: 0,
+    word_spacing: 0,
 
     // ── Position ──
     pos_x: 0.5,       // 0~1 normalized (0.5 = center)
@@ -113,6 +114,28 @@ const DEFAULT_SUBTITLE_STYLE = {
     tw_unrevealed_color: '#808080',
     tw_unrevealed_stroke_color: '#404040',
     tw_unrevealed_opacity: 0.4,
+    fullpage_typewriter: false,
+    fullpage_typewriter_reveal_type: 'char',
+    fullpage_typewriter_align: 'center',
+    fullpage_typewriter_cursor: true,
+    fullpage_typewriter_cursor_char: '|',
+    fullpage_typewriter_cursor_color: '#FFD700',
+    fullpage_typewriter_first_line_bold: true,
+    fullpage_typewriter_first_line_scale: 1.2,
+    fullpage_typewriter_first_line_color: '',
+
+    // ── Scatter Pop ──
+    scatter_max_words: 3,
+    scatter_seed: 1,
+    scatter_min_scale: 0.8,
+    scatter_max_scale: 1.5,
+    scatter_min_rotate: -10,
+    scatter_max_rotate: 10,
+    scatter_accum_prob: 0.5,
+    scatter_area_left: 15,
+    scatter_area_right: 85,
+    scatter_area_top: 25,
+    scatter_area_bottom: 75,
 
     // ── Character bounce ──
     char_bounce_height: 20,
@@ -339,7 +362,53 @@ const BUILTIN_PRESETS = {
     "紫色动态底框": { karaoke_highlight: true, font_family: "Segoe UI", fontsize: 60, color_text: "#FFFFFF", color_high: "#FFFFFF", use_box: false, use_stroke: false, shadow_blur: 4, color_shadow: "#000000", opacity_shadow: 150, shadow_offset_x: 2, shadow_offset_y: 2, dynamic_box: true, color_high_bg: "#7B68EE", opacity_high_bg: 255, dynamic_radius: 8, line_spacing: 1.2, font_weight: 900 },
     "荧光绿底框_黑字": { karaoke_highlight: true, font_family: "Segoe UI", fontsize: 60, color_text: "#000000", color_high: "#000000", use_box: true, box_adaptive_width: true, color_bg: "#ADFF2F", opacity_bg: 255, box_radius: 6, box_padding_x: 20, box_padding_y: 10, use_stroke: false, shadow_blur: 0, line_spacing: 1.2, font_weight: 900, text_transform: "uppercase" },
     "纯白发光字": { karaoke_highlight: true, font_family: "Segoe UI", fontsize: 65, color_text: "#FFFFFF", color_high: "#FFFFFF", use_box: false, use_stroke: false, shadow_blur: 15, color_shadow: "#FFFFFF", opacity_shadow: 200, shadow_offset_x: 0, shadow_offset_y: 0, line_spacing: 1.2, font_weight: 900, text_transform: "uppercase" },
-    "粉红发光字": { karaoke_highlight: true, font_family: "Segoe UI", fontsize: 65, color_text: "#FF69B4", color_high: "#FF69B4", use_box: false, use_stroke: false, shadow_blur: 15, color_shadow: "#FF69B4", opacity_shadow: 200, shadow_offset_x: 0, shadow_offset_y: 0, line_spacing: 1.2, font_weight: 900, text_transform: "uppercase" }
+    "粉红发光字": { karaoke_highlight: true, font_family: "Segoe UI", fontsize: 65, color_text: "#FF69B4", color_high: "#FF69B4", use_box: false, use_stroke: false, shadow_blur: 15, color_shadow: "#FF69B4", opacity_shadow: 200, shadow_offset_x: 0, shadow_offset_y: 0, line_spacing: 1.2, font_weight: 900, text_transform: "uppercase" },
+    "全屏打字机_金黄光标": {
+        fullpage_typewriter: true,
+        fullpage_typewriter_reveal_type: "char",
+        fullpage_typewriter_cursor: true,
+        fullpage_typewriter_cursor_char: "|",
+        fullpage_typewriter_cursor_color: "#FFD700",
+        tw_unrevealed_opacity: 0,
+        fontsize: 58,
+        color_text: "#FFFFFF",
+        use_box: true,
+        color_bg: "#000000",
+        opacity_bg: 180,
+        box_radius: 12,
+        box_padding_x: 24,
+        box_padding_y: 20,
+        line_spacing: 8,
+        global_mask_enabled: true,
+        global_mask_color: "#000000",
+        global_mask_opacity: 0.4,
+        pos_y: 0.5,
+        wrap_width_percent: 85,
+        use_stroke: false,
+        anim_in_type: "none",
+        anim_out_type: "none"
+    },
+    "随机分散气泡卡片": {
+        anim_in_type: "scatter_pop",
+        scatter_max_words: 3,
+        scatter_min_scale: 0.9,
+        scatter_max_scale: 1.4,
+        scatter_min_rotate: -8,
+        scatter_max_rotate: 8,
+        scatter_accum_prob: 0.5,
+        use_box: true,
+        color_bg: "#6A0DAD",
+        opacity_bg: 220,
+        box_radius: 12,
+        box_padding_x: 16,
+        box_padding_y: 12,
+        color_text: "#FFFFFF",
+        color_high: "#FFD700",
+        fontsize: 52,
+        bold: true,
+        use_stroke: false,
+        anim_out_type: "none"
+    }
 };
 
 // Category mapping for collapsible preset picker
@@ -348,7 +417,7 @@ const PRESET_CATEGORIES = {
     '📝 基础字幕': ['默认白字','黄字黑边 (经典)','上滑入场','左滑入场','黑底白字 (新闻)'],
     '🎤 卡拉OK高亮': ['卡拉OK高亮','节奏逐词','闪光高亮','黑边_粉红高亮','黑边_薄荷高亮','黑边_电蓝高亮','极简纯文+电光青高亮','重金大字+强对比排版'],
     '🔥 逐词动态': ['逐个大小出字-55','逐个大小出字-45','逐个出字+红色动画','逐个出字大小-爆贴','蓝底白字+动感回弹','紫色动态底框','逐字放大','逐词弹出(随机大小)','逐词弹出(随机回弹)','Hormozi 风格字幕'],
-    '✨ 特殊动画': ['打字机模式','逐行出现','悬浮漂移','霓虹多层描边','滚动歌词_粉高亮','圣光降临','阴影沉浸式'],
+    '✨ 特殊动画': ['打字机模式','逐行出现','悬浮漂移','霓虹多层描边','滚动歌词_粉高亮','圣光降临','阴影沉浸式','全屏打字机_金黄光标','随机分散气泡卡片'],
     '💫 阴影发光': ['软阴影_青字高亮','硬阴影_黄字高亮','纯白发光字','粉红发光字'],
 };
 
@@ -482,7 +551,7 @@ function exportSubtitlePresets() {
     return JSON.stringify({ default: data.default || {}, presets: userPresets }, null, 2);
 }
 
-function importSubtitlePresets(jsonString) {
+function importSubtitlePresets(jsonString, overwriteConflicts = false) {
     const result = { added: [], conflicts: [], skipped: [] };
     try {
         const incoming = JSON.parse(jsonString);
@@ -505,9 +574,12 @@ function importSubtitlePresets(jsonString) {
                 continue;
             }
             if (name in presets) {
-                // 同名预设：覆盖而非跳过
-                presets[name] = extractStyleKeys(style);
-                result.conflicts.push(name);
+                if (overwriteConflicts) {
+                    presets[name] = extractStyleKeys(style);
+                    result.conflicts.push(name);
+                } else {
+                    result.skipped.push(name);
+                }
                 continue;
             }
             presets[name] = extractStyleKeys(style);

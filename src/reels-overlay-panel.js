@@ -426,7 +426,7 @@ class ReelsOverlayPanel {
                             <option value="800">ExtraBold</option><option value="900">Black</option>
                         </select>
                         <label>标题大写</label><input type="checkbox" id="rop-scroll-title-uppercase" checked>
-                        <label>字间距</label><input type="number" id="rop-scroll-title-letterspacing" class="rop-input" min="-20" max="100" value="0">
+                        <label>字符间距</label><input type="number" id="rop-scroll-title-letterspacing" class="rop-input" min="-20" max="100" value="0">
                         <label>标题对齐</label>
                         <select id="rop-scroll-title-align" class="rop-select">
                             <option value="">跟随正文</option><option value="center">居中</option><option value="left">左对齐</option><option value="right">右对齐</option>
@@ -505,7 +505,7 @@ class ReelsOverlayPanel {
                             <option value="700">Bold</option><option value="800">ExtraBold</option><option value="900">Black</option>
                         </select>
                         <label>正文大写</label><input type="checkbox" id="rop-scroll-uppercase">
-                        <label>字间距</label><input type="number" id="rop-scroll-letterspacing" class="rop-input" min="-20" max="100" value="0">
+                        <label>字符间距</label><input type="number" id="rop-scroll-letterspacing" class="rop-input" min="-20" max="100" value="0">
                         <label>对齐</label>
                         <select id="rop-scroll-align" class="rop-select">
                             <option value="center">居中</option><option value="left">左对齐</option><option value="right">右对齐</option>
@@ -564,6 +564,11 @@ class ReelsOverlayPanel {
                         <div style="display:flex;align-items:center;gap:6px;">
                             <input type="checkbox" id="rop-scroll-auto-stop">
                             <span style="font-size:11px;color:var(--text-muted);">文字全显示后停止滚动</span>
+                        </div>
+                        <label>提前完成</label>
+                        <div style="display:flex;align-items:center;gap:6px;">
+                            <input type="number" id="rop-scroll-auto-stop-lead" class="rop-input" min="0" max="60" step="0.5" value="0" style="width:60px;">
+                            <span style="font-size:11px;color:var(--text-muted);">秒（提前完成滚动，0=不提前）</span>
                         </div>
                         <label>正文自动缩放</label>
                         <div style="display:flex;align-items:center;gap:6px;">
@@ -658,7 +663,7 @@ class ReelsOverlayPanel {
                         <select id="rop-title-valign" class="rop-select rop-defaultable" data-default="top">
                             <option value="center">垂直居中</option><option value="top">顶部对齐</option><option value="bottom">底部对齐</option>
                         </select>
-                        <label>字间距</label>
+                        <label>字符间距</label>
                         <div class="rop-slider-combo"><input type="range" id="rop-title-letterspacing" class="rop-range rop-defaultable" data-default="0" min="-20" max="100" value="0"><input type="number" class="rop-num-readout" data-link="rop-title-letterspacing" min="-20" max="100" value="0"><button class="rop-reset-btn" data-target="rop-title-letterspacing" title="恢复默认(0)">↺</button></div>
                         <label>文字宽度</label>
                         <div class="rop-slider-combo"><input type="range" id="rop-title-override-w" class="rop-range rop-defaultable" data-default="830" min="1" max="1080" value="830"><input type="number" class="rop-num-readout" data-link="rop-title-override-w" min="1" max="1080" value="830"><button class="rop-reset-btn" data-target="rop-title-override-w" title="恢复当前内容宽度">↺</button></div>
@@ -745,7 +750,7 @@ class ReelsOverlayPanel {
                             <option value="400" selected>Regular</option><option value="500">Medium</option><option value="600">SemiBold</option>
                             <option value="700">Bold</option><option value="800">ExtraBold</option><option value="900">Black</option>
                         </select>
-                        <label>字间距</label>
+                        <label>字符间距</label>
                         <div class="rop-slider-combo"><input type="range" id="rop-body-letterspacing" class="rop-range rop-defaultable" data-default="0" min="-20" max="100" value="0"><input type="number" class="rop-num-readout" data-link="rop-body-letterspacing" min="-20" max="100" value="0"><button class="rop-reset-btn" data-target="rop-body-letterspacing" title="恢复默认(0)">↺</button></div>
                         <label>文字宽度</label>
                         <div class="rop-slider-combo"><input type="range" id="rop-body-override-w" class="rop-range rop-defaultable" data-default="830" min="1" max="1080" value="830"><input type="number" class="rop-num-readout" data-link="rop-body-override-w" min="1" max="1080" value="830"><button class="rop-reset-btn" data-target="rop-body-override-w" title="恢复当前内容宽度">↺</button></div>
@@ -821,7 +826,7 @@ class ReelsOverlayPanel {
                         <select id="rop-footer-valign" class="rop-select rop-defaultable" data-default="top">
                             <option value="center">垂直居中</option><option value="top">顶部对齐</option><option value="bottom">底部对齐</option>
                         </select>
-                        <label>字间距</label>
+                        <label>字符间距</label>
                         <div class="rop-slider-combo"><input type="range" id="rop-footer-letterspacing" class="rop-range rop-defaultable" data-default="0" min="-20" max="100" value="0"><input type="number" class="rop-num-readout" data-link="rop-footer-letterspacing" min="-20" max="100" value="0"><button class="rop-reset-btn" data-target="rop-footer-letterspacing" title="恢复默认(0)">↺</button></div>
                         <label>文字宽度</label>
                         <div class="rop-slider-combo"><input type="range" id="rop-footer-override-w" class="rop-range rop-defaultable" data-default="830" min="1" max="1080" value="830"><input type="number" class="rop-num-readout" data-link="rop-footer-override-w" min="1" max="1080" value="830"><button class="rop-reset-btn" data-target="rop-footer-override-w" title="恢复当前内容宽度">↺</button></div>
@@ -1332,6 +1337,7 @@ class ReelsOverlayPanel {
             'rop-scroll-start-time', 'rop-scroll-end-time',
             'rop-scroll-speed',
             'rop-scroll-auto-stop',
+            'rop-scroll-auto-stop-lead',
             'rop-scroll-static',
             'rop-scroll-auto-fit', 'rop-scroll-min-fontsize',
             'rop-scroll-feather-top', 'rop-scroll-feather-bottom', 'rop-scroll-feather-top-offset', 'rop-scroll-feather-bottom-offset',
@@ -1351,24 +1357,42 @@ class ReelsOverlayPanel {
         }
 
         // ── Windows Electron 焦点修复 ──
-        // 使用捕获阶段拦截可编辑控件事件，避免预览拖拽、面板折叠等外层 handler
-        // 在 textarea 获得焦点前抢走事件，导致标题/正文偶发点不进去。
-        const stopEditorEvent = (e) => {
-            const target = e.target;
-            if (!target || !target.closest) return;
-            if (!target.closest('textarea,input,select,[contenteditable="true"],.rop-textarea,.rop-input,.rop-select,.rop-range,.rop-color')) return;
-            e.stopPropagation();
-            if ((e.type === 'pointerdown' || e.type === 'mousedown') &&
-                (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT')) {
+        // 事件保护必须绑定在控件本身，不能绑在父容器捕获阶段；
+        // 否则事件可能到不了 textarea，表现为标题/正文输入框点不动。
+        this.container.querySelectorAll('textarea,input,select,[contenteditable="true"],.rop-textarea,.rop-input,.rop-select,.rop-range,.rop-color').forEach(el => {
+            if (el.dataset.ropEditorEventGuard === '1') return;
+            el.dataset.ropEditorEventGuard = '1';
+            const stopEditorEvent = (e) => {
+                e.stopPropagation();
+                if ((e.type === 'pointerdown' || e.type === 'mousedown') &&
+                    (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT')) {
+                    setTimeout(() => {
+                        if (document.activeElement !== el && typeof el.focus === 'function') {
+                            el.focus({ preventScroll: true });
+                        }
+                    }, 0);
+                }
+            };
+            ['pointerdown', 'mousedown', 'mouseup', 'click', 'dblclick'].forEach(type => {
+                el.addEventListener(type, stopEditorEvent);
+            });
+        });
+        ['rop-title-text', 'rop-body-text', 'rop-footer-text'].forEach(id => {
+            const el = this.container.querySelector('#' + id);
+            if (!el || el.dataset.ropTextcardTextGuard === '1') return;
+            el.dataset.ropTextcardTextGuard = '1';
+            const forceTextcardTextFocus = (e) => {
+                e.stopPropagation();
+                if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
                 setTimeout(() => {
-                    if (document.activeElement !== target && typeof target.focus === 'function') {
-                        target.focus({ preventScroll: true });
+                    if (document.activeElement !== el && typeof el.focus === 'function') {
+                        el.focus({ preventScroll: true });
                     }
                 }, 0);
-            }
-        };
-        ['pointerdown', 'mousedown', 'mouseup', 'click', 'dblclick'].forEach(type => {
-            this.container.addEventListener(type, stopEditorEvent, true);
+            };
+            ['pointerdown', 'mousedown', 'click'].forEach(type => {
+                el.addEventListener(type, forceTextcardTextFocus);
+            });
         });
         for (const fid of ['rop-title-override-w', 'rop-body-override-w', 'rop-footer-override-w']) {
             const el = this.container.querySelector('#' + fid);
@@ -1527,10 +1551,30 @@ class ReelsOverlayPanel {
         });
 
         // Drag-to-scrub on number inputs (click+drag horizontally to adjust value)
+        // 使用 Pointer Events + setPointerCapture，确保松开鼠标时 pointerup 一定能触发
         this.container.querySelectorAll('input.rop-input[type="number"]').forEach(el => {
             el.style.cursor = 'ew-resize';
+            el.style.touchAction = 'none';
             let dragging = false, startX = 0, startVal = 0;
-            el.addEventListener('mousedown', (e) => {
+
+            const onMove = (me) => {
+                if (!dragging) return;
+                const dx = me.clientX - startX;
+                const speed = me.shiftKey ? 0.1 : 1;
+                const step = parseFloat(el.step) || 1;
+                el.value = Math.round((startVal + dx * speed * step) / step) * step;
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+            };
+            const onUp = (ue) => {
+                if (!dragging) return;
+                dragging = false;
+                try { el.releasePointerCapture(ue.pointerId); } catch (_) {}
+                el.removeEventListener('pointermove', onMove);
+                el.removeEventListener('pointerup', onUp);
+                el.removeEventListener('pointercancel', onUp);
+            };
+
+            el.addEventListener('pointerdown', (e) => {
                 e.stopPropagation();
                 // Allow clicking into input to type when already focused
                 if (document.activeElement === el) return;
@@ -1538,21 +1582,10 @@ class ReelsOverlayPanel {
                 startX = e.clientX;
                 startVal = parseFloat(el.value) || 0;
                 e.preventDefault();
-                const onMove = (me) => {
-                    if (!dragging) return;
-                    const dx = me.clientX - startX;
-                    const speed = me.shiftKey ? 0.1 : 1;
-                    const step = parseFloat(el.step) || 1;
-                    el.value = Math.round((startVal + dx * speed * step) / step) * step;
-                    el.dispatchEvent(new Event('input', { bubbles: true }));
-                };
-                const onUp = () => {
-                    dragging = false;
-                    document.removeEventListener('mousemove', onMove);
-                    document.removeEventListener('mouseup', onUp);
-                };
-                document.addEventListener('mousemove', onMove);
-                document.addEventListener('mouseup', onUp);
+                try { el.setPointerCapture(e.pointerId); } catch (_) {}
+                el.addEventListener('pointermove', onMove);
+                el.addEventListener('pointerup', onUp);
+                el.addEventListener('pointercancel', onUp);
             });
             // Double-click to focus for manual typing
             el.addEventListener('dblclick', (e) => {
@@ -1921,7 +1954,7 @@ class ReelsOverlayPanel {
                 'shadow_enabled', 'shadow_color', 'shadow_blur', 'shadow_opacity',
                 'shadow_offset_x', 'shadow_offset_y',
                 'scroll_x_anchor', 'scroll_from_x', 'scroll_from_y', 'scroll_to_x', 'scroll_to_y',
-                'scroll_speed', 'scroll_auto_stop', 'scroll_static', 'scroll_auto_fit', 'scroll_min_fontsize',
+                'scroll_speed', 'scroll_auto_stop', 'scroll_auto_stop_lead', 'scroll_static', 'scroll_auto_fit', 'scroll_min_fontsize',
                 'scroll_title_fontsize', 'scroll_title_font_family', 'scroll_title_font_weight',
                 'scroll_title_bold', 'scroll_title_color', 'scroll_title_align', 'scroll_title_gap', 'scroll_title_fixed',
                 'scroll_title_independent', 'scroll_title_x', 'scroll_title_y',
@@ -2302,7 +2335,7 @@ class ReelsOverlayPanel {
 
     _duplicateOverlay() {
         if (!this._selectedOv) return;
-        const clone = JSON.parse(JSON.stringify(this._selectedOv));
+        const clone = JSON.parse(JSON.stringify(this._selectedOv, (key, val) => key === '_allOverlays' ? undefined : val));
         clone.id = 'ov_' + Date.now();
         clone.x += 30;
         clone.y += 30;
@@ -2793,6 +2826,9 @@ class ReelsOverlayPanel {
                 const mgr = this.videoCanvas && this.videoCanvas.overlayMgr;
                 if (mgr && mgr.overlays) {
                     mgr.overlays.forEach(o => {
+                        if (!o.id) {
+                            o.id = 'ov_' + Math.random().toString(36).slice(2, 9) + '_' + Date.now().toString(36);
+                        }
                         if (o.type === 'scroll') {
                             const label = o.name || o.scroll_title || o.content?.slice(0, 20) || o.id;
                             const sel = o.id === curVal ? ' selected' : '';
@@ -3072,6 +3108,7 @@ class ReelsOverlayPanel {
             this._val('rop-scroll-feather-left-offset', ov.feather_left_offset ?? 0);
             this._val('rop-scroll-feather-right-offset', ov.feather_right_offset ?? 0);
             this._val('rop-scroll-auto-stop', ov.scroll_auto_stop === true);
+            this._val('rop-scroll-auto-stop-lead', ov.scroll_auto_stop_lead ?? 0);
             this._val('rop-scroll-static', ov.scroll_static === true);
             this._val('rop-scroll-auto-fit', ov.scroll_auto_fit === true);
             this._val('rop-scroll-min-fontsize', ov.scroll_min_fontsize ?? 16);
@@ -3518,6 +3555,7 @@ class ReelsOverlayPanel {
             ov.feather_left_offset = this._get('rop-scroll-feather-left-offset');
             ov.feather_right_offset = this._get('rop-scroll-feather-right-offset');
             ov.scroll_auto_stop = this._get('rop-scroll-auto-stop');
+            ov.scroll_auto_stop_lead = parseFloat(this._get('rop-scroll-auto-stop-lead')) || 0;
             ov.scroll_static = this._get('rop-scroll-static');
             ov.scroll_auto_fit = this._get('rop-scroll-auto-fit');
             ov.scroll_min_fontsize = this._get('rop-scroll-min-fontsize');
@@ -3653,7 +3691,7 @@ class ReelsOverlayPanel {
             // 滚动参数
             'scroll_x_anchor', 'scroll_from_x', 'scroll_from_y', 'scroll_to_x', 'scroll_to_y',
             'scroll_offset_x', 'scroll_offset_y',
-            'scroll_speed', 'scroll_auto_stop', 'scroll_static', 'scroll_auto_fit', 'scroll_min_fontsize',
+            'scroll_speed', 'scroll_auto_stop', 'scroll_auto_stop_lead', 'scroll_static', 'scroll_auto_fit', 'scroll_min_fontsize',
             // 羽化
             'feather_top', 'feather_bottom', 'feather_top_offset', 'feather_bottom_offset',
             'feather_left', 'feather_right', 'feather_left_offset', 'feather_right_offset',
@@ -4240,11 +4278,36 @@ class ReelsOverlayPanel {
                 try {
                     const data = JSON.parse(e.target.result);
                     const templates = this._getCardTemplates();
-                    const count = Object.keys(data).length;
-                    Object.assign(templates, data); // 合并模板
+                    let addedCount = 0;
+                    let overwrittenCount = 0;
+                    const conflicts = [];
+                    for (const name of Object.keys(data)) {
+                        if (templates[name]) {
+                            conflicts.push(name);
+                        }
+                    }
+                    if (conflicts.length > 0) {
+                        const ok = confirm(`导入的模板中包含以下已存在的模板：\n${conflicts.join(', ')}\n\n是否覆盖它们？(点击「取消」将跳过这些冲突的模板)`);
+                        for (const [name, val] of Object.entries(data)) {
+                            if (templates[name]) {
+                                if (ok) {
+                                    templates[name] = val;
+                                    overwrittenCount++;
+                                }
+                            } else {
+                                templates[name] = val;
+                                addedCount++;
+                            }
+                        }
+                    } else {
+                        for (const [name, val] of Object.entries(data)) {
+                            templates[name] = val;
+                            addedCount++;
+                        }
+                    }
                     this._setCardTemplates(templates);
                     this._refreshCardTemplateSelect();
-                    alert(`✅ 成功导入了 ${count} 个模板`);
+                    alert(`✅ 导入完成：新增了 ${addedCount} 个模板，覆盖了 ${overwrittenCount} 个模板。`);
                 } catch (err) {
                     console.error('导入模板出错:', err);
                     alert('导入失败，不是有效的模板 JSON 文件。');
@@ -4399,17 +4462,33 @@ class ReelsOverlayPanel {
             return;
         }
         const select = this.container.querySelector('#rop-group-preset-select');
-        const defaultName = select ? select.value : '';
+        const currentName = select ? select.value : '';
+        // 另存时默认追加 "_副本" 后缀，避免用户误覆盖原预设
+        const defaultName = currentName ? (currentName + '_副本') : '';
         const name = await this._showCardTemplateNameDialog(defaultName);
         if (!name) return;
+        // 如果输入名称与已有预设重名，弹确认框
+        const existingPresets = this._getOverlayGroupPresets();
+        if (existingPresets[name]) {
+            if (!confirm(`预设 "${name}" 已存在，确定要覆盖吗？`)) return;
+        }
         this._executeSavePreset(name, false);
     }
 
     _executeSavePreset(name, isUpdate = false) {
         const overlays = this.videoCanvas.overlayMgr?.overlays || [];
+        // 确保被保存的所有层在内存中都有 ID
+        overlays.forEach(ov => {
+            if (!ov.id) {
+                ov.id = 'ov_' + Math.random().toString(36).slice(2, 9) + '_' + Date.now().toString(36);
+            }
+        });
         // Deep clone overlays, strip runtime-only keys and text content
         const serialized = overlays.map(ov => {
-            const clone = JSON.parse(JSON.stringify(ov));
+            const clone = JSON.parse(JSON.stringify(ov, (key, val) => {
+                if (key === '_allOverlays') return undefined;
+                return val;
+            }));
             delete clone._img;
             delete clone._imgLoaded;
             delete clone._templateName;
@@ -4583,10 +4662,15 @@ class ReelsOverlayPanel {
             mgr.overlays.push(clone);
         }
 
-        // 重映射跟随滚动绑定的 ID 引用（旧预设ID → 新生成的ID）
+        // 重映射跟随滚动绑定的 ID 引用（旧预设ID → 新生成的ID），若找不到匹配目标且存在滚动层，则回退绑定到首个滚动层
+        const firstScrollOv = mgr.overlays.find(o => o.type === 'scroll');
         for (const ov of mgr.overlays) {
-            if (ov.bind_scroll_overlay_id && idMap[ov.bind_scroll_overlay_id]) {
-                ov.bind_scroll_overlay_id = idMap[ov.bind_scroll_overlay_id];
+            if (ov.bind_scroll_overlay_id) {
+                if (idMap[ov.bind_scroll_overlay_id]) {
+                    ov.bind_scroll_overlay_id = idMap[ov.bind_scroll_overlay_id];
+                } else if (firstScrollOv) {
+                    ov.bind_scroll_overlay_id = firstScrollOv.id;
+                }
             }
         }
 
@@ -4989,10 +5073,15 @@ class ReelsOverlayPanel {
             mgr.overlays.push(clone);
         }
 
-        // 重映射跟随滚动绑定的 ID 引用
+        // 重映射跟随滚动绑定的 ID 引用，若找不到匹配目标且存在滚动层，则回退绑定到首个滚动层
+        const firstScrollOv = mgr.overlays.find(o => o.type === 'scroll');
         for (const ov of mgr.overlays) {
-            if (ov.bind_scroll_overlay_id && idMap[ov.bind_scroll_overlay_id]) {
-                ov.bind_scroll_overlay_id = idMap[ov.bind_scroll_overlay_id];
+            if (ov.bind_scroll_overlay_id) {
+                if (idMap[ov.bind_scroll_overlay_id]) {
+                    ov.bind_scroll_overlay_id = idMap[ov.bind_scroll_overlay_id];
+                } else if (firstScrollOv) {
+                    ov.bind_scroll_overlay_id = firstScrollOv.id;
+                }
             }
         }
 
@@ -5001,7 +5090,7 @@ class ReelsOverlayPanel {
             for (const oldOv of oldTextByIndex) {
                 if (!usedOldText.has(oldOv)) {
                     if (oldOv.type === 'text' || oldOv.type === 'textcard' || oldOv.type === 'scroll') {
-                        const clone = JSON.parse(JSON.stringify(oldOv));
+                        const clone = JSON.parse(JSON.stringify(oldOv, (key, val) => key === '_allOverlays' ? undefined : val));
                         clone.id = 'ov_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
                         mgr.overlays.push(clone);
                     }
@@ -5077,11 +5166,36 @@ class ReelsOverlayPanel {
                 try {
                     const data = JSON.parse(ev.target.result);
                     const presets = this._getOverlayGroupPresets();
-                    const count = Object.keys(data).length;
-                    Object.assign(presets, data);
+                    let addedCount = 0;
+                    let overwrittenCount = 0;
+                    const conflicts = [];
+                    for (const name of Object.keys(data)) {
+                        if (presets[name]) {
+                            conflicts.push(name);
+                        }
+                    }
+                    if (conflicts.length > 0) {
+                        const ok = confirm(`导入的文件中包含以下已存在的预设：\n${conflicts.join(', ')}\n\n是否覆盖它们？(点击「取消」将跳过这些冲突的预设)`);
+                        for (const [name, val] of Object.entries(data)) {
+                            if (presets[name]) {
+                                if (ok) {
+                                    presets[name] = val;
+                                    overwrittenCount++;
+                                }
+                            } else {
+                                presets[name] = val;
+                                addedCount++;
+                            }
+                        }
+                    } else {
+                        for (const [name, val] of Object.entries(data)) {
+                            presets[name] = val;
+                            addedCount++;
+                        }
+                    }
                     this._setOverlayGroupPresets(presets);
                     this._refreshOverlayGroupPresetSelect();
-                    alert(`✅ 成功导入了 ${count} 个覆层组预设`);
+                    alert(`✅ 导入完成：新增了 ${addedCount} 个预设，覆盖了 ${overwrittenCount} 个预设。`);
                 } catch (err) {
                     console.error('导入预设出错:', err);
                     alert('导入失败，不是有效的预设 JSON 文件。');
@@ -5234,7 +5348,8 @@ class ReelsOverlayPanel {
                          border-radius:4px; color:#ddd; font-size:11px; font-family:monospace; text-transform:lowercase; box-sizing:border-box; }
         .rop-color-hex:focus { border-color:var(--accent); outline:none; }
         .rop-textarea { width:100%; padding:6px; background:var(--bg-primary, #141414); border:1px solid var(--border-color, var(--border-color));
-                        border-radius:4px; color:#ddd; font-size:11px; resize:vertical; margin-bottom:6px; font-family:system-ui; }
+                        border-radius:4px; color:#ddd; font-size:11px; resize:vertical; margin-bottom:6px; font-family:system-ui;
+                        position:relative; z-index:2; pointer-events:auto; user-select:text; }
         .rop-actions { padding:8px 10px; }
         .rop-slider-combo { display:flex; align-items:center; gap:6px; width:100%; }
         .rop-slider-combo .rop-range { flex:1; min-width:0; }

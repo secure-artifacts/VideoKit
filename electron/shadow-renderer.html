@@ -18,6 +18,44 @@ const path = require('path');
 
 // ═══ 基础工具函数 ═══
 
+function _parseCropString(cropStr) {
+    let cropX = 0, cropY = 0, cropW = 1, cropH = 1;
+    if (cropStr && typeof cropStr === 'string' && cropStr.trim() !== '') {
+        const parts = cropStr.split(',').map(p => parseFloat(p.trim()));
+        if (parts.length === 4 && parts.every(p => !isNaN(p))) {
+            cropX = Math.max(0, Math.min(100, parts[0])) / 100;
+            cropY = Math.max(0, Math.min(100, parts[1])) / 100;
+            cropW = Math.max(1, Math.min(100, parts[2])) / 100;
+            cropH = Math.max(1, Math.min(100, parts[3])) / 100;
+        }
+    }
+    return { cropX, cropY, cropW, cropH };
+}
+
+function _drawCroppedVideoCover(ctx, videoEl, cropX, cropY, cropW, cropH, targetW, targetH, scalePct, offsetX = 0, offsetY = 0) {
+    if (!ctx || !videoEl || !(targetW > 0) || !(targetH > 0)) return;
+    const srcW = videoEl.videoWidth || videoEl.naturalWidth || targetW;
+    const srcH = videoEl.videoHeight || videoEl.naturalHeight || targetH;
+    if (!(srcW > 0) || !(srcH > 0)) {
+        ctx.drawImage(videoEl, 0, 0, targetW, targetH);
+        return;
+    }
+    const sx = srcW * cropX;
+    const sy = srcH * cropY;
+    const sWidth = srcW * cropW;
+    const sHeight = srcH * cropH;
+
+    const userScale = (scalePct || 100) / 100;
+    const scale = Math.max(targetW / sWidth, targetH / sHeight) * userScale;
+    const drawW = sWidth * scale;
+    const drawH = sHeight * scale;
+    const maxShiftX = Math.abs(targetW - drawW) / 2;
+    const maxShiftY = Math.abs(targetH - drawH) / 2;
+    const drawX = (targetW - drawW) / 2 + maxShiftX * (offsetX / 100);
+    const drawY = (targetH - drawH) / 2 + maxShiftY * (offsetY / 100);
+    ctx.drawImage(videoEl, sx, sy, sWidth, sHeight, drawX, drawY, drawW, drawH);
+}
+
 function _canvasToRawRGBA(canvas) {
     const ctx = canvas.getContext('2d');
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -102,6 +140,9 @@ ipcRenderer.on('render-chunk', async (event, config) => {
         targetHeight,
         backgroundPath,
         bgScale,
+        bgX,
+        bgY,
+        bgDurScale,
         loopFade,
         loopFadeDur,
         style,
@@ -113,6 +154,8 @@ ipcRenderer.on('render-chunk', async (event, config) => {
         contentVideoScale,
         contentVideoX,
         contentVideoY,
+        contentVideoCrop,
+        contentVideoBlurBg,
         // FFmpeg session params (纯视频，无音频)
         sessionParams,
     } = config;
@@ -209,15 +252,17 @@ ipcRenderer.on('render-chunk', async (event, config) => {
         log(`FFmpeg 会话: ${sessionId}`);
 
         // 背景绘制辅助
-        const _drawBgSrc = (src, tw, th, scale) => {
+        const _drawBgSrc = (src, tw, th, scale, offsetX = 0, offsetY = 0) => {
             const _userScale = (scale || 100) / 100;
             const srcW = src.videoWidth || src.naturalWidth || tw;
             const srcH = src.videoHeight || src.naturalHeight || th;
             const coverScale = Math.max(tw / srcW, th / srcH) * _userScale;
             const drawW = srcW * coverScale;
             const drawH = srcH * coverScale;
-            const drawX = (tw - drawW) / 2;
-            const drawY = (th - drawH) / 2;
+            const maxShiftX = Math.abs(tw - drawW) / 2;
+            const maxShiftY = Math.abs(th - drawH) / 2;
+            const drawX = (tw - drawW) / 2 + maxShiftX * (offsetX / 100);
+            const drawY = (th - drawH) / 2 + maxShiftY * (offsetY / 100);
             ctx.drawImage(src, drawX, drawY, drawW, drawH);
         };
 
@@ -232,14 +277,29 @@ ipcRenderer.on('render-chunk', async (event, config) => {
         for (let frameIdx = startFrame; frameIdx < endFrame; frameIdx++) {
             const t = frameIdx / fps;
 
+            // ── Seek content video first if present ──
+            if (cvMemoryNode && cvMemoryRawDur > 0) {
+                const trimS = parseFloat(contentVideoTrimStart) || 0;
+                let t_cv = (t % cvMemoryRawDur) + trimS;
+                if (t_cv >= cvMemoryRawDur) t_cv = t_cv % cvMemoryRawDur;
+                await _seekVideoNode(cvMemoryNode, t_cv);
+            }
+
             // ── 背景 ──
             ctx.fillStyle = '#000000';
             ctx.fillRect(0, 0, targetWidth, targetHeight);
 
-            if (bgMemoryNode) {
-                let t_bg = t % bgMemoryRawDur;
+            if (contentVideoBlurBg && cvMemoryNode && cvMemoryRawDur > 0) {
+                const { cropX, cropY, cropW, cropH } = _parseCropString(contentVideoCrop);
+                ctx.save();
+                ctx.filter = 'blur(40px) brightness(0.6)';
+                _drawCroppedVideoCover(ctx, cvMemoryNode, cropX, cropY, cropW, cropH, targetWidth, targetHeight, bgScale || 100, bgX || 0, bgY || 0);
+                ctx.restore();
+            } else if (bgMemoryNode) {
+                const ptsFactor = (bgDurScale || 100) / 100;
+                let t_bg = (t / ptsFactor) % bgMemoryRawDur;
                 await _seekVideoNode(bgMemoryNode, t_bg);
-                _drawBgSrc(bgMemoryNode, targetWidth, targetHeight, bgScale);
+                _drawBgSrc(bgMemoryNode, targetWidth, targetHeight, bgScale, bgX, bgY);
 
                 // LoopFade
                 if (bgMemoryNodeFade) {
@@ -250,28 +310,29 @@ ipcRenderer.on('render-chunk', async (event, config) => {
                         await _seekVideoNode(bgMemoryNodeFade, t_bg2);
                         ctx.save();
                         ctx.globalAlpha = Math.max(0, Math.min(1, fadeRatio));
-                        _drawBgSrc(bgMemoryNodeFade, targetWidth, targetHeight, bgScale);
+                        _drawBgSrc(bgMemoryNodeFade, targetWidth, targetHeight, bgScale, bgX, bgY);
                         ctx.restore();
                     }
                 }
             } else if (staticBgImg) {
-                _drawBgSrc(staticBgImg, targetWidth, targetHeight, bgScale);
+                _drawBgSrc(staticBgImg, targetWidth, targetHeight, bgScale, bgX, bgY);
             }
 
             // ── 内容视频 ──
             if (cvMemoryNode && cvMemoryRawDur > 0) {
-                const trimS = parseFloat(contentVideoTrimStart) || 0;
-                let t_cv = (t % cvMemoryRawDur) + trimS;
-                if (t_cv >= cvMemoryRawDur) t_cv = t_cv % cvMemoryRawDur;
-                await _seekVideoNode(cvMemoryNode, t_cv);
-
                 const imgW = cvMemoryNode.videoWidth || targetWidth;
                 const imgH = cvMemoryNode.videoHeight || targetHeight;
+                const { cropX, cropY, cropW, cropH } = _parseCropString(contentVideoCrop);
+                const sx = imgW * cropX;
+                const sy = imgH * cropY;
+                const sWidth = imgW * cropW;
+                const sHeight = imgH * cropH;
+
                 const cScale = (contentVideoScale || 100) / 100;
-                const baseScale = targetWidth / imgW;
+                const baseScale = targetWidth / sWidth;
                 const finalScale = baseScale * cScale;
-                const drawW = imgW * finalScale;
-                const drawH = imgH * finalScale;
+                const drawW = sWidth * finalScale;
+                const drawH = sHeight * finalScale;
                 let drawX = (targetWidth - drawW) / 2;
                 let drawY = (targetHeight - drawH) / 2;
                 if (contentVideoX && contentVideoX !== 'center') {
@@ -282,7 +343,7 @@ ipcRenderer.on('render-chunk', async (event, config) => {
                     const relY = parseFloat(contentVideoY);
                     if (!isNaN(relY)) Math.abs(relY) <= 1 ? drawY += targetHeight * relY : drawY += relY;
                 }
-                ctx.drawImage(cvMemoryNode, drawX, drawY, drawW, drawH);
+                ctx.drawImage(cvMemoryNode, sx, sy, sWidth, sHeight, drawX, drawY, drawW, drawH);
             }
 
             // ── 全局蒙版 ──

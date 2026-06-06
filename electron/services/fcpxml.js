@@ -431,7 +431,7 @@ function segmentsToFcpxml(videoPath, segments, videoDuration, fps, resolution, s
         if (seg.bgPath) {
             const bgSrc = 'file://' + seg.bgPath;
             const bgDurStr = seg.bgDuration > 0 ? secToFrac(seg.bgDuration) : secToFrac(10);
-            xml += `\t\t<asset name="bg_${i + 1}" src="${xmlEscape(bgSrc)}" start="0/${Math.round(fps)}s" duration="${bgDurStr}" hasVideo="1" hasAudio="1" format="r0" id="r${300 + i}"/>\n`;
+            xml += `\t\t<asset name="bg_${i + 1}" src="${xmlEscape(bgSrc)}" start="0/${Math.round(fps)}s" duration="${bgDurStr}" hasVideo="1" hasAudio="1" format="r0" id="r${2000 + i}"/>\n`;
         }
     }
     // Effects
@@ -448,6 +448,8 @@ function segmentsToFcpxml(videoPath, segments, videoDuration, fps, resolution, s
             const segEnd = hasExplicitTrim ? (seg.end || (seg.videoDuration || videoDuration)) : ((seg.videoPath && seg.videoDuration) ? seg.videoDuration : (seg.end != null ? seg.end : videoDuration));
             const segDuration = segEnd - segStart;
             const clipName = seg._fcpxmlName;
+            // B版覆层默认从10s开始（clipName 以 _B 结尾）
+            const effectiveOvOffset = seg.overlayStartOffset || (clipName && clipName.endsWith('_B') ? 10 : 0);
             const durationStr = secToFrac(segDuration);
             const startStr = secToFrac(segStart);
 
@@ -470,7 +472,7 @@ function segmentsToFcpxml(videoPath, segments, videoDuration, fps, resolution, s
                         xml += `\t\t\t\t\t\t<filter-video ref="r101" name="Cross Dissolve"/>\n`;
                         xml += `\t\t\t\t\t</transition>\n`;
                     }
-                    xml += `\t\t\t\t\t<asset-clip name="bg_${loop + 1}" ref="r${300 + i}" offset="${secToFrac(bgOff)}" start="0/${Math.round(fps)}s" duration="${secToFrac(clipDur)}" format="r0" tcFormat="NDF">\n`;
+                    xml += `\t\t\t\t\t<asset-clip name="bg_${loop + 1}" ref="r${2000 + i}" offset="${secToFrac(bgOff)}" start="0/${Math.round(fps)}s" duration="${secToFrac(clipDur)}" format="r0" tcFormat="NDF">\n`;
                     if (loop === 0) {
                         xml += `\t\t\t\t\t\t<asset-clip name="${xmlEscape(clipName)}" ref="r${i + 1}" lane="1" offset="0/${Math.round(fps)}s" start="${startStr}" duration="${durationStr}" format="r0" tcFormat="NDF"/>\n`;
                         if (seg.overlayPngSlices && seg.overlayPngSlices.length > 0) {
@@ -485,7 +487,9 @@ function segmentsToFcpxml(videoPath, segments, videoDuration, fps, resolution, s
                                 }
                             }
                         } else if (seg.overlayPngPath) {
-                            xml += `\t\t\t\t\t\t<asset-clip name="overlay" ref="r${200 + i * 10}" lane="2" offset="0/${Math.round(fps)}s" duration="${durationStr}" format="r0" tcFormat="NDF"/>\n`;
+                            const ovOff = effectiveOvOffset;
+                            const ovDur = Math.max(0.1, segDuration - ovOff);
+                            xml += `\t\t\t\t\t\t<asset-clip name="overlay" ref="r${200 + i * 10}" lane="2" offset="${secToFrac(ovOff)}" duration="${secToFrac(ovDur)}" format="r0" tcFormat="NDF"/>\n`;
                         }
                     }
                     xml += `\t\t\t\t\t</asset-clip>\n`;
@@ -506,7 +510,9 @@ function segmentsToFcpxml(videoPath, segments, videoDuration, fps, resolution, s
                         }
                     }
                 } else if (seg.overlayPngPath) {
-                    xml += `\t\t\t\t\t\t<asset-clip name="overlay" ref="r${200 + i * 10}" lane="1" offset="${startStr}" duration="${durationStr}" format="r0" tcFormat="NDF"/>\n`;
+                    const ovOff = effectiveOvOffset;
+                    const ovDur = Math.max(0.1, segDuration - ovOff);
+                    xml += `\t\t\t\t\t\t<asset-clip name="overlay" ref="r${200 + i * 10}" lane="1" offset="${secToFrac(segStart + ovOff)}" duration="${secToFrac(ovDur)}" format="r0" tcFormat="NDF"/>\n`;
                 }
                 xml += `\t\t\t\t\t</asset-clip>\n`;
             }
@@ -550,6 +556,7 @@ function segmentsToFcpxml(videoPath, segments, videoDuration, fps, resolution, s
         const segDuration = segEnd - segStart;
 
         const clipName = seg._fcpxmlName;
+        const effectiveOvOffset = seg.overlayStartOffset || (clipName && clipName.endsWith('_B') ? 10 : 0);
         const subtitles = seg.subtitles || [clipName, seg.subtitle || ''];
         const offsetStr = secToFrac(timelineOffset);
         const startStr = secToFrac(segStart);
@@ -574,7 +581,7 @@ function segmentsToFcpxml(videoPath, segments, videoDuration, fps, resolution, s
                     xml += `\t\t\t\t\t\t</transition>\n`;
                 }
 
-                xml += `\t\t\t\t\t\t<asset-clip name="bg_${clipName}_${loop + 1}" ref="r${300 + i}" offset="${secToFrac(bgOffset)}" start="0/${Math.round(fps)}s" duration="${secToFrac(clipDur)}" format="r0" tcFormat="NDF">\n`;
+                xml += `\t\t\t\t\t\t<asset-clip name="bg_${clipName}_${loop + 1}" ref="r${2000 + i}" offset="${secToFrac(bgOffset)}" start="0/${Math.round(fps)}s" duration="${secToFrac(clipDur)}" format="r0" tcFormat="NDF">\n`;
 
                 if (loop === 0) {
                     xml += `\t\t\t\t\t\t\t<asset-clip name="${xmlEscape(clipName)}" ref="r${i + 1}" lane="1" offset="${secToFrac(bgOffset)}" start="${startStr}" duration="${durationStr}" format="r0" tcFormat="NDF"/>\n`;
@@ -590,7 +597,9 @@ function segmentsToFcpxml(videoPath, segments, videoDuration, fps, resolution, s
                             }
                         }
                     } else if (seg.overlayPngPath) {
-                        xml += `\t\t\t\t\t\t\t<asset-clip name="overlay_${xmlEscape(clipName)}" ref="r${200 + i * 10}" lane="2" offset="${secToFrac(bgOffset)}" duration="${durationStr}" format="r0" tcFormat="NDF"/>\n`;
+                        const ovOff = effectiveOvOffset;
+                        const ovDur = Math.max(0.1, segDuration - ovOff);
+                        xml += `\t\t\t\t\t\t\t<asset-clip name="overlay_${xmlEscape(clipName)}" ref="r${200 + i * 10}" lane="2" offset="${secToFrac(bgOffset + ovOff)}" duration="${secToFrac(ovDur)}" format="r0" tcFormat="NDF"/>\n`;
                     }
                 }
 
@@ -617,7 +626,9 @@ function segmentsToFcpxml(videoPath, segments, videoDuration, fps, resolution, s
                     }
                 }
             } else if (seg.overlayPngPath) {
-                xml += `\t\t\t\t\t\t\t<asset-clip name="overlay_${xmlEscape(clipName)}" ref="r${200 + i * 10}" lane="1" offset="${offsetStr}" duration="${durationStr}" format="r0" tcFormat="NDF"/>\n`;
+                const ovOff = effectiveOvOffset;
+                const ovDur = Math.max(0.1, segDuration - ovOff);
+                xml += `\t\t\t\t\t\t\t<asset-clip name="overlay_${xmlEscape(clipName)}" ref="r${200 + i * 10}" lane="1" offset="${secToFrac(timelineOffset + ovOff)}" duration="${secToFrac(ovDur)}" format="r0" tcFormat="NDF"/>\n`;
             } else {
             for (let ci = 0; ci < subtitles.length; ci++) {
                 const subEntry = subtitles[ci];

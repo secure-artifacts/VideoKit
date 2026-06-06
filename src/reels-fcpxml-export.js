@@ -250,6 +250,21 @@ async function reelsBatchFcpxmlExport(params) {
             } catch (e) { }
         }
 
+        // 提取覆层开始偏移（B版文案默认10s后出现）
+        let overlayStartOffset = 0;
+        if (overlays && overlays.length > 0) {
+            for (const ov of overlays) {
+                if (!ov.disabled && ov.start != null && ov.start > 0) {
+                    overlayStartOffset = ov.start;
+                    break;
+                }
+            }
+        }
+        // B版任务默认覆层从10s开始
+        if (!overlayStartOffset && task && task._version === 'B') {
+            overlayStartOffset = 10;
+        }
+
         const seg = {
             name: clipName,
             // 内容视频（主轨或 lane 1）
@@ -265,6 +280,8 @@ async function reelsBatchFcpxmlExport(params) {
             subtitles: finalSubtitles,
             overlayPngPath: config.overlayPngPath || null,
             overlayPngSlices: config.overlayPngSlices || null,
+            // 覆层开始偏移（秒）
+            overlayStartOffset: overlayStartOffset,
         };
 
         segments.push(seg);
@@ -274,7 +291,7 @@ async function reelsBatchFcpxmlExport(params) {
     // 调试: 打印每个 segment 的关键字段
     for (let si = 0; si < segments.length; si++) {
         const s = segments[si];
-        log(`  segment[${si}] "${s.name}": videoPath=${s.videoPath ? '✓' : '✗'}, bgPath=${s.bgPath || '✗'}, bgDur=${s.bgDuration || 0}, overlayPng=${s.overlayPngPath ? '✓' : '✗'}, subtitles=${s.subtitles?.length || 0}`);
+        log(`  segment[${si}] "${s.name}": videoPath=${s.videoPath ? '✓' : '✗'}, bgPath=${s.bgPath || '✗'}, bgDur=${s.bgDuration || 0}, overlayPng=${s.overlayPngPath ? '✓' : '✗'}, subtitles=${s.subtitles?.length || 0}, ovOffset=${s.overlayStartOffset || 0}`);
     }
 
     // ═══ 调用后端 segmentsToFcpxml API ═══
@@ -504,7 +521,9 @@ async function _fallbackFrontendExport(segments, outputDir, taskName, fps, tasks
 
         // ── PNG 覆层优先，否则用 Basic Title ──
         if (seg.overlayPngPath) {
-            xml += `\t\t\t\t\t\t\t<asset-clip name="overlay_${clipName}" ref="r${200 + i}" lane="1" offset="${secToFrac(timelineOffset)}" duration="${secToFrac(segDuration)}" format="r0" tcFormat="NDF"/>\n`;
+            const ovOffset = (seg.overlayStartOffset || 0);
+            const ovDuration = Math.max(0.1, segDuration - ovOffset);
+            xml += `\t\t\t\t\t\t\t<asset-clip name="overlay_${clipName}" ref="r${200 + i}" lane="1" offset="${secToFrac(timelineOffset + ovOffset)}" duration="${secToFrac(ovDuration)}" format="r0" tcFormat="NDF"/>\n`;
         } else {
         const totalLanes = subtitles.length;
         for (let ci = 0; ci < subtitles.length; ci++) {
@@ -534,8 +553,9 @@ async function _fallbackFrontendExport(segments, outputDir, taskName, fps, tasks
             }
 
             // ⏱️ 时间切片支持：与后端 fcpxml.js 逻辑一致
-            let titleOffsetStr = secToFrac(timelineOffset);
-            let titleDurationStr = secToFrac(segDuration);
+            const baseOvOffset = seg.overlayStartOffset || 0;
+            let titleOffsetStr = secToFrac(timelineOffset + baseOvOffset);
+            let titleDurationStr = secToFrac(Math.max(0.1, segDuration - baseOvOffset));
             if (isObj && subEntry.timeStart != null) {
                 const sliceStart = subEntry.timeStart || 0;
                 const sliceEnd = subEntry.timeEnd != null ? subEntry.timeEnd : segDuration;

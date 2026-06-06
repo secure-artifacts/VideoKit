@@ -20,6 +20,41 @@ function expandHomePath(p) {
     return p;
 }
 
+function normalizeTailSilenceSeconds(value) {
+    const seconds = parseFloat(value);
+    if (!Number.isFinite(seconds) || seconds <= 0) return 0;
+    return Math.max(0.1, Math.min(5, seconds));
+}
+
+function buildWorkflowBatchFolderName(date = new Date()) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    const hh = String(date.getHours()).padStart(2, '0');
+    const mm = String(date.getMinutes()).padStart(2, '0');
+    return `${y}-${m}-${d}_${hh}${mm}_一键配音`;
+}
+
+async function appendTailSilenceToMp3(filePath, seconds, tempDir, baseName) {
+    const tailSeconds = normalizeTailSilenceSeconds(seconds);
+    if (!tailSeconds) return false;
+
+    const tmpPath = path.join(tempDir, `${baseName}_tail_silence_tmp.mp3`);
+    await ffmpeg.runCommand('ffmpeg', [
+        '-y',
+        '-i', filePath,
+        '-af', `apad=pad_dur=${tailSeconds.toFixed(3)}`,
+        '-c:a', 'libmp3lame',
+        '-b:a', '192k',
+        '-ac', '2',
+        tmpPath,
+    ]);
+    fs.copyFileSync(tmpPath, filePath);
+    try { fs.unlinkSync(tmpPath); } catch (_) { }
+    console.log(`[一键配音] 已在 MP3 末尾追加静音 ${tailSeconds.toFixed(1)} 秒`);
+    return true;
+}
+
 /**
  * 一键配音工作流
  */
@@ -37,8 +72,10 @@ async function ttsWorkflow(data) {
         model_id = 'eleven_v3',
         stability = 0.5,
         output_format = 'mp3_44100_128',
+        tail_silence = 0,
         key_index = null,
         output_dir: rawOutputDir = '',
+        gladia_keys = null
     } = data;
 
     if (!text || !voice_id) throw new Error('缺少必要参数');
@@ -54,18 +91,21 @@ async function ttsWorkflow(data) {
     if (!apiKeys || apiKeys.length === 0) throw new Error('未配置 API Key');
 
     if (subtitle_text) {
-        const gladiaKeysData = settings.loadGladiaKeys();
-        if (!gladiaKeysData.keys || gladiaKeysData.keys.length === 0) {
+        let activeGladiaKeys = gladia_keys;
+        if (!activeGladiaKeys || activeGladiaKeys.length === 0) {
+            const gladiaKeysData = settings.loadGladiaKeys();
+            activeGladiaKeys = gladiaKeysData.keys || [];
+        }
+        if (!activeGladiaKeys || activeGladiaKeys.length === 0) {
             throw new Error('未配置 Gladia (AI字幕转录) API Key！任务被拒绝，以防浪费TTS额度 (请在设置中配置)');
         }
     }
 
     // 创建输出文件夹
     const today = new Date();
-    const dateStr = today.toISOString().split('T')[0];
     let outputDir = rawOutputDir.trim();
     if (!outputDir) {
-        outputDir = path.join(os.homedir(), 'Downloads', `${dateStr}_一键配音`);
+        outputDir = path.join(os.homedir(), 'Downloads', buildWorkflowBatchFolderName(today));
     }
     fs.mkdirSync(outputDir, { recursive: true });
 
@@ -122,6 +162,8 @@ async function ttsWorkflow(data) {
         try { fs.unlinkSync(mixedTempPath); } catch (_) { }
     }
 
+    await appendTailSilenceToMp3(sourcePath, tail_silence, metadataGroup, taskPrefix);
+
     let segments = [];
 
     // Step 2: 智能拆分（使用 FFmpeg 静音检测替代 pydub + numpy）
@@ -164,10 +206,13 @@ async function ttsWorkflow(data) {
     let subtitleTxtPath = null;
     if (subtitle_text) {
         try {
-            const gladiaKeysData = settings.loadGladiaKeys();
-            const gladiaKeys = gladiaKeysData.keys || [];
+            let activeGladiaKeys = gladia_keys;
+            if (!activeGladiaKeys || activeGladiaKeys.length === 0) {
+                const gladiaKeysData = settings.loadGladiaKeys();
+                activeGladiaKeys = gladiaKeysData.keys || [];
+            }
 
-            if (!gladiaKeys || gladiaKeys.length === 0) {
+            if (!activeGladiaKeys || activeGladiaKeys.length === 0) {
                 throw new Error('未配置 Gladia API Key，请在设置中配置后再试');
             }
 
@@ -180,7 +225,7 @@ async function ttsWorkflow(data) {
             const arrayPath = path.join(metadataGroup, `${fileName}_audio_text_withtime.json`);
             const textPath = path.join(metadataGroup, `${fileName}_transcription.txt`);
 
-            const result = await gladia.transcribeAudio(sourcePath, gladiaKeys, 'english');
+            const result = await gladia.transcribeAudio(sourcePath, activeGladiaKeys, 'english');
 
             fs.writeFileSync(arrayPath, JSON.stringify(result.wordTimeInfo, null, 4), 'utf-8');
             fs.writeFileSync(textPath, result.fullText, 'utf-8');

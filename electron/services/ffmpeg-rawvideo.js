@@ -79,6 +79,23 @@ function hasAudioTrack(filePath) {
     }
 }
 
+function buildAtempoChainForDurationScale(durationScale = 100) {
+    const scale = Number(durationScale) || 100;
+    if (Math.abs(scale - 100) < 0.01) return '';
+    let targetTempo = 100 / scale;
+    const filters = [];
+    while (targetTempo < 0.5) {
+        filters.push('atempo=0.5');
+        targetTempo /= 0.5;
+    }
+    while (targetTempo > 100.0) {
+        filters.push('atempo=100.0');
+        targetTempo /= 100.0;
+    }
+    filters.push(`atempo=${targetTempo.toFixed(6)}`);
+    return filters.join(',');
+}
+
 // ═══════════════════════════════════════════════════════
 // 辅助: 递归搜索文件（限深度，跳过隐藏目录）
 // ═══════════════════════════════════════════════════════
@@ -115,6 +132,8 @@ async function prepareBg(opts) {
         backgroundPath,
         bgMode = 'single',
         bgClipPool = [],
+        bgClipOrder = 'random',
+        bgClipSeed = '',
         bgTransition = 'crossfade',
         bgTransDur = 0.5,
         targetWidth = 1080,
@@ -124,6 +143,10 @@ async function prepareBg(opts) {
         loopFade = true,
         loopFadeDur = 1.0,
         bgScale = 100,
+        bgX = 0,
+        bgY = 0,
+        bgFlipH = false,
+        bgFlipV = false,
         bgDurScale = 100,
     } = opts;
     
@@ -138,18 +161,16 @@ async function prepareBg(opts) {
     // 构建缩放+裁切滤镜
     const scaleFactor = (bgScale || 100) / 100;
     let scaleCropFilter;
-    if (Math.abs(scaleFactor - 1.0) < 0.01) {
-        scaleCropFilter = `scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=increase,crop=${targetWidth}:${targetHeight}`;
+    const scaledW = Math.round(targetWidth * scaleFactor);
+    const scaledH = Math.round(targetHeight * scaleFactor);
+    if (scaleFactor >= 1.0) {
+        scaleCropFilter = `scale=${scaledW}:${scaledH}:force_original_aspect_ratio=increase,crop=${targetWidth}:${targetHeight}:'max(0, min(in_w-out_w, ((in_w-out_w)/2)*(1-(${bgX}/100))))':'max(0, min(in_h-out_h, ((in_h-out_h)/2)*(1-(${bgY}/100))))'`;
     } else {
-        const scaledW = Math.round(targetWidth * scaleFactor);
-        const scaledH = Math.round(targetHeight * scaleFactor);
-        if (scaleFactor >= 1.0) {
-            scaleCropFilter = `scale=${scaledW}:${scaledH}:force_original_aspect_ratio=increase,crop=${targetWidth}:${targetHeight}`;
-        } else {
-            scaleCropFilter = `scale=${scaledW}:${scaledH}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2:color=black`;
-        }
-        console.log(`[WYSIWYG-BG] 背景缩放: ${bgScale}%, filter: ${scaleCropFilter}`);
+        scaleCropFilter = `scale=${scaledW}:${scaledH}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:'max(0, min(ow-iw, ((ow-iw)/2)*(1+(${bgX}/100))))':'max(0, min(oh-ih, ((oh-ih)/2)*(1+(${bgY}/100))))':color=black`;
     }
+    if (bgFlipH) scaleCropFilter += ',hflip';
+    if (bgFlipV) scaleCropFilter += ',vflip';
+    console.log(`[WYSIWYG-BG] 背景缩放: ${bgScale}%, flipH: ${bgFlipH}, flipV: ${bgFlipV}, filter: ${scaleCropFilter}`);
 
     // ═══ 多素材拼接模式 ═══
     if (bgMode === 'multi' && Array.isArray(bgClipPool) && bgClipPool.length > 0) {
@@ -168,13 +189,17 @@ async function prepareBg(opts) {
             clipDurations.push({ path: clip, duration: Math.max(dur, 0.5) * ptsFactor, isImage: isImageMedia(clip) });
         }
 
-        // 随机选择素材直到总时长 >= 目标时长
+        const orderedClipDurations = bgClipOrder === 'random'
+            ? _stableShuffleBgClips(clipDurations, `${bgClipSeed || ''}|${validClips.join('|')}`)
+            : clipDurations;
+
+        // 选择素材直到总时长 >= 目标时长
         const selectedClips = [];
         let totalDur = 0;
         const transOverlap = bgTransition !== 'none' ? bgTransDur : 0;
         let attempts = 0;
         while (totalDur < duration && attempts < 200) {
-            const pick = clipDurations[Math.floor(Math.random() * clipDurations.length)];
+            const pick = orderedClipDurations[selectedClips.length % orderedClipDurations.length];
             selectedClips.push(pick);
             totalDur += pick.duration - (selectedClips.length > 1 ? transOverlap : 0);
             attempts++;
@@ -190,7 +215,8 @@ async function prepareBg(opts) {
                 await runFFmpegSync(ffmpeg, args);
                 return { framesDir, frameCount: 1 };
             } else {
-                await extractSimpleLoop(ffmpeg, clip.path, framesDir, scaleCropFilter, fps, duration);
+                const shouldLoop = duration > clip.duration + 0.1;
+                await extractSimpleLoop(ffmpeg, clip.path, framesDir, scaleCropFilter, fps, duration, 1.0, shouldLoop);
             }
         } else {
             // 多片段拼接
@@ -204,6 +230,9 @@ async function prepareBg(opts) {
             }
 
             // 构建 filter_complex
+            // xfade/concat 对输入流参数很敏感：混合手机视频、图片、不同 fps/SAR/pix_fmt
+            // 时如果不先归一化，容易报 timebase/SAR 不一致，或输出抖帧/黑帧。
+            const normalizeVideoFilter = `${scaleCropFilter},fps=${fps},setsar=1,format=yuv420p,settb=AVTB,${ptsFilter}`;
             const filterParts = [];
             
             if (bgTransition !== 'none' && bgTransDur > 0) {
@@ -221,26 +250,39 @@ async function prepareBg(opts) {
 
                 // 预处理每个输入
                 for (let i = 0; i < selectedClips.length; i++) {
-                    filterParts.push(`[${i}:v]${scaleCropFilter},${ptsFilter}[v${i}]`);
+                    filterParts.push(`[${i}:v]${normalizeVideoFilter}[v${i}]`);
                 }
 
                 // 链式 xfade
                 let prevLabel = 'v0';
                 let cumulativeOffset = 0;
+                const xfadeZones = []; // 记录所有转场区间
                 for (let i = 1; i < selectedClips.length; i++) {
                     cumulativeOffset += selectedClips[i - 1].duration - tDur;
                     const outLabel = i === selectedClips.length - 1 ? 'vout' : `vx${i}`;
-                    const offset = Math.max(0, cumulativeOffset).toFixed(3);
+                    const offset = Math.max(0, cumulativeOffset);
+                    xfadeZones.push({ start: offset, end: offset + tDur });
                     filterParts.push(
-                        `[${prevLabel}][v${i}]xfade=transition=${xfadeTrans}:duration=${tDur.toFixed(3)}:offset=${offset}[${outLabel}]`
+                        `[${prevLabel}][v${i}]xfade=transition=${xfadeTrans}:duration=${tDur.toFixed(3)}:offset=${offset.toFixed(3)}[${outLabel}]`
                     );
                     prevLabel = outLabel;
+                }
+
+                // ── 智能避让：确保不在转场区间内结束 ──
+                let bgTrimDuration = duration;
+                for (const zone of xfadeZones) {
+                    if (bgTrimDuration > zone.start && bgTrimDuration < zone.end) {
+                        const extended = zone.end + 0.05;
+                        console.log(`[WYSIWYG-BG] ⚠️ 多素材结尾落在转场区间 [${zone.start.toFixed(2)}s, ${zone.end.toFixed(2)}s]，自动延长背景: ${bgTrimDuration.toFixed(2)}s → ${extended.toFixed(2)}s`);
+                        bgTrimDuration = extended;
+                        break;
+                    }
                 }
 
                 args.push(
                     '-filter_complex', filterParts.join(';'),
                     '-map', `[${prevLabel}]`,
-                    '-t', String(duration),
+                    '-t', String(bgTrimDuration),
                     '-r', String(fps),
                     '-an',
                     '-qscale:v', '2',
@@ -249,7 +291,7 @@ async function prepareBg(opts) {
             } else {
                 // 无转场: concat 硬切
                 for (let i = 0; i < selectedClips.length; i++) {
-                    filterParts.push(`[${i}:v]${scaleCropFilter},${ptsFilter}[v${i}]`);
+                    filterParts.push(`[${i}:v]${normalizeVideoFilter}[v${i}]`);
                 }
                 const concatLabels = selectedClips.map((_, i) => `[v${i}]`).join('');
                 filterParts.push(`${concatLabels}concat=n=${selectedClips.length}:v=1:a=0[vout]`);
@@ -328,7 +370,24 @@ async function prepareBg(opts) {
 
     if (fadeEnabled && bgDuration > 0 && duration > bgDuration) {
         const step = bgDuration - fadeDur;
-        const segCount = Math.min(Math.ceil(duration / step) + 1, 20);
+
+        // ── 智能避让：确保背景视频不会在转场过渡中结束 ──
+        // xfade 发生在 offset = i * step，持续 fadeDur 秒
+        // 如果 duration 落在 [offset, offset + fadeDur] 区间内，画面会是半透明重叠
+        let bgTrimDuration = duration;
+        for (let i = 1; i <= 20; i++) {
+            const xfadeStart = i * step;
+            const xfadeEnd = xfadeStart + fadeDur;
+            if (bgTrimDuration > xfadeStart && bgTrimDuration < xfadeEnd) {
+                // 结束点落在转场区间内 → 延长到转场结束
+                const extended = xfadeEnd + 0.05; // 多留 50ms 安全余量
+                console.log(`[WYSIWYG-BG] ⚠️ 检测到结尾落在第${i}段转场区间 [${xfadeStart.toFixed(2)}s, ${xfadeEnd.toFixed(2)}s]，自动延长背景: ${bgTrimDuration.toFixed(2)}s → ${extended.toFixed(2)}s`);
+                bgTrimDuration = extended;
+                break;
+            }
+        }
+
+        const segCount = Math.min(Math.ceil(bgTrimDuration / step) + 1, 20);
 
         if (segCount >= 2) {
             const args = ['-y'];
@@ -353,20 +412,22 @@ async function prepareBg(opts) {
             args.push(
                 '-filter_complex', filterParts.join(';'),
                 '-map', `[${prevLabel}]`,
-                '-t', String(duration),
+                '-t', String(bgTrimDuration),
                 '-r', String(fps),
                 '-an',
                 '-qscale:v', '2',
                 `${framesDir}/frame_%06d.jpg`,
             );
 
-            console.log(`[WYSIWYG-BG] xfade 循环: ${segCount}段, fadeDur=${fadeDur}s`);
+            console.log(`[WYSIWYG-BG] xfade 循环: ${segCount}段, fadeDur=${fadeDur}s, bgTrim=${bgTrimDuration.toFixed(2)}s`);
             await runFFmpegSync(ffmpeg, args);
         } else {
-            await extractSimpleLoop(ffmpeg, backgroundPath, framesDir, scaleCropFilter, fps, duration, ptsFactor);
+            const shouldLoop = duration > bgDuration + 0.1;
+            await extractSimpleLoop(ffmpeg, backgroundPath, framesDir, scaleCropFilter, fps, duration, ptsFactor, shouldLoop);
         }
     } else {
-        await extractSimpleLoop(ffmpeg, backgroundPath, framesDir, scaleCropFilter, fps, duration, ptsFactor);
+        const shouldLoop = duration > bgDuration + 0.1;
+        await extractSimpleLoop(ffmpeg, backgroundPath, framesDir, scaleCropFilter, fps, duration, ptsFactor, shouldLoop);
     }
 
     // 统计实际帧数
@@ -375,14 +436,16 @@ async function prepareBg(opts) {
     return { framesDir, frameCount: files.length };
 }
 
-async function extractSimpleLoop(ffmpeg, backgroundPath, framesDir, scaleCropFilter, fps, duration, ptsFactor = 1.0) {
+async function extractSimpleLoop(ffmpeg, backgroundPath, framesDir, scaleCropFilter, fps, duration, ptsFactor = 1.0, shouldLoop = false) {
     let vf = scaleCropFilter;
     if (Math.abs(ptsFactor - 1.0) > 0.01) {
         vf = `${scaleCropFilter},setpts=PTS*${ptsFactor.toFixed(3)}`;
     }
-    const args = [
-        '-y',
-        '-stream_loop', '-1',
+    const args = ['-y'];
+    if (shouldLoop) {
+        args.push('-stream_loop', '-1');
+    }
+    args.push(
         '-i', backgroundPath,
         '-t', String(duration),
         '-vf', vf,
@@ -390,7 +453,7 @@ async function extractSimpleLoop(ffmpeg, backgroundPath, framesDir, scaleCropFil
         '-an',
         '-qscale:v', '2',
         `${framesDir}/frame_%06d.jpg`,
-    ];
+    );
     await runFFmpegSync(ffmpeg, args);
 }
 
@@ -465,7 +528,19 @@ async function prepareOverlay(opts) {
             duration = Math.min(parseFloat(duration), actualTrimDur); // 此时 duration 依然决定了最多提取多少秒
         }
     } else {
-        args.push('-stream_loop', '-1');  // 无 trim 时无线循环 
+        // 智能控流：只有当目标时长明显大于素材时长时才进行循环，避免1帧浮点舍入误差导致的末帧闪烁第一帧Bug
+        let shouldLoop = true;
+        try {
+            const mediaDur = await getMediaDuration(overlayPath);
+            if (mediaDur > 0 && parseFloat(duration) <= mediaDur + 0.1) {
+                shouldLoop = false;
+            }
+        } catch (e) {
+            console.warn(`[WYSIWYG-OVERLAY] 获取素材时长失败，默认开启循环: ${e.message}`);
+        }
+        if (shouldLoop) {
+            args.push('-stream_loop', '-1');  // 无 trim 且确实需要时无限循环
+        }
     }
 
     args.push(
@@ -544,6 +619,10 @@ async function startSession(opts) {
         bgVolume = 0.1, backgroundPath, bgHasAudio = false,
         bgmPath = '', bgmVolume = 0,
         contentVideoPath = '', contentVideoVolume = 1.0,
+        bgScale = 100,
+        bgX = 0,
+        bgY = 0,
+        bgDurScale = 100,
         audioDurScale = 100,
         reverbEnabled = false, reverbPreset = 'hall', reverbMix = 30, stereoWidth = 100, audioFxTarget = 'all',
         renderedAudioPath = null,
@@ -640,7 +719,29 @@ async function startSession(opts) {
             '-an'
         );
 
-        const filterComplex = `[0:v]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height}[bg];[1:v]scale=in_range=full:in_color_matrix=bt709:out_range=limited:out_color_matrix=bt709,format=yuva420p[fg];[bg][fg]overlay=0:0:format=auto:shortest=1[outv]`;
+        // Build scaling filter for alpha overlay background
+        const scaleFactor = (bgScale || 100) / 100;
+        let scaleCropFilter;
+        const scaledW = Math.round(width * scaleFactor);
+        const scaledH = Math.round(height * scaleFactor);
+        if (scaleFactor >= 1.0) {
+            scaleCropFilter = `scale=${scaledW}:${scaledH}:force_original_aspect_ratio=increase,crop=${width}:${height}:'max(0, min(in_w-out_w, ((in_w-out_w)/2)*(1-(${bgX}/100))))':'max(0, min(in_h-out_h, ((in_h-out_h)/2)*(1-(${bgY}/100))))'`;
+        } else {
+            scaleCropFilter = `scale=${scaledW}:${scaledH}:force_original_aspect_ratio=decrease,pad=${width}:${height}:'max(0, min(ow-iw, ((ow-iw)/2)*(1+(${bgX}/100))))':'max(0, min(oh-ih, ((oh-ih)/2)*(1+(${bgY}/100))))':color=black`;
+        }
+        if (opts.bgFlipH) scaleCropFilter += ',hflip';
+        if (opts.bgFlipV) scaleCropFilter += ',vflip';
+
+        // Build speed filter for background video (only if not an image)
+        let ptsFilter = 'setpts=PTS-STARTPTS';
+        if (!isAlphaBgImage) {
+            const ptsFactor = (bgDurScale || 100) / 100;
+            if (Math.abs(ptsFactor - 1.0) > 0.01) {
+                ptsFilter = `setpts=(PTS-STARTPTS)*${ptsFactor.toFixed(3)}`;
+            }
+        }
+
+        const filterComplex = `[0:v]${scaleCropFilter},${ptsFilter}[bg];[1:v]scale=in_range=full:in_color_matrix=bt709:out_range=limited:out_color_matrix=bt709,format=yuva420p[fg];[bg][fg]overlay=0:0:format=auto:shortest=1[outv]`;
         args.push('-filter_complex', filterComplex, '-map', '[outv]');
 
     } else {
@@ -676,6 +777,7 @@ async function startSession(opts) {
         voicePath, voiceVolume, bgVolume, backgroundPath, bgHasAudio,
         bgmPath, bgmVolume,
         contentVideoPath, contentVideoVolume,
+        bgDurScale,
         audioDurScale,
         reverbEnabled, reverbPreset, reverbMix, stereoWidth, audioFxTarget,
         renderedAudioPath,
@@ -868,6 +970,23 @@ function _mulberry32(seed) {
         return ((t ^ t >>> 14) >>> 0) / 4294967296;
     };
 }
+
+function _stableShuffleBgClips(clips, seedText) {
+    let seed = 2166136261;
+    const text = String(seedText || '');
+    for (let i = 0; i < text.length; i++) {
+        seed ^= text.charCodeAt(i);
+        seed = Math.imul(seed, 16777619);
+    }
+    const rng = _mulberry32(seed >>> 0);
+    const shuffled = clips.slice();
+    for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(rng() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled;
+}
+
 function _presetSeed(preset) {
     let h = 0x811c9dc5;
     for (let i = 0; i < preset.length; i++) {
@@ -1064,12 +1183,12 @@ async function mixAudio(session) {
         const bgReallyHasAudio = wantBgAudio && backgroundPath && fs.existsSync(backgroundPath) && hasAudioTrack(backgroundPath);
 
         // 收集所有音频源
-        let audioInputs = []; // [{path, volume, loop}]
+        let audioInputs = []; // [{path, volume, loop, durationScale}]
         if (renderedBgAudio) {
             // 渲染后的背景音频（已含特效），不需要 loop
-            audioInputs.push({ path: renderedBgAudio, volume: bgVolumeVal, loop: false });
+            audioInputs.push({ path: renderedBgAudio, volume: bgVolumeVal, loop: false, durationScale: session.bgDurScale });
         } else if (bgReallyHasAudio) {
-            audioInputs.push({ path: backgroundPath, volume: bgVolumeVal, loop: true });
+            audioInputs.push({ path: backgroundPath, volume: bgVolumeVal, loop: true, durationScale: session.bgDurScale });
         }
         if (hasBgm) {
             audioInputs.push({ path: bgmPath, volume: bgmVolume, loop: true });
@@ -1095,7 +1214,11 @@ async function mixAudio(session) {
             audioInputs.forEach((ai, i) => {
                 const idx = i + 1;
                 const label = `[a${i}]`;
-                filterParts.push(`[${idx}:a]volume=${ai.volume.toFixed(3)}${label}`);
+                const atempoChain = buildAtempoChainForDurationScale(ai.durationScale || 100);
+                const filter = atempoChain
+                    ? `volume=${ai.volume.toFixed(3)},${atempoChain}`
+                    : `volume=${ai.volume.toFixed(3)}`;
+                filterParts.push(`[${idx}:a]${filter}${label}`);
                 labels.push(label);
             });
             if (labels.length > 1) {
@@ -1206,13 +1329,17 @@ async function mixAudio(session) {
 
         // 渲染后的背景音频（已含特效）
         if (renderedBgInputIdx >= 0) {
-            filterParts.push(`[${renderedBgInputIdx}:a]volume=${bgVolume.toFixed(3)}[rbg]`);
+            const bgTempo = buildAtempoChainForDurationScale(session.bgDurScale || 100);
+            const bgFilter = bgTempo ? `volume=${bgVolume.toFixed(3)},${bgTempo}` : `volume=${bgVolume.toFixed(3)}`;
+            filterParts.push(`[${renderedBgInputIdx}:a]${bgFilter}[rbg]`);
             mixLabels.push('[rbg]');
         }
 
         // 背景音频（原始，无特效）
         if (bgInputIdx >= 0) {
-            filterParts.push(`[${bgInputIdx}:a]volume=${bgVolume.toFixed(3)}[bg]`);
+            const bgTempo = buildAtempoChainForDurationScale(session.bgDurScale || 100);
+            const bgFilter = bgTempo ? `volume=${bgVolume.toFixed(3)},${bgTempo}` : `volume=${bgVolume.toFixed(3)}`;
+            filterParts.push(`[${bgInputIdx}:a]${bgFilter}[bg]`);
             mixLabels.push('[bg]');
         }
 
@@ -1531,6 +1658,9 @@ async function parallelExport(opts, mainWindow) {
                     targetHeight,
                     backgroundPath: params.backgroundPath,
                     bgScale: params.bgScale || 100,
+                    bgX: params.bgX || 0,
+                    bgY: params.bgY || 0,
+                    bgDurScale: params.bgDurScale || 100,
                     loopFade: params.loopFade,
                     loopFadeDur: params.loopFadeDur,
                     style: params.style,
@@ -1542,6 +1672,8 @@ async function parallelExport(opts, mainWindow) {
                     contentVideoScale: params.contentVideoScale,
                     contentVideoX: params.contentVideoX,
                     contentVideoY: params.contentVideoY,
+                    contentVideoCrop: params.contentVideoCrop,
+                    contentVideoBlurBg: params.contentVideoBlurBg,
                     sessionParams,
                 });
             };
@@ -1608,6 +1740,7 @@ async function parallelExport(opts, mainWindow) {
         bgHasAudio: params.bgHasAudio !== false && !_isImageFile_node(params.backgroundPath),
         bgmPath: params.bgmPath || '',
         bgmVolume: params.bgmVolume ?? 0,
+        bgDurScale: params.bgDurScale || 100,
         audioDurScale: params.audioDurScale || 100,
         reverbEnabled: params.reverbEnabled || false,
         reverbPreset: params.reverbPreset || 'hall',
@@ -1699,6 +1832,27 @@ async function renderChromiumAudioWav(opts) {
     const settings = require('./settings');
     const { BrowserWindow, ipcMain } = require('electron');
 
+    const ext = path.extname(filePath).toLowerCase();
+    const isVideo = ['.mp4', '.mov', '.webm', '.mkv', '.avi', '.m4v', '.flv', '.ts'].includes(ext);
+
+    let audioInputPath = filePath;
+    let tmpExtractedWav = null;
+
+    if (isVideo) {
+        tmpExtractedWav = settings.secureTmpFile('audiofx_extracted', '.wav');
+        console.log('[WYSIWYG] 视频文件，先用 FFmpeg 提取音频:', tmpExtractedWav);
+        try {
+            execFileSync(findFFmpeg(), [
+                '-y', '-i', filePath,
+                '-vn', '-c:a', 'pcm_s16le', '-ar', '44100', '-ac', '2',
+                tmpExtractedWav
+            ], { timeout: 30000 });
+            audioInputPath = tmpExtractedWav;
+        } catch (e) {
+            console.error('[WYSIWYG] 视频音频提取失败:', e.message);
+        }
+    }
+
     console.log('[WYSIWYG] 启动 Chromium Web Audio 隐藏窗口渲染...');
     const renderedWavPath = settings.secureTmpFile('voice_rendered', '.wav');
 
@@ -1709,39 +1863,45 @@ async function renderChromiumAudioWav(opts) {
         },
     });
 
-    const wavResult = await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('Audio render timeout (60s)')), 60000);
+    try {
+        const wavResult = await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error('Audio render timeout (60s)')), 60000);
 
-        const onResult = (event, result) => {
-            clearTimeout(timeout);
-            ipcMain.removeListener('render-audio-result', onResult);
-            ipcMain.removeListener('audio-renderer-ready', onReady);
-            renderWin.close();
-            resolve(result);
-        };
+            const onResult = (event, result) => {
+                clearTimeout(timeout);
+                ipcMain.removeListener('render-audio-result', onResult);
+                ipcMain.removeListener('audio-renderer-ready', onReady);
+                renderWin.close();
+                resolve(result);
+            };
 
-        const onReady = () => {
-            renderWin.webContents.send('render-audio', {
-                filePath, reverbEnabled,
-                reverbPreset: reverbPreset || 'hall',
-                reverbMix: reverbMix || 30,
-                stereoWidth: stereoWidth || 100,
-            });
-        };
+            const onReady = () => {
+                renderWin.webContents.send('render-audio', {
+                    filePath: audioInputPath, reverbEnabled,
+                    reverbPreset: reverbPreset || 'hall',
+                    reverbMix: reverbMix || 30,
+                    stereoWidth: stereoWidth || 100,
+                });
+            };
 
-        ipcMain.on('render-audio-result', onResult);
-        ipcMain.on('audio-renderer-ready', onReady);
+            ipcMain.on('render-audio-result', onResult);
+            ipcMain.on('audio-renderer-ready', onReady);
 
-        const htmlPath = path.join(__dirname, '..', 'audio-renderer.html');
-        renderWin.loadFile(htmlPath).catch(reject);
-    });
+            const htmlPath = path.join(__dirname, '..', 'audio-renderer.html');
+            renderWin.loadFile(htmlPath).catch(reject);
+        });
 
-    if (wavResult.success && wavResult.wavBuffer) {
-        fs.writeFileSync(renderedWavPath, wavResult.wavBuffer);
-        console.log(`[WYSIWYG] Chromium Web Audio 渲染完成: ${renderedWavPath} (${(wavResult.wavBuffer.length / 1024 / 1024).toFixed(1)}MB)`);
-        return renderedWavPath;
-    } else {
-        throw new Error(wavResult.error || 'Unknown render error');
+        if (wavResult.success && wavResult.wavBuffer) {
+            fs.writeFileSync(renderedWavPath, wavResult.wavBuffer);
+            console.log(`[WYSIWYG] Chromium Web Audio 渲染完成: ${renderedWavPath} (${(wavResult.wavBuffer.length / 1024 / 1024).toFixed(1)}MB)`);
+            return renderedWavPath;
+        } else {
+            throw new Error(wavResult.error || 'Unknown render error');
+        }
+    } finally {
+        if (tmpExtractedWav && fs.existsSync(tmpExtractedWav)) {
+            try { fs.unlinkSync(tmpExtractedWav); } catch (_) {}
+        }
     }
 }
 

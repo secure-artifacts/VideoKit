@@ -1960,6 +1960,11 @@ def elevenlabs_tts_workflow():
     export_mp4 = data.get('export_mp4', False)
     export_fcpxml = data.get('export_fcpxml', True)  # 默认导出 FCPXML
     seamless_fcpxml = data.get('seamless_fcpxml', True)  # 默认无缝字幕
+    try:
+        tail_silence = float(data.get('tail_silence', 0) or 0)
+    except (TypeError, ValueError):
+        tail_silence = 0
+    tail_silence = max(0.1, min(5.0, tail_silence)) if tail_silence > 0 else 0
     
     if not text or not voice_id:
         return jsonify({"error": "缺少必要参数"}), 400
@@ -1980,12 +1985,13 @@ def elevenlabs_tts_workflow():
         # 创建输出文件夹
         import datetime
         
-        # 如果未指定输出目录，使用下载文件夹+日期_一键配音
+        # 如果未指定输出目录，使用下载文件夹+日期_时间_一键配音
         output_dir = data.get('output_dir', '').strip()
         if not output_dir:
-            today = datetime.date.today().strftime('%Y-%m-%d')
+            now = datetime.datetime.now()
+            batch_name = now.strftime('%Y-%m-%d_%H%M_一键配音')
             downloads_folder = os.path.expanduser('~/Downloads')
-            output_dir = os.path.join(downloads_folder, f'{today}_一键配音')
+            output_dir = os.path.join(downloads_folder, batch_name)
         
         # 确保目录存在
         os.makedirs(output_dir, exist_ok=True)
@@ -2034,6 +2040,12 @@ def elevenlabs_tts_workflow():
         source_path = os.path.join(audio_group, f'{task_prefix}-source.mp3')
         with open(source_path, 'wb') as f:
             f.write(audio_bytes)
+
+        if tail_silence > 0:
+            from pydub import AudioSegment
+            audio_with_tail = AudioSegment.from_file(source_path) + AudioSegment.silent(duration=int(tail_silence * 1000))
+            audio_with_tail.export(source_path, format='mp3', bitrate='192k')
+            print(f"[一键配音] 已在 MP3 末尾追加静音 {tail_silence:.1f} 秒")
         
         segments = []
         
@@ -4389,7 +4401,7 @@ with a grateful heart.
     }
     
     try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent?key={api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key={api_key}"
         resp = requests.post(url, json=payload, timeout=60)
         resp.raise_for_status()
         

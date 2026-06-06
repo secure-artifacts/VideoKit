@@ -2462,12 +2462,18 @@
                   style="width: 80px;">
                 <span style="color: var(--text-muted);">秒</span>
               </div>
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <label>尾部静音:</label>
+                <input type="number" id="vw-tail-silence" class="input" value="0" min="0" max="5" step="0.1"
+                  style="width: 80px;" title="生成的 MP3 末尾追加静音；0 表示不添加，启用时范围 0.1-5 秒">
+                <span style="color: var(--text-muted);">秒</span>
+              </div>
             </div>
 
             <!-- 输出目录 -->
             <div class="param-row" style="margin-top: 12px;">
               <label>输出目录:</label>
-              <input type="text" id="vw-output-dir" class="input" style="flex: 1;" placeholder="默认: ~/Downloads/日期_一键配音"
+              <input type="text" id="vw-output-dir" class="input" style="flex: 1;" placeholder="默认: ~/Downloads/YYYY-MM-DD_HHMM_一键配音"
                 value="">
               <button class="btn btn-secondary" onclick="vwBrowseOutputDir()">📁 浏览</button>
               <button class="btn btn-secondary" onclick="vwOpenOutputDir()" title="在 Finder 中打开输出文件夹">📂 打开</button>
@@ -2922,6 +2928,17 @@
                   <h3 class="section-title" style="margin:0; font-size:13px;">📋 任务列表</h3>
                   <span id="reels-task-count-panel" style="font-size:11px; color:var(--text-secondary);">0</span>
                 </div>
+                <!-- 导出选择控制栏 -->
+                <div id="reels-export-select-bar" style="flex-shrink:0; display:flex; align-items:center; gap:6px; padding:4px 10px; border-bottom:1px solid var(--border-color); font-size:11px; background:rgba(0,0,0,0.15);">
+                  <label style="display:flex;align-items:center;gap:6px;cursor:pointer;white-space:nowrap;color:var(--text-secondary);" title="全选/取消全选导出任务">
+                    <input type="checkbox" id="reels-export-select-all" checked
+                      style="accent-color:var(--accent-color);transform:scale(1.2);margin:0 4px 0 2px;cursor:pointer;"
+                      onchange="reelsToggleExportSelectAll(this.checked)">
+                    <span style="font-size:10px;">全选导出</span>
+                  </label>
+                  <span style="flex:1;"></span>
+                  <span id="reels-export-selected-count" style="font-size:10px;color:var(--accent,#7b8bef);font-weight:600;" title="已选中导出的任务数"></span>
+                </div>
                 <div id="reels-task-list"
                   style="flex:1; overflow-y:auto; padding:4px 6px; font-size:12px; border:1px dashed rgba(255,255,255,0.15); border-radius:4px; margin:6px; transition:border-color .15s ease, background-color .15s ease, box-shadow .15s ease;">
                   <p class="hint" style="margin:0;font-size:11px;">添加背景素材+配音+SRT，或拖拽/导入文件夹</p>
@@ -2937,6 +2954,7 @@
                   <button class="inspector-tab active" data-tab="subtitle" onclick="reelsInspectorSwitch('subtitle',this)" style="flex:1; padding:8px 0; border:none; background:transparent; color:var(--text-secondary); font-size:11px; font-weight:600; cursor:pointer; border-bottom:2px solid var(--accent);">T 字幕</button>
                   <button class="inspector-tab" data-tab="overlay" onclick="reelsInspectorSwitch('overlay',this)" style="flex:1; padding:8px 0; border:none; background:transparent; color:var(--text-secondary); font-size:11px; font-weight:600; cursor:pointer; border-bottom:2px solid transparent;">🖼️ 覆层</button>
                   <button class="inspector-tab" data-tab="watermark" onclick="reelsInspectorSwitch('watermark',this)" style="flex:1; padding:8px 0; border:none; background:transparent; color:var(--text-secondary); font-size:11px; font-weight:600; cursor:pointer; border-bottom:2px solid transparent;">🔒 水印</button>
+                  <button class="inspector-tab" data-tab="background" onclick="reelsInspectorSwitch('background',this)" style="flex:1; padding:8px 0; border:none; background:transparent; color:var(--text-secondary); font-size:11px; font-weight:600; cursor:pointer; border-bottom:2px solid transparent;">🌫️ 背景</button>
                 </div>
 
                 <!-- Tab: 字幕样式 -->
@@ -3456,6 +3474,79 @@
                         </div>
                       </details>
 
+                      <!-- 4.6 全屏打字机模式 -->
+                      <details style="margin-bottom: 10px;">
+                        <summary style="cursor: pointer; font-size: 13px; font-weight: 600; color: var(--text-color);">📽️ 全屏打字机模式</summary>
+                        <div style="padding: 8px; background: var(--bg-secondary); border-radius: 6px; margin-top: 4px; border: 1px solid var(--border-color);">
+                          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:8px;">
+                            <input type="checkbox" id="reels-fullpage-typewriter" style="accent-color:var(--accent);"
+                              onchange="const o=document.getElementById('reels-fullpage-typewriter-options');if(o)o.style.display=this.checked?'':'none';if(typeof reelsUpdatePreview==='function')reelsUpdatePreview();">
+                            启用全屏打字机（所有文案全屏渐入）
+                          </label>
+                          <div id="reels-fullpage-typewriter-options" style="display:none;">
+                            <div class="param-row" style="margin-bottom:6px; display:flex; align-items:center; gap:8px;">
+                              <label style="min-width:80px; margin:0;">出字类型:</label>
+                              <select id="reels-fullpage-typewriter-reveal-type" class="select" style="width:100px;"
+                                onchange="if(typeof reelsUpdatePreview==='function')reelsUpdatePreview();">
+                                <option value="char">字母/单字</option>
+                                <option value="word">单词/短语</option>
+                              </select>
+                            </div>
+                            <div class="param-row" style="margin-bottom:6px; display:flex; align-items:center; gap:8px;">
+                              <label style="min-width:80px; margin:0;">对齐方式:</label>
+                              <select id="reels-fullpage-typewriter-align" class="select" style="width:100px;"
+                                onchange="if(typeof reelsUpdatePreview==='function')reelsUpdatePreview();">
+                                <option value="center">居中对齐</option>
+                                <option value="left">左对齐</option>
+                                <option value="right">右对齐</option>
+                              </select>
+                            </div>
+                            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:6px;">
+                              <input type="checkbox" id="reels-fullpage-typewriter-cursor" checked
+                                onchange="if(typeof reelsUpdatePreview==='function')reelsUpdatePreview();">
+                              启用闪烁光标
+                            </label>
+                            <div class="param-row" style="margin-bottom:6px; display:flex; align-items:center; gap:8px;">
+                              <label style="min-width:80px; margin:0;">光标字符:</label>
+                              <input type="text" id="reels-fullpage-typewriter-cursor-char" class="input" value="|" style="width:60px;"
+                                onchange="if(typeof reelsUpdatePreview==='function')reelsUpdatePreview();">
+                            </div>
+                            <div class="param-row" style="margin-bottom:6px; display:flex; align-items:center; gap:8px;">
+                              <label style="min-width:80px; margin:0;">光标颜色:</label>
+                              <input type="color" id="reels-fullpage-typewriter-cursor-color" value="#FFD700"
+                                style="width: 36px; height: 28px; border: none; cursor: pointer;"
+                                onchange="if(typeof reelsUpdatePreview==='function')reelsUpdatePreview();">
+                            </div>
+                            <div class="param-row" style="margin-bottom:6px; display:flex; align-items:center; gap:8px;">
+                              <label style="min-width:80px; margin:0;">未现字透明:</label>
+                              <input type="range" id="reels-tw-unrevealed-opacity" min="0" max="255" value="0" style="flex:1;"
+                                oninput="if(typeof reelsUpdatePreview==='function')reelsUpdatePreview();">
+                            </div>
+                            <div class="param-row" style="margin-bottom:6px; display:flex; align-items:center; gap:8px;">
+                              <label style="min-width:80px; margin:0;">首行标题粗体:</label>
+                              <input type="checkbox" id="reels-fullpage-typewriter-first-line-bold" checked
+                                onchange="if(typeof reelsUpdatePreview==='function')reelsUpdatePreview();">
+                            </div>
+                            <div class="param-row" style="margin-bottom:6px; display:flex; align-items:center; gap:8px;">
+                              <label style="min-width:80px; margin:0;">首行放大倍数:</label>
+                              <input type="number" id="reels-fullpage-typewriter-first-line-scale" class="input" value="1.2" step="0.1" min="0.5" max="3.0" style="width:60px;"
+                                onchange="if(typeof reelsUpdatePreview==='function')reelsUpdatePreview();">
+                            </div>
+                            <div class="param-row" style="margin-bottom:6px; display:flex; align-items:center; gap:8px;">
+                              <label style="min-width:80px; margin:0;">首行自定义色:</label>
+                              <input type="color" id="reels-fullpage-typewriter-first-line-color" value="#FFFFFF"
+                                style="width: 36px; height: 28px; border: none; cursor: pointer;"
+                                onchange="if(typeof reelsUpdatePreview==='function')reelsUpdatePreview();">
+                              <label class="checkbox-label" style="margin-left:8px; font-size:11px; display:flex; align-items:center; gap:4px;">
+                                <input type="checkbox" id="reels-fullpage-typewriter-first-line-color-enable"
+                                  onchange="if(typeof reelsUpdatePreview==='function')reelsUpdatePreview();"><span>启用自定义色</span>
+                              </label>
+                            </div>
+                            <div style="font-size:11px;color:var(--text-secondary);margin-top:6px;">💡 建议搭配“背景框”或“高级固定文本框”以实现极佳的蒙版卡片效果</div>
+                          </div>
+                        </div>
+                      </details>
+
                       <!-- 5. 排版与定位 -->
                       <details style="margin-bottom: 10px;">
                         <summary style="cursor: pointer; font-size: 13px; font-weight: 600; color: var(--text-color);">5. 排版与定位</summary>
@@ -3527,6 +3618,7 @@
                             <option value="flash_highlight">闪光高亮</option>
                         <option value="holy_glow">圣光</option>
                         <option value="blur_sharp">模糊→清晰</option>
+                        <option value="scatter_pop">随机散射卡片</option>
                       </select>
                     </div>
                     <div style="display: flex; align-items: center; gap: 4px;">
@@ -3648,6 +3740,52 @@
                           <input type="number" id="reels-word-pop-read-opacity" class="input input-small" value="1.0" step="0.1" min="0" max="1" style="width: 40px;" oninput="document.getElementById('reels-word-pop-read-opacity-range').value=this.value; reelsUpdatePreview()">
                         </div>
                       </div>
+                      <div class="param-row" style="flex-wrap: wrap; gap: 8px; margin-top: 6px; padding-top: 6px; border-top: 1px dashed rgba(255,255,255,0.05);">
+                        <div style="display: flex; align-items: center; gap: 3px;">
+                          <label>散射大字组词数:</label>
+                          <input type="number" id="reels-scatter-max-words" class="input input-small" value="3" min="1" max="20" style="width: 45px;" oninput="if(typeof reelsUpdatePreview==='function')reelsUpdatePreview();">
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 3px;">
+                          <label>读完保留概率:</label>
+                          <input type="range" id="reels-scatter-accum-prob-range" min="0" max="1" step="0.1" value="0.5" style="width: 50px;" oninput="document.getElementById('reels-scatter-accum-prob').value=this.value; if(typeof reelsUpdatePreview==='function')reelsUpdatePreview();">
+                          <input type="number" id="reels-scatter-accum-prob" class="input input-small" value="0.5" step="0.1" min="0" max="1" style="width: 45px;" oninput="document.getElementById('reels-scatter-accum-prob-range').value=this.value; if(typeof reelsUpdatePreview==='function')reelsUpdatePreview();">
+                        </div>
+                      </div>
+                      <div class="param-row" style="flex-wrap: wrap; gap: 8px; margin-top: 6px;">
+                        <div style="display: flex; align-items: center; gap: 3px;">
+                          <label>散射水平范围:</label>
+                          <input type="number" id="reels-scatter-area-left" class="input input-small" value="15" min="0" max="100" style="width: 40px;" oninput="if(typeof reelsUpdatePreview==='function')reelsUpdatePreview();" title="左边界比例（占视频宽度的百分比，默认15%）">
+                          <span>%-</span>
+                          <input type="number" id="reels-scatter-area-right" class="input input-small" value="85" min="0" max="100" style="width: 40px;" oninput="if(typeof reelsUpdatePreview==='function')reelsUpdatePreview();" title="右边界比例（占视频宽度的百分比，默认85%）">
+                          <span>%</span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 3px;">
+                          <label>散射垂直范围:</label>
+                          <input type="number" id="reels-scatter-area-top" class="input input-small" value="25" min="0" max="100" style="width: 40px;" oninput="if(typeof reelsUpdatePreview==='function')reelsUpdatePreview();" title="上边界比例（占视频高度的百分比，默认25%）">
+                          <span>%-</span>
+                          <input type="number" id="reels-scatter-area-bottom" class="input input-small" value="75" min="0" max="100" style="width: 40px;" oninput="if(typeof reelsUpdatePreview==='function')reelsUpdatePreview();" title="下边界比例（占视频高度的百分比，默认75%）">
+                          <span>%</span>
+                        </div>
+                      </div>
+                      <div class="param-row" style="flex-wrap: wrap; gap: 8px; margin-top: 6px;">
+                        <div style="display: flex; align-items: center; gap: 3px;">
+                          <label>随机干扰值(种子):</label>
+                          <input type="number" id="reels-scatter-seed" class="input input-small" value="1" min="1" max="9999" style="width: 45px;" oninput="if(typeof reelsUpdatePreview==='function')reelsUpdatePreview();" title="随机分布干扰值（修改后位置角度会全部随机变换，默认1）">
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 3px;">
+                          <label>缩放比例范围:</label>
+                          <input type="number" id="reels-scatter-min-scale" class="input input-small" value="0.8" step="0.1" min="0.1" max="5.0" style="width: 40px;" oninput="if(typeof reelsUpdatePreview==='function')reelsUpdatePreview();" title="最小随机缩放（默认0.8）">
+                          <span>-</span>
+                          <input type="number" id="reels-scatter-max-scale" class="input input-small" value="1.5" step="0.1" min="0.1" max="5.0" style="width: 40px;" oninput="if(typeof reelsUpdatePreview==='function')reelsUpdatePreview();" title="最大随机缩放（默认1.5）">
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 3px;">
+                          <label>旋转度数范围:</label>
+                          <input type="number" id="reels-scatter-min-rotate" class="input input-small" value="-10" min="-180" max="180" style="width: 40px;" oninput="if(typeof reelsUpdatePreview==='function')reelsUpdatePreview();" title="最小倾斜角度（默认-10）">
+                          <span>-</span>
+                          <input type="number" id="reels-scatter-max-rotate" class="input input-small" value="10" min="-180" max="180" style="width: 40px;" oninput="if(typeof reelsUpdatePreview==='function')reelsUpdatePreview();" title="最大倾斜角度（默认10）">
+                          <span>°</span>
+                        </div>
+                      </div>
                     </div>
                     </div>
                   </details>
@@ -3701,9 +3839,345 @@
                       <button class="btn btn-secondary" style="font-size: 11px; padding: 3px 10px; flex:0 0 auto;" onclick="reelsImportWatermarkPresets()">导入</button>
                     </div>
                   </div>
-                  <div id="reels-watermark-list" style="font-size:12px; max-height:300px; overflow-y:auto;"></div>
+                  <div id="reels-watermark-list" style="font-size:12px;"></div>
                   <button class="btn btn-secondary" style="font-size:11px; padding:3px 10px; margin-top:6px;"
                     onclick="reelsAddWatermark()">➕ 添加水印</button>
+                </div>
+
+                <!-- Tab: 背景与视频设置 -->
+                <div id="inspector-tab-background" style="display:none; flex:1; overflow-y:scroll; scrollbar-gutter: stable; padding:10px;">
+                  <h3 class="section-title">🌫️ 背景与视频设置</h3>
+                  
+                  <!-- Section 1: 背景素材设置 (Background Settings) -->
+                  <details open style="margin-bottom: 10px;">
+                    <summary style="cursor: pointer; font-size: 13px; font-weight: 600; color: var(--text-color);">1. 背景素材设置</summary>
+                    <div style="padding: 8px; background: var(--bg-secondary); border-radius: 6px; margin-top: 4px; border: 1px solid var(--border-color); display:flex; flex-direction:column; gap:8px;">
+                      
+                      <!-- 背景模式 -->
+                      <div style="display:grid; grid-template-columns:80px 1fr; gap:6px; align-items:center;">
+                        <label style="margin:0; font-size:12px;">背景模式:</label>
+                        <select id="reels-bg-mode-ui" class="select" style="height:24px; font-size:11px; padding:2px 6px;" onchange="reelsToggleBgModeUI(this.value)">
+                          <option value="single">🔁 单素材模式</option>
+                          <option value="multi">🎞 多素材模式 (随机库)</option>
+                        </select>
+                      </div>
+
+                      <!-- 单素材模式容器 -->
+                      <div id="reels-bg-single-container" style="display:flex; flex-direction:column; gap:8px;">
+                        <!-- 背景文件选择 -->
+                        <div style="display:grid; grid-template-columns:80px 1fr; gap:6px; align-items:center;">
+                          <label style="margin:0; font-size:12px;">背景文件:</label>
+                          <div style="display:flex; gap:4px; align-items:center; min-width:0;">
+                            <input type="text" id="reels-bg-path-ui" class="input file-path" placeholder="(未选择背景素材)" readonly style="flex:1; font-size:10px; height:24px; padding:2px 4px;">
+                            <button class="btn btn-secondary" style="font-size:10px; padding:2px 6px; flex-shrink:0;" onclick="reelsSelectBgPathUI()">选择</button>
+                            <button class="btn btn-secondary" style="font-size:10px; padding:2px 6px; flex-shrink:0;" onclick="reelsCopyCvToBgUI()" title="将内容视频路径复制到背景">同内容</button>
+                            <button class="btn btn-secondary" style="font-size:10px; padding:2px 6px; flex-shrink:0; color:#f87171;" onclick="reelsClearBgPathUI()">清除</button>
+                          </div>
+                        </div>
+                      </div>
+
+                      <!-- 多素材模式容器 -->
+                      <div id="reels-bg-multi-container" style="display:none; flex-direction:column; gap:8px;">
+                        <div style="display:grid; grid-template-columns:80px 1fr; gap:6px; align-items:center;">
+                          <label style="margin:0; font-size:12px;">素材池:</label>
+                          <div style="display:flex; gap:6px; align-items:center; min-width:0;">
+                            <span id="reels-bg-pool-count" style="font-size:11px; color:var(--text-secondary);">已添加 0 个素材</span>
+                            <button class="btn btn-secondary" style="font-size:10px; padding:3px 8px; flex-shrink:0;" onclick="reelsManageBgPoolUI()">⚙️ 管理素材池</button>
+                          </div>
+                        </div>
+
+                        <!-- 随机拼接转场设置 -->
+                        <div style="border-top:1px dashed var(--border-color); padding-top:6px; display:flex; flex-direction:column; gap:6px;">
+                          <div style="display:grid; grid-template-columns:80px 1fr; gap:6px; align-items:center;">
+                            <label style="margin:0; font-size:11px; color:var(--text-secondary);">组合方式:</label>
+                            <select id="reels-bg-cliporder-ui" class="select" style="height:22px; font-size:11px; padding:1px 4px;" onchange="reelsSaveBgConfigUI()">
+                              <option value="random">🎲 随机组合</option>
+                              <option value="sequence">↧ 按顺序组合</option>
+                            </select>
+                          </div>
+
+                          <div style="display:grid; grid-template-columns:80px 1fr; gap:6px; align-items:center;">
+                            <label style="margin:0; font-size:11px; color:var(--text-secondary);">转场类型:</label>
+                            <select id="reels-bg-transition-ui" class="select" style="height:22px; font-size:11px; padding:1px 4px;" onchange="reelsSaveBgConfigUI()">
+                              <option value="none">⚡ 无转场（硬切）</option>
+                              <option value="crossfade">✨ 交叉淡化</option>
+                              <option value="fade_black">⬛ 黑场过渡</option>
+                              <option value="fade_white">⬜ 白场过渡</option>
+                              <option value="slide_left">◀ 左滑入</option>
+                              <option value="slide_right">▶ 右滑入</option>
+                              <option value="wipe">🔲 擦除</option>
+                            </select>
+                          </div>
+                          
+                          <div style="display:grid; grid-template-columns:80px 1fr; gap:6px; align-items:center;">
+                            <label style="margin:0; font-size:11px; color:var(--text-secondary);">转场时长(s):</label>
+                            <div style="display:flex; gap:8px; align-items:center; min-width:0;">
+                              <input type="range" id="reels-bg-transdur-range" min="0.1" max="3.0" step="0.1" value="0.5" style="flex:1;" oninput="document.getElementById('reels-bg-transdur-num').value=this.value; reelsSaveBgConfigUI();">
+                              <input type="number" id="reels-bg-transdur-num" class="input input-small" value="0.5" min="0.1" max="3" step="0.1" style="width: 44px; height:20px; font-size:10px; padding:1px 3px;" oninput="document.getElementById('reels-bg-transdur-range').value=this.value; reelsSaveBgConfigUI();">
+                              <button class="btn btn-secondary" style="font-size:10px; padding:1px 3px; min-width:20px; height:20px; display:flex; align-items:center; justify-content:center; flex-shrink:0;" onclick="reelsResetParamUI('reels-bg-transdur', 0.5)" title="恢复默认值">↺</button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <!-- 片段池自动拼接容器 -->
+                      <div id="reels-bg-clippool-container" style="border-top:1px dashed var(--border-color); padding-top:8px; display:flex; flex-direction:column; gap:8px; margin-top:4px;">
+                        <div style="font-size:12px; font-weight:600; color:var(--text-color); display:flex; align-items:center; gap:4px;">
+                          <span>🎞️ 片段池自动拼接背景</span>
+                        </div>
+                        
+                        <!-- 选择片段文件夹 -->
+                        <div style="display:grid; grid-template-columns:80px 1fr; gap:6px; align-items:center;">
+                          <label style="margin:0; font-size:11px; color:var(--text-secondary);">片段文件夹:</label>
+                          <div style="display:flex; gap:4px; align-items:center; min-width:0;">
+                            <input type="text" id="reels-bg-clippool-dir-ui" class="input file-path" placeholder="(未选择片段目录)" readonly style="flex:1; font-size:10px; height:22px; padding:2px 4px;">
+                            <button class="btn btn-secondary" style="font-size:10px; padding:2px 6px; flex-shrink:0;" onclick="reelsSelectClipPoolUI()">选择</button>
+                            <button class="btn btn-secondary" style="font-size:10px; padding:2px 6px; flex-shrink:0; color:#f87171;" onclick="reelsClearClipPoolUI()">清除</button>
+                          </div>
+                        </div>
+
+                        <!-- 片段排序 -->
+                        <div style="display:grid; grid-template-columns:80px 1fr; gap:6px; align-items:center;">
+                          <label style="margin:0; font-size:11px; color:var(--text-secondary);">排序规则:</label>
+                          <select id="reels-bg-clippool-order-ui" class="select" style="height:22px; font-size:11px; padding:1px 4px;" onchange="reelsChangeClipOrderUI(this.value)">
+                            <option value="name">文件名</option>
+                            <option value="mtime">修改时间</option>
+                            <option value="random">随机</option>
+                          </select>
+                        </div>
+
+                        <!-- 拼接状态与操作 -->
+                        <div style="display:flex; align-items:center; justify-content:space-between; gap:6px; margin-top:2px;">
+                          <span id="reels-bg-clippool-status-ui" style="font-size:11px; color:var(--text-secondary); max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">0 个片段</span>
+                          <button id="reels-bg-clippool-concat-btn" class="btn btn-primary" style="font-size:10px; padding:4px 8px; flex-shrink:0; background:#255f85; color:#fff;" onclick="reelsConcatClipPoolUI()">⚡ 拼接并设为背景</button>
+                        </div>
+                      </div>
+
+                      <!-- 背景缩放 -->
+                      <div style="display:grid; grid-template-columns:80px 1fr; gap:6px; align-items:center;">
+                        <label style="margin:0; font-size:12px;">背景缩放 (%):</label>
+                        <div style="display:flex; gap:8px; align-items:center; min-width:0;">
+                          <input type="range" id="reels-bg-scale-range" min="50" max="300" value="100" style="flex:1; min-width:80px;" oninput="document.getElementById('reels-bg-scale-num').value=this.value; reelsSaveBgConfigUI();">
+                          <input type="number" id="reels-bg-scale-num" class="input input-small" value="100" min="50" max="300" style="width: 54px; height:22px; font-size:11px; padding:1px 3px;" oninput="document.getElementById('reels-bg-scale-range').value=this.value; reelsSaveBgConfigUI();">
+                          <button class="btn btn-secondary" style="font-size:10px; padding:1px 3px; min-width:20px; height:20px; display:flex; align-items:center; justify-content:center; flex-shrink:0;" onclick="reelsResetParamUI('reels-bg-scale', 100)" title="恢复默认值">↺</button>
+                        </div>
+                      </div>
+
+                      <!-- 背景翻转 -->
+                      <div style="display:grid; grid-template-columns:80px 1fr; gap:6px; align-items:center;">
+                        <label style="margin:0; font-size:12px;">背景翻转:</label>
+                        <div style="display:flex; gap:12px; align-items:center;">
+                          <label style="display:flex; align-items:center; gap:4px; font-size:11px; margin:0; cursor:pointer;">
+                            <input type="checkbox" id="reels-bg-fliph-ui" onchange="reelsSaveBgConfigUI()"> 左右翻转
+                          </label>
+                          <label style="display:flex; align-items:center; gap:4px; font-size:11px; margin:0; cursor:pointer;">
+                            <input type="checkbox" id="reels-bg-flipv-ui" onchange="reelsSaveBgConfigUI()"> 上下翻转
+                          </label>
+                        </div>
+                      </div>
+
+                      <!-- 背景X偏移 -->
+                      <div style="display:grid; grid-template-columns:80px 1fr; gap:6px; align-items:center;">
+                        <label style="margin:0; font-size:12px;">背景X偏移 (%):</label>
+                        <div style="display:flex; flex-direction:column; gap:4px; min-width:0;">
+                          <div style="display:flex; gap:8px; align-items:center; min-width:0;">
+                            <input type="range" id="reels-bg-x-range" min="-100" max="100" value="0" style="flex:1; min-width:80px;" oninput="document.getElementById('reels-bg-x-num').value=this.value; reelsSaveBgConfigUI();">
+                            <input type="number" id="reels-bg-x-num" class="input input-small" value="0" min="-100" max="100" style="width: 54px; height:22px; font-size:11px; padding:1px 3px;" oninput="document.getElementById('reels-bg-x-range').value=this.value; reelsSaveBgConfigUI();">
+                            <button class="btn btn-secondary" style="font-size:10px; padding:1px 3px; min-width:20px; height:20px; display:flex; align-items:center; justify-content:center; flex-shrink:0;" onclick="reelsResetParamUI('reels-bg-x', 0)" title="恢复默认值">↺</button>
+                          </div>
+                          <div style="display:flex; gap:4px;">
+                            <button class="btn btn-secondary" style="font-size:10px; padding:1px 4px; height:18px; line-height:1;" onclick="reelsSetBgOffsetUI('x', 100)">靠左</button>
+                            <button class="btn btn-secondary" style="font-size:10px; padding:1px 4px; height:18px; line-height:1;" onclick="reelsSetBgOffsetUI('x', 0)">居中</button>
+                            <button class="btn btn-secondary" style="font-size:10px; padding:1px 4px; height:18px; line-height:1;" onclick="reelsSetBgOffsetUI('x', -100)">靠右</button>
+                          </div>
+                        </div>
+                      </div>
+
+                      <!-- 背景Y偏移 -->
+                      <div style="display:grid; grid-template-columns:80px 1fr; gap:6px; align-items:center;">
+                        <label style="margin:0; font-size:12px;">背景Y偏移 (%):</label>
+                        <div style="display:flex; flex-direction:column; gap:4px; min-width:0;">
+                          <div style="display:flex; gap:8px; align-items:center; min-width:0;">
+                            <input type="range" id="reels-bg-y-range" min="-100" max="100" value="0" style="flex:1; min-width:80px;" oninput="document.getElementById('reels-bg-y-num').value=this.value; reelsSaveBgConfigUI();">
+                            <input type="number" id="reels-bg-y-num" class="input input-small" value="0" min="-100" max="100" style="width: 54px; height:22px; font-size:11px; padding:1px 3px;" oninput="document.getElementById('reels-bg-y-range').value=this.value; reelsSaveBgConfigUI();">
+                            <button class="btn btn-secondary" style="font-size:10px; padding:1px 3px; min-width:20px; height:20px; display:flex; align-items:center; justify-content:center; flex-shrink:0;" onclick="reelsResetParamUI('reels-bg-y', 0)" title="恢复默认值">↺</button>
+                          </div>
+                          <div style="display:flex; gap:4px;">
+                            <button class="btn btn-secondary" style="font-size:10px; padding:1px 4px; height:18px; line-height:1;" onclick="reelsSetBgOffsetUI('y', 100)">靠上</button>
+                            <button class="btn btn-secondary" style="font-size:10px; padding:1px 4px; height:18px; line-height:1;" onclick="reelsSetBgOffsetUI('y', 0)">居中</button>
+                            <button class="btn btn-secondary" style="font-size:10px; padding:1px 4px; height:18px; line-height:1;" onclick="reelsSetBgOffsetUI('y', -100)">靠下</button>
+                          </div>
+                        </div>
+                      </div>
+
+                      <!-- 背景音量 -->
+                      <div style="display:grid; grid-template-columns:80px 1fr; gap:6px; align-items:center;">
+                        <label style="margin:0; font-size:12px;">背景音量 (%):</label>
+                        <div style="display:flex; gap:8px; align-items:center; min-width:0;">
+                          <input type="range" id="reels-bg-volume-range" min="0" max="100" value="100" style="flex:1; min-width:80px;" oninput="document.getElementById('reels-bg-volume-num').value=this.value; reelsSaveBgConfigUI();">
+                          <input type="number" id="reels-bg-volume-num" class="input input-small" value="100" min="0" max="100" style="width: 54px; height:22px; font-size:11px; padding:1px 3px;" oninput="document.getElementById('reels-bg-volume-range').value=this.value; reelsSaveBgConfigUI();">
+                          <button class="btn btn-secondary" style="font-size:10px; padding:1px 3px; min-width:20px; height:20px; display:flex; align-items:center; justify-content:center; flex-shrink:0;" onclick="reelsResetParamUI('reels-bg-volume', 100)" title="恢复默认值">↺</button>
+                        </div>
+                      </div>
+
+                      <!-- 背景速度/时长缩放 -->
+                      <div style="display:grid; grid-template-columns:80px 1fr; gap:6px; align-items:center;">
+                        <label style="margin:0; font-size:12px;">速度缩放 (%):</label>
+                        <div style="display:flex; gap:8px; align-items:center; min-width:0;">
+                          <input type="range" id="reels-bg-dur-scale-range" min="50" max="200" value="100" style="flex:1; min-width:80px;" oninput="document.getElementById('reels-bg-dur-scale-num').value=this.value; reelsSaveBgConfigUI();">
+                          <input type="number" id="reels-bg-dur-scale-num" class="input input-small" value="100" min="50" max="200" style="width: 54px; height:22px; font-size:11px; padding:1px 3px;" oninput="document.getElementById('reels-bg-dur-scale-range').value=this.value; reelsSaveBgConfigUI();">
+                          <button class="btn btn-secondary" style="font-size:10px; padding:1px 3px; min-width:20px; height:20px; display:flex; align-items:center; justify-content:center; flex-shrink:0;" onclick="reelsResetParamUI('reels-bg-dur-scale', 100)" title="恢复默认值">↺</button>
+                        </div>
+                      </div>
+
+                    </div>
+                  </details>
+
+                  <!-- Section 2: 内容视频设置 (Content Video Settings) -->
+                  <details open style="margin-bottom: 10px;">
+                    <summary style="cursor: pointer; font-size: 13px; font-weight: 600; color: var(--text-color);">2. 内容视频设置</summary>
+                    <div style="padding: 8px; background: var(--bg-secondary); border-radius: 6px; margin-top: 4px; border: 1px solid var(--border-color); display:flex; flex-direction:column; gap:8px;">
+                      
+                      <!-- 内容视频 file selection -->
+                      <div style="display:grid; grid-template-columns:80px 1fr; gap:6px; align-items:center;">
+                        <label style="margin:0; font-size:12px;">视频文件:</label>
+                        <div style="display:flex; gap:4px; align-items:center; min-width:0;">
+                          <input type="text" id="reels-cv-path-ui" class="input file-path" placeholder="(未选择内容视频)" readonly style="flex:1; font-size:10px; height:24px; padding:2px 4px;">
+                          <button class="btn btn-secondary" style="font-size:10px; padding:2px 6px; flex-shrink:0;" onclick="reelsSelectCvPathUI()">选择</button>
+                          <button class="btn btn-secondary" style="font-size:10px; padding:2px 6px; flex-shrink:0;" onclick="reelsCopyBgToCvUI()" title="将背景素材路径复制到内容视频">同背景</button>
+                          <button class="btn btn-secondary" style="font-size:10px; padding:2px 6px; flex-shrink:0; color:#f87171;" onclick="reelsClearCvPathUI()">清除</button>
+                        </div>
+                      </div>
+
+                      <!-- 开启毛玻璃背景 -->
+                      <div style="display:flex; align-items:center; gap:8px;">
+                        <input type="checkbox" id="reels-cv-blur-bg-ui" onchange="reelsSaveBgConfigUI()" style="margin:0;">
+                        <label for="reels-cv-blur-bg-ui" style="margin:0; font-size:12px; cursor:pointer;">开启毛玻璃背景</label>
+                      </div>
+
+                      <!-- 毛玻璃细化参数 -->
+                      <div id="reels-cv-blur-params-container" style="display:none; flex-direction:column; gap:6px; padding-left:14px; border-left: 2px solid var(--border-color); margin-left: 4px;">
+                        <div style="display:grid; grid-template-columns:80px 1fr; gap:6px; align-items:center;">
+                          <label style="margin:0; font-size:11px; color:var(--text-muted);">模糊程度(px):</label>
+                          <div style="display:flex; gap:8px; align-items:center; min-width:0;">
+                            <input type="range" id="reels-cv-blur-range" min="0" max="100" value="40" style="flex:1; min-width:80px;" oninput="document.getElementById('reels-cv-blur-num').value=this.value; reelsSaveBgConfigUI();">
+                            <input type="number" id="reels-cv-blur-num" class="input input-small" value="40" min="0" max="100" style="width: 44px; height:20px; font-size:10px; padding:1px 3px;" oninput="document.getElementById('reels-cv-blur-range').value=this.value; reelsSaveBgConfigUI();">
+                            <button class="btn btn-secondary" style="font-size:10px; padding:1px 3px; min-width:20px; height:20px; display:flex; align-items:center; justify-content:center; flex-shrink:0;" onclick="reelsResetParamUI('reels-cv-blur', 40)" title="恢复默认值">↺</button>
+                          </div>
+                        </div>
+                        <div style="display:grid; grid-template-columns:80px 1fr; gap:6px; align-items:center;">
+                          <label style="margin:0; font-size:11px; color:var(--text-muted);">画面亮度(%):</label>
+                          <div style="display:flex; gap:8px; align-items:center; min-width:0;">
+                            <input type="range" id="reels-cv-brightness-range" min="0" max="200" value="60" style="flex:1; min-width:80px;" oninput="document.getElementById('reels-cv-brightness-num').value=this.value; reelsSaveBgConfigUI();">
+                            <input type="number" id="reels-cv-brightness-num" class="input input-small" value="60" min="0" max="200" style="width: 44px; height:20px; font-size:10px; padding:1px 3px;" oninput="document.getElementById('reels-cv-brightness-range').value=this.value; reelsSaveBgConfigUI();">
+                            <button class="btn btn-secondary" style="font-size:10px; padding:1px 3px; min-width:20px; height:20px; display:flex; align-items:center; justify-content:center; flex-shrink:0;" onclick="reelsResetParamUI('reels-cv-brightness', 60)" title="恢复默认值">↺</button>
+                          </div>
+                        </div>
+                      </div>
+
+                      <!-- 视频音量 -->
+                      <div style="display:grid; grid-template-columns:80px 1fr; gap:6px; align-items:center;">
+                        <label style="margin:0; font-size:12px;">视频音量 (%):</label>
+                        <div style="display:flex; gap:8px; align-items:center; min-width:0;">
+                          <input type="range" id="reels-cv-volume-range" min="0" max="100" value="100" style="flex:1; min-width:80px;" oninput="document.getElementById('reels-cv-volume-num').value=this.value; reelsSaveBgConfigUI();">
+                          <input type="number" id="reels-cv-volume-num" class="input input-small" value="100" min="0" max="100" style="width: 54px; height:22px; font-size:11px; padding:1px 3px;" oninput="document.getElementById('reels-cv-volume-range').value=this.value; reelsSaveBgConfigUI();">
+                          <button class="btn btn-secondary" style="font-size:10px; padding:1px 3px; min-width:20px; height:20px; display:flex; align-items:center; justify-content:center; flex-shrink:0;" onclick="reelsResetParamUI('reels-cv-volume', 100)" title="恢复默认值">↺</button>
+                        </div>
+                      </div>
+
+                      <!-- 视频缩放 -->
+                      <div style="display:grid; grid-template-columns:80px 1fr; gap:6px; align-items:center;">
+                        <label style="margin:0; font-size:12px;">视频缩放 (%):</label>
+                        <div style="display:flex; gap:8px; align-items:center; min-width:0;">
+                          <input type="range" id="reels-cv-scale-range" min="10" max="300" value="100" style="flex:1; min-width:80px;" oninput="document.getElementById('reels-cv-scale-num').value=this.value; reelsSaveBgConfigUI();">
+                          <input type="number" id="reels-cv-scale-num" class="input input-small" value="100" min="10" max="300" style="width: 54px; height:22px; font-size:11px; padding:1px 3px;" oninput="document.getElementById('reels-cv-scale-range').value=this.value; reelsSaveBgConfigUI();">
+                          <button class="btn btn-secondary" style="font-size:10px; padding:1px 3px; min-width:20px; height:20px; display:flex; align-items:center; justify-content:center; flex-shrink:0;" onclick="reelsResetParamUI('reels-cv-scale', 100)" title="恢复默认值">↺</button>
+                        </div>
+                      </div>
+
+                      <!-- 视频翻转 -->
+                      <div style="display:grid; grid-template-columns:80px 1fr; gap:6px; align-items:center;">
+                        <label style="margin:0; font-size:12px;">视频翻转:</label>
+                        <div style="display:flex; gap:12px; align-items:center;">
+                          <label style="display:flex; align-items:center; gap:4px; font-size:11px; margin:0; cursor:pointer;">
+                            <input type="checkbox" id="reels-cv-fliph-ui" onchange="reelsSaveBgConfigUI()"> 左右翻转
+                          </label>
+                          <label style="display:flex; align-items:center; gap:4px; font-size:11px; margin:0; cursor:pointer;">
+                            <input type="checkbox" id="reels-cv-flipv-ui" onchange="reelsSaveBgConfigUI()"> 上下翻转
+                          </label>
+                        </div>
+                      </div>
+
+                      <!-- 视频裁剪时间 -->
+                      <div style="display:grid; grid-template-columns:80px 1fr; gap:6px; align-items:center;">
+                        <label style="margin:0; font-size:12px;">裁剪开始 (s):</label>
+                        <div style="display:flex; gap:8px; align-items:center; min-width:0;">
+                          <input type="number" id="reels-cv-trim-start" class="input input-small" placeholder="0.0 (未裁剪)" min="0" step="0.1" style="flex:1; height:22px; font-size:11px; padding:1px 3px;" oninput="reelsSaveBgConfigUI()">
+                          <button class="btn btn-secondary" style="font-size:10px; padding:1px 3px; min-width:20px; height:20px; display:flex; align-items:center; justify-content:center; flex-shrink:0;" onclick="reelsResetTrimUI('reels-cv-trim-start')" title="恢复默认值">↺</button>
+                        </div>
+                      </div>
+                      <div style="display:grid; grid-template-columns:80px 1fr; gap:6px; align-items:center;">
+                        <label style="margin:0; font-size:12px;">裁剪结束 (s):</label>
+                        <div style="display:flex; gap:8px; align-items:center; min-width:0;">
+                          <input type="number" id="reels-cv-trim-end" class="input input-small" placeholder="视频结尾 (未裁剪)" min="0" step="0.1" style="flex:1; height:22px; font-size:11px; padding:1px 3px;" oninput="reelsSaveBgConfigUI()">
+                          <button class="btn btn-secondary" style="font-size:10px; padding:1px 3px; min-width:20px; height:20px; display:flex; align-items:center; justify-content:center; flex-shrink:0;" onclick="reelsResetTrimUI('reels-cv-trim-end')" title="恢复默认值">↺</button>
+                        </div>
+                      </div>
+
+                      <!-- 空间画面裁切 -->
+                      <div style="border-top: 1px solid var(--border-color); padding-top: 8px; margin-top: 4px;">
+                        <div style="font-size:12px; font-weight:600; margin-bottom: 6px; display:flex; align-items:center; justify-content:space-between;">
+                          <span>📐 空间画面裁切 (%)</span>
+                          <button class="btn btn-secondary" style="font-size:10px; padding:2px 6px;" onclick="reelsResetCvCropUI()">重置</button>
+                        </div>
+                        <div style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px; align-items:center;">
+                          <button class="btn btn-secondary" style="font-size:9px; padding:2px 4px; background:var(--bg-secondary); border:1px solid var(--border-color);" onclick="reelsApplyCropPresetUI('full')">全画</button>
+                          <button class="btn btn-secondary" style="font-size:9px; padding:2px 4px; background:var(--bg-secondary); border:1px solid var(--border-color);" onclick="reelsApplyCropPresetUI('16_9')">16:9</button>
+                          <button class="btn btn-secondary" style="font-size:9px; padding:2px 4px; background:var(--bg-secondary); border:1px solid var(--border-color);" onclick="reelsApplyCropPresetUI('4_5')">4:5</button>
+                          <button class="btn btn-secondary" style="font-size:9px; padding:2px 4px; background:var(--bg-secondary); border:1px solid var(--border-color);" onclick="reelsApplyCropPresetUI('1_1')">1:1</button>
+                          <button class="btn btn-secondary" style="font-size:9px; padding:2px 4px; background:var(--bg-secondary); border:1px solid var(--border-color);" onclick="reelsApplyCropPresetUI('9_16')">9:16</button>
+                          <button class="btn btn-secondary" style="font-size:9px; padding:2px 4px; background:var(--bg-secondary); border:1px solid var(--border-color);" onclick="reelsApplyCropPresetUI('1_2')">1:2</button>
+                          <button class="btn btn-secondary" style="font-size:9px; padding:2px 4px; background:var(--bg-secondary); border:1px solid var(--border-color);" onclick="reelsApplyCropPresetUI('half_height')">1/2高</button>
+                        </div>
+                        <div style="display:flex; flex-direction:column; gap:6px;">
+                          
+                          <div style="display:grid; grid-template-columns:55px 1fr; gap:6px; align-items:center;">
+                            <label style="margin:0; font-size:11px; color:var(--text-secondary);">左 (Left):</label>
+                            <div style="display:flex; gap:6px; align-items:center; min-width:0;">
+                              <input type="range" id="reels-cv-crop-left-range" min="0" max="100" value="0" style="flex:1;" oninput="document.getElementById('reels-cv-crop-left').value=this.value; reelsSaveBgConfigUI();">
+                              <input type="number" id="reels-cv-crop-left" value="0" min="0" max="100" style="width: 44px; height:20px; font-size:10px; padding:1px 3px;" oninput="document.getElementById('reels-cv-crop-left-range').value=this.value; reelsSaveBgConfigUI();">
+                            </div>
+                          </div>
+
+                          <div style="display:grid; grid-template-columns:55px 1fr; gap:6px; align-items:center;">
+                            <label style="margin:0; font-size:11px; color:var(--text-secondary);">上 (Top):</label>
+                            <div style="display:flex; gap:6px; align-items:center; min-width:0;">
+                              <input type="range" id="reels-cv-crop-top-range" min="0" max="100" value="0" style="flex:1;" oninput="document.getElementById('reels-cv-crop-top').value=this.value; reelsSaveBgConfigUI();">
+                              <input type="number" id="reels-cv-crop-top" value="0" min="0" max="100" style="width: 44px; height:20px; font-size:10px; padding:1px 3px;" oninput="document.getElementById('reels-cv-crop-top-range').value=this.value; reelsSaveBgConfigUI();">
+                            </div>
+                          </div>
+
+                          <div style="display:grid; grid-template-columns:55px 1fr; gap:6px; align-items:center;">
+                            <label style="margin:0; font-size:11px; color:var(--text-secondary);">宽 (Width):</label>
+                            <div style="display:flex; gap:6px; align-items:center; min-width:0;">
+                              <input type="range" id="reels-cv-crop-width-range" min="1" max="100" value="100" style="flex:1;" oninput="document.getElementById('reels-cv-crop-width').value=this.value; reelsSaveBgConfigUI();">
+                              <input type="number" id="reels-cv-crop-width" value="100" min="1" max="100" style="width: 44px; height:20px; font-size:10px; padding:1px 3px;" oninput="document.getElementById('reels-cv-crop-width-range').value=this.value; reelsSaveBgConfigUI();">
+                            </div>
+                          </div>
+
+                          <div style="display:grid; grid-template-columns:55px 1fr; gap:6px; align-items:center;">
+                            <label style="margin:0; font-size:11px; color:var(--text-secondary);">高 (Height):</label>
+                            <div style="display:flex; gap:6px; align-items:center; min-width:0;">
+                              <input type="range" id="reels-cv-crop-height-range" min="1" max="100" value="100" style="flex:1;" oninput="document.getElementById('reels-cv-crop-height').value=this.value; reelsSaveBgConfigUI();">
+                              <input type="number" id="reels-cv-crop-height" value="100" min="1" max="100" style="width: 44px; height:20px; font-size:10px; padding:1px 3px;" oninput="document.getElementById('reels-cv-crop-height-range').value=this.value; reelsSaveBgConfigUI();">
+                            </div>
+                          </div>
+
+                        </div>
+                      </div>
+
+                    </div>
+                  </details>
                 </div>
 
               </div><!-- /reels-col-subtitle -->
@@ -3738,7 +4212,7 @@
                     </div>
                     <!-- 预览视口 -->
                     <div id="reels-preview-viewport"
-                      style="position: relative; flex:1; width:100%; background: var(--bg-titlebar); overflow: hidden; cursor: grab; box-shadow: inset 0 0 16px rgba(0,0,0,0.8);">
+                      style="position: relative; flex:1; width:100%; background: var(--bg-titlebar); overflow: hidden; cursor: default; box-shadow: inset 0 0 16px rgba(0,0,0,0.8);">
                       <div id="reels-preview-transform"
                         style="position: absolute; transform-origin: 0 0; will-change: transform;">
                         <div id="reels-preview-container"
@@ -3888,7 +4362,7 @@
           <script>
           function reelsInspectorSwitch(tab, btn) {
             // 切换 Tab 内容可见性
-            var tabs = ['subtitle', 'overlay', 'watermark'];
+            var tabs = ['subtitle', 'overlay', 'watermark', 'background'];
             for (var i = 0; i < tabs.length; i++) {
               var el = document.getElementById('inspector-tab-' + tabs[i]);
               if (el) el.style.display = tabs[i] === tab ? '' : 'none';
@@ -3953,11 +4427,11 @@
               <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; font-size:12px; padding:5px 0 4px; border-bottom:1px solid var(--border-color);">
                 <span style="font-size:10px; color:var(--text-muted); min-width:32px;">🔉</span>
                 <label>人声音频层音量:</label>
-                <input type="number" id="reels-voice-volume" class="input input-small" min="0" max="200" step="1"
+                <input type="number" id="reels-voice-volume" class="input input-small" min="0" max="1000" step="1"
                   value="100" style="width:52px;font-size:11px;">
                 <span style="font-size:11px;color:var(--text-secondary);">%</span>
                 <label style="margin-left:6px;">视频背景层音量:</label>
-                <input type="number" id="reels-bg-volume" class="input input-small" min="0" max="200" step="1"
+                <input type="number" id="reels-bg-volume" class="input input-small" min="0" max="1000" step="1"
                   value="100" style="width:52px;font-size:11px;">
                 <span style="font-size:11px;color:var(--text-secondary);">%</span>
               </div>
@@ -4055,10 +4529,42 @@
                   <button class="btn btn-secondary" style="font-size:10px;padding:2px 6px;"
                     onclick="document.getElementById('reels-intro-path').value=''">清除</button>
                 </div>
+                <span style="width:1px;height:16px;background:var(--border-color);display:inline-block;"></span>
+                <!-- 分辨率 -->
+                <label style="display:flex;align-items:center;gap:4px;font-size:11px;white-space:nowrap;">
+                  分辨率:
+                  <select id="reels-resolution-select" class="select select-small" style="width:130px;font-size:11px;padding:2px 4px;"
+                    onchange="reelsHandleResolutionChange(this.value)">
+                    <option value="1080x1920">Portrait (1080x1920)</option>
+                    <option value="1920x1080">Landscape (1920x1080)</option>
+                    <option value="800x1000">Square-ish (800x1000)</option>
+                    <option value="custom">自定义...</option>
+                  </select>
+                </label>
+                <div id="reels-custom-res-inputs" style="display:none; align-items:center; gap:4px; font-size:11px; white-space:nowrap;">
+                  宽:
+                  <input type="number" id="reels-custom-width" class="input input-small" min="100" max="8192" value="1080"
+                    style="width:48px;font-size:11px;" oninput="reelsHandleCustomResolutionChange()">
+                  高:
+                  <input type="number" id="reels-custom-height" class="input input-small" min="100" max="8192" value="1920"
+                    style="width:48px;font-size:11px;" oninput="reelsHandleCustomResolutionChange()">
+                </div>
                 <!-- 导出按钮推到右端 -->
                 <span style="flex:1;"></span>
                 <label style="display:flex;align-items:center;gap:4px;font-size:11px;white-space:nowrap;">
+                  命名规则:
+                  <select id="reels-export-naming-mode-outer" class="select select-small" style="width:105px;font-size:11px;padding:2px 4px;">
+                    <option value="custom">自定义命名</option>
+                    <option value="text">默认文案</option>
+                    <option value="background">背景素材名</option>
+                    <option value="audio">音频素材名</option>
+                    <option value="card">默认 Card 名</option>
+                  </select>
+                </label>
+                <span style="width:1px;height:16px;background:var(--border-color);display:inline-block;"></span>
+                <label style="display:flex;align-items:center;gap:4px;font-size:11px;white-space:nowrap;">
                   并发数:
+
                   <input type="number" id="reels-export-concurrency" class="input input-small" min="1" max="64" value="1" style="width:44px;font-size:11px;">
                 </label>
                 <label style="display:flex;align-items:center;gap:4px;font-size:11px;white-space:nowrap;">
@@ -4174,7 +4680,7 @@
             <h3 class="section-title">Gladia API Keys</h3>
             <p class="hint">用于音频转录，每行一个 API Key</p>
             <textarea id="gladia-keys" class="textarea" rows="6" placeholder="输入 Gladia API Keys..."></textarea>
-            <button class="btn btn-primary" onclick="saveGladiaKeys()" style="margin-top: 12px;">保存 Gladia Keys</button>
+            <button class="btn btn-primary" onclick="saveGladiaKeys()" style="margin-top: 12px;">💾 保存 Gladia Keys</button>
           </div>
 
           <div class="form-section">
@@ -4184,12 +4690,12 @@
             
             <p class="hint" style="margin-top: 12px; font-weight: 500;">模型选择</p>
             <select id="gemini-model" class="select" style="width: 100%; font-size: 12px;">
-                <option value="gemini-2.5-flash">⚡ gemini-2.5-flash (GA·快速)</option>
-                <option value="gemini-2.5-flash-lite">⚡ gemini-2.5-flash-lite (GA·最快最省)</option>
+                <option value="gemini-3.5-flash">⚡ gemini-3.5-flash (GA·最新最快)</option>
+                <option value="gemini-3.1-pro">🧠 gemini-3.1-pro (GA·高级推理)</option>
+                <option value="gemini-3.1-flash">⚡ gemini-3.1-flash (GA·高速通用)</option>
+                <option value="gemini-3.1-flash-lite" selected>⚡ gemini-3.1-flash-lite (GA·Lite⚡·默认)</option>
                 <option value="gemini-2.5-pro">🧠 gemini-2.5-pro (GA·强推理)</option>
-                <option value="gemini-3-flash-preview">gemini-3-flash-preview (Preview)</option>
-                <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview (Preview·最新)</option>
-                <option value="gemini-3.1-flash-lite-preview" selected>gemini-3.1-flash-lite-preview (Preview·Lite⚡·默认)</option>
+                <option value="gemini-2.5-flash">⚡ gemini-2.5-flash (GA·快速稳定)</option>
                 <option value="gemma-4-31b-it">💎 Gemma 4 31B (Dense·256K·30RPM)</option>
                 <option value="gemma-4-26b-it">💎 Gemma 4 26B MoE (256K·30RPM)</option>
             </select>
@@ -4205,7 +4711,7 @@
             <p class="hint" style="margin-top: 12px; font-weight: 500;">自定义系统提示词 (Prompt)</p>
             <textarea id="gemini-prompt" class="textarea" rows="12" placeholder="在此输入自定义系统指令..."></textarea>
             
-            <button class="btn btn-primary" onclick="saveGeminiKeys()" style="margin-top: 12px;">保存设置</button>
+            <button class="btn btn-primary" onclick="saveGeminiKeys()" style="margin-top: 12px;">💾 保存 Gemini 配置</button>
           </div>
 
           <div class="form-section">

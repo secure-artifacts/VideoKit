@@ -721,10 +721,22 @@ function generateEnhancedASS(segments, style, opts = {}) {
         return tags.join('');
     }
 
+    function resolveSegmentPos(segStyle = null) {
+        if (!segStyle || typeof segStyle !== 'object') {
+            return { x: posX, y: posY };
+        }
+        const sx = typeof segStyle.pos_x === 'number' ? segStyle.pos_x : parseFloat(segStyle.pos_x);
+        const sy = typeof segStyle.pos_y === 'number' ? segStyle.pos_y : parseFloat(segStyle.pos_y);
+        const x = Number.isFinite(sx) ? (sx <= 1 ? sx * videoW : sx) : posX;
+        const y = Number.isFinite(sy) ? (sy <= 1 ? sy * videoH : sy) : posY;
+        return { x, y };
+    }
+
     // ── 构建位置标签（含 slide 动画支持）──
-    function buildPosTags(segStart, segEnd) {
-        const cx = Math.round(posX);
-        const cy = Math.round(posY);
+    function buildPosTags(segStart, segEnd, segStyle = null) {
+        const segPos = resolveSegmentPos(segStyle);
+        const cx = Math.round(segPos.x);
+        const cy = Math.round(segPos.y);
         const durMs = Math.round((segEnd - segStart) * 1000);
 
         // Slide animations use \move
@@ -801,15 +813,36 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
 
     const events = [];
 
+    function buildSegmentStyleTags(segStyle = {}) {
+        if (!segStyle || typeof segStyle !== 'object') return '';
+        let tags = '';
+        const color = segStyle.color_text || segStyle.color;
+        if (color) tags += `\\1c${toASSColor(color)}`;
+        if (segStyle.color_outline) tags += `\\3c${toASSColor(segStyle.color_outline)}`;
+        if (segStyle.fontsize) tags += `\\fs${Math.round(parseFloat(segStyle.fontsize) || fontSize)}`;
+        if (segStyle.font_family) tags += `\\fn${String(segStyle.font_family).replace(/[{}\\]/g, '')}`;
+        if (segStyle.font_weight !== undefined) tags += `\\b${Math.max(100, Math.min(900, parseInt(segStyle.font_weight, 10) || 400))}`;
+        else if (segStyle.bold !== undefined) tags += `\\b${segStyle.bold ? 1 : 0}`;
+        if (segStyle.italic !== undefined) tags += `\\i${segStyle.italic ? 1 : 0}`;
+        if (segStyle.border_width !== undefined) tags += `\\bord${Math.max(0, parseFloat(segStyle.border_width) || 0)}`;
+        if (segStyle.shadow_blur || segStyle.shadow_offset_x || segStyle.shadow_offset_y) {
+            const shad = Math.max(Math.abs(segStyle.shadow_offset_x || 0), Math.abs(segStyle.shadow_offset_y || 0), segStyle.shadow_blur ? Math.min(segStyle.shadow_blur, 4) : 0);
+            tags += `\\shad${Math.max(0, Math.round(shad))}`;
+        }
+        return tags;
+    }
+
     for (const seg of segments) {
+        const segStyle = seg.style_override || seg.subtitle_style || null;
+        const segStyleTags = buildSegmentStyleTags(segStyle);
         const rawText = String(seg.text || '');
         const wrappedLines = wrapTextByPixelWidth(rawText, wrapWidth, wrapFontOpts);
         let text = (wrappedLines.length > 0 ? wrappedLines.join('\n') : rawText).replace(/\n/g, '\\N');
 
         // 动画标签
-        const posTag = buildPosTags(seg.start, seg.end);
+        const posTag = buildPosTags(seg.start, seg.end, segStyle);
         const animTag = buildAnimTags(seg.start, seg.end);
-        const overrideOpen = `{${posTag}${animTag}}`;
+        const overrideOpen = `{${posTag}${animTag}${segStyleTags}}`;
 
         // ── 打字机效果 (typewriter) ──
         if (animInType === 'typewriter' && seg.words && seg.words.length > 0) {
@@ -851,7 +884,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
                 // 描边层在主文字下方 (layer -10 - li)
                 const layerNum = -(10 + li);
                 const seText = (wrappedLines.length > 0 ? wrappedLines.join('\n') : rawText).replace(/\n/g, '\\N');
-                const sePosTag = buildPosTags(seg.start, seg.end);
+                const sePosTag = buildPosTags(seg.start, seg.end, segStyle);
                 const seAnimTag = buildAnimTags(seg.start, seg.end);
                 events.push(`Dialogue: ${layerNum},${toASSTime(seg.start)},${toASSTime(seg.end)},SE_Layer${li},,0,0,0,,{${sePosTag}${seAnimTag}}${seText}`);
             }

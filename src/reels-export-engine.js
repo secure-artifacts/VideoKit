@@ -82,6 +82,12 @@ function buildSubtitleBurnCommand(params) {
     if (vcodec === 'h264_videotoolbox') {
         // VideoToolbox 使用 bitrate 而非 crf
         args.push('-b:v', q.bitrate || '8M');
+    } else if (vcodec === 'h264_nvenc') {
+        args.push('-preset', preset || 'p4', '-cq', String(q.crf), '-b:v', '0');
+    } else if (vcodec === 'h264_amf') {
+        args.push('-quality', 'balanced', '-rc', 'cqp', '-qp_i', String(q.crf), '-qp_p', String(q.crf));
+    } else if (vcodec === 'h264_qsv') {
+        args.push('-global_quality', String(q.crf));
     } else {
         args.push('-crf', String(q.crf));
         if (preset) args.push('-preset', preset);

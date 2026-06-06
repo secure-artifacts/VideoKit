@@ -80,7 +80,7 @@ async function processScripts(scripts, keys, customPrompt, modelId) {
     }
 
     const systemPrompt = customPrompt && customPrompt.trim() ? customPrompt.trim() : DEFAULT_GEMINI_PROMPT;
-    const resolvedModel = (modelId && modelId.trim()) ? modelId.trim() : 'gemini-2.5-flash';
+    const resolvedModel = (modelId && modelId.trim()) ? modelId.trim() : 'gemini-3.1-flash-lite';
     console.log(`[Gemini] 使用模型: ${resolvedModel}`);
 
     const numberedInputs = scripts.map((s) => `[${s.idx}] ${s.text}`).join('\n\n');
@@ -136,7 +136,7 @@ ${numberedInputs}
  * 自动根据 Key 前缀路由到 AI Studio 或 Vertex AI 端点
  */
 async function testKeys(keys, modelId) {
-    const resolvedModel = (modelId && modelId.trim()) ? modelId.trim() : 'gemini-2.5-flash';
+    const resolvedModel = (modelId && modelId.trim()) ? modelId.trim() : 'gemini-3.1-flash-lite';
     const CONCURRENCY = 20;
 
     const testOne = async (apiKey, idx) => {

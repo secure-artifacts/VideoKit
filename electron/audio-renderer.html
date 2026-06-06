@@ -92,6 +92,8 @@ ipcRenderer.on('render-audio', async (event, config) => {
             wetGain.gain.value = mix;
             const masterGain = offCtx.createGain();
             masterGain.gain.value = 1.0;
+            masterGain.channelCount = 2;
+            masterGain.channelCountMode = 'explicit';
 
             // 与预览完全一致的连接
             sourceNode.connect(dryGain);
@@ -123,6 +125,8 @@ ipcRenderer.on('render-audio', async (event, config) => {
                 const wf = Math.max(0, (stereoW - 1)) * 0.015;
                 const masterGain = offCtx.createGain();
                 masterGain.gain.value = 1.0;
+                masterGain.channelCount = 2;
+                masterGain.channelCountMode = 'explicit';
                 sourceNode.connect(masterGain);
                 const splitter = offCtx.createChannelSplitter(2);
                 const merger = offCtx.createChannelMerger(2);
