@@ -569,30 +569,30 @@ function _bcFieldsFromTask(task) {
         fields.push({ key: '__bg__', label: '🎨 背景素材', type: 'media', kinds: ['image', 'video'] });
     }
     if (task.audioPath) {
-        fields.push({ key: '__audio__', label: '🎵 音频', type: 'media', kinds: ['audio'] });
+        fields.push({ key: '__audio__', label: '🎵 人声-音频文件', type: 'media', kinds: ['audio'] });
     }
     if (task.srtPath) {
-        fields.push({ key: '__srt__', label: '💬 字幕SRT', type: 'media', kinds: ['subtitle'] });
+        fields.push({ key: '__srt__', label: '💬 人声-SRT字幕', type: 'media', kinds: ['subtitle'] });
     }
     if (task.contentVideoPath) {
         fields.push({ key: '__cv__', label: '📹 内容视频', type: 'media', kinds: ['video'] });
     }
     if (_bcTextColumnCandidatesForCategory('ai_source').length > 0 || task.aiScript) {
-        fields.push({ key: '__ai__', label: '🧠 AI源文案（手动绑定）', type: 'text', category: 'ai_source' });
+        fields.push({ key: '__ai__', label: '🧠 人声-原文案（手动绑定）', type: 'text', category: 'ai_source' });
     }
     if (_bcTextColumnCandidatesForCategory('dynamic_subtitle').length > 0 || task.txtContent) {
-        fields.push({ key: '__txt__', label: '💬 动态字幕断行后（手动绑定）', type: 'text', category: 'dynamic_subtitle' });
+        fields.push({ key: '__txt__', label: '💬 人声-断行文案（手动绑定）', type: 'text', category: 'dynamic_subtitle' });
     }
     if (_bcTextColumnCandidatesForCategory('tts_text').length > 0 || task.ttsText) {
-        fields.push({ key: '__tts__', label: '🎙️ 配音文案（手动绑定）', type: 'text', category: 'tts_text' });
+        fields.push({ key: '__tts__', label: '🎙️ 人声-配音文案（手动绑定）', type: 'text', category: 'tts_text' });
     }
     const overlays = task.overlays || [];
     overlays.forEach((ov, li) => {
         if (ov.fixed_text) return;
         if (ov.type === 'textcard' || !ov.type) {
-            fields.push({ key: `L${li}_title_text`, label: `📝 层${li+1} 文字卡片标题`, type: 'text', category: 'card_title' });
-            fields.push({ key: `L${li}_body_text`, label: `📝 层${li+1} 文字卡片正文`, type: 'text', category: 'card_body' });
-            fields.push({ key: `L${li}_footer_text`, label: `📝 层${li+1} 文字卡片结尾`, type: 'text', category: 'card_footer' });
+            fields.push({ key: `L${li}_title_text`, label: `📝 层${li+1} 覆层标题`, type: 'text', category: 'card_title' });
+            fields.push({ key: `L${li}_body_text`, label: `📝 层${li+1} 覆层内容`, type: 'text', category: 'card_body' });
+            fields.push({ key: `L${li}_footer_text`, label: `📝 层${li+1} 覆层结尾`, type: 'text', category: 'card_footer' });
         } else if (ov.type === 'scroll') {
             fields.push({ key: `L${li}_scroll_title`, label: `📜 层${li+1} 滚动字幕标题`, type: 'text', category: 'scroll_title' });
             fields.push({ key: `L${li}_content`, label: `📜 层${li+1} 滚动字幕正文`, type: 'text', category: 'scroll_body' });
@@ -600,6 +600,7 @@ function _bcFieldsFromTask(task) {
             fields.push({ key: `L${li}_content`, label: `📝 层${li+1} 普通文本`, type: 'text', category: 'plain_text' });
         }
     });
+    fields.push({ key: '__export_name__', label: '📝 导出命名', type: 'text', category: 'export_name' });
     return fields;
 }
 
@@ -650,15 +651,16 @@ function _bcPickCandidateForTemplate(candidates, templateIndex = 0) {
 }
 
 const BC_FIELD_CATEGORY_COLUMN_NAMES = {
-    ai_source: ['ai源文案', 'ai源', 'ai原文', '原文案', '源文案', 'ai_script', 'aiscript'],
-    dynamic_subtitle: ['动态字幕断行后', '断行后', '字幕断行', '字幕文本', '字幕文案', 'txtcontent', 'txt_content'],
-    tts_text: ['配音文案', 'tts文案', 'tts_text', 'ttstext', 'voice text'],
+    ai_source: ['人声-原文案', 'ai源文案', 'ai源', 'ai原文', '原文案', '源文案', 'ai_script', 'aiscript'],
+    dynamic_subtitle: ['人声-断行文案', '断行文案', '动态字幕断行后', '断行后', '字幕断行', '字幕文本', '字幕文案', 'txtcontent', 'txt_content'],
+    tts_text: ['人声-配音文案', '配音文案', 'tts文案', 'tts_text', 'ttstext', 'voice text'],
     card_title: ['文字卡片标题', '卡片标题', '覆层标题', '标题', 'title', 'headline'],
     card_body: ['文字卡片正文', '卡片正文', '覆层内容', '覆层正文', '正文', 'body'],
     card_footer: ['文字卡片结尾', '卡片结尾', '覆层结尾', '结尾', '尾标', 'footer', 'ending'],
     scroll_title: ['滚动字幕标题', '滚动标题', 'scroll_title', 'scroll title'],
     scroll_body: ['滚动字幕正文', '滚动字幕内容', '滚动正文', '滚动内容', 'scroll_body', 'scroll body'],
     plain_text: ['普通文本', '文本', 'text'],
+    export_name: ['导出命名', '视频命名', '命名', '文件名', 'exportname', 'export_name', 'filename'],
 };
 
 function _bcTextColumnCandidatesForCategory(category) {
@@ -1595,6 +1597,7 @@ function _bcBuildTask(tpl, row, rowIdx, taskNum, cols) {
         else if (f.key === '__ai__') { task.aiScript = val; }
         else if (f.key === '__txt__') { task.txtContent = val; }
         else if (f.key === '__tts__') { task.ttsText = val; }
+        else if (f.key === '__export_name__') { task.exportName = val; }
         else if (f.key.startsWith('L')) {
             const m = f.key.match(/^L(\d+)_(.+)$/);
             if (m && task.overlays && task.overlays[parseInt(m[1])]) {

@@ -1,6 +1,6 @@
 {
   "name": "videokit",
-  "version": "4.4.1",
+  "version": "4.4.2",
   "description": "视频工具包-批量：音频生成-reels视频制作-多媒体转换",
   "author": {
     "name": "TimCode",
@@ -16,12 +16,12 @@
     "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && node scripts/run-electron-dev.js\"",
     "electron:build": "npm run build && electron-builder",
     "start": "npm run electron:dev",
-    "pack:mac-arm64": "npm run build && electron-builder --mac --arm64",
-    "pack:mac-x64": "npm run build && electron-builder --mac --x64",
+    "pack:mac-arm64": "npm run build && electron-builder --mac --arm64 -c.mac.artifactName=\"\\${productName}-\\${version}-macOS M-series (arm64).\\${ext}\"",
+    "pack:mac-x64": "npm run build && electron-builder --mac --x64 -c.mac.artifactName=\"\\${productName}-\\${version}-macOS Intel (x64).\\${ext}\"",
     "pack:mac-universal": "npm run build && electron-builder --mac --arm64 --x64",
-    "pack:win-x64": "npm run build && electron-builder --win --x64",
-    "pack:linux-x64": "npm run build && electron-builder --linux --x64",
-    "pack:all": "npm run build && electron-builder --mac --arm64 --x64 --win --x64 --linux --x64"
+    "pack:win-x64": "npm run build && electron-builder --win --x64 -c.win.artifactName=\"\\${productName}-Setup-\\${version}-Windows (win).\\${ext}\"",
+    "pack:linux-x64": "npm run build && electron-builder --linux --x64 -c.linux.artifactName=\"\\${productName}-\\${version}-Linux (linux).\\${ext}\"",
+    "pack:all": "npm run build && electron-builder --mac --arm64 -c.mac.artifactName=\"\\${productName}-\\${version}-macOS M-series (arm64).\\${ext}\" && electron-builder --mac --x64 -c.mac.artifactName=\"\\${productName}-\\${version}-macOS Intel (x64).\\${ext}\" && electron-builder --win --x64 -c.win.artifactName=\"\\${productName}-Setup-\\${version}-Windows (win).\\${ext}\" && electron-builder --linux --x64 -c.linux.artifactName=\"\\${productName}-\\${version}-Linux (linux).\\${ext}\""
   },
   "dependencies": {
     "@google/genai": "^1.50.1",

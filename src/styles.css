@@ -479,7 +479,97 @@ body {
     display: none;
 }
 
-/* 子标签页 */
+/* 媒体转换左侧侧边栏布局 */
+#media-panel .panel-content {
+    max-width: 100%;
+    margin: 0;
+    display: flex;
+    gap: 0;
+    height: calc(100vh - 110px);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.media-sidebar {
+    width: 210px;
+    background: rgba(0, 0, 0, 0.2);
+    border-right: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    padding: 12px 8px;
+    gap: 12px;
+    flex-shrink: 0;
+}
+
+.sidebar-group {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.group-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary);
+    padding: 4px 8px 8px 8px;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.sub-group-title {
+    font-size: 10px;
+    color: #e5a93c;
+    padding: 8px 8px 2px 8px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.sidebar-item {
+    background: none;
+    border: none;
+    text-align: left;
+    color: var(--text-secondary);
+    padding: 6px 8px 6px 16px;
+    font-size: 11px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-top: 1px;
+}
+
+.sidebar-item:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+}
+
+.sidebar-item.active {
+    color: white;
+    background: var(--accent);
+    font-weight: 600;
+}
+
+.media-workbench {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    padding: 16px 20px 20px 20px;
+}
+
 .sub-tabs {
     display: flex;
     gap: 8px;
@@ -514,7 +604,7 @@ body {
     display: block;
 }
 
-/* 新版媒体工具箱 Beta */
+/* 媒体工具箱 */
 .mtb-shell {
     max-width: 1280px;
 }
@@ -1840,6 +1930,27 @@ body.theme-light .rbt-select {
 .rbt-select-caret {
     font-size: 10px;
     opacity: 0.85;
+}
+
+/* 工作台工具页面标题与说明样式 */
+.workbench-title-container {
+    margin-bottom: 20px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.workbench-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.workbench-title-desc {
+    font-size: 13px;
+    font-weight: normal;
+    color: var(--text-secondary);
 }
 
 

@@ -831,7 +831,7 @@ function _renderBatchTable() {
                     <select class="rbt-select" id="rbt-ms-bulk-role" style="width:100%; height:24px; font-size:11px;">
                         <option value="">-- 批量改角色 --</option>
                         <option value="bg">🖼 背景素材</option>
-                        <option value="overlay">🎬 视频覆层</option>
+                        <option value="overlay">🎬 内容视频</option>
                         <option value="hook">🪝 钩子视频</option>
                         <option value="universal">♾️ 通用视觉</option>
                         <option value="voice">🎙 人声配音</option>
@@ -863,9 +863,11 @@ function _renderBatchTable() {
             <div class="rbt-actions-panel" style="display:${_batchTableState.actionsCollapsed ? 'none' : 'flex'};">
                 <div id="rbt-actions-wrapper" style="display:flex; flex-direction:column; gap:0;">
                 
-                    <!-- === 1. 基础系统与工程管理 === -->
-                    <div class="rbt-actions" style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:6px; margin-bottom:6px;">
-                        <span style="font-size:11px;color:var(--text-secondary);font-weight:bold;margin-right:4px;">工程管理:</span>
+                    <!-- === 1. 工程管理 / 数据录入 === -->
+                    <div class="rbt-actions rbt-group-project" style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:6px; margin-bottom:6px;">
+                        <span style="font-size:11px;color:var(--text-secondary);font-weight:bold;margin-right:4px;">工程与数据:</span>
+                        <span class="rbt-batch-rowbreak"></span>
+                        <span class="rbt-batch-subgroup">工程管理</span>
                         <button class="rbt-btn" id="rbt-add-row-btn" style="padding:2px 8px;font-size:11px;background:rgba(40,80,40,0.6);border:1px solid rgba(80,180,80,0.3);color:#a0e0b0;">添加行</button>
                         <button class="rbt-btn" id="rbt-clear-btn" style="padding:2px 8px;font-size:11px;background:rgba(120,40,40,0.6);border:1px solid rgba(220,80,80,0.3);color:#f48484;" title="清空全部">清空</button>
                         <span style="color:rgba(255,255,255,0.2);margin:0 2px;">|</span>
@@ -876,11 +878,8 @@ function _renderBatchTable() {
                         <span style="color:rgba(255,255,255,0.2);margin:0 2px;">|</span>
                         <button class="rbt-btn" id="rbt-col-settings-btn" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;">列设置</button>
                         <button class="rbt-btn" id="rbt-close-btn" style="padding:2px 8px;font-size:11px;background:rgba(120,40,40,0.6);border:1px solid rgba(220,80,80,0.3);color:#f48484;">关闭界面</button>
-                    </div>
-
-                    <!-- === 2. 核心数据调度与录入 === -->
-                    <div class="rbt-actions" style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:6px; margin-bottom:6px;">
-                        <span style="font-size:11px;color:var(--text-secondary);font-weight:bold;margin-right:4px;">数据录入:</span>
+                        <span class="rbt-batch-rowbreak"></span>
+                        <span class="rbt-batch-subgroup">数据录入</span>
                         <button id="rbt-open-media-pool-btn" class="rbt-btn" style="background:${_batchTableState.mediaPoolOpen ? 'rgba(50,70,160,0.6)' : 'rgba(40,60,120,0.6)'}; color:#9bb0ff; border:1px solid rgba(80,120,220,0.3); font-size:11px; padding:2px 8px;">${_batchTableState.mediaPoolOpen ? '收起素材池' : '打开素材池'}</button>
                         <button class="rbt-btn" id="rbt-cycle-fill-btn" style="background:rgba(255,255,255,0.05); color:#ccc; border:1px solid rgba(255,255,255,0.1); padding:2px 8px; font-size:11px;" title="打开素材循环填充面板">素材使用设置</button>
                         <span style="color:rgba(255,255,255,0.2);margin:0 2px;">|</span>
@@ -889,39 +888,90 @@ function _renderBatchTable() {
                             <option value="custom" ${exportNamingMode === 'custom' ? 'selected' : ''}>自定义命名</option>
                             <option value="text" ${exportNamingMode === 'text' ? 'selected' : ''}>默认文案</option>
                             <option value="background" ${exportNamingMode === 'background' ? 'selected' : ''}>背景素材名</option>
-                            <option value="audio" ${exportNamingMode === 'audio' ? 'selected' : ''}>音频素材名</option>
+                            <option value="audio" ${exportNamingMode === 'audio' ? 'selected' : ''}>人声-音频文件名</option>
                             <option value="card" ${exportNamingMode === 'card' ? 'selected' : ''}>默认 Card 名</option>
+                            <option value="index" ${exportNamingMode === 'index' ? 'selected' : ''}>纯序号 (1, 2, 3...)</option>
+                            <option value="date-auto" ${exportNamingMode === 'date-auto' ? 'selected' : ''}>按日期自动排序</option>
                         </select>
+                        <button id="reels-naming-config-btn" style="display:${(exportNamingMode === 'index' || exportNamingMode === 'date-auto') ? 'inline-block' : 'none'};background:none;border:none;color:#aaa;cursor:pointer;font-size:11px;padding:0;margin-left:2px;" title="配置命名规则">⚙️</button>
                         <span style="color:rgba(255,255,255,0.2);margin:0 2px;">|</span>
-                        <button class="rbt-btn" id="rbt-paste-txtcontent" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;" title="从剪贴板粘贴到人声字幕列">人声对齐字幕（断行后）</button>
+                        <button class="rbt-btn" id="rbt-paste-txtcontent" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;" title="从剪贴板粘贴到人声-断行文案列">粘贴人声-断行文案</button>
                         <button class="rbt-btn" id="rbt-paste-btn" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;" title="从 Google 表格粘贴覆层文案(支持标题/内容/结尾多列格式)">粘贴覆层文案</button>
                         <button class="rbt-btn" id="rbt-paste-scroll-btn" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;" title="从 Google 表格批量粘贴滚动字幕">粘贴滚动字幕</button>
                         <button class="rbt-btn" id="rbt-paste-clip-ab" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;" title="A/B双版文案">粘贴剪辑文案 (A/B版)</button>
                         <button class="rbt-btn" id="rbt-bulk-create-btn" style="padding:2px 8px;font-size:11px;background:rgba(124,92,255,0.15);border:1px solid rgba(124,92,255,0.3);color:#b8a0ff;font-weight:600;" title="类似Canva大量制作：表格数据 × 覆层模板 = 批量任务">🧩 大量制作</button>
                     </div>
 
-                    <!-- === 4. 批量参数修剪 (Scaling) === -->
-                    <div class="rbt-actions" style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:6px; margin-bottom:6px;">
-                        <span style="font-size:11px;color:var(--text-secondary);font-weight:bold;margin-right:4px;">整体参数缩放:</span>
+                    <!-- === 4. 批量参数总设置 (Scaling / Content Video / Blur) === -->
+                    <div class="rbt-actions rbt-group-batch-settings" style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:6px; margin-bottom:6px;">
+                        <span style="font-size:11px;color:var(--text-secondary);font-weight:bold;margin-right:4px;">批量参数总设置:</span>
+                        <span class="rbt-batch-rowbreak"></span>
+                        <span class="rbt-batch-subgroup">基础</span>
+                        <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#ccc;" title="批量设置选中行的自定义时长；留空表示自动">时长(s)
+                            <input type="number" id="rbt-batch-duration" min="0" max="600" step="0.5" placeholder="自动" style="width:52px;background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);color:#ccc;padding:2px;font-size:11px;text-align:center;">
+                        </label>
+                        <button class="rbt-btn" id="rbt-apply-batch-basic" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;">应用基础</button>
+                        <span style="color:rgba(255,255,255,0.2);margin:0 2px;">|</span>
+                        <span class="rbt-batch-subgroup">配乐</span>
+                        <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#ccc;" title="批量设置配乐音量；留空表示不改">配乐音量
+                            <input type="number" id="rbt-batch-bgmvol" min="0" max="1000" step="5" placeholder="%" style="width:45px;background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);color:#ccc;padding:2px;font-size:11px;text-align:center;">
+                        </label>
+                        <button class="rbt-btn" id="rbt-apply-batch-bgm" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;">应用配乐</button>
+                        <span class="rbt-batch-rowbreak"></span>
+                        <span class="rbt-batch-subgroup">字幕时间</span>
+                        <select id="rbt-batch-subtime-mode" class="rbt-select" style="width:70px;height:20px;font-size:11px;padding:0 2px;background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);color:#ccc;" title="批量设置字幕时间">
+                            <option value="keep">保持</option>
+                            <option value="full">全时段</option>
+                            <option value="split">分段</option>
+                        </select>
+                        <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#ccc;" title="字幕时间分段秒数，仅在选择“分段”时生效">切换
+                            <input type="number" id="rbt-batch-subtime-split" min="0.1" step="0.5" placeholder="s" style="width:48px;background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);color:#ccc;padding:2px;font-size:11px;text-align:center;">
+                        </label>
+                        <button class="rbt-btn" id="rbt-apply-batch-subtime" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;">应用字幕时间</button>
+                        <span class="rbt-batch-rowbreak"></span>
+                        <span class="rbt-batch-subgroup">背景</span>
                         <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#ccc;" title="批量设置选中行的背景图片缩放">BG
                             <input type="number" id="rbt-batch-bgscale" min="50" max="300" value="100" step="5" style="width:45px;background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);color:#ccc;padding:2px;font-size:11px;text-align:center;"> %
                         </label>
                         <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#ccc;" title="批量设置选中行的背景素材时长缩放">BG时长
                             <input type="number" id="rbt-batch-bgdurscale" min="10" max="500" value="100" step="5" style="width:45px;background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);color:#ccc;padding:2px;font-size:11px;text-align:center;"> %
                         </label>
-                        <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#ccc;" title="批量设置选中行的人声音频素材时长缩放">音频时长
+                        <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#ccc;" title="批量设置背景视频音量；留空表示不改">BG音量
+                            <input type="number" id="rbt-batch-bgvol" min="0" max="1000" step="5" placeholder="%" style="width:45px;background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);color:#ccc;padding:2px;font-size:11px;text-align:center;">
+                        </label>
+                        <button class="rbt-btn" id="rbt-apply-batch-bg" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;">应用背景</button>
+                        <span class="rbt-batch-rowbreak"></span>
+                        <span class="rbt-batch-subgroup">人声</span>
+                        <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#ccc;" title="批量设置选中行的人声-音频变速/时长缩放">人声变速
                             <input type="number" id="rbt-batch-audiodurscale" min="10" max="500" value="100" step="5" style="width:45px;background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);color:#ccc;padding:2px;font-size:11px;text-align:center;"> %
                         </label>
-                        <button class="rbt-btn" id="rbt-apply-batch-scale" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;">应用缩放</button>
-                    </div>
-
-                    <!-- === 4b. 批量内容视频与毛玻璃设置 (Batch Content Video & Blur Settings) === -->
-                    <div class="rbt-actions" style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:6px; margin-bottom:6px;">
-                        <span style="font-size:11px;color:var(--text-secondary);font-weight:bold;margin-right:4px;">内容与毛玻璃批量:</span>
+                        <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#ccc;" title="批量设置人声音量；留空表示不改">人声音量
+                            <input type="number" id="rbt-batch-voicevol" min="0" max="1000" step="5" placeholder="%" style="width:45px;background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);color:#ccc;padding:2px;font-size:11px;text-align:center;">
+                        </label>
+                        <button class="rbt-btn" id="rbt-apply-batch-scale" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;">应用人声</button>
+                        <span class="rbt-batch-rowbreak"></span>
+                        <span class="rbt-batch-subgroup">内容视频</span>
                         <button class="rbt-btn" id="rbt-batch-bg-to-cv" style="padding:2px 8px;font-size:11px;background:rgba(0,188,212,0.15);border:1px solid rgba(0,188,212,0.3);color:#80deea;" title="将勾选行的背景素材路径复制到内容视频">背景用于内容视频</button>
-                        <span style="color:rgba(255,255,255,0.2);margin:0 2px;">|</span>
                         <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#ccc;" title="批量设置选中行的内容视频缩放">视频缩放
                             <input type="number" id="rbt-batch-cvscale" min="10" max="300" value="100" step="5" style="width:45px;background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);color:#ccc;padding:2px;font-size:11px;text-align:center;"> %
+                        </label>
+                        <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#ccc;" title="批量设置内容视频时间段起点；留空表示不改，填 0 可从开头开始">起
+                            <input type="number" id="rbt-batch-cvtrim-start" min="0" step="0.1" placeholder="s" style="width:48px;background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);color:#ccc;padding:2px;font-size:11px;text-align:center;">
+                        </label>
+                        <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#ccc;" title="批量设置内容视频时间段终点；留空表示不改">止
+                            <input type="number" id="rbt-batch-cvtrim-end" min="0" step="0.1" placeholder="s" style="width:48px;background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);color:#ccc;padding:2px;font-size:11px;text-align:center;">
+                        </label>
+                        <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#ccc;" title="批量设置内容视频裁切范围：左,上,宽,高，单位百分比；留空表示不改">裁切
+                            <input type="text" id="rbt-batch-cvcrop" placeholder="0,0,100,100" style="width:92px;background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);color:#ccc;padding:2px;font-size:11px;text-align:center;">
+                        </label>
+                        <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#ccc;" title="批量设置内容视频 X 位置；留空表示不改，可填 center 或像素值">X
+                            <input type="text" id="rbt-batch-cvx" placeholder="center" style="width:55px;background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);color:#ccc;padding:2px;font-size:11px;text-align:center;">
+                        </label>
+                        <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#ccc;" title="批量设置内容视频 Y 位置；留空表示不改，可填 center 或像素值">Y
+                            <input type="text" id="rbt-batch-cvy" placeholder="center" style="width:55px;background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);color:#ccc;padding:2px;font-size:11px;text-align:center;">
+                        </label>
+                        <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#ccc;" title="批量设置内容视频音量；留空表示不改">视频音量
+                            <input type="number" id="rbt-batch-cvvol" min="0" max="1000" step="5" placeholder="%" style="width:45px;background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);color:#ccc;padding:2px;font-size:11px;text-align:center;">
                         </label>
                         <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#ccc;" title="批量开启/关闭毛玻璃背景">毛玻璃
                             <select id="rbt-batch-cvblurbg" class="rbt-select" style="width:55px;height:20px;font-size:11px;padding:0 2px;background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);color:#ccc;">
@@ -936,12 +986,17 @@ function _renderBatchTable() {
                         <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#ccc;" title="批量设置画面亮度百分比 (%)">亮度
                             <input type="number" id="rbt-batch-cvbrightness" min="0" max="200" value="60" style="width:40px;background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);color:#ccc;padding:2px;font-size:11px;text-align:center;"> %
                         </label>
-                        <button class="rbt-btn" id="rbt-apply-batch-cv" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;">应用设置</button>
+                        <button class="rbt-btn" id="rbt-apply-batch-cv" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;">应用内容视频</button>
                     </div>
 
-                    <!-- === 5. AI与配音网络引擎 (AI & Voices) === -->
-                    <div class="rbt-actions" style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; border-bottom:none; padding-bottom:6px; margin-bottom:6px;">
-                        <span style="font-size:11px;color:var(--text-secondary);font-weight:bold;margin-right:4px;">人声流水线:</span>
+                    <!-- === 5. 人声流水线 / 对齐 / 执行 === -->
+                    <div class="rbt-actions rbt-group-voice-flow" style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; border-bottom:none; padding-bottom:6px; margin-bottom:6px;">
+                        <span style="font-size:11px;color:var(--text-secondary);font-weight:bold;margin-right:4px;">人声工具:</span>
+                        <span class="rbt-batch-rowbreak"></span>
+                        <span class="rbt-batch-subgroup">人声流水线</span>
+                        <button class="rbt-btn" id="rbt-paste-ai-raw-btn" style="font-size:11px;padding:2px 8px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;">粘贴人声-原文案</button>
+                        <button class="rbt-btn" id="rbt-paste-tts-btn" style="font-size:11px;padding:2px 8px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;">粘贴人声文案/断行/音色</button>
+                        <span style="color:rgba(255,255,255,0.2);margin:0 2px;">|</span>
                         <span style="font-size:11px;color:#888;">AI模型:</span>
                         <select id="rbt-tts-model" class="rbt-select" style="width:145px;height:24px;font-size:11px;padding:0 4px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);color:#ccc;">
                             <option value="eleven_v3">v3 (情感标签)</option>
@@ -949,7 +1004,7 @@ function _renderBatchTable() {
                             <option value="eleven_multilingual_v2">Eleven Multilingual v2</option>
                             <option value="eleven_monolingual_v1">Eleven Monolingual v1</option>
                         </select>
-                        <span style="font-size:11px;color:#888;">配音音色:</span>
+                        <span style="font-size:11px;color:#888;">人声-配音音色:</span>
                         <input list="rbt-tts-voices-list" id="rbt-tts-default-voice" class="rbt-select" style="width:110px;height:24px;font-size:11px;padding:0 4px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);color:#ccc;" placeholder="输入或选择音色ID" />
                         <datalist id="rbt-tts-voices-list"></datalist>
                         <button class="rbt-btn" id="rbt-refresh-voices-btn" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;" title="刷新列表">刷新</button>
@@ -957,25 +1012,28 @@ function _renderBatchTable() {
                         <span style="font-size:11px;color:#888;">尾部静音:</span>
                         <input type="number" id="rbt-tts-tail-silence" min="0" max="5" step="0.1" value="${localStorage.getItem('rbt_tts_tail_silence') || '0'}" style="width:48px;height:22px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);color:#ccc;padding:0 4px;font-size:11px;" title="生成的 MP3 末尾追加静音；0 表示不添加，启用时范围 0.1-5 秒">
                         <span style="font-size:11px;color:#888;">秒</span>
-                        <span style="color:rgba(255,255,255,0.2);margin:0 2px;">|</span>
-                        <button class="rbt-btn" id="rbt-paste-ai-raw-btn" style="font-size:11px;padding:2px 8px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;">粘贴AI原文案</button>
-                        <button class="rbt-btn" id="rbt-paste-tts-btn" style="font-size:11px;padding:2px 8px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;">粘贴TTS素材</button>
                         <!-- 幽灵事件锚点 -->
                         <div style="display:none;">
                             <button id="rbt-ai-gemini-btn"></button><button id="rbt-ai-tts-all-btn"></button><button id="rbt-ai-auto-all-btn"></button><button id="rbt-export-selected-btn"></button>
                         </div>
-                    </div>
-
-                    <!-- === 6. 字幕对齐后处理 (Alignment) === -->
-                    <div class="rbt-actions" style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; border-bottom:none; padding-bottom:6px; margin-bottom:6px;">
-                        <span style="font-size:11px;color:var(--text-secondary);font-weight:bold;margin-right:4px;">对齐设定:</span>
+                        <span class="rbt-batch-rowbreak"></span>
+                        <span class="rbt-batch-subgroup">执行动作</span>
+                        <select id="rbt-unified-execute-mode" class="rbt-select" style="width:auto; height:24px; font-size:11px; background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.1); border-radius:4px; padding:0 8px; color:#ccc; cursor:pointer; outline:none;">
+                            <option value="rbt-ai-auto-all-btn">一键: 执行AI大全家桶 (改写+配音合成+对齐生成)</option>
+                            <option value="rbt-ai-gemini-btn">分步: 仅执行 AI 改写及处理文案</option>
+                            <option value="rbt-ai-tts-all-btn">分步: 仅执行 批量生成配音及本地时间轴提取</option>
+                        </select>
+                        <button class="rbt-btn" id="rbt-unified-execute-btn" style="background:rgba(255,255,255,0.1); color:#fff; border:1px solid rgba(255,255,255,0.2); font-size:11px; padding:2px 16px; border-radius:4px; cursor:pointer;">启动流水线执行</button>
+                        <button class="rbt-btn" id="rbt-ai-settings-btn" style="padding:2px 10px;font-size:11px;background:rgba(168,85,247,0.15);border:1px solid rgba(168,85,247,0.3);color:#a78bfa;border-radius:4px;cursor:pointer;" title="配置 Gemini API Key 和自定义 Prompt 指令">⚙️ AI设置</button>
+                        <span class="rbt-batch-rowbreak"></span>
+                        <span class="rbt-batch-subgroup">对齐设定</span>
                         <select id="rbt-align-source" class="rbt-select" style="width:auto;height:24px;font-size:11px;padding:0 4px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);color:#ccc;">
                             <option value="video">背景视频对齐</option>
-                            <option value="audio">人声音频对齐</option>
+                            <option value="audio">人声-音频文件对齐</option>
                         </select>
                         <select id="rbt-align-txt-col" class="rbt-select" style="width:auto;height:24px;font-size:11px;padding:0 4px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);color:#ccc;">
-                            <option value="txtContent">选列：[人声字幕]</option>
-                            <option value="ttsText">选列：[TTS文案]</option>
+                            <option value="txtContent">选列：[人声-断行文案]</option>
+                            <option value="ttsText">选列：[人声-配音文案]</option>
                             <option value="overlay_title">选列：[覆层标题]</option>
                             <option value="overlay_body">选列：[覆层内容]</option>
                         </select>
@@ -997,17 +1055,7 @@ function _renderBatchTable() {
                         <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#999;cursor:pointer;" title="开启后：对齐时若识别到的文字与当前行文本不匹配，会自动在全部任务候选池中进行相似性搜寻。关闭后（默认）：直接强制使用该行文案进行对齐，即使有些许不匹配也强行生成对齐时间轴。"><input type="checkbox" id="rbt-align-auto-detect" style="margin:0;transform:scale(0.8);" ${localStorage.getItem('rbt_align_auto_detect') === '1' ? 'checked' : ''}> 自动查找匹配模式</label>
                     </div>
 
-                    <!-- === 7. 终极任务执行台 (Execution Block) === -->
-                    <div class="rbt-actions" style="display:flex; gap:8px; align-items:center; border-bottom:none; padding-bottom:6px; margin-bottom:6px;">
-                        <span style="font-size:11px; color:#aaa; font-weight:bold; margin-right:4px;">执行动作:</span>
-                        <select id="rbt-unified-execute-mode" class="rbt-select" style="width:auto; height:24px; font-size:11px; background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.1); border-radius:4px; padding:0 8px; color:#ccc; cursor:pointer; outline:none;">
-                            <option value="rbt-ai-auto-all-btn">一键: 执行AI大全家桶 (改写+配音合成+对齐生成)</option>
-                            <option value="rbt-ai-gemini-btn">分步: 仅执行 AI 改写及处理文案</option>
-                            <option value="rbt-ai-tts-all-btn">分步: 仅执行 批量生成配音及本地时间轴提取</option>
-                        </select>
-                        <button class="rbt-btn" id="rbt-unified-execute-btn" style="background:rgba(255,255,255,0.1); color:#fff; border:1px solid rgba(255,255,255,0.2); font-size:11px; padding:2px 16px; border-radius:4px; cursor:pointer;">启动流水线执行</button>
-                        <button class="rbt-btn" id="rbt-ai-settings-btn" style="padding:2px 10px;font-size:11px;background:rgba(168,85,247,0.15);border:1px solid rgba(168,85,247,0.3);color:#a78bfa;border-radius:4px;cursor:pointer;" title="配置 Gemini API Key 和自定义 Prompt 指令">⚙️ AI设置</button>
-                    </div>
+                </div>
 
                     <!-- === 8. 批量模板配置 (Select/Preset/Templates) === -->
                     <div class="rbt-actions" id="rbt-batch-bar" style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:0; padding-bottom:0; border-bottom:none;">
@@ -1019,9 +1067,9 @@ function _renderBatchTable() {
                         <button class="rbt-btn" id="rbt-ai-preset-btn" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;" title="一键覆盖选中行参数">任务预设设置</button>
                         <button class="rbt-btn" id="rbt-import-task-preset-btn" style="padding:2px 6px;font-size:10px;background:rgba(100,100,255,0.1);border:1px solid rgba(100,100,255,0.2);color:#8b8bfa;" title="导入任务组合预设 JSON 文件">📥</button>
                         <span style="color:rgba(255,255,255,0.2);margin:0 2px;">|</span>
-                        <select id="rbt-batch-sub-tpl" style="display:none;"><option value="">字幕模板...</option>${batchSubOpts}</select>
+                        <select id="rbt-batch-sub-tpl" style="display:none;"><option value="">动态字幕模版...</option>${batchSubOpts}</select>
                         <div id="rbt-sub-tpl-trigger" class="rbt-select rbt-select-trigger" style="width:130px;height:24px;font-size:11px;padding:0 8px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);color:#ccc;display:flex;align-items:center;">
-                            <span id="rbt-sub-tpl-label" style="flex:1;">字幕模板...</span><span style="font-size:8px;">▼</span>
+                            <span id="rbt-sub-tpl-label" style="flex:1;">动态字幕模版...</span><span style="font-size:8px;">▼</span>
                         </div>
                         <button class="rbt-btn" id="rbt-apply-batch-sub" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;">应用</button>
                         <button class="rbt-btn" id="rbt-apply-first-subtitle-style" style="padding:2px 8px;font-size:11px;background:rgba(255,193,7,0.12);border:1px solid rgba(255,193,7,0.28);color:#ffd166;" title="把当前字幕模板只应用到每行第一个动态字幕，作为标题样式">首句标题</button>
@@ -1041,7 +1089,6 @@ function _renderBatchTable() {
                         <span id="rbt-selected-count" style="margin-left:auto;font-size:11px;color:#aaa;"></span>
                     </div>
 
-                </div>
             </div>
 
             <!-- hidden file inputs -->
@@ -1056,18 +1103,18 @@ function _renderBatchTable() {
                 <table class="rbt-table" id="rbt-table">
                     <thead>
                         <tr>
-                            <th class="rbt-col-drag" style="width:24px;"></th>
-                            <th class="rbt-col-chk" style="width:30px;text-align:center;">
+                            <th class="rbt-col-drag rbt-grp-base" style="width:24px;"></th>
+                            <th class="rbt-col-chk rbt-grp-base" style="width:30px;text-align:center;">
                                 <input type="checkbox" id="rbt-header-select-all" style="margin:0;transform:scale(0.9);cursor:pointer;" title="全选所有行">
                             </th>
-                            <th class="rbt-col-num">#</th>
+                            <th class="rbt-col-num rbt-grp-base">#</th>
 
                             <!-- 元数据与配置列 -->
-                            <th class="rbt-col-act">操作</th>
-                            <th class="rbt-col-tpl">字幕模板</th>
-                            <th class="rbt-col-tpl">覆层预设</th>
-                            <th class="rbt-col-dur">时长(s)</th>
-                            <th class="rbt-col-exportname"><div class="rbt-th-wrap"><span>导出命名</span><button class="rbt-th-paste" data-paste-col="exportName" title="从剪贴板粘贴到该列">📋</button><button class="rbt-th-clear" data-clear-col="exportName" title="清空该列">清</button></div></th>
+                            <th class="rbt-col-act rbt-grp-base">操作</th>
+                            <th class="rbt-col-tpl rbt-grp-base">动态字幕模版</th>
+                            <th class="rbt-col-tpl rbt-grp-base">覆层预设</th>
+                            <th class="rbt-col-dur rbt-grp-base">时长(s)</th>
+                            <th class="rbt-col-exportname rbt-grp-base"><div class="rbt-th-wrap"><span>导出命名</span><button class="rbt-th-paste" data-paste-col="exportName" title="从剪贴板粘贴到该列">📋</button><button class="rbt-th-clear" data-clear-col="exportName" title="清空该列">清</button></div></th>
 
                             <!-- 🌟 视频封面层 (Gold) -->
                             <th class="rbt-col-cover-media rbt-grp-cover"><div class="rbt-th-wrap"><span>封面素材</span><button class="rbt-th-folder" data-folder-col="cover_media" title="选择文件夹批量分配">📁</button><button class="rbt-th-clear" data-clear-col="cover_media" title="清空该列">清</button></div></th>
@@ -1076,31 +1123,30 @@ function _renderBatchTable() {
                             <!-- 🟦 画面基础层 (Blue) -->
                             <th class="rbt-col-hook rbt-grp-video"><div class="rbt-th-wrap"><span>前置Hook</span><button class="rbt-th-clear" data-clear-col="hook" title="清空该列">清</button></div></th>
                             <th class="rbt-col-bg rbt-grp-video"><div class="rbt-th-wrap"><span>背景素材</span><button class="rbt-th-folder" data-folder-col="bg" title="选择文件夹批量分配">📁</button><button class="rbt-th-clear" data-clear-col="bg" title="清空该列">清</button></div></th>
-                            <th class="rbt-col-clippool rbt-grp-video"><div class="rbt-th-wrap"><span>片段池</span><button class="rbt-th-clear" data-clear-col="clipPool" title="清空该列">清</button></div></th>
+                            <th class="rbt-col-clippool rbt-grp-video"><div class="rbt-th-wrap"><span>背景片段池</span><button class="rbt-th-clear" data-clear-col="clipPool" title="清空该列">清</button></div></th>
                             <th class="rbt-col-bgscale rbt-grp-video"><div class="rbt-th-wrap"><span>背景缩放</span><button class="rbt-th-clear" data-clear-col="bgScale" title="清空该列">清</button></div></th>
                             <th class="rbt-col-bgdurscale rbt-grp-video"><div class="rbt-th-wrap"><span>背景时长</span><button class="rbt-th-clear" data-clear-col="bgDurScale" title="清空该列">清</button></div></th>
                             <th class="rbt-col-bgvol rbt-grp-video"><div class="rbt-th-wrap"><span>背景音量</span><button class="rbt-th-clear" data-clear-col="bgVideoVolume" title="重置为全局值">清</button></div></th>
-
-                            <!-- 🎬 视频覆层 (Cyan) -->
-                            <th class="rbt-col-contentvideo rbt-grp-cv"><div class="rbt-th-wrap"><span>内容视频</span><button class="rbt-th-folder" data-folder-col="contentvideo" title="选择文件夹批量分配">📁</button><button class="rbt-th-clear" data-clear-col="contentvideo" title="清空该列">清</button></div></th>
-                            <th class="rbt-col-cvtrim rbt-grp-cv"><div class="rbt-th-wrap"><span>✂️ 时段裁切</span><button class="rbt-th-clear" data-clear-col="cvTrim" title="清空该列">清</button></div></th>
-                            <th class="rbt-col-cvcrop rbt-grp-cv"><div class="rbt-th-wrap"><span>📐 画面裁切</span><button class="rbt-th-clear" data-clear-col="cvCrop" title="清空该列">清</button></div></th>
-                            <th class="rbt-col-cvblurbg rbt-grp-cv"><div class="rbt-th-wrap"><span>🌫️ 毛玻璃背景</span><button class="rbt-th-clear" data-clear-col="cvBlurBg" title="清空该列">清</button></div></th>
-                            <th class="rbt-col-cvscale rbt-grp-cv"><div class="rbt-th-wrap"><span>视频缩放</span><button class="rbt-th-clear" data-clear-col="cvScale" title="清空该列">清</button></div></th>
-                            <th class="rbt-col-cvpos rbt-grp-cv"><div class="rbt-th-wrap"><span>视频位置</span><button class="rbt-th-clear" data-clear-col="cvPos" title="清空该列">清</button></div></th>
-                            <th class="rbt-col-cvvol rbt-grp-cv"><div class="rbt-th-wrap"><span>🔊 覆层音量</span><button class="rbt-th-clear" data-clear-col="cvVol" title="清空该列">清</button></div></th>
-
                             <th class="rbt-col-bgm rbt-grp-video"><div class="rbt-th-wrap"><span>配乐</span><button class="rbt-th-folder" data-folder-col="bgm" title="选择文件夹批量分配">📁</button><button class="rbt-th-clear" data-clear-col="bgm" title="清空该列">清</button></div></th>
 
+                            <!-- 🎬 内容视频 (Cyan) -->
+                            <th class="rbt-col-contentvideo rbt-grp-cv"><div class="rbt-th-wrap"><span>内容视频</span><button class="rbt-th-folder" data-folder-col="contentvideo" title="选择文件夹批量分配">📁</button><button class="rbt-th-clear" data-clear-col="contentvideo" title="清空该列">清</button></div></th>
+                            <th class="rbt-col-cvtrim rbt-grp-cv"><div class="rbt-th-wrap"><span>内容视频-时间段</span><button class="rbt-th-clear" data-clear-col="cvTrim" title="清空该列">清</button></div></th>
+                            <th class="rbt-col-cvcrop rbt-grp-cv"><div class="rbt-th-wrap"><span>内容视频-裁切</span><button class="rbt-th-clear" data-clear-col="cvCrop" title="清空该列">清</button></div></th>
+                            <th class="rbt-col-cvblurbg rbt-grp-cv"><div class="rbt-th-wrap"><span>内容视频-毛玻璃背景</span><button class="rbt-th-clear" data-clear-col="cvBlurBg" title="清空该列">清</button></div></th>
+                            <th class="rbt-col-cvscale rbt-grp-cv"><div class="rbt-th-wrap"><span>内容视频-缩放</span><button class="rbt-th-clear" data-clear-col="cvScale" title="清空该列">清</button></div></th>
+                            <th class="rbt-col-cvpos rbt-grp-cv"><div class="rbt-th-wrap"><span>内容视频-位置</span><button class="rbt-th-clear" data-clear-col="cvPos" title="清空该列">清</button></div></th>
+                            <th class="rbt-col-cvvol rbt-grp-cv"><div class="rbt-th-wrap"><span>内容视频-音量</span><button class="rbt-th-clear" data-clear-col="cvVol" title="清空该列">清</button></div></th>
+
                             <!-- 🟪 人声与音频层 (Purple) -->
-                            <th class="rbt-col-ai_script rbt-grp-audio"><div class="rbt-th-wrap"><span>AI 原文案</span><button class="rbt-th-paste" data-paste-col="aiScript" title="从剪贴板粘贴到该列">📋</button><button class="rbt-th-clear" data-clear-col="ai_script" title="清空该列">清</button></div></th>
-                            <th class="rbt-col-tts_text rbt-grp-audio"><div class="rbt-th-wrap"><span>TTS文案</span><button class="rbt-th-paste" data-paste-col="ttsText" title="从剪贴板粘贴到该列">📋</button><button class="rbt-th-clear" data-clear-col="tts_text" title="清空该列">清</button></div></th>
-                            <th class="rbt-col-tts_voice rbt-grp-audio"><div class="rbt-th-wrap"><span>TTS音色</span><button class="rbt-th-paste" data-paste-col="ttsVoiceId" title="从剪贴板粘贴到该列">📋</button><button class="rbt-th-clear" data-clear-col="tts_voice" title="清空该列">清</button></div></th>
-                            <th class="rbt-col-srt rbt-grp-audio"><div class="rbt-th-wrap"><span>字幕SRT</span><button class="rbt-th-folder" data-folder-col="srt" title="选择文件夹批量分配">📁</button><button class="rbt-th-clear" data-clear-col="srt" title="清空该列">清</button></div></th>
-                            <th class="rbt-col-txtcontent rbt-grp-audio"><div class="rbt-th-wrap"><span>人声对齐字幕（断行后）</span><button class="rbt-th-paste" data-paste-col="txtContent" title="从剪贴板粘贴到该列">📋</button><button class="rbt-th-clear" data-clear-col="txt" title="清空该列">清</button></div></th>
-                            <th class="rbt-col-audio rbt-grp-audio"><div class="rbt-th-wrap"><span>人声音频层</span><button class="rbt-th-folder" data-folder-col="audio" title="选择文件夹批量分配">📁</button><button class="rbt-th-clear" data-clear-col="audio" title="清空该列">清</button></div></th>
-                            <th class="rbt-col-voicevol rbt-grp-audio"><div class="rbt-th-wrap"><span>人声音量</span><button class="rbt-th-clear" data-clear-col="voiceVolume" title="重置为全局值">清</button></div></th>
-                            <th class="rbt-col-audiodurscale rbt-grp-audio"><div class="rbt-th-wrap"><span>人声变速</span><button class="rbt-th-clear" data-clear-col="audioDurScale" title="清空该列">清</button></div></th>
+                            <th class="rbt-col-ai_script rbt-grp-audio"><div class="rbt-th-wrap"><span>人声-原文案</span><button class="rbt-th-paste" data-paste-col="aiScript" title="从剪贴板粘贴到该列">📋</button><button class="rbt-th-clear" data-clear-col="ai_script" title="清空该列">清</button></div></th>
+                            <th class="rbt-col-tts_text rbt-grp-audio"><div class="rbt-th-wrap"><span>人声-配音文案</span><button class="rbt-th-paste" data-paste-col="ttsText" title="从剪贴板粘贴到该列">📋</button><button class="rbt-th-clear" data-clear-col="tts_text" title="清空该列">清</button></div></th>
+                            <th class="rbt-col-txtcontent rbt-grp-audio"><div class="rbt-th-wrap"><span>人声-断行文案</span><button class="rbt-th-paste" data-paste-col="txtContent" title="从剪贴板粘贴到该列">📋</button><button class="rbt-th-clear" data-clear-col="txt" title="清空该列">清</button></div></th>
+                            <th class="rbt-col-tts_voice rbt-grp-audio"><div class="rbt-th-wrap"><span>人声-配音音色</span><button class="rbt-th-paste" data-paste-col="ttsVoiceId" title="从剪贴板粘贴到该列">📋</button><button class="rbt-th-clear" data-clear-col="tts_voice" title="清空该列">清</button></div></th>
+                            <th class="rbt-col-srt rbt-grp-audio"><div class="rbt-th-wrap"><span>人声-SRT字幕</span><button class="rbt-th-folder" data-folder-col="srt" title="选择文件夹批量分配">📁</button><button class="rbt-th-clear" data-clear-col="srt" title="清空该列">清</button></div></th>
+                            <th class="rbt-col-audio rbt-grp-audio"><div class="rbt-th-wrap"><span>人声-音频文件</span><button class="rbt-th-folder" data-folder-col="audio" title="选择文件夹批量分配">📁</button><button class="rbt-th-clear" data-clear-col="audio" title="清空该列">清</button></div></th>
+                            <th class="rbt-col-voicevol rbt-grp-audio"><div class="rbt-th-wrap"><span>人声-音频音量</span><button class="rbt-th-clear" data-clear-col="voiceVolume" title="重置为全局值">清</button></div></th>
+                            <th class="rbt-col-audiodurscale rbt-grp-audio"><div class="rbt-th-wrap"><span>人声-音频变速</span><button class="rbt-th-clear" data-clear-col="audioDurScale" title="清空该列">清</button></div></th>
 
                             <!-- 🟧 覆层 (Amber) -->
                             <th class="rbt-col-pip rbt-grp-ovl"><div class="rbt-th-wrap"><span>图像覆层</span><button class="rbt-th-folder" data-folder-col="pip" title="选择文件夹批量分配">📁</button><button class="rbt-th-clear" data-clear-col="pip" title="清空该列">清</button></div></th>
@@ -1109,7 +1155,7 @@ function _renderBatchTable() {
                             <th class="rbt-col-footer rbt-grp-ovl"><div class="rbt-th-wrap"><span>覆层结尾</span><button class="rbt-th-paste" data-paste-col="overlay_footer" title="从剪贴板粘贴到该列">📋</button><button class="rbt-th-clear" data-clear-col="overlay_footer" title="清空该列">清</button></div></th>
                             <th class="rbt-col-scroll-title rbt-grp-ovl"><div class="rbt-th-wrap"><span>滚动标题</span><button class="rbt-th-paste" data-paste-col="scroll_title" title="从剪贴板粘贴到该列">📋</button><button class="rbt-th-clear" data-clear-col="scroll_title" title="清空该列">清</button></div></th>
                             <th class="rbt-col-scroll-body rbt-grp-ovl"><div class="rbt-th-wrap"><span>滚动内容</span><button class="rbt-th-paste" data-paste-col="scroll_body" title="从剪贴板粘贴到该列">📋</button><button class="rbt-th-clear" data-clear-col="scroll_body" title="清空该列">清</button></div></th>
-                            <th class="rbt-col-subtime rbt-grp-ovl"><div class="rbt-th-wrap"><span>⏱️ 字幕时间</span><button class="rbt-th-clear" data-clear-col="subtitleTime" title="重置为全时段">清</button></div></th>
+                            <th class="rbt-col-subtime rbt-grp-ovl"><div class="rbt-th-wrap"><span>字幕时间</span><button class="rbt-th-clear" data-clear-col="subtitleTime" title="重置为全时段">清</button></div></th>
                         </tr>
                     </thead>
                     <tbody id="rbt-tbody">
@@ -1592,64 +1638,64 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
 
     return `
         <tr data-idx="${idx}" class="rbt-row ${idx === (window._reelsState?.selectedIdx || -1) ? 'rbt-row-selected' : ''} ${task._justRefreshed ? 'rbt-row-refreshed' : ''}">
-            <td class="rbt-col-drag"><span class="rbt-drag-handle" draggable="true" title="拖拽调整顺序">☰</span></td>
-            <td class="rbt-col-chk" style="text-align:center;"><input type="checkbox" class="rbt-row-check" data-idx="${idx}" ${_batchTableState.selectedRows.has(idx) ? 'checked' : ''}></td>
-            <td class="rbt-col-num">${idx + 1}</td>
-            <td class="rbt-col-act">
+            <td class="rbt-col-drag rbt-grp-base"><span class="rbt-drag-handle" draggable="true" title="拖拽调整顺序">☰</span></td>
+            <td class="rbt-col-chk rbt-grp-base" style="text-align:center;"><input type="checkbox" class="rbt-row-check" data-idx="${idx}" ${_batchTableState.selectedRows.has(idx) ? 'checked' : ''}></td>
+            <td class="rbt-col-num rbt-grp-base">${idx + 1}</td>
+            <td class="rbt-col-act rbt-grp-base">
                 <button class="rbt-row-btn rbt-select-btn" data-idx="${idx}" title="预览此任务">👁</button>
                 <button class="rbt-row-btn rbt-clone-btn" data-idx="${idx}" title="复制此行">📋</button>
                 <button class="rbt-row-btn rbt-delete-btn" data-idx="${idx}" title="删除此行">🗑</button>
             </td>
-            <td class="rbt-col-tpl">
+            <td class="rbt-col-tpl rbt-grp-base">
                 <div class="rbt-sub-tpl-trigger rbt-select" data-idx="${idx}" style="cursor:pointer;font-size:10px;padding:0 4px;height:22px;display:flex;align-items:center;justify-content:space-between;user-select:none;" title="点击选择字幕模板（含样式预览）">
                     <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${task._subtitlePreset ? _escHtml(task._subtitlePreset) : '默认'}</span>
                     <span style="font-size:8px;margin-left:2px;flex-shrink:0;">▼</span>
                 </div>
             </td>
-            <td class="rbt-col-tpl">
+            <td class="rbt-col-tpl rbt-grp-base">
                 <select class="rbt-select rbt-card-tpl-select" data-idx="${idx}">
                     <option value="">无预设</option>
                     ${cardTplOptions}
                 </select>
             </td>
-            <td class="rbt-col-dur">
+            <td class="rbt-col-dur rbt-grp-base">
                 <input type="number" class="rbt-textarea rbt-dur-input" data-idx="${idx}" min="0" max="600" step="0.5"
                     value="${task.customDuration ? task.customDuration : ''}" placeholder="自动" style="width:55px;text-align:center;" title="留空=自动跟随音频/视频时长，输入数字=自定义秒数">
             </td>
-            <td class="rbt-col-exportname">
+            <td class="rbt-col-exportname rbt-grp-base">
                 <input type="text" class="rbt-textarea rbt-exportname-input" data-idx="${idx}" 
                     value="${_escHtml(task.exportName || '')}" placeholder="留空按命名规则" style="width:100px;font-size:11px;" title="手动输入时优先使用；留空则按底部导出设置里的命名规则生成">
             </td>
-            <td class="rbt-col-cover-media rbt-droppable" data-field="cover_media">
+            <td class="rbt-col-cover-media rbt-grp-cover rbt-droppable" data-field="cover_media">
                 <div style="display:flex;align-items:center;gap:2px;">
                     <div style="flex:1;min-width:0;overflow:hidden;">${coverContent}</div>
                     ${coverEnabled ? `<button class="rbt-field-clear" data-idx="${idx}" data-field="cover_media" title="关闭封面功能">✕</button>` : ''}
                 </div>
             </td>
-            <td class="rbt-col-cover-text rbt-droppable" data-field="cover_text">
+            <td class="rbt-col-cover-text rbt-grp-cover rbt-droppable" data-field="cover_text">
                 <div style="display:flex;align-items:center;gap:2px;">
                     <textarea class="rbt-textarea rbt-cover-text-input" data-idx="${idx}" rows="1" placeholder="暂无" title="封面主标题文案">${_escHtml(coverTextStr)}</textarea>
                 </div>
             </td>
-            <td class="rbt-col-hook rbt-droppable" data-field="hook">
+            <td class="rbt-col-hook rbt-grp-video rbt-droppable" data-field="hook">
                 <div style="display:flex;align-items:center;gap:2px;">
                     <div style="flex:1;min-width:0;overflow:hidden;">${hookContent}</div>
                     ${task.hookFile ? `<button class="rbt-field-clear" data-idx="${idx}" data-field="hook" title="清除前置Hook">✕</button>` : ''}
                 </div>
             </td>
-            <td class="rbt-col-bg rbt-droppable" data-field="bg">
+            <td class="rbt-col-bg rbt-grp-video rbt-droppable" data-field="bg">
                 <div style="display:flex;align-items:center;gap:2px;">
                     <button class="rbt-bg-pool-manage" data-idx="${idx}" style="flex:0 0 auto;width:20px;height:20px;border-radius:4px;border:1px solid ${bgMode === 'multi' ? '#7c5cff' : '#333'};background:${bgMode === 'multi' ? '#2a1f5e' : 'transparent'};color:${bgMode === 'multi' ? '#b8a0ff' : '#666'};font-size:11px;cursor:pointer;padding:0;line-height:18px;" title="${bgMode === 'multi' ? '多素材模式 - 点击管理' : '单素材模式 - 点击切换到多素材'}">${bgMode === 'multi' ? '🎞' : '🔁'}</button>
                     <div style="flex:1;min-width:0;overflow:hidden;">${bgContent}</div>
                     ${(bgPath || (bgMode === 'multi' && bgClipPool.length > 0)) ? `<button class="rbt-field-clear" data-idx="${idx}" data-field="bg" title="清除背景">✕</button>` : ''}
                 </div>
             </td>
-            <td class="rbt-col-clippool">
+            <td class="rbt-col-clippool rbt-grp-video">
                 <div style="display:flex;flex-direction:column;gap:3px;font-size:10px;">
                     <div style="display:flex;align-items:center;gap:3px;">
                         <button class="rbt-clip-pool-pick" data-idx="${idx}" style="padding:1px 5px;font-size:10px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);color:#ccc;border-radius:3px;cursor:pointer;" title="选择片段文件夹">📁</button>
                         <span class="rbt-file-name" style="flex:1;min-width:0;" title="${_escHtml(task.clipPoolDir || '')}">${task.clipPoolDir ? _escHtml(_shortName(task.clipPoolDir)) : '<span class="rbt-placeholder">选择文件夹</span>'}</span>
-                        ${task.clipPoolDir ? `<button class="rbt-field-clear" data-idx="${idx}" data-field="clipPool" title="清除片段池">✕</button>` : ''}
+                        ${task.clipPoolDir ? `<button class="rbt-field-clear" data-idx="${idx}" data-field="clipPool" title="清除背景片段池">✕</button>` : ''}
                     </div>
                     <div style="display:flex;align-items:center;gap:3px;">
                         <select class="rbt-clip-order" data-idx="${idx}" style="flex:1;min-width:0;height:18px;font-size:10px;background:#181818;color:#aaa;border:1px solid #333;border-radius:3px;">
@@ -1664,7 +1710,7 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
                     </div>
                 </div>
             </td>
-            <td class="rbt-col-bgscale">
+            <td class="rbt-col-bgscale rbt-grp-video">
                 <div class="rbt-clutter-free-scale">
                     <div class="rbt-scale-display">${task.bgScale || 100}%</div>
                     <div class="rbt-scale-controls">
@@ -1678,7 +1724,7 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
                     </div>
                 </div>
             </td>
-            <td class="rbt-col-bgdurscale">
+            <td class="rbt-col-bgdurscale rbt-grp-video">
                 <div class="rbt-clutter-free-scale">
                     <div class="rbt-scale-display">${task.bgDurScale || 100}%</div>
                     <div class="rbt-scale-controls">
@@ -1692,7 +1738,7 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
                     </div>
                 </div>
             </td>
-            <td class="rbt-col-bgvol">
+            <td class="rbt-col-bgvol rbt-grp-video">
                 <div class="rbt-clutter-free-scale">
                     <div class="rbt-scale-display">🔉 ${task.bgVideoVolume != null ? task.bgVideoVolume : '—'}%</div>
                     <div class="rbt-scale-controls" style="flex-direction:row; inset:0;">
@@ -1703,7 +1749,25 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
                     </div>
                 </div>
             </td>
-            <td class="rbt-col-contentvideo rbt-droppable" data-field="contentvideo">
+            <td class="rbt-col-bgm rbt-grp-video rbt-droppable" data-field="bgm">
+                <div style="display:flex;align-items:center;gap:4px;">
+                    <input type="checkbox" class="rbt-bgm-check" data-idx="${idx}" title="勾选后可批量设置配乐">
+                    <button class="rbt-bgm-pool-manage" data-idx="${idx}" style="flex:0 0 auto;width:20px;height:20px;border-radius:4px;border:1px solid ${bgmMode === 'multi' ? '#9b59b6' : '#333'};background:${bgmMode === 'multi' ? '#3e2250' : 'transparent'};color:${bgmMode === 'multi' ? '#e0b3ff' : '#666'};font-size:11px;cursor:pointer;padding:0;line-height:18px;" title="${bgmMode === 'multi' ? '多素材配乐池 - 点击管理' : '单素材配乐 - 点击切换到多素材'}">${bgmMode === 'multi' ? '🎵' : '🔁'}</button>
+                    <span class="rbt-file-name rbt-bgm-pick" data-idx="${idx}" title="拖拽/双击 | ${_escHtml(task.bgmPath || '')}"
+                          style="cursor:pointer;flex:1;">${bgmContent}</span>
+                    ${(task.bgmPath || (bgmMode === 'multi' && bgmClipPool.length > 0)) ? `<button class="rbt-field-clear" data-idx="${idx}" data-field="bgm" title="清除配乐">✕</button>` : ''}
+                </div>
+                <div class="rbt-clutter-free-scale" style="height:18px; margin-top:2px;">
+                    <div class="rbt-scale-display" style="font-size:10px;">🎵 Vol: ${task.bgmVolume != null ? task.bgmVolume : 30}%</div>
+                    <div class="rbt-scale-controls" style="flex-direction:row; inset:0;">
+                        <span style="font-size:10px;color:#888;white-space:nowrap;">🔉</span>
+                        <input type="range" class="rbt-bgm-vol" data-idx="${idx}" min="0" max="1000" value="${task.bgmVolume != null ? task.bgmVolume : 30}"
+                               style="flex:1; min-width:0; height:12px; accent-color:#9b59b6;" title="配乐音量">
+                        <span class="rbt-bgm-vol-label" style="font-size:10px;color:#888;min-width:28px;text-align:right;">${task.bgmVolume != null ? task.bgmVolume : 30}%</span>
+                    </div>
+                </div>
+            </td>
+            <td class="rbt-col-contentvideo rbt-grp-cv rbt-droppable" data-field="contentvideo">
                 ${(() => {
             const cvPath = task.contentVideoPath || '';
             const cvName = _shortName(cvPath);
@@ -1724,7 +1788,7 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
                     </div>`;
         })()}
             </td>
-            <td class="rbt-col-cvtrim">
+            <td class="rbt-col-cvtrim rbt-grp-cv">
                 <div class="rbt-cv-trim-cell" data-idx="${idx}" style="cursor:pointer;font-size:10px;padding:2px 4px;border-radius:4px;text-align:center;
                     ${task.contentVideoTrimStart != null || task.contentVideoTrimEnd != null
             ? 'background:rgba(76,158,255,0.15);color:#4c9eff;border:1px solid rgba(76,158,255,0.3);'
@@ -1735,7 +1799,7 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
             : '全段'}
                 </div>
             </td>
-            <td class="rbt-col-cvcrop">
+            <td class="rbt-col-cvcrop rbt-grp-cv">
                 <div class="rbt-cv-crop-cell" data-idx="${idx}" style="cursor:pointer;font-size:10px;padding:2px 4px;border-radius:4px;text-align:center;
                     ${task.contentVideoCrop
             ? 'background:rgba(76,158,255,0.15);color:#4c9eff;border:1px solid rgba(76,158,255,0.3);'
@@ -1744,13 +1808,13 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
                     ${task.contentVideoCrop ? `📐 ${task.contentVideoCrop}%` : '全画面'}
                 </div>
             </td>
-            <td class="rbt-col-cvblurbg" style="text-align:center; font-size:10px;">
+            <td class="rbt-col-cvblurbg rbt-grp-cv" style="text-align:center; font-size:10px;">
                 <div style="display:flex; flex-direction:column; align-items:center; gap:2px;">
-                    <input type="checkbox" class="rbt-cvblurbg-check" data-idx="${idx}" ${task.contentVideoBlurBg ? 'checked' : ''} title="使用视频覆层作为毛玻璃背景">
+                    <input type="checkbox" class="rbt-cvblurbg-check" data-idx="${idx}" ${task.contentVideoBlurBg ? 'checked' : ''} title="使用内容视频作为毛玻璃背景">
                     ${task.contentVideoBlurBg ? `<span style="color:#8af;font-size:9px;scale:0.9;" title="模糊半径, 亮度比例">${task.contentVideoBlur != null ? task.contentVideoBlur : 40}px, ${task.contentVideoBrightness != null ? task.contentVideoBrightness : 60}%</span>` : ''}
                 </div>
             </td>
-            <td class="rbt-col-cvscale">
+            <td class="rbt-col-cvscale rbt-grp-cv">
                 <div class="rbt-clutter-free-scale">
                     <div class="rbt-scale-display">${task.contentVideoScale || 100}%</div>
                     <div class="rbt-scale-controls">
@@ -1760,11 +1824,11 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
                             <span style="font-size:10px;color:#666;">%</span>
                         </div>
                         <input type="range" class="rbt-cvscale-slider" data-idx="${idx}" min="10" max="300" value="${task.contentVideoScale || 100}"
-                               style="width:60px;height:12px;accent-color:#00bcd4;" title="视频覆层缩放比例 (100%=自动适配宽度)">
+                               style="width:60px;height:12px;accent-color:#00bcd4;" title="内容视频缩放比例 (100%=自动适配宽度)">
                     </div>
                 </div>
             </td>
-            <td class="rbt-col-cvpos">
+            <td class="rbt-col-cvpos rbt-grp-cv">
                 <div style="display:flex;flex-direction:column;gap:2px;font-size:10px;">
                     <div style="display:flex;align-items:center;gap:2px;">
                         <span style="color:#666;min-width:12px;">X:</span>
@@ -1780,7 +1844,7 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
                     </div>
                 </div>
             </td>
-            <td class="rbt-col-cvvol">
+            <td class="rbt-col-cvvol rbt-grp-cv">
                 <div class="rbt-clutter-free-scale">
                     <div class="rbt-scale-display">🔊 ${task.contentVideoVolume != null ? task.contentVideoVolume : 100}%</div>
                     <div class="rbt-scale-controls">
@@ -1794,31 +1858,13 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
                     </div>
                 </div>
             </td>
-            <td class="rbt-col-bgm rbt-droppable" data-field="bgm">
-                <div style="display:flex;align-items:center;gap:4px;">
-                    <input type="checkbox" class="rbt-bgm-check" data-idx="${idx}" title="勾选后可批量设置配乐">
-                    <button class="rbt-bgm-pool-manage" data-idx="${idx}" style="flex:0 0 auto;width:20px;height:20px;border-radius:4px;border:1px solid ${bgmMode === 'multi' ? '#9b59b6' : '#333'};background:${bgmMode === 'multi' ? '#3e2250' : 'transparent'};color:${bgmMode === 'multi' ? '#e0b3ff' : '#666'};font-size:11px;cursor:pointer;padding:0;line-height:18px;" title="${bgmMode === 'multi' ? '多素材配乐池 - 点击管理' : '单素材配乐 - 点击切换到多素材'}">${bgmMode === 'multi' ? '🎵' : '🔁'}</button>
-                    <span class="rbt-file-name rbt-bgm-pick" data-idx="${idx}" title="拖拽/双击 | ${_escHtml(task.bgmPath || '')}"
-                          style="cursor:pointer;flex:1;">${bgmContent}</span>
-                    ${(task.bgmPath || (bgmMode === 'multi' && bgmClipPool.length > 0)) ? `<button class="rbt-field-clear" data-idx="${idx}" data-field="bgm" title="清除配乐">✕</button>` : ''}
-                </div>
-                <div class="rbt-clutter-free-scale" style="height:18px; margin-top:2px;">
-                    <div class="rbt-scale-display" style="font-size:10px;">🎵 Vol: ${task.bgmVolume != null ? task.bgmVolume : 30}%</div>
-                    <div class="rbt-scale-controls" style="flex-direction:row; inset:0;">
-                        <span style="font-size:10px;color:#888;white-space:nowrap;">🔉</span>
-                        <input type="range" class="rbt-bgm-vol" data-idx="${idx}" min="0" max="1000" value="${task.bgmVolume != null ? task.bgmVolume : 30}"
-                               style="flex:1; min-width:0; height:12px; accent-color:#9b59b6;" title="配乐音量">
-                        <span class="rbt-bgm-vol-label" style="font-size:10px;color:#888;min-width:28px;text-align:right;">${task.bgmVolume != null ? task.bgmVolume : 30}%</span>
-                    </div>
-                </div>
-            </td>
-            <td class="rbt-col-ai_script">
+            <td class="rbt-col-ai_script rbt-grp-audio">
                 <div style="position:relative;">
                     <textarea class="rbt-textarea rbt-ai-script-input" data-idx="${idx}" rows="2" placeholder="粘贴需要被处理的原文案..." title="双击放大编辑">${_escHtml(task.aiScript || '')}</textarea>
                     ${task.aiScript ? `<button class="rbt-field-clear" data-idx="${idx}" data-field="ai_script" title="清除原文案" style="position:absolute;top:2px;right:2px;">✕</button>` : ''}
                 </div>
             </td>
-            <td class="rbt-col-tts_text">
+            <td class="rbt-col-tts_text rbt-grp-audio">
                 <div style="position:relative;">
                     <textarea class="rbt-textarea rbt-tts-text-input" data-idx="${idx}" rows="2" placeholder="粘贴配音文案..." 
                               style="${task.aiTtsDiffWarning ? 'border:1px solid #ef4444; background:rgba(239, 68, 68, 0.1);' : ''}"
@@ -1829,25 +1875,12 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
                     ${task.aiTtsDiffWarning ? `<div class="diff-warning-badge" style="margin-top:6px;font-size:12px;color:#ef4444;font-weight:bold;text-align:right;">⚠️词汇变动警告 <span class="diff-modal-btn" data-field="tts" data-idx="${idx}" style="color:#3b82f6;cursor:pointer;margin-left:8px;text-decoration:underline;">[🔍比对]</span></div>` : ''}
                 </div>
             </td>
-            <td class="rbt-col-tts_voice">
-                <div style="display:flex;flex-direction:column;gap:4px;">
-                    <input type="text" class="rbt-input rbt-tts-voice-input" data-idx="${idx}" value="${_escHtml(task.ttsVoiceId || '')}" placeholder="Voice ID" style="width:80px;font-size:10px;padding:2px;border:1px solid #333;background:#111;color:#fff;">
-                    <button class="rbt-btn rbt-tts-gen-btn" data-idx="${idx}" style="font-size:10px;padding:2px;background:#5e5ce6;color:#fff;border:none;">▶ 生成配音</button>
-                    ${task.status === 'generating' ? '<span style="font-size:10px;color:#ffd43b;">Generating...</span>' : task.status === 'success' ? '<span style="font-size:10px;color:#4ade80;font-weight:bold;">✅ 最新生成完成</span>' : task.status === 'error' ? '<span style="font-size:10px;color:#ff3333;">❌ 出错</span>' : ''}
-                </div>
-            </td>
-            <td class="rbt-col-srt rbt-droppable" data-field="srt">
-                <div style="display:flex;align-items:center;gap:2px;">
-                    <span class="rbt-file-name" style="flex:1" title="拖拽/双击 | ${_escHtml(task.srtPath || '')}">${srtName || '<span class="rbt-placeholder">拖拽/双击</span>'}</span>
-                    ${srtName ? `<button class="rbt-srt-edit-btn" data-idx="${idx}" title="编辑这套外部SRT文件内容" style="padding:0 4px;font-size:10px;background:#384050;border:1px solid #556;color:#ccc;cursor:pointer;border-radius:3px;">✎ 直接修改</button><button class="rbt-field-clear" data-idx="${idx}" data-field="srt" title="清除字幕">✕</button>` : ''}
-                </div>
-            </td>
-            <td class="rbt-col-txtcontent">
+            <td class="rbt-col-txtcontent rbt-grp-audio">
                 <div style="position:relative;">
                     <textarea class="rbt-textarea rbt-txtcontent-input" data-idx="${idx}" rows="2" 
                               ${task.srtPath ? 'disabled placeholder="[已使用外部SRT]"' : 'placeholder="粘贴或输入文案..."'} 
                               style="${task.srtPath ? 'opacity:0.3;cursor:not-allowed;' : ''} ${task.aiTextDiffWarning ? 'border:1px solid #ef4444; background:rgba(239, 68, 68, 0.1);' : ''}"
-                              title="${task.aiTextDiffWarning ? '⚠️ 警告：AI断行产生的文本与【🧠 AI 原文案】存在字符差异。可能发生了改词或删词，请仔细检查比对！\n\n如有错误请直接修改。' : (task.srtPath ? '外部SRT优先级更高，文案处于禁用状态' : '双击放大编辑')}">${_escHtml(task.txtContent || '')}</textarea>
+                              title="${task.aiTextDiffWarning ? '⚠️ 警告：AI断行产生的文本与【人声-原文案】存在字符差异。可能发生了改词或删词，请仔细检查比对！\n\n如有错误请直接修改。' : (task.srtPath ? '外部SRT优先级更高，文案处于禁用状态' : '双击放大编辑')}">${_escHtml(task.txtContent || '')}</textarea>
                     ${task.txtContent && !task.srtPath ? `<button class="rbt-field-clear" data-idx="${idx}" data-field="txt" title="清除文案" style="position:absolute;top:2px;right:2px;">✕</button>` : ''}
                 </div>
                 <div style="display:flex;align-items:center;gap:4px;margin-top:2px;min-height:14px;">
@@ -1858,25 +1891,38 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
                     ${task.aiTextDiffWarning ? `<div class="diff-warning-badge" style="margin-top:6px;font-size:12px;color:#ef4444;font-weight:bold;text-align:right;">⚠️词汇变动警告 <span class="diff-modal-btn" data-field="txt" data-idx="${idx}" style="color:#3b82f6;cursor:pointer;margin-left:8px;text-decoration:underline;">[🔍比对]</span></div>` : ''}
                 </div>
             </td>
-            <td class="rbt-col-audio rbt-droppable" data-field="audio">
-                <div style="display:flex;align-items:center;gap:2px;">
-                    ${audioName ? `<button class="rbt-table-play-btn" data-src="${_escHtml(task.audioPath)}" style="background:none;border:none;cursor:pointer;font-size:14px;padding:0 4px;" title="点击试听">▶️</button>` : ''}
-                    <span class="rbt-file-name" style="flex:1" title="拖拽/双击 | ${_escHtml(task.audioPath || '')}">${audioName || '<span class="rbt-placeholder">拖拽/双击</span>'}</span>
-                    ${audioName ? `<button class="rbt-field-clear" data-idx="${idx}" data-field="audio" title="清除人声">✕</button>` : ''}
+            <td class="rbt-col-tts_voice rbt-grp-audio">
+                <div style="display:flex;flex-direction:column;gap:4px;">
+                    <input type="text" class="rbt-input rbt-tts-voice-input" data-idx="${idx}" value="${_escHtml(task.ttsVoiceId || '')}" placeholder="Voice ID" style="width:80px;font-size:10px;padding:2px;border:1px solid #333;background:#111;color:#fff;">
+                    <button class="rbt-btn rbt-tts-gen-btn" data-idx="${idx}" style="font-size:10px;padding:2px;background:#5e5ce6;color:#fff;border:none;">▶ 生成配音</button>
+                    ${task.status === 'generating' ? '<span style="font-size:10px;color:#ffd43b;">Generating...</span>' : task.status === 'success' ? '<span style="font-size:10px;color:#4ade80;font-weight:bold;">✅ 最新生成完成</span>' : task.status === 'error' ? '<span style="font-size:10px;color:#ff3333;">❌ 出错</span>' : ''}
                 </div>
             </td>
-            <td class="rbt-col-voicevol">
+            <td class="rbt-col-srt rbt-grp-audio rbt-droppable" data-field="srt">
+                <div style="display:flex;align-items:center;gap:2px;">
+                    <span class="rbt-file-name" style="flex:1" title="拖拽/双击 | ${_escHtml(task.srtPath || '')}">${srtName || '<span class="rbt-placeholder">拖拽/双击</span>'}</span>
+                    ${srtName ? `<button class="rbt-srt-edit-btn" data-idx="${idx}" title="编辑这套外部SRT文件内容" style="padding:0 4px;font-size:10px;background:#384050;border:1px solid #556;color:#ccc;cursor:pointer;border-radius:3px;">✎ 直接修改</button><button class="rbt-field-clear" data-idx="${idx}" data-field="srt" title="清除字幕">✕</button>` : ''}
+                </div>
+            </td>
+            <td class="rbt-col-audio rbt-grp-audio rbt-droppable" data-field="audio">
+                <div style="display:flex;align-items:center;gap:2px;">
+                    ${audioName ? `<button class="rbt-table-play-btn" data-src="${_escHtml(task.audioPath)}" style="background:none;border:none;cursor:pointer;font-size:14px;padding:0 4px;" title="点击试听">▶️</button>` : ''}
+                     <span class="rbt-file-name" style="flex:1" title="拖拽/双击 | ${_escHtml(task.audioPath || '')}">${audioName || '<span class="rbt-placeholder">拖拽/双击</span>'}</span>
+                     ${audioName ? `<button class="rbt-field-clear" data-idx="${idx}" data-field="audio" title="清除人声">✕</button>` : ''}
+                </div>
+            </td>
+            <td class="rbt-col-voicevol rbt-grp-audio">
                 <div class="rbt-clutter-free-scale">
                     <div class="rbt-scale-display">🎙 ${task.voiceVolume != null ? task.voiceVolume : '—'}%</div>
                     <div class="rbt-scale-controls" style="flex-direction:row; inset:0;">
                         <span style="font-size:10px;color:#888;white-space:nowrap;">🎙</span>
                         <input type="range" class="rbt-voicevol-slider" data-idx="${idx}" data-is-null="${task.voiceVolume == null ? 'true' : 'false'}" min="0" max="1000" value="${task.voiceVolume != null ? task.voiceVolume : 100}"
-                               style="flex:1; min-width:0; height:12px; accent-color:#b388ff;" title="人声音频层音量（留空=跟随全局设置）">
+                               style="flex:1; min-width:0; height:12px; accent-color:#b388ff;" title="人声-音频音量（留空=跟随全局设置）">
                         <span class="rbt-voicevol-label" style="font-size:10px;color:#888;min-width:28px;text-align:right;">${task.voiceVolume != null ? task.voiceVolume + '%' : '全局'}</span>
                     </div>
                 </div>
             </td>
-            <td class="rbt-col-audiodurscale">
+            <td class="rbt-col-audiodurscale rbt-grp-audio">
                 <div class="rbt-clutter-free-scale">
                     <div class="rbt-scale-display">${task.audioDurScale || 100}%</div>
                     <div class="rbt-scale-controls">
@@ -1890,28 +1936,28 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
                     </div>
                 </div>
             </td>
-            <td class="rbt-col-pip rbt-droppable" data-field="pip">
+            <td class="rbt-col-pip rbt-grp-ovl rbt-droppable" data-field="pip">
                 <div style="display:flex;align-items:center;gap:2px;">
                     <div style="flex:1;min-width:0;overflow:hidden;display:flex;">${pipContent}</div>
                     ${task.pipPath ? `<button class="rbt-field-clear" data-idx="${idx}" data-field="pip" title="清除图像覆层">✕</button>` : ''}
                 </div>
             </td>
-            <td class="rbt-col-title">
+            <td class="rbt-col-title rbt-grp-ovl">
                 <textarea class="rbt-textarea rbt-title-input" data-idx="${idx}" rows="2" title="双击放大编辑" style="${title === '标题文字' ? 'color:#ff5555;' : ''}">${_escHtml(title)}</textarea>
             </td>
-            <td class="rbt-col-body">
+            <td class="rbt-col-body rbt-grp-ovl">
                 <textarea class="rbt-textarea rbt-body-input" data-idx="${idx}" rows="2" title="双击放大编辑" style="${body === '内容文字' ? 'color:#ff5555;' : ''}">${_escHtml(body)}</textarea>
             </td>
-            <td class="rbt-col-footer">
+            <td class="rbt-col-footer rbt-grp-ovl">
                 <textarea class="rbt-textarea rbt-footer-input" data-idx="${idx}" rows="2" title="双击放大编辑">${_escHtml(footer)}</textarea>
             </td>
-            <td class="rbt-col-scroll-title">
+            <td class="rbt-col-scroll-title rbt-grp-ovl">
                 <textarea class="rbt-textarea rbt-scroll-title-input" data-idx="${idx}" rows="2" title="双击放大编辑">${_escHtml(scrollTitle)}</textarea>
             </td>
-            <td class="rbt-col-scroll-body">
+            <td class="rbt-col-scroll-body rbt-grp-ovl">
                 <textarea class="rbt-textarea rbt-scroll-body-input" data-idx="${idx}" rows="2" title="双击放大编辑">${_escHtml(scrollBody)}</textarea>
             </td>
-            <td class="rbt-col-subtime">
+            <td class="rbt-col-subtime rbt-grp-ovl">
                 ${_renderSubtitleTimeCell(task, idx)}
             </td>
         </tr>
@@ -1957,12 +2003,36 @@ function _bindBatchTableEvents() {
 
     // Close
     container.querySelector('#rbt-close-btn')?.addEventListener('click', () => reelsToggleBatchTable({ saveOnClose: false }));
-    container.querySelector('#reels-naming-mode')?.addEventListener('change', (e) => {
+    container.querySelector('#reels-naming-mode')?.addEventListener('change', async (e) => {
         const val = e.target.value || 'text';
         localStorage.setItem('reels_naming_mode', val);
         const outerSelect = document.getElementById('reels-export-naming-mode-outer');
         if (outerSelect) {
             outerSelect.value = val;
+        }
+        const configBtnOuter = document.getElementById('reels-export-naming-config-btn');
+        if (configBtnOuter) {
+            configBtnOuter.style.display = (val === 'index' || val === 'date-auto') ? 'inline-block' : 'none';
+        }
+        const configBtnInner = container.querySelector('#reels-naming-config-btn');
+        if (configBtnInner) {
+            configBtnInner.style.display = (val === 'index' || val === 'date-auto') ? 'inline-block' : 'none';
+        }
+        if (val === 'index' || val === 'date-auto') {
+            const ok = await showNamingSettingsDialog(val);
+            if (!ok) {
+                localStorage.setItem('reels_naming_mode', 'text');
+                e.target.value = 'text';
+                if (outerSelect) outerSelect.value = 'text';
+                if (configBtnOuter) configBtnOuter.style.display = 'none';
+                if (configBtnInner) configBtnInner.style.display = 'none';
+            }
+        }
+    });
+    container.querySelector('#reels-naming-config-btn')?.addEventListener('click', () => {
+        const mode = localStorage.getItem('reels_naming_mode') || 'text';
+        if (mode === 'index' || mode === 'date-auto') {
+            showNamingSettingsDialog(mode);
         }
     });
     container.querySelector('#rbt-apply-btn')?.addEventListener('click', () => {
@@ -2530,7 +2600,7 @@ function _bindBatchTableEvents() {
             _openStyledPresetPicker(subTplTrigger, currentVal, (val) => {
                 if (subTplSelect) subTplSelect.value = val;
                 if (subTplLabel) {
-                    subTplLabel.textContent = val || '字幕模板...';
+                    subTplLabel.textContent = val || '动态字幕模版...';
                     subTplLabel.style.color = val ? '#fff' : '';
                 }
             });
@@ -2609,26 +2679,149 @@ function _bindBatchTableEvents() {
         });
     });
 
-    // ══ Batch scale apply ══
-    container.querySelector('#rbt-apply-batch-scale')?.addEventListener('click', () => {
+    const _getBatchTargetIndices = () => {
         const indices = _getSelectedIndices();
-        if (indices.length === 0) { alert('请先勾选需要批量设置的行'); return; }
+        if (indices.length === 0) {
+            alert('请先勾选需要批量设置的行');
+            return null;
+        }
+        return indices;
+    };
+
+    const _finishBatchApply = (indices, message) => {
+        _renderBatchTable();
+        const currentIdx = window._reelsState.selectedIdx;
+        if (indices.includes(currentIdx)) {
+            const selectedTask = window._reelsState.tasks[currentIdx];
+            if (selectedTask && window.reelsSyncBackgroundTabUI) {
+                window.reelsSyncBackgroundTabUI(selectedTask);
+            }
+            if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
+        }
+        alert(message);
+    };
+
+    // ══ Batch basic apply ══
+    container.querySelector('#rbt-apply-batch-basic')?.addEventListener('click', () => {
+        const indices = _getBatchTargetIndices();
+        if (!indices) return;
+        const durationRaw = container.querySelector('#rbt-batch-duration')?.value?.trim();
+        const duration = durationRaw !== '' ? parseFloat(durationRaw) : null;
+        if (duration == null) {
+            alert('基础设置没有填写需要应用的值');
+            return;
+        }
+        if (isNaN(duration) || duration < 0) {
+            alert('时长(s) 必须为空或大于等于 0');
+            return;
+        }
+        for (const idx of indices) {
+            const task = window._reelsState.tasks[idx];
+            if (task) task.customDuration = duration > 0 ? duration : 0;
+        }
+        _finishBatchApply(indices, `✅ 已将基础设置 (${duration > 0 ? `时长 ${duration}s` : '时长自动'}) 应用到 ${indices.length} 行`);
+    });
+
+    // ══ Batch background apply ══
+    container.querySelector('#rbt-apply-batch-bg')?.addEventListener('click', () => {
+        const indices = _getBatchTargetIndices();
+        if (!indices) return;
         const bgScale = parseInt(container.querySelector('#rbt-batch-bgscale')?.value) || 100;
         const bgDurScale = parseInt(container.querySelector('#rbt-batch-bgdurscale')?.value) || 100;
-        const audioDurScale = parseInt(container.querySelector('#rbt-batch-audiodurscale')?.value) || 100;
+        const bgVolRaw = container.querySelector('#rbt-batch-bgvol')?.value?.trim();
+        const bgVol = bgVolRaw !== '' ? parseInt(bgVolRaw, 10) : null;
         const parts = [];
+        if (bgVol != null && (isNaN(bgVol) || bgVol < 0)) {
+            alert('背景音量必须为空或大于等于 0');
+            return;
+        }
         for (const idx of indices) {
             const task = window._reelsState.tasks[idx];
             if (!task) continue;
             task.bgScale = bgScale;
             task.bgDurScale = bgDurScale;
-            task.audioDurScale = audioDurScale;
+            if (bgVol != null && !isNaN(bgVol)) task.bgVideoVolume = bgVol;
         }
-        if (bgScale !== 100) parts.push(`背景缩放${bgScale}%`);
-        if (bgDurScale !== 100) parts.push(`背景时长${bgDurScale}%`);
-        if (audioDurScale !== 100) parts.push(`音频时长${audioDurScale}%`);
-        _renderBatchTable();
-        alert(`✅ 已将缩放设置 ${parts.length > 0 ? '(' + parts.join(', ') + ')' : '(100%)'} 应用到 ${indices.length} 行`);
+        parts.push(`背景缩放${bgScale}%`);
+        parts.push(`背景时长${bgDurScale}%`);
+        if (bgVol != null && !isNaN(bgVol)) parts.push(`背景音量${bgVol}%`);
+        _finishBatchApply(indices, `✅ 已将背景设置 (${parts.join(', ')}) 应用到 ${indices.length} 行`);
+    });
+
+    // ══ Batch voice apply ══
+    container.querySelector('#rbt-apply-batch-scale')?.addEventListener('click', () => {
+        const indices = _getBatchTargetIndices();
+        if (!indices) return;
+        const audioDurScale = parseInt(container.querySelector('#rbt-batch-audiodurscale')?.value) || 100;
+        const voiceVolRaw = container.querySelector('#rbt-batch-voicevol')?.value?.trim();
+        const voiceVol = voiceVolRaw !== '' ? parseInt(voiceVolRaw, 10) : null;
+        if (voiceVol != null && (isNaN(voiceVol) || voiceVol < 0)) {
+            alert('人声音量必须为空或大于等于 0');
+            return;
+        }
+        const parts = [`人声变速${audioDurScale}%`];
+        for (const idx of indices) {
+            const task = window._reelsState.tasks[idx];
+            if (!task) continue;
+            task.audioDurScale = audioDurScale;
+            if (voiceVol != null && !isNaN(voiceVol)) task.voiceVolume = voiceVol;
+        }
+        if (voiceVol != null && !isNaN(voiceVol)) parts.push(`人声音量${voiceVol}%`);
+        _finishBatchApply(indices, `✅ 已将人声设置 (${parts.join(', ')}) 应用到 ${indices.length} 行`);
+    });
+
+    // ══ Batch BGM apply ══
+    container.querySelector('#rbt-apply-batch-bgm')?.addEventListener('click', () => {
+        const indices = _getBatchTargetIndices();
+        if (!indices) return;
+        const bgmVolRaw = container.querySelector('#rbt-batch-bgmvol')?.value?.trim();
+        const bgmVol = bgmVolRaw !== '' ? parseInt(bgmVolRaw, 10) : null;
+        if (bgmVol == null) {
+            alert('配乐设置没有填写需要应用的值');
+            return;
+        }
+        if (isNaN(bgmVol) || bgmVol < 0) {
+            alert('配乐音量必须为空或大于等于 0');
+            return;
+        }
+        for (const idx of indices) {
+            const task = window._reelsState.tasks[idx];
+            if (task) task.bgmVolume = bgmVol;
+        }
+        _finishBatchApply(indices, `✅ 已将配乐设置 (配乐音量 ${bgmVol}%) 应用到 ${indices.length} 行`);
+    });
+
+    // ══ Batch subtitle time apply ══
+    container.querySelector('#rbt-apply-batch-subtime')?.addEventListener('click', () => {
+        const indices = _getBatchTargetIndices();
+        if (!indices) return;
+        const subtimeMode = container.querySelector('#rbt-batch-subtime-mode')?.value || 'keep';
+        const subtimeSplitRaw = container.querySelector('#rbt-batch-subtime-split')?.value?.trim();
+        const subtimeSplit = subtimeSplitRaw !== '' ? parseFloat(subtimeSplitRaw) : null;
+        if (subtimeMode === 'keep') {
+            alert('字幕时间当前为“保持”，没有需要应用的值');
+            return;
+        }
+        if (subtimeMode === 'split' && (subtimeSplit == null || isNaN(subtimeSplit) || subtimeSplit <= 0)) {
+            alert('字幕时间选择“分段”时，必须填写大于 0 的切换秒数');
+            return;
+        }
+        for (const idx of indices) {
+            const task = window._reelsState.tasks[idx];
+            if (!task) continue;
+            if (subtimeMode === 'full') {
+                task.subtitleTimeMode = 'full';
+                task.subtitleTimeSlices = [];
+            } else if (subtimeMode === 'split') {
+                task.subtitleTimeMode = 'split';
+                task.subtitleTimeSlices = [
+                    { label: 'A', startSec: 0, endSec: subtimeSplit, source: 'body_part1' },
+                    { label: 'B', startSec: subtimeSplit, endSec: null, source: 'body_part2' },
+                ];
+            }
+        }
+        const desc = subtimeMode === 'full' ? '全时段' : `${subtimeSplit}s分段`;
+        _finishBatchApply(indices, `✅ 已将字幕时间设置 (${desc}) 应用到 ${indices.length} 行`);
     });
 
     // ══ Batch copy bg to cv ══
@@ -2667,11 +2860,51 @@ function _bindBatchTableEvents() {
         if (indices.length === 0) { alert('请先勾选需要批量设置的行'); return; }
         
         const cvScale = parseInt(container.querySelector('#rbt-batch-cvscale')?.value) || 100;
+        const cvTrimStartRaw = container.querySelector('#rbt-batch-cvtrim-start')?.value?.trim();
+        const cvTrimEndRaw = container.querySelector('#rbt-batch-cvtrim-end')?.value?.trim();
+        const cvCropRaw = container.querySelector('#rbt-batch-cvcrop')?.value?.trim();
+        const cvX = container.querySelector('#rbt-batch-cvx')?.value?.trim();
+        const cvY = container.querySelector('#rbt-batch-cvy')?.value?.trim();
+        const cvVolRaw = container.querySelector('#rbt-batch-cvvol')?.value?.trim();
+        const cvTrimStart = cvTrimStartRaw !== '' ? parseFloat(cvTrimStartRaw) : null;
+        const cvTrimEnd = cvTrimEndRaw !== '' ? parseFloat(cvTrimEndRaw) : null;
+        const cvVol = cvVolRaw !== '' ? parseInt(cvVolRaw, 10) : null;
         const blurBgMode = container.querySelector('#rbt-batch-cvblurbg')?.value || 'keep';
         const blurVal = parseInt(container.querySelector('#rbt-batch-cvblur')?.value) ?? 40;
         const brightnessVal = parseInt(container.querySelector('#rbt-batch-cvbrightness')?.value) ?? 60;
-        
+
+        if (cvTrimStart != null && (isNaN(cvTrimStart) || cvTrimStart < 0)) {
+            alert('内容视频-时间段起点必须为空或大于等于 0');
+            return;
+        }
+        if (cvTrimEnd != null && (isNaN(cvTrimEnd) || cvTrimEnd < 0)) {
+            alert('内容视频-时间段终点必须为空或大于等于 0');
+            return;
+        }
+        if (cvTrimStart != null && cvTrimEnd != null && cvTrimEnd <= cvTrimStart) {
+            alert('内容视频-时间段终点必须大于起点');
+            return;
+        }
+
+        let cvCrop = '';
+        if (cvCropRaw) {
+            const cropParts = cvCropRaw.split(',').map(p => parseFloat(p.trim()));
+            const invalidCrop = cropParts.length !== 4 || cropParts.some(v => !Number.isFinite(v)) ||
+                cropParts[0] < 0 || cropParts[1] < 0 || cropParts[2] <= 0 || cropParts[3] <= 0 ||
+                cropParts[0] > 100 || cropParts[1] > 100 || cropParts[2] > 100 || cropParts[3] > 100;
+            if (invalidCrop) {
+                alert('内容视频-裁切格式必须是：左,上,宽,高，数值范围 0-100，宽高必须大于 0');
+                return;
+            }
+            cvCrop = cropParts.join(',');
+        }
+
         const parts = [`视频缩放 ${cvScale}%`];
+        if (cvTrimStart != null || cvTrimEnd != null) parts.push(`时间段 ${cvTrimStart != null ? cvTrimStart : 0}s-${cvTrimEnd != null ? cvTrimEnd : '尾'}`);
+        if (cvCrop) parts.push(`裁切 ${cvCrop}%`);
+        if (cvX) parts.push(`X ${cvX}`);
+        if (cvY) parts.push(`Y ${cvY}`);
+        if (cvVol != null && !isNaN(cvVol)) parts.push(`视频音量 ${cvVol}%`);
         if (blurBgMode !== 'keep') {
             parts.push(`毛玻璃背景 ${blurBgMode === 'on' ? '开启' : '关闭'}`);
         }
@@ -2682,27 +2915,19 @@ function _bindBatchTableEvents() {
             const task = window._reelsState.tasks[idx];
             if (!task) continue;
             task.contentVideoScale = cvScale;
+            if (cvTrimStart != null) task.contentVideoTrimStart = cvTrimStart;
+            if (cvTrimEnd != null) task.contentVideoTrimEnd = cvTrimEnd;
+            if (cvCrop) task.contentVideoCrop = cvCrop;
+            if (cvX) task.contentVideoX = cvX;
+            if (cvY) task.contentVideoY = cvY;
+            if (cvVol != null && !isNaN(cvVol)) task.contentVideoVolume = cvVol;
             if (blurBgMode === 'on') task.contentVideoBlurBg = true;
             else if (blurBgMode === 'off') task.contentVideoBlurBg = false;
             task.contentVideoBlur = blurVal;
             task.contentVideoBrightness = brightnessVal;
         }
 
-        _renderBatchTable();
-
-        // 如果当前选中任务也被修改了，刷新侧边栏和预览
-        const currentIdx = window._reelsState.selectedIdx;
-        if (indices.includes(currentIdx)) {
-            const selectedTask = window._reelsState.tasks[currentIdx];
-            if (selectedTask && window.reelsSyncBackgroundTabUI) {
-                window.reelsSyncBackgroundTabUI(selectedTask);
-            }
-            if (typeof reelsUpdatePreview === 'function') {
-                reelsUpdatePreview();
-            }
-        }
-
-        alert(`✅ 已将设置 (${parts.join(', ')}) 应用到 ${indices.length} 行`);
+        _finishBatchApply(indices, `✅ 已将内容视频设置 (${parts.join(', ')}) 应用到 ${indices.length} 行`);
     });
     // Toggle Media Pool Sidebar
     container.querySelector('#rbt-open-media-pool-btn')?.addEventListener('click', () => {
@@ -2763,10 +2988,10 @@ function _bindBatchTableEvents() {
         let msg = `即将开始【批量 AI 处理文案】操作：\n\n`;
         msg += `【预期处理数据清单】\n`;
         msg += `· 目标范围：${indices.length > 0 ? `已选中的 ${indices.length} 行` : `全部 ${tasks.length} 行`}\n`;
-        msg += `· 有效数据：检测到 ${validIdxs.length} 行「🧠 AI 原文案」列有内容将被处理\n`;
+        msg += `· 有效数据：检测到 ${validIdxs.length} 行「人声-原文案」列有内容将被处理\n`;
         if (validIdxs.length > 0) msg += `· 对应行号：[ ${validIdxs.map(i => i + 1).join(', ')} ]\n\n`;
-        else msg += `\n⚠️ 警告：当前目标中没有任何行填写了「🧠 AI 原文案」，执行将失败！\n\n`;
-        msg += `【处理规则】\n1. 读取有效行的「🧠 AI 原文案」。\n2. 使用选择的「Prompt指令预设」调用模型。\n3. 结果自动填入「🤖 TTS文案」列。\n\n是否确认开始执行此操作？`;
+        else msg += `\n⚠️ 警告：当前目标中没有任何行填写了「人声-原文案」，执行将失败！\n\n`;
+        msg += `【处理规则】\n1. 读取有效行的「人声-原文案」。\n2. 使用选择的「Prompt指令预设」调用模型。\n3. 结果自动填入「人声-配音文案」列。\n\n是否确认开始执行此操作？`;
 
         if (!confirm(msg)) return;
         _ensureAIColumnsVisible();
@@ -2784,10 +3009,10 @@ function _bindBatchTableEvents() {
         let msg = `即将开始【分步配音字幕】操作：\n\n`;
         msg += `【预期处理数据清单】\n`;
         msg += `· 目标范围：${indices.length > 0 ? `已选中的 ${indices.length} 行` : `全部 ${tasks.length} 行`}\n`;
-        msg += `· 有效数据：检测到 ${validIdxs.length} 行「🤖 TTS文案」将生成配音\n`;
+        msg += `· 有效数据：检测到 ${validIdxs.length} 行「人声-配音文案」将生成配音\n`;
         if (validIdxs.length > 0) msg += `· 对应行号：[ ${validIdxs.map(i => i + 1).join(', ')} ]\n\n`;
-        else msg += `\n⚠️ 警告：当前目标中没有任何行填写了「🤖 TTS文案」，执行将失败！\n\n`;
-        msg += `【处理规则】\n1. 读取有效行的「🤖 TTS文案」。\n2. 依据当前配置的「发音人」合成音频。\n3. 生成完毕后本地持久化保存至该任务。\n\n是否确认开始执行？`;
+        else msg += `\n⚠️ 警告：当前目标中没有任何行填写了「人声-配音文案」，执行将失败！\n\n`;
+        msg += `【处理规则】\n1. 读取有效行的「人声-配音文案」。\n2. 依据当前配置的「人声-配音音色」合成人声-音频文件。\n3. 生成完毕后本地持久化保存至该任务。\n\n是否确认开始执行？`;
 
         if (!confirm(msg)) return;
         _ensureAIColumnsVisible();
@@ -2814,14 +3039,14 @@ function _bindBatchTableEvents() {
         let msg = `即将开始【🚀 自动全家桶 (AI改写 + 配音 + 字幕对齐)】操作：\n\n`;
         msg += `【预期处理数据清单】\n`;
         msg += `· 目标范围：${indices.length > 0 ? `已选中的 ${indices.length} 行` : `全部 ${tasks.length} 行`}\n`;
-        msg += `· 发动机一：检测到 ${aiValid.length} 行「🧠 AI 原文案」作为源头数据将被 AI 改写\n`;
+        msg += `· 发动机一：检测到 ${aiValid.length} 行「人声-原文案」作为源头数据将被 AI 改写\n`;
         if (aiValid.length > 0) msg += `· 对应行号：[ ${aiValid.map(i => i + 1).join(', ')} ]\n\n`;
-        else msg += `\n⚠️ 警告：当前目标中没有填写「🧠 AI 原文案」，第一阶段将失败！\n\n`;
+        else msg += `\n⚠️ 警告：当前目标中没有填写「人声-原文案」，第一阶段将失败！\n\n`;
         msg += `【三步流水线】\n`;
-        msg += `① 读取「🧠 AI 原文案」→ Gemini 改写 → 填入「🤖 TTS文案」+ 「人声字幕」\n`;
-        msg += `② 读取「🤖 TTS文案」→ ElevenLabs 合成配音\n`;
-        msg += `③ 配音 + 「人声字幕」→ Gladia 转录对齐 → 生成 SRT 时间轴\n\n`;
-        if (!hasTxtContent) msg += `💡 提示：「人声字幕」列暂无内容，第③步将跳过（可先在AI Prompt中配置断句输出）\n\n`;
+        msg += `① 读取「人声-原文案」→ Gemini 改写 → 填入「人声-配音文案」+ 「人声-断行文案」\n`;
+        msg += `② 读取「人声-配音文案」→ ElevenLabs 合成配音\n`;
+        msg += `③ 配音 + 「人声-断行文案」→ Gladia 转录对齐 → 生成 SRT 时间轴\n\n`;
+        if (!hasTxtContent) msg += `💡 提示：「人声-断行文案」列暂无内容，第③步将跳过（可先在AI Prompt中配置断句输出）\n\n`;
         msg += `是否确认开启一条龙处理流程？`;
 
         if (!confirm(msg)) return;
@@ -2852,7 +3077,7 @@ function _bindBatchTableEvents() {
             await _batchAlignAllTasks(true); // 强制使用专业对齐重新执行
             showToast('🎉 全家桶三步流水线全部完成！', 'success', 5000);
         } else {
-            showToast('✅ 全家桶完成（AI + 配音）。无人声字幕，跳过对齐步骤。', 'success', 5000);
+            showToast('✅ 全家桶完成（AI + 配音）。无人声-断行文案，跳过对齐步骤。', 'success', 5000);
         }
     });
 
@@ -2949,6 +3174,28 @@ function _bindBatchTableEvents() {
     if (modelSelect) modelSelect.value = savedModel;
     modelSelect?.addEventListener('change', () => {
         localStorage.setItem('rbt_tts_model', modelSelect.value);
+    });
+
+    // 恢复与保存对齐设定与执行动作选择
+    const savedAlignSource = localStorage.getItem('rbt_align_source') || 'video';
+    const alignSourceSelect = container.querySelector('#rbt-align-source');
+    if (alignSourceSelect) alignSourceSelect.value = savedAlignSource;
+    alignSourceSelect?.addEventListener('change', () => {
+        localStorage.setItem('rbt_align_source', alignSourceSelect.value);
+    });
+
+    const savedAlignTxtCol = localStorage.getItem('rbt_align_txt_col') || 'txtContent';
+    const alignTxtColSelect = container.querySelector('#rbt-align-txt-col');
+    if (alignTxtColSelect) alignTxtColSelect.value = savedAlignTxtCol;
+    alignTxtColSelect?.addEventListener('change', () => {
+        localStorage.setItem('rbt_align_txt_col', alignTxtColSelect.value);
+    });
+
+    const savedExecuteMode = localStorage.getItem('rbt_unified_execute_mode') || 'rbt-ai-auto-all-btn';
+    const executeModeSelect = container.querySelector('#rbt-unified-execute-mode');
+    if (executeModeSelect) executeModeSelect.value = savedExecuteMode;
+    executeModeSelect?.addEventListener('change', () => {
+        localStorage.setItem('rbt_unified_execute_mode', executeModeSelect.value);
     });
 
     // 刷新音色列表
@@ -3784,19 +4031,19 @@ function _bindBatchTableEvents() {
         if (!field) return;
         const labelMap = {
             hook: 'Hook',
-            bg: '背景',
-            clipPool: '片段池',
-            contentvideo: '视频覆层',
-            cvTrim: '视频覆层时段裁切',
-            cvCrop: '视频覆层画面裁切',
-            cvBlurBg: '覆层毛玻璃背景',
-            tts_text: 'TTS文案',
-            tts_voice: 'TTS音色',
+            bg: '背景素材',
+            clipPool: '背景片段池',
+            contentvideo: '内容视频',
+            cvTrim: '内容视频-时间段',
+            cvCrop: '内容视频-裁切',
+            cvBlurBg: '内容视频-毛玻璃背景',
+            tts_text: '人声-配音文案',
+            tts_voice: '人声-配音音色',
             pip: '图像覆层',
-            audio: '人声',
-            srt: 'SRT',
-            txt: 'TXT文案',
-            ai_script: 'AI原文案',
+            audio: '人声-音频文件',
+            srt: '人声-SRT字幕',
+            txt: '人声-断行文案',
+            ai_script: '人声-原文案',
             bgm: '配乐',
             overlay_title: '覆层标题',
             overlay_body: '覆层内容',
@@ -3806,7 +4053,7 @@ function _bindBatchTableEvents() {
             cover_media: '封面素材',
             cover_text: '封面文案',
             bgVideoVolume: '背景音量',
-            voiceVolume: '人声音量',
+            voiceVolume: '人声-音频音量',
             subtitleTime: '字幕时间切片',
         };
         const { state, indices, label } = _getClearTargets();
@@ -4049,7 +4296,7 @@ function _bindBatchTableEvents() {
             }
 
             _renderBatchTable();
-            const colLabels = { bg: '背景素材', audio: '人声音频', srt: '字幕SRT', bgm: '配乐', pip: '图片覆层', contentvideo: '视频覆层' };
+            const colLabels = { bg: '背景素材', audio: '人声-音频文件', srt: '人声-SRT字幕', bgm: '配乐', pip: '图像覆层', contentvideo: '内容视频' };
             showToast(`✅ ${colLabels[colType] || colType}：分配 ${filled} 个文件，新建 ${created} 行`, 'success');
         } finally {
             btn.textContent = '📁';
@@ -4237,7 +4484,7 @@ function _bindBatchTableEvents() {
                     }
                 }
             }
-            // ── 人声音频层音量 slider ──
+            // ── 人声-音频音量 slider ──
             if (e.target.classList.contains('rbt-voicevol-slider')) {
                 const label = e.target.parentElement.querySelector('.rbt-voicevol-label');
                 if (label) label.textContent = e.target.value + '%';
@@ -4291,7 +4538,7 @@ function _bindBatchTableEvents() {
                 const task = window._reelsState && window._reelsState.tasks[idx];
                 if (task) { task.bgDurScale = parseInt(e.target.value) || 100; }
             }
-            // ── 音频变速 slider↔input 同步 ──
+            // ── 人声-音频变速 slider↔input 同步 ──
             if (e.target.classList.contains('rbt-audiodurscale-slider')) {
                 const numInput = e.target.parentElement.querySelector('.rbt-audiodurscale-input');
                 if (numInput) numInput.value = e.target.value;
@@ -4350,7 +4597,7 @@ function _bindBatchTableEvents() {
                             if (isDiffTxt) {
                                 txtArea.style.border = '1px solid #ef4444';
                                 txtArea.style.background = 'rgba(239, 68, 68, 0.1)';
-                                txtArea.title = '⚠️ 警告：AI断行产生的文本与【🧠 AI 原文案】存在字符差异。可能发生了改词或删词，请仔细检查比对！\n\n如有错误请直接修改。';
+                                txtArea.title = '⚠️ 警告：AI断行产生的文本与【人声-原文案】存在字符差异。可能发生了改词或删词，请仔细检查比对！\n\n如有错误请直接修改。';
                             } else {
                                 txtArea.style.border = '';
                                 txtArea.style.background = '';
@@ -4738,10 +4985,10 @@ function _showMultiColumnPasteModal(tsvRows, startIdx, initialFieldCategory = nu
         { v: '', l: '-- 不导入 (忽略) --' },
         { v: 'exportName', l: '📝 导出命名' },
         { v: 'cover_text', l: '🌟 封面文案' },
-        { v: 'aiScript', l: '🧠 AI 原文案' },
-        { v: 'ttsText', l: '🤖 TTS文案' },
-        { v: 'ttsVoiceId', l: '🗣️ TTS音色' },
-        { v: 'txtContent', l: '📃 人声字幕' },
+        { v: 'aiScript', l: '🧠 人声-原文案' },
+        { v: 'ttsText', l: '🤖 人声-配音文案' },
+        { v: 'ttsVoiceId', l: '🗣️ 人声-配音音色' },
+        { v: 'txtContent', l: '📃 人声-断行文案' },
         { v: 'overlay_title', l: '🔠 覆层标题' },
         { v: 'overlay_body', l: '🔠 覆层内容' },
         { v: 'overlay_footer', l: '🔠 覆层结尾' },
@@ -5096,13 +5343,13 @@ function _showTextEditorModal(textareaEl) {
     const saveBtn = document.getElementById('rbt-text-editor-save');
 
     let titleStr = "大屏幕文案编辑";
-    if (textareaEl.classList.contains('rbt-txtcontent-input')) titleStr = "编辑【人声字幕】";
+    if (textareaEl.classList.contains('rbt-txtcontent-input')) titleStr = "编辑【人声-断行文案】";
     else if (textareaEl.classList.contains('rbt-title-input')) titleStr = "编辑【覆层标题】";
     else if (textareaEl.classList.contains('rbt-body-input')) titleStr = "编辑【覆层内容】";
     else if (textareaEl.classList.contains('rbt-footer-input')) titleStr = "编辑【覆层结尾】";
     else if (textareaEl.classList.contains('rbt-scroll-title-input')) titleStr = "编辑【滚动标题】";
     else if (textareaEl.classList.contains('rbt-scroll-body-input')) titleStr = "编辑【滚动内容】";
-    else if (textareaEl.classList.contains('rbt-ai-script-input')) titleStr = "编辑【AI 原文案】";
+    else if (textareaEl.classList.contains('rbt-ai-script-input')) titleStr = "编辑【人声-原文案】";
     modalTitle.innerText = titleStr;
 
     modalTa.value = textareaEl.value;
@@ -5138,7 +5385,7 @@ function _showDiffModal(origText, newText, field, taskIdx) {
     // To prevent JS out of memory or stack error for giant blocks
     let diffTokens = [];
     if (a.length > 3000 || b.length > 3000) {
-        diffTokens = [{ val: '\n⚠️ 文本太长，无法进行高亮对比。请直接肉眼比对以下结果：\n\n【当前文本】\n' + newText + '\n\n【AI 原文案】\n' + origText, type: 'del' }];
+        diffTokens = [{ val: '\n⚠️ 文本太长，无法进行高亮对比。请直接肉眼比对以下结果：\n\n【当前文本】\n' + newText + '\n\n【人声-原文案】\n' + origText, type: 'del' }];
     } else {
         const m = a.length, n = b.length;
         const dp = Array(m + 1);
@@ -5499,7 +5746,7 @@ function _applyBatchTableChanges(stateOverride = null, options = {}) {
         task.bgDurScale = parseInt(el.value) || 100;
     });
 
-    // 音频时长缩放
+    // 人声-音频变速
     container.querySelectorAll('.rbt-audiodurscale-input').forEach(el => {
         const idx = parseInt(el.dataset.idx);
         const task = state.tasks[idx];
@@ -5521,14 +5768,14 @@ function _applyBatchTableChanges(stateOverride = null, options = {}) {
         if (task) task.ttsVoiceId = el.value;
     });
 
-    // AI 原文案
+    // 人声-原文案
     container.querySelectorAll('.rbt-ai-script-input').forEach(el => {
         const idx = parseInt(el.dataset.idx);
         const task = state.tasks[idx];
         if (task) task.aiScript = el.value;
     });
 
-    // 人声字幕（用于字幕对齐）
+    // 人声-断行文案（用于字幕对齐）
     const txtContentInputs = container.querySelectorAll('.rbt-txtcontent-input');
     txtContentInputs.forEach(el => {
         const idx = parseInt(el.dataset.idx);
@@ -5588,7 +5835,7 @@ function _applyBatchTableChanges(stateOverride = null, options = {}) {
         if (task) task.clipOrder = el.value || 'name';
     });
 
-    // 人声音频层音量
+    // 人声-音频音量
     const voiceVols = container.querySelectorAll('.rbt-voicevol-slider');
     voiceVols.forEach(el => {
         const idx = parseInt(el.dataset.idx);
@@ -5915,7 +6162,7 @@ async function _batchPasteScrollFromSheet() {
     const parts = [];
     if (filled) parts.push(`填充 ${filled} 行`);
     if (created) parts.push(`新建 ${created} 行`);
-    alert(`✅ 滚动字幕粘贴完成：${parts.join('，')}`);
+    alert(`滚动字幕粘贴完成：${parts.join('，')}`);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -5923,37 +6170,40 @@ async function _batchPasteScrollFromSheet() {
 // ═══════════════════════════════════════════════════════
 
 const _RBT_COLUMNS = [
-    { key: 'exportname', label: '📝 导出命名', default: true },
-    { key: 'cover-media', label: '🌟 封面素材', default: true },
-    { key: 'cover-text', label: '🌟 封面文案', default: true },
-    { key: 'hook', label: '🪝 前置Hook', default: true },
-    { key: 'bg', label: '🖼 背景素材', default: true },
-    { key: 'clippool', label: '🎞 片段池', default: true },
-    { key: 'bgscale', label: '🔍 背景缩放', default: true },
-    { key: 'bgdurscale', label: '⏱️ 背景时长', default: true },
-    { key: 'contentvideo', label: '🎬 内容视频', default: true },
-    { key: 'cvtrim', label: '✂️ 裁切', default: true },
-    { key: 'cvscale', label: '🔍 视频缩放', default: true },
-    { key: 'cvpos', label: '📐 视频位置', default: true },
-    { key: 'cvvol', label: '🔊 覆层音量', default: true },
-    { key: 'pip', label: '🖼️ 图像覆层', default: true },
-    { key: 'tts_text', label: '🤖 TTS文案', default: true },
-    { key: 'tts_voice', label: '🗣 TTS音色', default: true },
-    { key: 'audio', label: '🎙 人声音频层', default: true },
-    { key: 'voicevol', label: '🎙 人声音量', default: true },
-    { key: 'audiodurscale', label: '⏱️ 人声变速', default: true },
-    { key: 'ai_script', label: '🧠 AI 原文案', default: true },
-    { key: 'bgm', label: '🎵 配乐', default: true },
-    { key: 'srt', label: '📝 字幕SRT', default: true },
-    { key: 'txtcontent', label: '📃 人声对齐字幕（断行后）', default: true },
-    { key: 'title', label: '📌 覆层标题', default: true },
-    { key: 'body', label: '📌 覆层内容', default: true },
-    { key: 'footer', label: '📌 覆层结尾', default: true },
-    { key: 'scroll-title', label: '📜 滚动标题', default: true },
-    { key: 'scroll-body', label: '📜 滚动内容', default: true },
-    { key: 'subtime', label: '⏱️ 字幕时间', default: true },
-    { key: 'dur', label: '⏱️ 时长(s)', default: true },
-    { key: 'tpl', label: '🎬 字幕模板+覆层预设', default: true },
+    { key: 'exportname', label: '导出命名', default: true },
+    { key: 'cover-media', label: '封面素材', default: true },
+    { key: 'cover-text', label: '封面文案', default: true },
+    { key: 'hook', label: '前置Hook', default: true },
+    { key: 'bg', label: '背景素材', default: true },
+    { key: 'clippool', label: '背景片段池', default: true },
+    { key: 'bgscale', label: '背景缩放', default: true },
+    { key: 'bgdurscale', label: '背景时长', default: true },
+    { key: 'bgvol', label: '背景音量', default: true },
+    { key: 'contentvideo', label: '内容视频', default: true },
+    { key: 'cvtrim', label: '内容视频-时间段', default: true },
+    { key: 'cvcrop', label: '内容视频-裁切', default: true },
+    { key: 'cvblurbg', label: '内容视频-毛玻璃背景', default: true },
+    { key: 'cvscale', label: '内容视频-缩放', default: true },
+    { key: 'cvpos', label: '内容视频-位置', default: true },
+    { key: 'cvvol', label: '内容视频-音量', default: true },
+    { key: 'pip', label: '图像覆层', default: true },
+    { key: 'ai_script', label: '人声-原文案', default: true },
+    { key: 'tts_text', label: '人声-配音文案', default: true },
+    { key: 'txtcontent', label: '人声-断行文案', default: true },
+    { key: 'tts_voice', label: '人声-配音音色', default: true },
+    { key: 'srt', label: '人声-SRT字幕', default: true },
+    { key: 'audio', label: '人声-音频文件', default: true },
+    { key: 'voicevol', label: '人声-音频音量', default: true },
+    { key: 'audiodurscale', label: '人声-音频变速', default: true },
+    { key: 'bgm', label: '配乐', default: true },
+    { key: 'title', label: '覆层标题', default: true },
+    { key: 'body', label: '覆层内容', default: true },
+    { key: 'footer', label: '覆层结尾', default: true },
+    { key: 'scroll-title', label: '滚动标题', default: true },
+    { key: 'scroll-body', label: '滚动内容', default: true },
+    { key: 'subtime', label: '字幕时间', default: true },
+    { key: 'dur', label: '时长(s)', default: true },
+    { key: 'tpl', label: '动态字幕模版与覆层预设', default: true },
 ];
 
 function _getColVisStorageKey() {
@@ -5964,7 +6214,7 @@ function _getColVisStorageKey() {
 function _getColVisibility() {
     const key = _getColVisStorageKey();
     // 一次性迁移：将旧存储的列设置重置为全显示（版本号升级触发）
-    const RESET_VERSION = 'v4-export-naming-rules';
+    const RESET_VERSION = 'v5-column-unification';
     const resetKey = key + '-reset-version';
     if (localStorage.getItem(resetKey) !== RESET_VERSION) {
         localStorage.removeItem(key);
@@ -6373,42 +6623,42 @@ function _showColumnSettingsPopup(anchor) {
     // ── 预设方案定义 ──
     const presets = [
         {
-            name: '🎥 HeyGen匹配字幕',
+            name: 'HeyGen匹配字幕',
             desc: '背景视频 + 根据背景素材声音对齐字幕',
             cols: ['bg', 'bgscale', 'bgdurscale', 'srt', 'txtcontent', 'dur', 'tpl', 'exportname']
         },
         {
-            name: '🎨 无字幕动画Reels',
+            name: '无字幕动画Reels',
             desc: '背景素材 + 覆层(标题/内容/结尾) + 图像覆层 + 配乐',
             cols: ['bg', 'bgscale', 'bgdurscale', 'bgm', 'title', 'body', 'footer', 'dur', 'tpl', 'exportname']
         },
         {
-            name: '📝 动态字幕(手动)',
-            desc: '背景素材 + 手动提供人声音频/SRT/对齐字幕 + 配乐',
+            name: '动态字幕(手动)',
+            desc: '背景素材 + 手动提供人声-音频文件/人声-SRT字幕/人声-断行文案 + 配乐',
             cols: ['bg', 'bgscale', 'bgdurscale', 'audio', 'audiodurscale', 'bgm', 'srt', 'txtcontent', 'dur', 'tpl', 'exportname']
         },
         {
-            name: '🤖 动态字幕(AI自动)',
+            name: '动态字幕(AI自动)',
             desc: '背景素材 + AI文案→TTS→字幕 全自动流水线 + 配乐',
             cols: ['bg', 'bgscale', 'bgdurscale', 'ai_script', 'tts_text', 'tts_voice', 'audio', 'audiodurscale', 'bgm', 'srt', 'txtcontent', 'dur', 'tpl', 'exportname']
         },
         {
-            name: '🔄 滚动字幕(手动)',
-            desc: '背景素材 + 手动提供人声音频 + 滚动标题/内容 + 配乐',
+            name: '滚动字幕(手动)',
+            desc: '背景素材 + 手动提供人声-音频文件 + 滚动标题/内容 + 配乐',
             cols: ['bg', 'bgscale', 'bgdurscale', 'audio', 'audiodurscale', 'bgm', 'scroll-title', 'scroll-body', 'dur', 'tpl', 'exportname']
         },
         {
-            name: '🔄 滚动字幕(AI自动)',
+            name: '滚动字幕(AI自动)',
             desc: '背景素材 + AI文案→TTS→人声 + 滚动标题/内容 + 配乐',
             cols: ['bg', 'bgscale', 'bgdurscale', 'ai_script', 'tts_text', 'tts_voice', 'audio', 'audiodurscale', 'bgm', 'scroll-title', 'scroll-body', 'dur', 'tpl', 'exportname']
         },
         {
-            name: '✂️ 达芬奇剪辑',
+            name: '达芬奇剪辑',
             desc: '背景 + 内容视频(裁切/缩放/位置/音量) + 覆层文案 + 配乐',
-            cols: ['bg', 'bgscale', 'bgdurscale', 'contentvideo', 'cvtrim', 'cvscale', 'cvpos', 'cvvol', 'bgm', 'title', 'body', 'footer', 'dur', 'tpl', 'exportname']
+            cols: ['bg', 'bgscale', 'bgdurscale', 'contentvideo', 'cvtrim', 'cvcrop', 'cvblurbg', 'cvscale', 'cvpos', 'cvvol', 'bgm', 'title', 'body', 'footer', 'dur', 'tpl', 'exportname']
         },
         {
-            name: '🎙 加Hook版口播',
+            name: '加Hook版口播',
             desc: 'Hook + 封面 + 背景 + 全套人声/字幕 + 配乐',
             cols: ['hook', 'cover-media', 'cover-text', 'bg', 'bgscale', 'bgdurscale', 'ai_script', 'tts_text', 'tts_voice', 'audio', 'audiodurscale', 'bgm', 'srt', 'txtcontent', 'dur', 'tpl', 'exportname']
         }
@@ -6416,16 +6666,12 @@ function _showColumnSettingsPopup(anchor) {
 
     // ── 列分类 ──
     const colGroups = [
-        { label: '封面', keys: ['cover-media', 'cover-text'] },
-        { label: '素材 & 背景', keys: ['hook', 'bg', 'bgscale', 'bgdurscale', 'pip'] },
-        { label: '🎬 内容视频', keys: ['contentvideo', 'cvtrim', 'cvscale', 'cvpos', 'cvvol'] },
-        { label: 'AI 配音与文案', keys: ['ai_script', 'tts_text', 'tts_voice'] },
-        { label: '音频', keys: ['audio', 'audiodurscale', 'bgm'] },
-        { label: '字幕 & 文本', keys: ['srt', 'txtcontent'] },
-        { label: '覆层文案', keys: ['title', 'body', 'footer'] },
-        { label: '滚动字幕', keys: ['scroll-title', 'scroll-body'] },
-        { label: '字幕时间', keys: ['subtime'] },
-        { label: '其他', keys: ['dur', 'tpl', 'exportname'] },
+        { label: '封面控制', keys: ['cover-media', 'cover-text'] },
+        { label: '背景控制', keys: ['hook', 'bg', 'clippool', 'bgscale', 'bgdurscale', 'bgvol', 'bgm'] },
+        { label: '内容视频', keys: ['contentvideo', 'cvtrim', 'cvcrop', 'cvblurbg', 'cvscale', 'cvpos', 'cvvol'] },
+        { label: '人声音轨', keys: ['ai_script', 'tts_text', 'txtcontent', 'tts_voice', 'srt', 'audio', 'voicevol', 'audiodurscale'] },
+        { label: '文字覆层', keys: ['pip', 'title', 'body', 'footer', 'scroll-title', 'scroll-body', 'subtime'] },
+        { label: '基础配置', keys: ['dur', 'tpl', 'exportname'] },
     ];
 
     // Build column label map
@@ -7448,7 +7694,7 @@ function _showCycleFillDialog() {
 
     const fieldOptions = [
         { key: 'bg', label: '🖼 背景素材', items: [...existingBg], origItems: existingBg },
-        { key: 'audio', label: '🔊 音频', items: [...existingAudio], origItems: existingAudio },
+        { key: 'audio', label: '🔊 人声-音频文件', items: [...existingAudio], origItems: existingAudio },
         { key: 'bgm', label: '🎵 配乐', items: [...existingBgm], origItems: existingBgm },
     ];
 
@@ -7543,7 +7789,7 @@ function _showCycleFillDialog() {
                 <select id="rbt-cf-video-drop-route-mode" class="rbt-select" style="height:26px;padding:0 6px;${_batchTableState.videoDropRouteEnabled ? '' : 'opacity:.5;'}" ${_batchTableState.videoDropRouteEnabled ? '' : 'disabled'}>
                     <option value="hook" ${_batchTableState.videoDropRouteMode === 'hook' ? 'selected' : ''}>🪝 分配到前置Hook</option>
                     <option value="bg" ${_batchTableState.videoDropRouteMode === 'bg' ? 'selected' : ''}>🎬 分配到背景层</option>
-                    <option value="audio" ${_batchTableState.videoDropRouteMode === 'audio' ? 'selected' : ''}>🎙 分配到人声层</option>
+                    <option value="audio" ${_batchTableState.videoDropRouteMode === 'audio' ? 'selected' : ''}>🎙 分配到人声-音频文件</option>
                 </select>
             </div>
             <div style="margin-bottom:12px;">
@@ -7864,7 +8110,7 @@ function _doCycleFill(fieldKey, items, weights, mode) {
     }
 
     const seq = _generateCycleSequence(items, weights, targetIndices.length);
-    const fieldLabel = fieldKey === 'bg' ? '背景' : fieldKey === 'audio' ? '音频' : '配乐';
+    const fieldLabel = fieldKey === 'bg' ? '背景素材' : fieldKey === 'audio' ? '人声-音频文件' : '配乐';
 
     for (let i = 0; i < targetIndices.length; i++) {
         const task = state.tasks[targetIndices[i]];
@@ -8009,7 +8255,7 @@ function _applyCycleItemsAsBgmPool(items, order, scope) {
 }
 
 /**
- * 批量粘贴TTS打听： 1. TTS文案(带情感)   2. 断行文案(字幕文本)   3. TTS音色
+ * 批量粘贴人声文案/断行/音色：1. 人声-配音文案 2. 人声-断行文案 3. 人声-配音音色
  */
 async function _batchPasteTTSContent() {
     const mode = await _showPasteModeDialog();
@@ -8062,7 +8308,7 @@ async function _batchPasteTTSContent() {
         }
     } catch (e) {
         // 降级：让用户在弹窗里直接粘贴纯文本
-        let raw = await _showPasteDialog('📋 粘贴TTS素材 (1.情感播报词 2.画面文本 3.音色ID)');
+        let raw = await _showPasteDialog('📋 粘贴人声文案/断行/音色 (1.人声-配音文案 2.人声-断行文案 3.人声-配音音色)');
         if (!raw || !raw.trim()) return;
         const rows = typeof _parseBatchTSV === 'function' ? _parseBatchTSV(raw) : raw.split(/\n/).map(line => line.split('\t'));
         validRows = rows.filter(r => r.join('').trim().length > 0);
@@ -8155,11 +8401,11 @@ async function _batchPasteTTSContent() {
     _skipNextApply = true;
     _renderBatchTable();
     if (typeof _renderTaskList === 'function') _renderTaskList();
-    alert(`✅ 已成功通过【${mode === 'fill' ? '补全' : (mode === 'overwrite' ? '覆盖' : '新行')}】模式导入 ${addedCount} 条TTS记录`);
+    alert(`✅ 已成功通过【${mode === 'fill' ? '补全' : (mode === 'overwrite' ? '覆盖' : '新行')}】模式导入 ${addedCount} 条人声-TTS记录`);
 }
 
 /**
- * 从剪贴板批量粘贴文案到「人声字幕」列 (txtContent)
+ * 从剪贴板批量粘贴文案到「人声-断行文案」列 (txtContent)
  * 支持：
  * - 单列：每行一条文案
  * - 多列表格：取第一列
@@ -8244,11 +8490,11 @@ async function _batchPasteTxtContent() {
     const parts = [];
     if (filled) parts.push(`填充 ${filled} 行`);
     if (created) parts.push(`新建 ${created} 行`);
-    alert(`✅ 人声字幕粘贴完成通过模式 [${mode}]：${parts.join('，')}`);
+    alert(`✅ 人声-断行文案粘贴完成通过模式 [${mode}]：${parts.join('，')}`);
 }
 
 /**
- * 从剪贴板粘贴数据到「AI 原文案」
+ * 从剪贴板粘贴数据到「人声-原文案」
  */
 async function _batchPasteAiScript() {
     const mode = await _showPasteModeDialog();
@@ -8317,7 +8563,7 @@ async function _batchPasteAiScript() {
 
     _skipNextApply = true;
     _renderBatchTable();
-    showToast(`✅ 粘贴AI原文案成功：覆盖/填充 ${filled} 行，新建 ${created} 行`, 'success');
+    showToast(`✅ 粘贴人声-原文案成功：覆盖/填充 ${filled} 行，新建 ${created} 行`, 'success');
 }
 
 // ── 辅助：设置一行的文案 ──
@@ -9518,7 +9764,7 @@ async function _runSingleTTS(idx, batchOutputDir = '') {
     const task = state.tasks[idx];
 
     if (!task.ttsText) {
-        alert(`第 ${idx + 1} 行缺少 TTS文案，无法生成配音。`);
+        alert(`第 ${idx + 1} 行缺少人声-配音文案，无法生成配音。`);
         return;
     }
     const defaultVoice = document.getElementById('rbt-tts-default-voice')?.value || 'pNInz6obpgDQGcFmaJcg';
@@ -9551,7 +9797,7 @@ async function _runSingleTTS(idx, batchOutputDir = '') {
                 task_index: idx,
                 need_split: false,
                 max_duration: 60,
-                subtitle_text: task.txtContent || '', // 「字幕文本」列（中文断句）用于 Gladia 转录对齐生成 SRT
+                subtitle_text: task.txtContent || '', // 「人声-断行文案」列用于 Gladia 转录对齐生成 SRT
                 tail_silence: tailSilence,
                 export_mp4: false,
                 export_fcpxml: false,
@@ -9607,7 +9853,7 @@ async function _runTTSBatchProcessing() {
     // Validate if there's actually anything to TTS
     const hasTtsText = targetIdxs.some(idx => tasks[idx].ttsText && tasks[idx].ttsText.trim().length > 0);
     if (!hasTtsText) {
-        alert('❌ 任务拒绝执行 (数据缺失)\n\n【缺失数据列】：「🤖 TTS文案」列内容为空\n【当前需要】    ：生成配音必须依赖该列提供的纯文本内容。\n\n【建议操作】：\n1. 手动双击「🤖 TTS文案」单元格输入文字；\n2. 或者先在「🧠 AI 原文案」列填入长文本，并点击【🪄 AI处理文案】让模型自动填充该列。');
+        alert('❌ 任务拒绝执行 (数据缺失)\n\n【缺失数据列】：「人声-配音文案」列内容为空\n【当前需要】    ：生成配音必须依赖该列提供的纯文本内容。\n\n【建议操作】：\n1. 手动双击「人声-配音文案」单元格输入文字；\n2. 或者先在「人声-原文案」列填入长文本，并点击【🪄 AI处理文案】让模型自动填充该列。');
         return false;
     }
 
@@ -9659,7 +9905,7 @@ async function _runGeminiBatchProcessing() {
         })).filter(o => o.text.trim().length > 0);
 
         if (payload.length === 0) {
-            alert('❌ 任务拒绝执行 (数据缺失)\n\n【缺失数据列】：「🧠 AI 原文案」列内容为空\n【当前需要】    ：大模型需要基于原始参考素材进行改写。\n\n【建议操作】：请先在「🧠 AI 原文案」列中双击粘贴您想要改写的长文章、大纲或参考内容，然后再执行此操作。');
+            alert('❌ 任务拒绝执行 (数据缺失)\n\n【缺失数据列】：「人声-原文案」列内容为空\n【当前需要】    ：大模型需要基于原始参考素材进行改写。\n\n【建议操作】：请先在「人声-原文案」列中双击粘贴您想要改写的长文章、大纲或参考内容，然后再执行此操作。');
             return false;
         }
 
@@ -9785,7 +10031,7 @@ function _applyAiPresetBatch() {
             <label style="font-size:12px;color:#aaa;">或单独配置各项参数组合</label>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px;">
                 <div><label style="font-size:11px;color:#888;">Voice ID</label><input id="_p-voice" style="width:100%;padding:5px;background:#222;color:#fff;border:1px solid #444;border-radius:4px;font-size:11px;" placeholder="如 pNInz6obpgDQGcFmaJcg"></div>
-                <div><label style="font-size:11px;color:#888;">字幕模板</label><select id="_p-tpl" style="width:100%;padding:5px;background:#222;color:#fff;border:1px solid #444;border-radius:4px;font-size:11px;"><option value="">无</option>${stplOptionsHtml}</select></div>
+                <div><label style="font-size:11px;color:#888;">动态字幕模版</label><select id="_p-tpl" style="width:100%;padding:5px;background:#222;color:#fff;border:1px solid #444;border-radius:4px;font-size:11px;"><option value="">无</option>${stplOptionsHtml}</select></div>
                 <div><label style="font-size:11px;color:#888;">覆层预设</label><select id="_p-overlay" style="width:100%;padding:5px;background:#222;color:#fff;border:1px solid #444;border-radius:4px;font-size:11px;"><option value="">无</option>${ctplOptionsHtml}</select></div>
                 <div><label style="font-size:11px;color:#888;">背景缩放 %</label><input id="_p-bgscale" type="number" value="100" min="50" max="300" style="width:100%;padding:5px;background:#222;color:#fff;border:1px solid #444;border-radius:4px;font-size:11px;"></div>
                 <div><label style="font-size:11px;color:#888;">背景变速 %</label><input id="_p-bgdurscale" type="number" value="100" min="10" max="500" style="width:100%;padding:5px;background:#222;color:#fff;border:1px solid #444;border-radius:4px;font-size:11px;"></div>
@@ -10300,7 +10546,7 @@ function _openCoverModal(idx) {
  * 显示批量分配模式对话框
  */
 function _showBatchModeDialog(fileCount, field) {
-    const fieldLabel = { bg: '背景素材', audio: '音频', srt: '字幕', txt: 'TXT', hook: 'Hook', pip: '图像覆层' }[field] || field;
+    const fieldLabel = { bg: '背景素材', audio: '人声-音频文件', srt: '人声-SRT字幕', txt: '人声-断行文案', hook: '前置Hook', pip: '图像覆层' }[field] || field;
     return new Promise((resolve) => {
         const overlay = document.createElement('div');
         overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99999;display:flex;align-items:center;justify-content:center;';
@@ -11042,9 +11288,9 @@ function _buildBatchAlignSourceTextCandidates(tasks, lbMaxChars) {
             const rowIndex = parseInt(row.dataset.idx, 10);
             if (!Number.isFinite(rowIndex)) return;
             const task = tasks?.[rowIndex] || null;
-            addCandidate(rowIndex, 'txtContent', '人声字幕', row.querySelector('.rbt-txtcontent-input')?.value || '', task);
-            addCandidate(rowIndex, 'ttsText', 'TTS文案', row.querySelector('.rbt-tts-text-input')?.value || '', task);
-            addCandidate(rowIndex, 'aiScript', 'AI原文案', row.querySelector('.rbt-ai-script-input')?.value || '', task);
+            addCandidate(rowIndex, 'txtContent', '人声-断行文案', row.querySelector('.rbt-txtcontent-input')?.value || '', task);
+            addCandidate(rowIndex, 'ttsText', '人声-配音文案', row.querySelector('.rbt-tts-text-input')?.value || '', task);
+            addCandidate(rowIndex, 'aiScript', '人声-原文案', row.querySelector('.rbt-ai-script-input')?.value || '', task);
             addCandidate(rowIndex, 'overlay_title', '覆层标题', row.querySelector('.rbt-title-input')?.value || '', task);
             addCandidate(rowIndex, 'overlay_body', '覆层内容', row.querySelector('.rbt-body-input')?.value || '', task);
             addCandidate(rowIndex, 'scroll_body', '滚动字幕', row.querySelector('.rbt-scroll-body-input')?.value || '', task);
@@ -11052,9 +11298,9 @@ function _buildBatchAlignSourceTextCandidates(tasks, lbMaxChars) {
     }
 
     const fields = [
-        ['txtContent', '人声字幕'],
-        ['ttsText', 'TTS文案'],
-        ['aiScript', 'AI原文案'],
+        ['txtContent', '人声-断行文案'],
+        ['ttsText', '人声-配音文案'],
+        ['aiScript', '人声-原文案'],
         ['txtPath', 'TXT文件'],
         ['overlay_title', '覆层标题'],
         ['overlay_body', '覆层内容'],
@@ -11499,7 +11745,7 @@ async function _batchAlignAllTasks(overrideForce = false) {
         if (alignOptions.forceAudioSource === true) return t.audioPath || '';
         // 严格模式：只使用用户明确选择的源，不做静默 fallback
         if (alignSource === 'video') return t.bgPath || t.videoPath || '';
-        // alignSource === 'audio' (默认)：只用人声音频
+        // alignSource === 'audio' (默认)：只用人声-音频文件
         return t.audioPath || '';
     };
 
@@ -11519,7 +11765,7 @@ async function _batchAlignAllTasks(overrideForce = false) {
     if (tasksWithTextButNoAudio.length > 0) {
         const names = tasksWithTextButNoAudio.slice(0, 10).map(x => `  第${x.idx + 1}行: ${x.name}`).join('\n');
         const more = tasksWithTextButNoAudio.length > 10 ? `\n  ... 等共 ${tasksWithTextButNoAudio.length} 个` : '';
-        const sourceLabel = alignSource === 'video' ? '背景视频' : '人声音频(MP3)';
+        const sourceLabel = alignSource === 'video' ? '背景视频' : '人声-音频文件(MP3)';
         alert(`⚠️ 以下 ${tasksWithTextButNoAudio.length} 个任务有文案但缺少${sourceLabel}，无法对齐：\n\n${names}${more}\n\n请先添加${sourceLabel}文件，或切换「识别源」设置。`);
         if (tasksWithTextButNoAudio.length === state.tasks.length ||
             (targetIndexSet && tasksWithTextButNoAudio.length === targetIndexSet.size)) {
@@ -11558,7 +11804,7 @@ async function _batchAlignAllTasks(overrideForce = false) {
         } else if (alreadyAligned > 0) {
             alert(`没有需要对齐的任务。\n\n📋 当前有 ${alreadyAligned} 个任务已对齐完成。\n\n💡 如需重新生成，请勾选「强制重新查找/对齐」后再点击对齐。`);
         } else {
-            alert('没有需要对齐的任务。\n请确认：\n1. 人声字幕列有文案\n2. 有音频/视频文件\n3. 尚未对齐');
+            alert('没有需要对齐的任务。\n请确认：\n1. 人声-断行文案列有文案\n2. 有人声-音频文件或背景视频文件\n3. 尚未对齐');
         }
         return;
     }
@@ -12609,7 +12855,52 @@ function _injectBatchTableCSS() {
         .rbt-actions-panel {
             background:#101028; border-bottom:1px solid #1a1a3a; padding:8px 12px;
             display:flex; flex-direction:column; gap:6px; align-items:stretch;
-            flex:0 1 auto; min-height:0; max-height:32vh; overflow:auto;
+            flex:0 1 auto; min-height:0; max-height:32vh; overflow:hidden;
+        }
+        #rbt-actions-wrapper {
+            flex:1 1 auto;
+            min-height:0;
+            overflow:auto;
+        }
+        .rbt-batch-subgroup {
+            display:inline-flex; align-items:center; height:20px;
+            padding:0 7px; border-radius:999px;
+            background:rgba(76,158,255,0.12);
+            border:1px solid rgba(76,158,255,0.25);
+            color:#9fc8ff; font-size:10px; font-weight:800;
+            white-space:nowrap;
+        }
+        .rbt-group-project .rbt-batch-rowbreak,
+        .rbt-group-batch-settings .rbt-batch-rowbreak,
+        .rbt-group-voice-flow .rbt-batch-rowbreak {
+            flex:0 0 100%;
+            width:100%;
+            height:0;
+            margin:0;
+            padding:0;
+        }
+        #rbt-actions-wrapper > .rbt-actions { order:10; }
+        #rbt-actions-wrapper > .rbt-group-project { order:1; }
+        #rbt-actions-wrapper > .rbt-group-input { order:2; }
+        #rbt-actions-wrapper > .rbt-group-batch-settings { order:3; }
+        .rbt-actions-panel > #rbt-batch-bar {
+            order:99;
+            position:relative;
+            z-index:20;
+            background:#101028 !important;
+            box-shadow:none;
+            margin:0 -12px -8px -12px !important;
+            padding:7px 12px !important;
+            border-top:1px solid rgba(123,139,239,0.22) !important;
+            border-bottom:0 !important;
+            overflow:hidden;
+            flex:0 0 auto;
+        }
+        #rbt-batch-bar > span:first-child {
+            flex:0 0 auto !important;
+            margin:0 4px 0 0 !important;
+            color:var(--text-secondary) !important;
+            font-size:11px !important;
         }
         .rbt-header h2 { margin:0; font-size:18px; color:var(--accent); white-space:nowrap; flex-shrink:0; }
         .rbt-actions { display:none; }
@@ -12649,12 +12940,33 @@ function _injectBatchTableCSS() {
             transition: background 0.2s;
         }
         /* 列分组专属主题色（顶部颜色条 + 极光背景色） */
+        .rbt-table th.rbt-grp-base  { background:#1c1e24; box-shadow: inset 0 3px 0 #64748b, inset -1px 0 0 rgba(255,255,255,0.03); }
+        .rbt-table th.rbt-grp-cover { background:#221e14; box-shadow: inset 0 3px 0 #ffd700, inset -1px 0 0 rgba(255,255,255,0.03); }
         .rbt-table th.rbt-grp-video { background:#151c36; box-shadow: inset 0 3px 0 #3b82f6, inset -1px 0 0 rgba(255,255,255,0.03); }
+        .rbt-table th.rbt-grp-cv    { background:#10212e; box-shadow: inset 0 3px 0 #10b981, inset -1px 0 0 rgba(255,255,255,0.03); }
+        .rbt-table th.rbt-grp-media { background:#10212e; box-shadow: inset 0 3px 0 #10b981, inset -1px 0 0 rgba(255,255,255,0.03); }
         .rbt-table th.rbt-grp-audio { background:#1a1636; box-shadow: inset 0 3px 0 #8b5cf6, inset -1px 0 0 rgba(255,255,255,0.03); }
         .rbt-table th.rbt-grp-sub   { background:#101e38; box-shadow: inset 0 3px 0 #0ea5e9, inset -1px 0 0 rgba(255,255,255,0.03); }
-        .rbt-table th.rbt-grp-media { background:#10212e; box-shadow: inset 0 3px 0 #10b981, inset -1px 0 0 rgba(255,255,255,0.03); }
         .rbt-table th.rbt-grp-ovl   { background:#221d28; box-shadow: inset 0 3px 0 #f59e0b, inset -1px 0 0 rgba(255,255,255,0.03); }
         .rbt-table th.rbt-grp-scr   { background:#24162e; box-shadow: inset 0 3px 0 #f43f5e, inset -1px 0 0 rgba(255,255,255,0.03); }
+
+        /* 单元格背景高亮颜色（深色模式 tint 背景色） */
+        .rbt-table td.rbt-grp-base  { background: rgba(100, 116, 139, 0.04); }
+        .rbt-table td.rbt-grp-cover { background: rgba(255, 215, 0, 0.04); }
+        .rbt-table td.rbt-grp-video { background: rgba(59, 130, 246, 0.04); }
+        .rbt-table td.rbt-grp-cv    { background: rgba(16, 185, 129, 0.04); }
+        .rbt-table td.rbt-grp-audio { background: rgba(139, 92, 246, 0.04); }
+        .rbt-table td.rbt-grp-ovl   { background: rgba(245, 158, 11, 0.04); }
+
+        /* Visual separation borders between column groups (Dark Mode) */
+        .rbt-table th.rbt-col-exportname, .rbt-table td.rbt-col-exportname,
+        .rbt-table th.rbt-col-cover-text, .rbt-table td.rbt-col-cover-text,
+        .rbt-table th.rbt-col-bgm, .rbt-table td.rbt-col-bgm,
+        .rbt-table th.rbt-col-cvvol, .rbt-table td.rbt-col-cvvol,
+        .rbt-table th.rbt-col-audiodurscale, .rbt-table td.rbt-col-audiodurscale {
+            border-right: 2px solid rgba(255, 255, 255, 0.16) !important;
+        }
+
         .rbt-table th:last-child { border-right:none; }
         .rbt-col-toggle {
             display:flex; align-items:center; gap:8px; padding:6px 12px; font-size:11px; color:#ccc; cursor:pointer; transition:background .15s;
@@ -13177,6 +13489,34 @@ function _injectBatchTableCSS() {
         body.theme-light .rbt-actions select { background:var(--bg-input) !important; color:var(--text-primary) !important; border-color:var(--border-color) !important; }
         body.theme-light .rbt-btn-primary { color:#fff !important; }
         body.theme-light .rbt-btn-accent { color:#000 !important; }
+
+        /* 亮色模式下的列分组背景 */
+        body.theme-light .rbt-table th.rbt-grp-base  { background: #f1f5f9 !important; color: #475569 !important; box-shadow: inset 0 3px 0 #64748b, inset -1px 0 0 rgba(0,0,0,0.05); }
+        body.theme-light .rbt-table td.rbt-grp-base  { background: rgba(100, 116, 139, 0.06); }
+
+        body.theme-light .rbt-table th.rbt-grp-cover { background: #fef9c3 !important; color: #854d0e !important; box-shadow: inset 0 3px 0 #eab308, inset -1px 0 0 rgba(0,0,0,0.05); }
+        body.theme-light .rbt-table td.rbt-grp-cover { background: rgba(234, 179, 8, 0.07); }
+
+        body.theme-light .rbt-table th.rbt-grp-video { background: #dbeafe !important; color: #1e40af !important; box-shadow: inset 0 3px 0 #3b82f6, inset -1px 0 0 rgba(0,0,0,0.05); }
+        body.theme-light .rbt-table td.rbt-grp-video { background: rgba(59, 130, 246, 0.07); }
+
+        body.theme-light .rbt-table th.rbt-grp-cv    { background: #d1fae5 !important; color: #065f46 !important; box-shadow: inset 0 3px 0 #10b981, inset -1px 0 0 rgba(0,0,0,0.05); }
+        body.theme-light .rbt-table td.rbt-grp-cv    { background: rgba(16, 185, 129, 0.07); }
+
+        body.theme-light .rbt-table th.rbt-grp-audio { background: #f3e8ff !important; color: #5b21b6 !important; box-shadow: inset 0 3px 0 #8b5cf6, inset -1px 0 0 rgba(0,0,0,0.05); }
+        body.theme-light .rbt-table td.rbt-grp-audio { background: rgba(139, 92, 246, 0.07); }
+
+        body.theme-light .rbt-table th.rbt-grp-ovl   { background: #ffedd5 !important; color: #9a3412 !important; box-shadow: inset 0 3px 0 #f59e0b, inset -1px 0 0 rgba(0,0,0,0.05); }
+        body.theme-light .rbt-table td.rbt-grp-ovl   { background: rgba(245, 158, 11, 0.07); }
+
+        /* Visual separation borders between column groups (Light Mode) */
+        body.theme-light .rbt-table th.rbt-col-exportname, body.theme-light .rbt-table td.rbt-col-exportname,
+        body.theme-light .rbt-table th.rbt-col-cover-text, body.theme-light .rbt-table td.rbt-col-cover-text,
+        body.theme-light .rbt-table th.rbt-col-bgm, body.theme-light .rbt-table td.rbt-col-bgm,
+        body.theme-light .rbt-table th.rbt-col-cvvol, body.theme-light .rbt-table td.rbt-col-cvvol,
+        body.theme-light .rbt-table th.rbt-col-audiodurscale, body.theme-light .rbt-table td.rbt-col-audiodurscale {
+            border-right: 2px solid rgba(0, 0, 0, 0.15) !important;
+        }
     `;
     document.head.appendChild(style);
 }
@@ -14400,7 +14740,7 @@ function _showClipAbPasteModal() {
 
         <div style="background:#13131c;padding:12px;border-radius:8px;border:1px dashed #444;margin-bottom:16px;">
             <div style="display:flex;align-items:center;margin-bottom:6px;gap:16px;">
-                 <label style="font-size:11px;color:#ccc;font-weight:600;">📹 视频覆层素材 (内容素材) 及 裁切/缩放设置：</label>
+                 <label style="font-size:11px;color:#ccc;font-weight:600;">📹 内容视频素材及裁切/缩放设置：</label>
                  <label style="font-size:11px;color:#aaa;cursor:pointer;display:flex;align-items:center;gap:4px;">
                      <input type="radio" name="clip_cv_mode" value="single" ${presetCvMode === 'single' ? 'checked' : ''} style="accent-color:var(--accent);">
                      单视频使用同一素材 (名称列若填入 '00:10-00:20' 则自动应用为裁切入出点)
@@ -15214,7 +15554,7 @@ function _bindMediaSidebarEvents(container) {
         }
         if (applied > 0) {
             _renderBatchTable();
-            const roleLabels = { bg: '背景', overlay: '视频覆层', hook: '钩子', universal: '通用', voice: '人声', bgm: '配乐' };
+            const roleLabels = { bg: '背景素材', overlay: '内容视频', hook: '前置Hook', universal: '通用', voice: '人声-音频文件', bgm: '配乐' };
             if (typeof showToast === 'function') showToast(`✅ 已将 ${applied} 个素材按「${roleLabels[role] || role}」角色依次分配到前 ${applied} 行`, 'success');
         }
     });

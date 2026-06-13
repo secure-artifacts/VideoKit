@@ -630,7 +630,16 @@ class ReelsRichTextEditor {
         if (seBoxRadius) seBoxRadius.value = o.box_radius !== undefined ? String(o.box_radius) : '';
         if (outlineColor) outlineColor.value = o.color_outline || '#000000';
         if (outlineWidth) outlineWidth.value = String(o.border_width ?? 0);
-        if (segFont) segFont.value = o.font_family || this.baseStyle.font_family || segFont.value || '';
+        if (segFont) {
+            const fontVal = o.font_family || this.baseStyle.font_family || segFont.value || '';
+            segFont.value = fontVal;
+            if (typeof getFontManager === 'function') {
+                const fm = getFontManager();
+                if (fm && typeof fm.refreshFontSelect === 'function') {
+                    fm.refreshFontSelect('rt-se-font', fontVal);
+                }
+            }
+        }
         if (segSize) segSize.value = String(o.fontsize || this.baseStyle.fontsize || '');
         const weight = Math.max(100, Math.min(900, parseInt(o.font_weight || (o.bold ? 700 : (this.baseStyle.font_weight || (this.baseStyle.bold ? 700 : 400))), 10) || 400));
         if (segWeight) {

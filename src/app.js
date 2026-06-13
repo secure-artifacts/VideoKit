@@ -173,10 +173,11 @@ function showToast(message, type = 'info', duration = 4000) {
 document.addEventListener('DOMContentLoaded', () => {
     initTabs();
     initSubTabs();
+    initMediaSidebar();
     initFileInputs();
     initAudioPlayer();
     initMediaModeOptions();
-    initMediaToolboxBeta();
+    initMediaToolbox();
     initBatchTTS();
     initSubtitleBatch();
     initKeyTableManagers();
@@ -553,6 +554,99 @@ function initSubTabs() {
 
         });
     });
+}
+
+// 初始化媒体工具侧边栏导航
+function initMediaSidebar() {
+    const sidebarItems = document.querySelectorAll('.media-sidebar .sidebar-item');
+    if (sidebarItems.length === 0) return;
+
+    sidebarItems.forEach(item => {
+        item.addEventListener('click', () => {
+            // 切换高亮状态
+            sidebarItems.forEach(i => i.classList.remove('active'));
+            item.classList.add('active');
+
+            const action = item.dataset.action;
+            if (action === 'subtab') {
+                const subtabId = item.dataset.subtab;
+                switchMediaSubtab(subtabId);
+            } else if (action === 'format') {
+                const mode = item.dataset.mode;
+                switchMediaSubtab('media-format');
+                const radio = document.querySelector(`input[name="format-mode"][value="${mode}"]`);
+                if (radio) {
+                    radio.checked = true;
+                    radio.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+
+                // 更新当前选中的格式标题
+                const titleEl = document.getElementById('active-format-title');
+                if (titleEl) {
+                    const formatDescriptions = {
+                        'h264': '通用 MP4 输出，适合上传和预览',
+                        'x264': '高效 H.264 压缩，在保持画质的同时大幅减小视频体积',
+                        'dnxhr': '达芬奇/剪映等剪辑软件的代理/高画质编辑格式',
+                        'dnxhr_hqx': '达芬奇/剪映等剪辑软件的高动态 10bit 编辑格式',
+                        'mp3': '将各类媒体文件中的音频提取或转换为 MP3 格式',
+                        'wav': '将各类媒体文件中的音频提取或转换为无损 WAV 格式',
+                        'audio_black': '将音频转换为带黑屏画面的 MP4 视频，方便上传视频平台',
+                        'audio_split': '批量对音频文件进行高精度裁切与分段导出',
+                        'audio_fx': '批量应用淡入淡出、变速变调等音频特效',
+                        'png': '批量将图片格式转换为无损 PNG',
+                        'jpg': '批量将图片格式转换为 JPG 格式',
+                        'jpeg': '批量将图片格式转换为 JPEG 格式',
+                        'txt_wrap': '智能按语义、符号或长度对文本文件进行分行处理'
+                    };
+                    const formatName = item.textContent.trim();
+                    const formatDesc = formatDescriptions[mode] || '';
+                    if (formatDesc) {
+                        titleEl.innerHTML = `<span class="workbench-title">${formatName}</span><span class="workbench-title-desc">${formatDesc}</span>`;
+                    } else {
+                        titleEl.innerHTML = `<span class="workbench-title">${formatName}</span>`;
+                    }
+                    titleEl.style.display = '';
+                }
+            }
+        });
+    });
+
+    // 初始化时，触发当前 active 项的点击事件以初始化状态
+    const activeItem = document.querySelector('.media-sidebar .sidebar-item.active');
+    if (activeItem) {
+        activeItem.click();
+    }
+}
+
+// 切换媒体子版块显示状态
+function switchMediaSubtab(subtabId) {
+    const panel = document.getElementById('media-panel');
+    if (!panel) return;
+
+    // 隐藏所有子版块，并显示选中的版块
+    panel.querySelectorAll('.subtab-content').forEach(content => {
+        content.classList.toggle('active', content.id === `${subtabId}-subtab`);
+    });
+
+    // 非格式转换板块下，隐藏当前格式标题
+    if (subtabId !== 'media-format') {
+        const titleEl = document.getElementById('active-format-title');
+        if (titleEl) titleEl.style.display = 'none';
+    }
+
+    // 控制通用输入框可见性
+    const mediaFileSection = document.getElementById('media-file-section');
+    if (mediaFileSection) {
+        const tabsWithOwnInput = ['media-scene', 'media-smartkf', 'media-thumbnail', 'media-classify', 'media-lipsync', 'media-batchcut', 'media-batchtxt', 'media-unirename', 'media-batchrename'];
+        mediaFileSection.style.display = tabsWithOwnInput.includes(subtabId) ? 'none' : '';
+    }
+
+    // 刷新 Logo 或水印预览
+    if (subtabId === 'media-logo') {
+        setTimeout(updateLogoPreview, 100);
+    } else if (subtabId === 'media-watermark') {
+        setTimeout(updateWatermarkPreview, 100);
+    }
 }
 
 // 初始化 Audio 播放器
@@ -3905,7 +3999,7 @@ async function selectMediaOutputDir() {
     }
 }
 
-// ==================== 新版媒体工具箱 Beta ====================
+// ==================== 媒体工具箱 ====================
 
 const MTB_TOOLS = [
     { id: 'mp4', category: 'common', label: 'H.264 MP4', desc: '通用 MP4 输出，适合上传和预览。', mode: 'mp4', input: 'file' },
@@ -3972,7 +4066,7 @@ const MTB_HELP = {
     watermark: {
         purpose: '给视频添加文字水印。',
         steps: ['选择视频文件。', '设置水印文字、字号、颜色、位置。', '点击开始处理。'],
-        notes: ['水印会重新编码视频。', '当前 Beta 版提供常用参数；旧版仍有更完整预览。']
+        notes: ['水印会重新编码视频。', '当前提供常用参数；旧版仍有更完整预览。']
     },
     logo: {
         purpose: '给视频叠加预设 Logo 或自定义 Logo。',
@@ -4012,7 +4106,7 @@ const MTB_HELP = {
     audio_split: {
         purpose: '按时间点把音频批量切成多个片段。',
         steps: ['选择一个或多个音频文件。', '输入裁切点，例如 00:29, 00:58.5。', '选择导出 MP3 或黑屏 MP4。', '点击开始处理。'],
-        notes: ['Beta 版对所有文件使用同一组裁切点。', '需要波形预览和每文件独立裁切点时，可继续使用同一工具内挂载的成熟界面。']
+        notes: ['对所有文件使用同一组裁切点。', '需要波形预览和每文件独立裁切点时，可继续使用同一工具内挂载的成熟界面。']
     },
     scene: {
         purpose: '检测视频镜头切换，并按场景导出片段或场景帧。',
@@ -4061,7 +4155,7 @@ const MTB_HELP = {
     }
 };
 
-function initMediaToolboxBeta() {
+function initMediaToolbox() {
     if (!document.getElementById('media-toolbox-panel')) return;
 
     document.querySelectorAll('.mtb-cat').forEach(btn => {
@@ -4230,15 +4324,42 @@ function mtbRestorePortedNodes(keepActive = false) {
     const content = document.getElementById('mtb-ported-content');
     if (global) global.innerHTML = '';
     if (content) content.innerHTML = '';
+
+    // 恢复通用文件选择区的显示状态 (避免在工具箱或特定子标签中被隐藏后无法恢复)
+    const mediaFileSection = document.getElementById('media-file-section');
+    if (mediaFileSection) {
+        const activeItem = document.querySelector('.media-sidebar .sidebar-item.active');
+        let subtabName = 'media-logo';
+        if (activeItem) {
+            if (activeItem.dataset.action === 'format') {
+                subtabName = 'media-format';
+            } else if (activeItem.dataset.action === 'subtab') {
+                subtabName = activeItem.dataset.subtab;
+            }
+        }
+        const tabsWithOwnInput = ['media-scene', 'media-smartkf', 'media-thumbnail', 'media-classify', 'media-lipsync', 'media-batchcut', 'media-batchtxt', 'media-unirename'];
+        mediaFileSection.style.display = tabsWithOwnInput.includes(subtabName) ? 'none' : '';
+    }
 }
 
 function mtbSetOldMediaSubtabActive(subtabId) {
     const panel = document.getElementById('media-panel');
     if (!panel || !subtabId) return;
-    panel.querySelectorAll(':scope > .panel-content > .sub-tabs .sub-tab').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.subtab === subtabId);
+
+    // 激活对应的 sidebar item
+    const sidebarItems = panel.querySelectorAll('.media-sidebar .sidebar-item');
+    sidebarItems.forEach(item => {
+        let isActive = false;
+        if (item.dataset.action === 'subtab' && item.dataset.subtab === subtabId) {
+            isActive = true;
+        } else if (item.dataset.action === 'format' && subtabId === 'media-format') {
+            const selectedMode = document.querySelector('input[name="format-mode"]:checked')?.value || 'h264';
+            isActive = (item.dataset.mode === selectedMode);
+        }
+        item.classList.toggle('active', isActive);
     });
-    panel.querySelectorAll(':scope > .panel-content > .subtab-content').forEach(node => {
+
+    panel.querySelectorAll('.subtab-content').forEach(node => {
         node.classList.toggle('active', node.id === `${subtabId}-subtab`);
     });
 }
@@ -4261,7 +4382,12 @@ function mtbMountPortedTool(tool) {
         : ['media-output-section'];
     for (const id of sharedIds) {
         const meta = mtbRememberPortableNode(id);
-        if (meta?.node) global.appendChild(meta.node);
+        if (meta?.node) {
+            global.appendChild(meta.node);
+            if (id === 'media-file-section') {
+                meta.node.style.display = ''; // 挂载到新版工具箱时，强制确保其可见
+            }
+        }
     }
 
     const contentId = `${tool.portSubtab}-subtab`;
@@ -4386,7 +4512,7 @@ function mtbRenderOptions(tool) {
                 <label><input id="mtb-split-mp3" type="checkbox" checked> 导出 MP3</label>
                 <label><input id="mtb-split-mp4" type="checkbox"> 导出黑屏 MP4</label>
             </div>
-            <p class="hint" style="margin-top:8px;">Beta 版对所有输入文件使用同一组裁切点；复杂波形编辑可从左侧打开旧版音频裁切。</p>
+            <p class="hint" style="margin-top:8px;">对所有输入文件使用同一组裁切点；复杂波形编辑可从左侧打开旧版音频裁切。</p>
         `;
         return;
     }
@@ -13970,3 +14096,229 @@ document.addEventListener('DOMContentLoaded', initUpdateChannelUI);
         });
     }
 })();
+
+// ═══════════════════════════════════════════════════════
+// 🏷️ 批量重命名工具
+// ═══════════════════════════════════════════════════════
+
+let _batchRenameFiles = [];
+
+function _initBatchRename() {
+    const fileInput = document.getElementById('batchrename-file-input');
+    const dropZone = document.getElementById('batchrename-drop-zone');
+
+    if (fileInput) {
+        fileInput.addEventListener('change', (e) => {
+            const files = Array.from(e.target.files || []);
+            _addBatchRenameFiles(files);
+            e.target.value = '';
+        });
+    }
+
+    if (dropZone) {
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.style.borderColor = 'var(--accent-color)';
+            dropZone.style.backgroundColor = 'rgba(233, 69, 96, 0.08)';
+        });
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.style.borderColor = '';
+            dropZone.style.backgroundColor = '';
+        });
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.style.borderColor = '';
+            dropZone.style.backgroundColor = '';
+            const files = Array.from(e.dataTransfer.files || []);
+            _addBatchRenameFiles(files);
+        });
+    }
+}
+
+function _addBatchRenameFiles(files) {
+    for (const f of files) {
+        if (_batchRenameFiles.some(x => x.path === getFileNativePath(f))) continue;
+        _batchRenameFiles.push({
+            name: f.name,
+            path: getFileNativePath(f),
+            ext: (f.name.match(/\.[^.]+$/) || [''])[0],
+        });
+    }
+    _renderBatchRenameList();
+}
+
+function _removeBatchRenameFile(idx) {
+    _batchRenameFiles.splice(idx, 1);
+    _renderBatchRenameList();
+}
+
+function clearBatchRenameList() {
+    _batchRenameFiles = [];
+    _renderBatchRenameList();
+    const statusEl = document.getElementById('batchrename-status');
+    if (statusEl) { statusEl.textContent = '就绪'; statusEl.style.color = ''; }
+}
+
+function toggleBatchRenameNumOptions() {
+    const enable = document.getElementById('batchrename-enable-num')?.checked ?? false;
+    const opts = document.getElementById('batchrename-num-options');
+    if (opts) opts.style.display = enable ? 'flex' : 'none';
+}
+
+function _calculateNewName(file, idx) {
+    const ext = file.ext;
+    const base = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
+
+    // 1. 字符串替换
+    let processedBase = base;
+    const findText = document.getElementById('batchrename-replace-find')?.value || '';
+    const replaceText = document.getElementById('batchrename-replace-with')?.value || '';
+    if (findText) {
+        const isRegex = document.getElementById('batchrename-replace-regex')?.checked ?? false;
+        const caseSensitive = document.getElementById('batchrename-replace-case')?.checked ?? true;
+        if (isRegex) {
+            try {
+                const flags = (caseSensitive ? '' : 'i') + 'g';
+                const regex = new RegExp(findText, flags);
+                processedBase = processedBase.replace(regex, replaceText);
+            } catch (e) {
+                // 正则语法错误，跳过替换
+            }
+        } else {
+            if (caseSensitive) {
+                processedBase = processedBase.split(findText).join(replaceText);
+            } else {
+                const escapedFind = findText.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+                const regex = new RegExp(escapedFind, 'gi');
+                processedBase = processedBase.replace(regex, replaceText);
+            }
+        }
+    }
+
+    // 2. 添加前后缀
+    const prefix = document.getElementById('batchrename-prefix')?.value || '';
+    const suffix = document.getElementById('batchrename-suffix')?.value || '';
+    processedBase = prefix + processedBase + suffix;
+
+    // 3. 大小写转换
+    const caseMode = document.getElementById('batchrename-case-mode')?.value || 'none';
+    if (caseMode === 'lower') {
+        processedBase = processedBase.toLowerCase();
+    } else if (caseMode === 'upper') {
+        processedBase = processedBase.toUpperCase();
+    }
+
+    // 4. 序号处理
+    let finalBase = processedBase;
+    const enableNum = document.getElementById('batchrename-enable-num')?.checked ?? false;
+    if (enableNum) {
+        const numBase = (document.getElementById('batchrename-num-base')?.value || '').trim();
+        const numPos = document.getElementById('batchrename-num-pos')?.value || 'suffix';
+        const numStart = parseInt(document.getElementById('batchrename-num-start')?.value, 10);
+        const start = isNaN(numStart) ? 1 : numStart;
+        const numWidth = parseInt(document.getElementById('batchrename-num-width')?.value, 10);
+        const width = isNaN(numWidth) ? 2 : numWidth;
+
+        const currentNum = start + idx;
+        const numStr = String(currentNum).padStart(width, '0');
+
+        if (numPos === 'complete') {
+            finalBase = (numBase || '') + numStr;
+        } else if (numPos === 'prefix') {
+            finalBase = numStr + (numBase || processedBase);
+        } else { // suffix
+            finalBase = (numBase || processedBase) + numStr;
+        }
+    }
+
+    return finalBase + ext;
+}
+
+function _renderBatchRenameList() {
+    const listEl = document.getElementById('batchrename-file-list');
+    const countEl = document.getElementById('batchrename-count');
+    if (!listEl) return;
+
+    if (_batchRenameFiles.length === 0) {
+        listEl.innerHTML = `<div style="text-align:center; padding:20px; color:var(--text-muted); font-size:13px;">请先选择或拖拽文件到上方区域</div>`;
+        if (countEl) countEl.textContent = '0 个文件';
+        return;
+    }
+
+    const escHtml = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    listEl.innerHTML = _batchRenameFiles.map((f, i) => {
+        const newName = _calculateNewName(f, i);
+        const isChanged = f.name !== newName;
+        const newNameStyle = isChanged ? 'color: var(--accent-color); font-weight: 600;' : 'color: var(--text-secondary);';
+        
+        return `<div style="background:var(--bg-secondary); border-radius:6px; padding:10px 12px; display:flex; align-items:center; gap:12px; border: 1px solid var(--border-color);">
+            <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:4px;">
+                <div style="font-size:12px; color:var(--text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${escHtml(f.name)}">
+                    原名: ${escHtml(f.name)}
+                </div>
+                <div style="font-size:13px; ${newNameStyle} white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${escHtml(newName)}">
+                    新名: ${escHtml(newName)}
+                </div>
+                <div style="font-size:10px; color:var(--text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+                    路径: ${escHtml(f.path)}
+                </div>
+            </div>
+            <button class="btn" style="padding:2px 6px; font-size:11px; flex-shrink:0;" onclick="_removeBatchRenameFile(${i})">✕</button>
+        </div>`;
+    }).join('');
+
+    if (countEl) countEl.textContent = `${_batchRenameFiles.length} 个文件`;
+}
+
+async function startBatchRename() {
+    const statusEl = document.getElementById('batchrename-status');
+    if (_batchRenameFiles.length === 0) {
+        if (statusEl) { statusEl.textContent = '⚠️ 请先选择或拖拽文件'; statusEl.style.color = 'var(--warning)'; }
+        return;
+    }
+
+    const copyMode = document.getElementById('batchrename-copy-mode')?.checked ?? false;
+    if (statusEl) { statusEl.textContent = `处理中... 0/${_batchRenameFiles.length}`; statusEl.style.color = ''; }
+
+    let okCount = 0;
+    try {
+        for (let i = 0; i < _batchRenameFiles.length; i++) {
+            const f = _batchRenameFiles[i];
+            const newName = _calculateNewName(f, i);
+            const dir = f.path.replace(/[\\/][^\\/]+$/, '');
+            const sep = dir.includes('\\') ? '\\' : '/';
+            const newPath = `${dir}${sep}${newName}`;
+
+            await window.electronAPI.apiCall('file/rename', {
+                source: f.path,
+                target: newPath,
+                copy: copyMode,
+            });
+            okCount++;
+            if (statusEl) statusEl.textContent = `处理中... ${okCount}/${_batchRenameFiles.length}`;
+        }
+        
+        if (statusEl) {
+            statusEl.textContent = `✅ 成功${copyMode ? '复制' : '重命名'} ${okCount} 个文件`;
+            statusEl.style.color = 'var(--success)';
+        }
+        showToast(`批量重命名完成: ${okCount} 个文件`, 'success');
+        
+        if (!copyMode) {
+            _batchRenameFiles = [];
+            _renderBatchRenameList();
+        }
+    } catch (err) {
+        if (statusEl) {
+            statusEl.textContent = `❌ 失败: ${err.message}`;
+            statusEl.style.color = 'var(--error)';
+        }
+        showToast('批量重命名失败: ' + err.message, 'error');
+    }
+}
+
+// 初始化批量重命名模块
+document.addEventListener('DOMContentLoaded', () => {
+    setTimeout(_initBatchRename, 200);
+});

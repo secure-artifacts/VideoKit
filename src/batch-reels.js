@@ -265,6 +265,13 @@ document.addEventListener('DOMContentLoaded', () => {
     _initReelsModule();
 });
 
+// Update dataset.rawValue whenever any subtitle-related input element changes
+document.addEventListener('input', (e) => {
+    if (e.target && e.target.id && e.target.id.startsWith('reels-')) {
+        e.target.dataset.rawValue = e.target.value;
+    }
+});
+
 function _initReelsModule() {
     const canvas = document.getElementById('reels-preview-canvas');
     if (canvas) {
@@ -884,11 +891,6 @@ function _initReelsColumnResize() {
     const handles = document.querySelectorAll('.reels-resize-handle');
     if (!handles.length) return;
 
-    // 全局安全网：任何点击时清理可能残留的拖拽覆盖层
-    document.addEventListener('click', () => {
-        document.querySelectorAll('[data-reels-resize-overlay]').forEach(el => el.remove());
-    }, true);
-
     // Restore saved widths
     const saved = localStorage.getItem('reels-col-widths');
     if (saved) {
@@ -905,8 +907,18 @@ function _initReelsColumnResize() {
     }
 
     handles.forEach(handle => {
-        handle.addEventListener('mousedown', (e) => {
+        handle.addEventListener('pointerdown', (e) => {
+            // 仅响鼠标左键/主键
+            if (e.button !== 0) return;
             e.preventDefault();
+
+            // 使用 Pointer Capture 锁定事件
+            try {
+                handle.setPointerCapture(e.pointerId);
+            } catch (err) {
+                console.warn('[Resize] Failed to setPointerCapture:', err);
+            }
+
             const leftId = handle.dataset.left;
             const rightId = handle.dataset.right;
             const leftEl = document.getElementById(leftId);
@@ -920,17 +932,15 @@ function _initReelsColumnResize() {
             const leftMin = parseInt(getComputedStyle(leftEl).minWidth) || 100;
             const rightMin = parseInt(getComputedStyle(rightEl).minWidth) || 100;
 
-            // Prevent text selection during drag
-            // 先清理可能残留的旧覆盖层（安全网）
-            document.querySelectorAll('[data-reels-resize-overlay]').forEach(el => el.remove());
-
-            const overlay = document.createElement('div');
-            overlay.setAttribute('data-reels-resize-overlay', '1');
-            overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;cursor:col-resize;';
-            document.body.appendChild(overlay);
-
             let _cleanedUp = false;
+
             const onMove = (ev) => {
+                // 兜底：如果检测到没有按键被按下，说明早已松手，主动清理状态
+                if (ev.buttons === 0) {
+                    onUp();
+                    return;
+                }
+
                 const dx = ev.clientX - startX;
                 const newLeft = Math.max(leftMin, leftW0 + dx);
                 const newRight = Math.max(rightMin, rightW0 - dx);
@@ -951,19 +961,25 @@ function _initReelsColumnResize() {
                 }
             };
 
-            // 超时安全网 ID（Windows 下 mouseup/mouseleave 都可能不触发）
-            let _dragTimeout = null;
-
             const onUp = () => {
                 if (_cleanedUp) return;
                 _cleanedUp = true;
                 handle.classList.remove('active');
-                if (overlay.parentNode) overlay.remove();
-                document.removeEventListener('mousemove', onMove);
-                document.removeEventListener('mouseup', onUp);
-                document.removeEventListener('mouseleave', onUp);
+
+                // 释放 Pointer Capture
+                try {
+                    if (handle.hasPointerCapture(e.pointerId)) {
+                        handle.releasePointerCapture(e.pointerId);
+                    }
+                } catch (err) {}
+
+                // 注销 Pointer 事件监听
+                handle.removeEventListener('pointermove', onMove);
+                handle.removeEventListener('pointerup', onUp);
+                handle.removeEventListener('pointercancel', onUp);
+                handle.removeEventListener('lostpointercapture', onUp);
                 window.removeEventListener('blur', onUp);
-                if (_dragTimeout) { clearTimeout(_dragTimeout); _dragTimeout = null; }
+                document.removeEventListener('visibilitychange', onUp);
 
                 // Save column widths
                 const cols = {};
@@ -974,14 +990,15 @@ function _initReelsColumnResize() {
                 localStorage.setItem('reels-col-widths', JSON.stringify(cols));
             };
 
-            document.addEventListener('mousemove', onMove);
-            document.addEventListener('mouseup', onUp);
-            // 安全网：鼠标离开窗口也清除覆盖层
-            document.addEventListener('mouseleave', onUp);
-            // Windows 安全网：Alt-Tab 切换窗口时 blur 触发清理
+            // 全套 Pointer 监听注册到 handle 自身
+            handle.addEventListener('pointermove', onMove);
+            handle.addEventListener('pointerup', onUp);
+            handle.addEventListener('pointercancel', onUp);
+            handle.addEventListener('lostpointercapture', onUp);
+            
+            // 安全网：失焦/隐藏时强制清理
             window.addEventListener('blur', onUp);
-            // 终极安全网：10秒超时强制清理（防止任何事件丢失场景）
-            _dragTimeout = setTimeout(onUp, 10000);
+            document.addEventListener('visibilitychange', onUp);
         });
     });
 }
@@ -1007,17 +1024,48 @@ async function _initReelsExportDefaults() {
     
     // Initialize export naming mode dropdown (outer)
     const namingModeOuter = document.getElementById('reels-export-naming-mode-outer');
+    const namingConfigBtnOuter = document.getElementById('reels-export-naming-config-btn');
+    const updateGearVisibility = (val) => {
+        if (namingConfigBtnOuter) {
+            namingConfigBtnOuter.style.display = (val === 'index' || val === 'date-auto') ? 'inline-block' : 'none';
+        }
+        const namingConfigBtnInner = document.getElementById('reels-naming-config-btn');
+        if (namingConfigBtnInner) {
+            namingConfigBtnInner.style.display = (val === 'index' || val === 'date-auto') ? 'inline-block' : 'none';
+        }
+    };
+
     if (namingModeOuter) {
         const storedVal = localStorage.getItem('reels_naming_mode') || 'text';
         namingModeOuter.value = storedVal;
+        updateGearVisibility(storedVal);
         
         // Add change event listener for synchronization
-        namingModeOuter.addEventListener('change', (e) => {
+        namingModeOuter.addEventListener('change', async (e) => {
             const val = e.target.value || 'text';
             localStorage.setItem('reels_naming_mode', val);
             const innerSelect = document.getElementById('reels-naming-mode');
             if (innerSelect) {
                 innerSelect.value = val;
+            }
+            updateGearVisibility(val);
+            if (val === 'index' || val === 'date-auto') {
+                const ok = await showNamingSettingsDialog(val);
+                if (!ok) {
+                    localStorage.setItem('reels_naming_mode', 'text');
+                    namingModeOuter.value = 'text';
+                    if (innerSelect) innerSelect.value = 'text';
+                    updateGearVisibility('text');
+                }
+            }
+        });
+    }
+
+    if (namingConfigBtnOuter) {
+        namingConfigBtnOuter.addEventListener('click', () => {
+            const mode = localStorage.getItem('reels_naming_mode') || 'text';
+            if (mode === 'index' || mode === 'date-auto') {
+                showNamingSettingsDialog(mode);
             }
         });
     }
@@ -1544,6 +1592,7 @@ function _refreshReelsFontSelects(fm, values = {}) {
         'rop-body-font': 'Arial',
         'rop-footer-font': 'Arial',
         'rop-scroll-font': 'Arial',
+        'rop-scroll-title-font': 'Arial',
     };
     for (const [id, fallback] of Object.entries(defaults)) {
         fm.refreshFontSelect(id, Object.prototype.hasOwnProperty.call(values, id) ? values[id] : fallback);
@@ -1726,6 +1775,7 @@ function reelsUploadFont() {
                 'rop-body-font': familyName,
                 'rop-footer-font': familyName,
                 'rop-scroll-font': familyName,
+                'rop-scroll-title-font': familyName,
             });
             const select = document.getElementById('reels-font-family');
             if (select) select.value = familyName;
@@ -1853,7 +1903,14 @@ function reelsOnStyleApplyScopeChange() {
 
 function _readStyleFromUI() {
     const get = (id) => document.getElementById(id);
-    const val = (id) => get(id) ? get(id).value : '';
+    const val = (id) => {
+        const el = get(id);
+        if (!el) return '';
+        if (el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA') {
+            return el.value;
+        }
+        return el.dataset.rawValue !== undefined ? el.dataset.rawValue : el.value;
+    };
     const num = (id, def) => { const v = parseFloat(val(id)); return isNaN(v) ? def : v; };
     const chk = (id) => get(id) ? get(id).checked : false;
 
@@ -1928,6 +1985,8 @@ function _readStyleFromUI() {
 
         // Dynamic box
         dynamic_box: chk('reels-dynamic-box'),
+        dynamic_box_stroke: chk('reels-dynamic-box-stroke'),
+        dynamic_box_stroke_width: num('reels-dynamic-box-stroke-width', 2),
         color_high_bg: val('reels-high-bg-color') || '#FFD700',
         opacity_high_bg: num('reels-high-bg-opacity', 200),
         dyn_box_anim: chk('reels-dyn-anim'),
@@ -1994,6 +2053,7 @@ function _readStyleFromUI() {
         word_pop_random_pulse_duration: num('reels-word-pop-pulse-dur', 0.22),
         word_pop_random_unread_opacity: num('reels-word-pop-unread-opacity', 0.0),
         word_pop_random_read_opacity: num('reels-word-pop-read-opacity', 1.0),
+        only_show_active_word: chk('reels-only-show-active-word'),
         flash_color: val('reels-flash-color') || '#FFFFFF',
         flash_duration: 0.1,
         bullet_stagger: 0.15,
@@ -2219,7 +2279,10 @@ function _renderSubtitleAutoColorRules() {
 function _writeStyleToUI(style) {
     const set = (id, val) => {
         const el = document.getElementById(id);
-        if (el) el.value = val;
+        if (el) {
+            el.value = val;
+            el.dataset.rawValue = val;
+        }
         const rangeEl = document.getElementById(id + '-range');
         if (rangeEl) rangeEl.value = val;
         const labelEl = document.getElementById(id + '-label');
@@ -2228,6 +2291,12 @@ function _writeStyleToUI(style) {
                 labelEl.textContent = val + '%';
             } else {
                 labelEl.textContent = val;
+            }
+        }
+        if (id === 'reels-font-family' && typeof getFontManager === 'function') {
+            const fm = getFontManager();
+            if (fm && typeof fm.refreshFontSelect === 'function') {
+                fm.refreshFontSelect(id, val);
             }
         }
     };
@@ -2266,8 +2335,8 @@ function _writeStyleToUI(style) {
     setChk('reels-use-box', style.use_box);
     setChk('reels-box-adaptive-width', style.box_adaptive_width);
     set('reels-box-color', style.color_bg || '#000000');
-    set('reels-box-opacity', style.opacity_bg || 150);
-    set('reels-box-radius', style.box_radius || 8);
+    set('reels-box-opacity', style.opacity_bg ?? 150);
+    set('reels-box-radius', style.box_radius ?? 8);
     set('reels-box-pad-x', style.box_padding_x ?? 12);
     set('reels-box-pad-y', style.box_padding_y ?? 8);
     { const el = document.getElementById('reels-box-pad-x-range'); if (el) el.value = style.box_padding_x ?? 12; }
@@ -2281,18 +2350,20 @@ function _writeStyleToUI(style) {
     setChk('reels-box-transition', style.box_transition_enabled);
     set('reels-box-transition-color', style.box_transition_color_to || '#FF6600');
     setChk('reels-dynamic-box', style.dynamic_box);
+    setChk('reels-dynamic-box-stroke', style.dynamic_box_stroke);
+    set('reels-dynamic-box-stroke-width', style.dynamic_box_stroke_width ?? 2);
     set('reels-high-bg-color', style.color_high_bg || '#FFD700');
     set('reels-high-bg-opacity', style.opacity_high_bg ?? 200);
     { const el = document.getElementById('reels-high-bg-opacity-range'); if (el) el.value = style.opacity_high_bg ?? 200; }
     setChk('reels-dyn-anim', style.dyn_box_anim);
-    set('reels-high-padding', style.high_padding || 4);
-    set('reels-dyn-radius', style.dynamic_radius || 6);
+    set('reels-high-padding', style.high_padding ?? 4);
+    set('reels-dyn-radius', style.dynamic_radius ?? 6);
     setChk('reels-use-underline', style.use_underline);
     set('reels-underline-color', style.color_underline || '#FFD700');
     set('reels-pos-x', Math.round((style.pos_x || 0.5) * 100));
     set('reels-pos-y', Math.round((style.pos_y || 0.5) * 100));
     set('reels-wrap-width', style.wrap_width_percent || 90);
-    set('reels-line-spacing', style.line_spacing || 4);
+    set('reels-line-spacing', style.line_spacing ?? 4);
     set('reels-rotation', style.rotation || 0);
     setChk('reels-adv-textbox', style.advanced_textbox_enabled);
     set('reels-adv-textbox-align', style.advanced_textbox_align || 'center');
@@ -2324,6 +2395,7 @@ function _writeStyleToUI(style) {
     set('reels-glow-color', style.holy_glow_color || '#FFFFAA');
     set('reels-glow-radius', style.holy_glow_radius || 6);
     set('reels-blur-max', style.blur_sharp_max || 20);
+    setChk('reels-only-show-active-word', style.only_show_active_word);
 
     // Scrolling lyrics mode
     setChk('reels-scrolling-mode', style.scrolling_mode);
@@ -3481,8 +3553,67 @@ document.addEventListener('DOMContentLoaded', () => {
         _reelsLoadWatermarks();
         _reelsRefreshWatermarkUI();
         _refreshWatermarkPresetList();
+        _initAllSubtitleNumberInputsDrag();
     }, 500);
 });
+
+function _initAllSubtitleNumberInputsDrag() {
+    const container = document.getElementById('inspector-tab-subtitle');
+    if (!container) return;
+    
+    container.querySelectorAll('input[type="number"]').forEach(el => {
+        if (el.dataset.dragBound === '1') return;
+        el.dataset.dragBound = '1';
+        
+        el.style.cursor = 'ew-resize';
+        let dragging = false, startX = 0, startVal = 0;
+        
+        el.addEventListener('mousedown', (e) => {
+            e.stopPropagation();
+            if (document.activeElement === el) return;
+            
+            dragging = true;
+            startX = e.clientX;
+            startVal = parseFloat(el.value) || 0;
+            e.preventDefault();
+            
+            const onMove = (me) => {
+                if (!dragging) return;
+                const dx = me.clientX - startX;
+                const speed = me.shiftKey ? 0.1 : 1;
+                const step = parseFloat(el.getAttribute('step')) || 1;
+                let newVal = Math.round((startVal + dx * speed * step) / step) * step;
+                
+                const min = parseFloat(el.getAttribute('min'));
+                const max = parseFloat(el.getAttribute('max'));
+                if (!isNaN(min) && newVal < min) newVal = min;
+                if (!isNaN(max) && newVal > max) newVal = max;
+                
+                el.value = newVal;
+                
+                const rangeEl = document.getElementById(el.id + '-range');
+                if (rangeEl) rangeEl.value = newVal;
+                
+                el.dispatchEvent(new Event('input'));
+            };
+            
+            const onUp = () => {
+                dragging = false;
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+            };
+            
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+        });
+        
+        el.addEventListener('dblclick', (e) => {
+            e.preventDefault();
+            el.focus();
+            el.select();
+        });
+    });
+}
 
 function _drawImageFlipped(ctx, img, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, flipH, flipV) {
     if (!flipH && !flipV) {
@@ -6366,6 +6497,96 @@ function _showInputDialog(title, placeholder) {
     });
 }
 
+window.showNamingSettingsDialog = function(mode) {
+    return new Promise((resolve) => {
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;';
+        
+        const isDate = mode === 'date-auto';
+        const title = isDate ? '按日期自动排序命名设置' : '纯序号命名设置';
+        
+        const defaultDate = localStorage.getItem('reels_naming_start_date') || new Date().toISOString().substring(0, 10);
+        const defaultVids = localStorage.getItem('reels_naming_vids_per_day') || '3';
+        const defaultPrefix = localStorage.getItem('reels_naming_prefix') || '';
+        const defaultSuffix = localStorage.getItem('reels_naming_suffix') || '';
+        
+        const box = document.createElement('div');
+        box.style.cssText = 'background:var(--bg-primary,#1e1e2e);border:1px solid var(--border-color,#444);border-radius:12px;padding:24px;width:380px;box-shadow:0 8px 32px rgba(0,0,0,0.5);color:var(--text-primary,#fff);font-family:system-ui, sans-serif;';
+        
+        let fieldsHtml = '';
+        if (isDate) {
+            fieldsHtml += `
+                <div style="margin-bottom:12px;">
+                    <label style="display:block;font-size:12px;color:#aaa;margin-bottom:4px;">起始日期:</label>
+                    <input type="date" id="_ns_start_date" value="${defaultDate}"
+                        style="width:100%;box-sizing:border-box;padding:8px 12px;border-radius:6px;border:1px solid var(--border-color,#555);background:var(--bg-secondary,#2a2a3e);color:var(--text-primary,#fff);font-size:13px;outline:none;">
+                </div>
+                <div style="margin-bottom:12px;">
+                    <label style="display:block;font-size:12px;color:#aaa;margin-bottom:4px;">每天视频数量:</label>
+                    <select id="_ns_vids_per_day"
+                        style="width:100%;box-sizing:border-box;padding:8px 12px;border-radius:6px;border:1px solid var(--border-color,#555);background:var(--bg-secondary,#2a2a3e);color:var(--text-primary,#fff);font-size:13px;outline:none;cursor:pointer;">
+                        <option value="1" ${defaultVids === '1' ? 'selected' : ''}>1</option>
+                        <option value="2" ${defaultVids === '2' ? 'selected' : ''}>2</option>
+                        <option value="3" ${defaultVids === '3' ? 'selected' : ''}>3</option>
+                        <option value="4" ${defaultVids === '4' ? 'selected' : ''}>4</option>
+                        <option value="5" ${defaultVids === '5' ? 'selected' : ''}>5</option>
+                        <option value="6" ${defaultVids === '6' ? 'selected' : ''}>6</option>
+                    </select>
+                </div>
+            `;
+        }
+        
+        fieldsHtml += `
+            <div style="margin-bottom:12px;">
+                <label style="display:block;font-size:12px;color:#aaa;margin-bottom:4px;">文件名自定义前缀 (可选):</label>
+                <input type="text" id="_ns_prefix" value="${defaultPrefix}" placeholder="例如: 爆款-"
+                    style="width:100%;box-sizing:border-box;padding:8px 12px;border-radius:6px;border:1px solid var(--border-color,#555);background:var(--bg-secondary,#2a2a3e);color:var(--text-primary,#fff);font-size:13px;outline:none;">
+            </div>
+            <div style="margin-bottom:12px;">
+                <label style="display:block;font-size:12px;color:#aaa;margin-bottom:4px;">文件名自定义后缀 (可选):</label>
+                <input type="text" id="_ns_suffix" value="${defaultSuffix}" placeholder="例如: -成品"
+                    style="width:100%;box-sizing:border-box;padding:8px 12px;border-radius:6px;border:1px solid var(--border-color,#555);background:var(--bg-secondary,#2a2a3e);color:var(--text-primary,#fff);font-size:13px;outline:none;">
+            </div>
+        `;
+        
+        box.innerHTML = `
+            <div style="font-size:15px;font-weight:600;margin-bottom:16px;color:var(--text-primary,#fff);">${title}</div>
+            ${fieldsHtml}
+            <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
+                <button id="_ns_cancel" style="padding:6px 18px;border-radius:6px;border:1px solid var(--border-color,#555);background:transparent;color:var(--text-secondary,#aaa);cursor:pointer;font-size:13px;">取消</button>
+                <button id="_ns_ok" style="padding:6px 18px;border-radius:6px;border:none;background:var(--accent-primary,#5b6abf);color:#fff;cursor:pointer;font-size:13px;font-weight:bold;">确定</button>
+            </div>
+        `;
+        
+        overlay.appendChild(box);
+        document.body.appendChild(overlay);
+        
+        box.addEventListener('mousedown', (e) => e.stopPropagation());
+        box.addEventListener('click', (e) => e.stopPropagation());
+        
+        const close = (success) => {
+            if (overlay.parentNode) document.body.removeChild(overlay);
+            resolve(success);
+        };
+        
+        box.querySelector('#_ns_cancel').onclick = () => close(false);
+        box.querySelector('#_ns_ok').onclick = () => {
+            if (isDate) {
+                const sDate = box.querySelector('#_ns_start_date').value;
+                const vDay = box.querySelector('#_ns_vids_per_day').value;
+                localStorage.setItem('reels_naming_start_date', sDate);
+                localStorage.setItem('reels_naming_vids_per_day', vDay);
+            }
+            const pfx = box.querySelector('#_ns_prefix').value;
+            const sfx = box.querySelector('#_ns_suffix').value;
+            localStorage.setItem('reels_naming_prefix', pfx);
+            localStorage.setItem('reels_naming_suffix', sfx);
+            close(true);
+        };
+        overlay.onclick = (e) => { if (e.target === overlay) close(false); };
+    });
+};
+
 async function reelsSavePreset() {
     console.log('[预设] 保存按钮被点击');
     try {
@@ -7234,6 +7455,43 @@ async function reelsStartExport() {
     {
         // 先给每个任务加上行号
         const namedWithRow = exportJobs.map((job, idx) => {
+            if (namingMode === 'index') {
+                const prefix = localStorage.getItem('reels_naming_prefix') || '';
+                const suffixVal = localStorage.getItem('reels_naming_suffix') || '';
+                return `${prefix}${idx + 1}${suffixVal}`;
+            }
+            if (namingMode === 'date-auto') {
+                const startDateStr = localStorage.getItem('reels_naming_start_date') || '';
+                const vidsPerDay = parseInt(localStorage.getItem('reels_naming_vids_per_day') || '3') || 3;
+                const prefix = localStorage.getItem('reels_naming_prefix') || '';
+                const suffixVal = localStorage.getItem('reels_naming_suffix') || '';
+
+                let startDate = new Date();
+                if (startDateStr) {
+                    const cleanDate = startDateStr.replace(/-/g, '');
+                    if (cleanDate.length === 8) {
+                        const y = parseInt(cleanDate.substring(0, 4));
+                        const m = parseInt(cleanDate.substring(4, 6)) - 1;
+                        const d = parseInt(cleanDate.substring(6, 8));
+                        startDate = new Date(y, m, d);
+                    } else {
+                        const parsed = Date.parse(startDateStr);
+                        if (!isNaN(parsed)) startDate = new Date(parsed);
+                    }
+                }
+                const dayOffset = Math.floor(idx / vidsPerDay);
+                const seq = (idx % vidsPerDay) + 1;
+                const targetDate = new Date(startDate.getTime());
+                targetDate.setDate(startDate.getDate() + dayOffset);
+
+                const yyyy = targetDate.getFullYear();
+                const mm = String(targetDate.getMonth() + 1).padStart(2, '0');
+                const dd = String(targetDate.getDate()).padStart(2, '0');
+                const dateFormatted = `${yyyy}${mm}${dd}`;
+
+                return `${prefix}${dateFormatted}-${seq}${suffixVal}`;
+            }
+
             const raw = _resolveReelsExportBaseName(job.task, namingMode);
             return `${raw}_行${idx + 1}`;
         });
@@ -8596,6 +8854,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         'rop-body-font': familyName,
                         'rop-footer-font': familyName,
                         'rop-scroll-font': familyName,
+                        'rop-scroll-title-font': familyName,
                     });
                     const familyEl = document.getElementById('reels-font-family');
                     if (familyEl) familyEl.value = familyName;

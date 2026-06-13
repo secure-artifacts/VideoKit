@@ -579,7 +579,7 @@ class ReelsCanvasRenderer {
         if (s.use_box) {
             ctx.save();
             const bgColor = s.color_bg || '#000000';
-            const bgAlpha = (s.opacity_bg || 150) / 255;
+            const bgAlpha = (s.opacity_bg ?? 150) / 255;
             ctx.globalAlpha = globalAlpha * bgAlpha;
 
             // Box blur (feathered edge)
@@ -739,7 +739,7 @@ class ReelsCanvasRenderer {
         }
 
         // ── Multi-layer stroke expand (pre-pass) ──
-        if (s.stroke_expand_enabled) {
+        if (s.stroke_expand_enabled && !s.only_show_active_word) {
             this._renderStrokeExpand(ctx, s, visibleLines, lineWidths, cx, advEnabled, advAlign, advX, advW,
                 cy, totalH, lineStep, fontStr, fontSize, letterSpacing, advY, advH);
         }
@@ -848,6 +848,9 @@ class ReelsCanvasRenderer {
                     wordEnd = wordPopGroups.ends[wordIdx];
                 }
 
+                const isWordActive = !s.only_show_active_word || (currentTime == null || (currentTime >= wordStart && currentTime <= wordEnd));
+                const drawX = s.only_show_active_word ? (cx - (wordW * lineScale) / 2) : currX;
+
                 // Metronome visibility
                 let metroVisible = true;
                 if (anim && isMetronome && wInfo) {
@@ -859,10 +862,10 @@ class ReelsCanvasRenderer {
                 }
 
                 // ── Dynamic highlight box ──
-                if (isHighlight && s.dynamic_box) {
+                if (isHighlight && s.dynamic_box && isWordActive) {
                     const dynPad = s.high_padding || 4;
                     const dynOffY = s.high_offset_y || 0;
-                    let boxX = currX - dynPad;
+                    let boxX = drawX - dynPad;
                     let boxY = y - dynPad + dynOffY;
                     let boxW = wordW * lineScale + dynPad * 2;
                     let boxH = lineHScaled + dynPad * 2;
@@ -886,10 +889,16 @@ class ReelsCanvasRenderer {
                     const dynColor = s.color_high_bg || '#FFD700';
                     const dynAlpha = (s.opacity_high_bg || 200) / 255;
                     ctx.globalAlpha = globalAlpha * dynAlpha * lineAlpha;
-                    ctx.fillStyle = dynColor;
                     const dynRad = s.dynamic_radius || 6;
                     this._roundRect(ctx, boxX, boxY, boxW, boxH, dynRad);
-                    ctx.fill();
+                    if (s.dynamic_box_stroke) {
+                        ctx.strokeStyle = dynColor;
+                        ctx.lineWidth = s.dynamic_box_stroke_width || 2;
+                        ctx.stroke();
+                    } else {
+                        ctx.fillStyle = dynColor;
+                        ctx.fill();
+                    }
                     ctx.restore();
                 }
 
@@ -902,8 +911,10 @@ class ReelsCanvasRenderer {
                     );
                 }
 
-                // ── Determine colors ──
                 let wordOpacity = lineAlpha;
+                if (s.only_show_active_word && currentTime != null && (currentTime < wordStart || currentTime > wordEnd)) {
+                    wordOpacity = 0.0;
+                }
                 let wordColor = isHighlight ? highColor : textColor;
                 let wordStrokeColor = outlineColor;
 
@@ -977,13 +988,13 @@ class ReelsCanvasRenderer {
                 }
 
                 // ── Bullet reveal alpha ──
-                if (isBullet && lineAlpha < 0.999) {
+                if (isBullet && lineAlpha < 0.999 && isWordActive) {
                     ctx.save();
                     ctx.globalAlpha = ctx.globalAlpha * lineAlpha;
                 }
 
                 // ── Holy glow around text ──
-                if (isHolyGlow && holyGlowRadius > 0) {
+                if (isHolyGlow && holyGlowRadius > 0 && isWordActive) {
                     ctx.save();
                     const glowColor = s.holy_glow_color || '#FFFFCC';
                     for (let gr = holyGlowRadius; gr > 0; gr--) {
@@ -992,45 +1003,58 @@ class ReelsCanvasRenderer {
                         ctx.strokeStyle = glowColor;
                         ctx.lineWidth = gr * 2;
                         ctx.lineJoin = 'round';
-                        ctx.strokeText(wordStr, currX, wordY);
+                        ctx.strokeText(wordStr, drawX, wordY);
                     }
                     ctx.restore();
                 }
 
                 // ── Render word ──
-                ctx.save();
-                ctx.globalAlpha = globalAlpha * wordOpacity;
+                if (isWordActive) {
+                    // ── Local multi-layer stroke expand ──
+                    if (s.stroke_expand_enabled) {
+                        this._renderWordStrokeExpand(ctx, s, wordStr, drawX, wordY, fontStr, letterSpacing);
+                    }
 
-                const wordScale = letterJumpScale * randomPopScale;
-                if (wordScale !== 1.0) {
-                    ctx.translate(currX, wordY);
-                    ctx.scale(wordScale, wordScale);
-                    ctx.translate(-currX, -wordY);
-                }
-                if (lineScale !== 1.0) {
-                    ctx.translate(currX, wordY);
-                    ctx.scale(lineScale, lineScale);
-                    ctx.translate(-currX, -wordY);
-                }
+                    ctx.save();
+                    ctx.globalAlpha = globalAlpha * wordOpacity;
 
-                this._drawWord(ctx, wordStr, currX, wordY, wordColor,
-                    useStroke && !s.stroke_expand_enabled, wordStrokeColor, borderW, outlineAlpha,
-                    shadowBlur, shadowOffX, shadowOffY, shadowColor, shadowAlpha, letterSpacing);
-                ctx.restore();
+                    const wordScale = letterJumpScale * randomPopScale;
+                    if (wordScale !== 1.0) {
+                        ctx.translate(drawX, wordY);
+                        ctx.scale(wordScale, wordScale);
+                        ctx.translate(-drawX, -wordY);
+                    }
+                    if (lineScale !== 1.0) {
+                        ctx.translate(drawX, wordY);
+                        ctx.scale(lineScale, lineScale);
+                        ctx.translate(-drawX, -wordY);
+                    }
+
+                    let currentShadowColor = shadowColor;
+                    if (shadowColor && shadowColor.includes(',')) {
+                        const shadowColors = shadowColor.split(',').map(c => c.trim());
+                        currentShadowColor = isHighlight ? (shadowColors[1] || shadowColors[0]) : shadowColors[0];
+                    }
+
+                    this._drawWord(ctx, wordStr, drawX, wordY, wordColor,
+                        useStroke && !s.stroke_expand_enabled, wordStrokeColor, borderW, outlineAlpha,
+                        shadowBlur, shadowOffX, shadowOffY, currentShadowColor, shadowAlpha, letterSpacing, s);
+                    ctx.restore();
+                }
 
                 // Bullet restore
-                if (isBullet && lineAlpha < 0.999) ctx.restore();
+                if (isBullet && lineAlpha < 0.999 && isWordActive) ctx.restore();
 
                 // Underline
-                if ((isHighlight && useUnderline) || (useUnderline && s.underline_all)) {
+                if (((isHighlight && useUnderline) || (useUnderline && s.underline_all)) && isWordActive) {
                     ctx.save();
                     ctx.globalAlpha = globalAlpha * lineAlpha;
                     ctx.strokeStyle = underlineColor;
                     ctx.lineWidth = Math.max(2, fontSize * 0.04) * lineScale;
                     ctx.beginPath();
                     const underlineY = wordY + lineHScaled + 2;
-                    ctx.moveTo(currX, underlineY);
-                    ctx.lineTo(currX + wordW * lineScale, underlineY);
+                    ctx.moveTo(drawX, underlineY);
+                    ctx.lineTo(drawX + wordW * lineScale, underlineY);
                     ctx.stroke();
                     ctx.restore();
                 }
@@ -1204,10 +1228,86 @@ class ReelsCanvasRenderer {
         ctx.restore();
     }
 
+    // ─── Single word stroke expand (for only_show_active_word) ───
+    _renderWordStrokeExpand(ctx, s, wordStr, x, y, fontStr, letterSpacing) {
+        const seLayers = parseInt(s.stroke_expand_layers) || 3;
+        const seStep = parseFloat(s.stroke_expand_step) || 4;
+        const seFeather = parseFloat(s.stroke_expand_feather) || 8;
+        const seColorsStr = typeof s.stroke_expand_colors === 'string'
+            ? s.stroke_expand_colors : (Array.isArray(s.stroke_expand_colors) ? s.stroke_expand_colors.join(',') : '#FF0000,#00FF00,#0000FF');
+        const seColors = seColorsStr.split(',').map(c => c.trim()).filter(Boolean);
+        const seLayerWidths = s.stroke_expand_layer_widths || [];
+        const seLayerFeathers = s.stroke_expand_layer_feathers || [];
+
+        ctx.save();
+        ctx.font = fontStr;
+        ctx.textBaseline = 'top';
+
+        for (let li = seLayers - 1; li >= 0; li--) {
+            const lw = li < seLayerWidths.length ? parseFloat(seLayerWidths[li]) : seStep * (li + 1);
+            const lf = li < seLayerFeathers.length ? parseFloat(seLayerFeathers[li]) : seFeather;
+            const color = li < seColors.length ? seColors[li] : seColors[seColors.length - 1] || '#000000';
+
+            if (lf > 0) {
+                const featherSteps = Math.min(8, Math.max(3, Math.floor(lf)));
+                for (let fi = featherSteps; fi >= 0; fi--) {
+                    const t = fi / featherSteps;
+                    const expandW = lw + lf * t;
+                    const alpha = Math.exp(-((t * 2.5) ** 2));
+                    ctx.save();
+                    ctx.globalAlpha = ctx.globalAlpha * alpha * 0.4;
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = expandW * 2;
+                    ctx.lineJoin = 'round';
+                    if (letterSpacing > 0) {
+                        this._strokeTextSpaced(ctx, wordStr, x, y, letterSpacing);
+                    } else {
+                        ctx.strokeText(wordStr, x, y);
+                    }
+                    ctx.restore();
+                }
+            } else {
+                ctx.save();
+                ctx.strokeStyle = color;
+                ctx.lineWidth = lw * 2;
+                ctx.lineJoin = 'round';
+                if (letterSpacing > 0) {
+                    this._strokeTextSpaced(ctx, wordStr, x, y, letterSpacing);
+                } else {
+                    ctx.strokeText(wordStr, x, y);
+                }
+                ctx.restore();
+            }
+        }
+        ctx.restore();
+    }
+
     // ─── Helper: draw word with optional letter spacing ───
     _drawWord(ctx, text, x, y, fillColor,
         useStroke, strokeColor, strokeWidth, strokeAlpha,
-        shadowBlur, shadowOffX, shadowOffY, shadowColor, shadowAlpha, letterSpacing = 0) {
+        shadowBlur, shadowOffX, shadowOffY, shadowColor, shadowAlpha, letterSpacing = 0, s = null) {
+
+        // Speed Trail (motion blur / speed lines)
+        if (s && s.speed_trail_enabled) {
+            ctx.save();
+            const layers = s.speed_trail_layers ?? 5;
+            const step = s.speed_trail_step ?? -8;
+            const trailColor = s.speed_trail_color || '#FFFFFF';
+            const baseAlpha = (s.speed_trail_opacity ?? 80) / 255;
+            
+            for (let i = 1; i <= layers; i++) {
+                ctx.save();
+                ctx.globalAlpha = ctx.globalAlpha * baseAlpha * (1 - i / (layers + 1));
+                ctx.fillStyle = trailColor;
+                if (letterSpacing > 0) {
+                    this._fillTextSpaced(ctx, text, x + i * step, y, letterSpacing);
+                } else {
+                    ctx.fillText(text, x + i * step, y);
+                }
+                ctx.restore();
+            }
+            ctx.restore();
+        }
 
         // Shadow
         if (shadowBlur > 0 || shadowOffX !== 0 || shadowOffY !== 0) {
@@ -1246,7 +1346,22 @@ class ReelsCanvasRenderer {
         }
 
         // Fill
-        ctx.fillStyle = fillColor;
+        if (typeof fillColor === 'string' && fillColor.includes(',')) {
+            const colors = fillColor.split(',').map(c => c.trim());
+            if (colors.length >= 2) {
+                const match = ctx.font.match(/(\d+)px/);
+                const fontSize = match ? parseFloat(match[1]) : 80;
+                const grad = ctx.createLinearGradient(x, y, x, y + fontSize * 0.95);
+                colors.forEach((c, i) => {
+                    grad.addColorStop(i / Math.max(1, colors.length - 1), c);
+                });
+                ctx.fillStyle = grad;
+            } else {
+                ctx.fillStyle = fillColor;
+            }
+        } else {
+            ctx.fillStyle = fillColor;
+        }
         if (letterSpacing > 0) {
             this._fillTextSpaced(ctx, text, x, y, letterSpacing);
         } else {
@@ -2031,7 +2146,7 @@ class ReelsCanvasRenderer {
         if (s.use_box) {
             ctx.save();
             const bgColor = s.color_bg || '#000000';
-            const bgAlpha = (s.opacity_bg || 180) / 255;
+            const bgAlpha = (s.opacity_bg ?? 180) / 255;
             ctx.globalAlpha = bgAlpha;
             const rad = s.box_radius || 12;
 
@@ -2109,12 +2224,14 @@ class ReelsCanvasRenderer {
                 const tokW = this._measureTextWithSpacing(ctx, tok.text, letterSpacing);
 
                 let color, opacity;
+                let isHighlight = false;
                 if (currentTime >= tok.end) {
                     color = (li === 0) ? (s.fullpage_typewriter_first_line_color || firstSegStyle.color_text || s.color_text || '#FFFFFF') : (s.color_text || '#FFFFFF');
                     opacity = 1.0;
                 } else if (currentTime >= tok.start && currentTime < tok.end) {
                     color = s.color_high || '#FFD700';
                     opacity = 1.0;
+                    isHighlight = true;
                 } else {
                     color = (li === 0) ? (s.fullpage_typewriter_first_line_color || firstSegStyle.color_text || s.color_text || '#FFFFFF') : (s.color_text || '#FFFFFF');
                     opacity = s.tw_unrevealed_opacity ?? 0.0;
@@ -2129,9 +2246,14 @@ class ReelsCanvasRenderer {
                 if (opacity > 0.001) {
                     ctx.save();
                     ctx.globalAlpha = opacity;
+                    let currentShadowColor = shadowColor;
+                    if (shadowColor && shadowColor.includes(',')) {
+                        const shadowColors = shadowColor.split(',').map(c => c.trim());
+                        currentShadowColor = isHighlight ? (shadowColors[1] || shadowColors[0]) : shadowColors[0];
+                    }
                     this._drawWord(ctx, tok.text, currX, y, color,
                         useStroke && !s.stroke_expand_enabled, outlineColor, borderW, outlineAlpha,
-                        shadowBlur, shadowOffX, shadowOffY, shadowColor, shadowAlpha, letterSpacing);
+                        shadowBlur, shadowOffX, shadowOffY, currentShadowColor, shadowAlpha, letterSpacing, s);
                     ctx.restore();
                 }
 
@@ -2299,8 +2421,6 @@ class ReelsCanvasRenderer {
             }
 
             ctx.save();
-            ctx.translate(group.posX, group.posY);
-            ctx.rotate(group.angle * Math.PI / 180);
 
             const scaledFontSize = s.fontsize * group.scale;
             const fontStr = `${italic ? 'italic ' : ''}${fontWeight} ${scaledFontSize}px "${fontFamily}", ${fallbackFamily}`;
@@ -2327,10 +2447,27 @@ class ReelsCanvasRenderer {
             const bw = groupW + padLeft + padRight;
             const bh = (scaledFontSize * 1.2) + padTop + padBottom;
 
+            // Clamp center coordinates to keep the scattered bubble within the video frame
+            let renderX = group.posX;
+            let renderY = group.posY;
+            if (bw < videoW) {
+                renderX = Math.max(bw / 2, Math.min(videoW - bw / 2, renderX));
+            } else {
+                renderX = videoW / 2;
+            }
+            if (bh < videoH) {
+                renderY = Math.max(bh / 2, Math.min(videoH - bh / 2, renderY));
+            } else {
+                renderY = videoH / 2;
+            }
+
+            ctx.translate(renderX, renderY);
+            ctx.rotate(group.angle * Math.PI / 180);
+
             if (s.use_box) {
                 ctx.save();
                 ctx.fillStyle = s.color_bg || '#6A0DAD';
-                ctx.globalAlpha = (s.opacity_bg || 220) / 255;
+                ctx.globalAlpha = (s.opacity_bg ?? 220) / 255;
                 const rad = (s.box_radius || 12) * group.scale;
                 this._roundRect(ctx, bx, by, bw, bh, rad);
                 ctx.fill();
@@ -2346,13 +2483,21 @@ class ReelsCanvasRenderer {
                 const wordW = wordWidths[wi];
 
                 let wordColor = s.color_text || '#FFFFFF';
+                let isHighlight = false;
                 if (currentTime >= w.start && currentTime <= w.end) {
                     wordColor = s.color_high || '#FFD700';
+                    isHighlight = true;
+                }
+
+                let currentShadowColor = shadowColor;
+                if (shadowColor && shadowColor.includes(',')) {
+                    const shadowColors = shadowColor.split(',').map(c => c.trim());
+                    currentShadowColor = isHighlight ? (shadowColors[1] || shadowColors[0]) : shadowColors[0];
                 }
 
                 this._drawWord(ctx, wordStr, currX, wordY, wordColor,
                     useStroke && !s.stroke_expand_enabled, outlineColor, borderW * group.scale, outlineAlpha,
-                    shadowBlur * group.scale, shadowOffX * group.scale, shadowOffY * group.scale, shadowColor, shadowAlpha, letterSpacing * group.scale);
+                    shadowBlur * group.scale, shadowOffX * group.scale, shadowOffY * group.scale, currentShadowColor, shadowAlpha, letterSpacing * group.scale, s);
 
                 currX += wordW + spaceW;
             }

@@ -1612,14 +1612,11 @@ class ReelsOverlayPanel {
                 if (!el) return;
                 const def = el.dataset.default;
                 if (def == null) return;
-                el.value = def;
+                this._val(targetId, def);
                 if (['rop-title-override-w', 'rop-body-override-w', 'rop-footer-override-w'].includes(targetId)) {
                     el.dataset.followContentWidth = '1';
                     el.dataset.userEdited = '0';
                 }
-                // Sync linked number readout
-                const numReadout = this.container.querySelector(`.rop-num-readout[data-link="${targetId}"]`);
-                if (numReadout) numReadout.value = def;
                 this._syncToOverlay();
             });
         });
@@ -1635,18 +1632,20 @@ class ReelsOverlayPanel {
                     if (el.id && el.id.endsWith('-weight')) return; // skip weight for now
                     const def = el.dataset.default;
                     if (def == null) return;
-                    if (el.type === 'checkbox') {
-                        el.checked = def === 'true';
-                    } else {
-                        el.value = def;
-                    }
+                    
+                    const val = (el.type === 'checkbox') ? (def === 'true') : def;
                     if (el.id) {
+                        this._val(el.id, val);
                         if (['rop-title-override-w', 'rop-body-override-w', 'rop-footer-override-w'].includes(el.id)) {
                             el.dataset.followContentWidth = '1';
                             el.dataset.userEdited = '0';
                         }
-                        const numReadout = this.container.querySelector(`.rop-num-readout[data-link="${el.id}"]`);
-                        if (numReadout) numReadout.value = def;
+                    } else {
+                        if (el.type === 'checkbox') {
+                            el.checked = val;
+                        } else {
+                            el.value = val;
+                        }
                     }
                 });
 
@@ -1661,7 +1660,7 @@ class ReelsOverlayPanel {
                 this.container.querySelectorAll('.rop-defaultable').forEach(el => {
                     if (el.id && el.id.endsWith('-weight')) {
                         const def = el.dataset.default;
-                        if (def != null) el.value = def;
+                        if (def != null) this._val(el.id, def);
                     }
                 });
 
@@ -2594,6 +2593,14 @@ class ReelsOverlayPanel {
         else el.value = v ?? '';
         if (el.type === 'color' && el._ropHexInput) {
             el._ropHexInput.value = this._normalizeHexColor(el.value) || (v ?? '');
+        }
+        if (['rop-font', 'rop-title-font', 'rop-body-font', 'rop-footer-font', 'rop-scroll-font', 'rop-scroll-title-font'].includes(id)) {
+            if (window.getFontManager) {
+                const fm = getFontManager();
+                if (fm && typeof fm.refreshFontSelect === 'function') {
+                    fm.refreshFontSelect(id, v ?? '');
+                }
+            }
         }
         // Sync linked number readout
         const numReadout = this.container.querySelector(`.rop-num-readout[data-link="${id}"]`);

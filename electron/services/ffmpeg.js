@@ -1250,6 +1250,10 @@ async function mediaConvert(filePath, mode, outDir, options = {}) {
         'gif': { outputExt: '.gif', type: 'video' },
         'audio_black': { outputExt: '.mp4', type: 'audio_black' },
         'audio_split': { outputExt: '', type: 'audio_split' },
+        'png': { outputExt: '.png', type: 'image' },
+        'jpg': { outputExt: '.jpg', type: 'image' },
+        'jpeg': { outputExt: '.jpeg', type: 'image' },
+        'jepg': { outputExt: '.jpeg', type: 'image' },
     };
 
     const config = modeConfigs[mode];
@@ -1303,6 +1307,15 @@ async function mediaConvert(filePath, mode, outDir, options = {}) {
         results.push(outputPath);
     } else if (config.type === 'audio_split') {
         // 音频裁切导出 - 由 mediaConvertBatch 中处理
+    } else if (config.type === 'image') {
+        const outputPath = path.join(outDir, `${baseName}${config.outputExt}`);
+        const args = ['-y', '-i', filePath];
+        if (mode === 'jpg' || mode === 'jpeg' || mode === 'jepg') {
+            args.push('-q:v', '2');
+        }
+        args.push(outputPath);
+        await runCommand('ffmpeg', args);
+        results.push(outputPath);
     }
 
     return results;

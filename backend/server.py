@@ -2603,6 +2603,9 @@ def media_convert():
         'dnxhr': {'output_ext': '_dnxhr.mov', 'type': 'dnxhr'},
         'dnxhr_hqx': {'output_ext': '_dnxhr_hqx.mov', 'type': 'dnxhr_10bit'},
         'png': {'output_ext': '.png', 'type': 'image'},
+        'jpg': {'output_ext': '.jpg', 'type': 'image'},
+        'jpeg': {'output_ext': '.jpeg', 'type': 'image'},
+        'jepg': {'output_ext': '.jpeg', 'type': 'image'},
         'mp3': {'output_ext': '.mp3', 'type': 'audio'},
         'wav': {'output_ext': '.wav', 'type': 'audio'},
         'audio_black': {'output_ext': '_black.mp4', 'type': 'audio_black'},
@@ -2782,10 +2785,13 @@ def media_convert():
                 output_path = os.path.join(out_dir, f"{base_name}{config['output_ext']}")
                 cmd = ['ffmpeg', '-y', '-i', file_path, '-c:v', 'dnxhd', '-profile:v', 'dnxhr_hqx', '-c:a', 'pcm_s16le', '-avoid_negative_ts', 'make_zero', output_path]
             
-            # PNG 转换
-            elif mode == 'png':
+            # PNG/JPG/JPEG 转换
+            elif mode in ['png', 'jpg', 'jpeg', 'jepg']:
                 output_path = os.path.join(out_dir, f"{base_name}{config['output_ext']}")
-                cmd = ['ffmpeg', '-y', '-i', file_path, output_path]
+                cmd = ['ffmpeg', '-y', '-i', file_path]
+                if mode in ['jpg', 'jpeg', 'jepg']:
+                    cmd.extend(['-q:v', '2'])
+                cmd.append(output_path)
             
             # MP3 转换
             elif mode == 'mp3':

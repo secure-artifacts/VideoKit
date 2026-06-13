@@ -488,6 +488,92 @@ function flattenWordsFromSegments(segments) {
 // ═══════════════════════════════════════════════════════
 
 /**
+ * 针对词级别时间戳进行更健壮的分词（用于卡拉OK高亮、单字显示等动画用途）
+ * - CJK 汉字按单字拆分。
+ * - 英文/拉丁文/数字以空格分词，保持完整。
+ * - 所有的标点符号、符号和空白字符，会自动附着并合并到前一个有效字/词的末尾（如果在最开头，则附着到下一个有效字/词的开头），防止标点单独出现。
+ */
+function tokenizeForWordTiming(text) {
+    if (!text) return [];
+    const normalized = String(text).trim();
+    if (!normalized) return [];
+
+    const cjkLikeRe = /[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\u3040-\u30FF\uAC00-\uD7AF]/;
+    const punctRe = /^[，。！？；：、（）《》【】“”‘’「」『』—…\s,.\-!?:;()\[\]{}'"`~@#$%^&*_+=\/\\|]+$/;
+
+    const chars = Array.from(normalized);
+    const rawTokens = [];
+
+    let currentWord = '';
+    let currentPunct = '';
+
+    for (let i = 0; i < chars.length; i++) {
+        const ch = chars[i];
+        if (cjkLikeRe.test(ch)) {
+            if (currentWord) {
+                rawTokens.push({ type: 'word', text: currentWord });
+                currentWord = '';
+            }
+            if (currentPunct) {
+                rawTokens.push({ type: 'punct', text: currentPunct });
+                currentPunct = '';
+            }
+            rawTokens.push({ type: 'cjk', text: ch });
+        } else if (/\s/.test(ch)) {
+            if (currentWord) {
+                rawTokens.push({ type: 'word', text: currentWord });
+                currentWord = '';
+            }
+            if (currentPunct) {
+                rawTokens.push({ type: 'punct', text: currentPunct });
+                currentPunct = '';
+            }
+        } else if (punctRe.test(ch)) {
+            if (currentWord) {
+                rawTokens.push({ type: 'word', text: currentWord });
+                currentWord = '';
+            }
+            currentPunct += ch;
+        } else {
+            if (currentPunct) {
+                rawTokens.push({ type: 'punct', text: currentPunct });
+                currentPunct = '';
+            }
+            currentWord += ch;
+        }
+    }
+    if (currentWord) rawTokens.push({ type: 'word', text: currentWord });
+    if (currentPunct) rawTokens.push({ type: 'punct', text: currentPunct });
+
+    const tokens = [];
+    let pendingPrepend = '';
+
+    for (const token of rawTokens) {
+        if (token.type === 'punct') {
+            if (tokens.length > 0) {
+                tokens[tokens.length - 1] += token.text;
+            } else {
+                pendingPrepend += token.text;
+            }
+        } else {
+            let tokenText = token.text;
+            if (pendingPrepend) {
+                tokenText = pendingPrepend + tokenText;
+                pendingPrepend = '';
+            }
+            tokens.push(tokenText);
+        }
+    }
+    if (pendingPrepend && tokens.length > 0) {
+        tokens[tokens.length - 1] += pendingPrepend;
+    } else if (pendingPrepend) {
+        tokens.push(pendingPrepend);
+    }
+
+    return tokens;
+}
+
+/**
  * 将 SRT 解析结果转为带 words 的 segments。
  * 对于每个 SRT 条目，如果没有 words 信息，自动按字符生成假 word 时间。
  */
@@ -505,12 +591,17 @@ function srtToSegmentsWithWords(srtSegments) {
         const text = seg.text || '';
         const dur = endSec - startSec;
 
-        if (seg.words && seg.words.length > 0) {
+        let needsRegen = !seg.words || seg.words.length === 0;
+        if (seg.words && seg.words.length === 1 && text.trim().length > 1) {
+            needsRegen = true;
+        }
+
+        if (!needsRegen) {
             return { start: startSec, end: endSec, text, words: seg.words };
         }
 
         // 自动按 token 生成均匀分布的 word timing
-        const [tokens] = tokenizeForWrap(text.replace(/\n/g, ' '));
+        const tokens = tokenizeForWordTiming(text.replace(/\n/g, ' '));
         const words = tokens.map((token, i) => ({
             word: token,
             start: startSec + (dur * i / tokens.length),
@@ -520,6 +611,7 @@ function srtToSegmentsWithWords(srtSegments) {
         return { start: startSec, end: endSec, text, words };
     });
 }
+
 
 /**
  * 将 segments 转回 SRT 格式字符串。
@@ -605,7 +697,7 @@ function generateEnhancedASS(segments, style, opts = {}) {
     // BorderStyle: 1=outline+shadow, 3=opaque box
     const borderStyle = s.use_box ? 3 : 1;
     const backColor = s.use_box
-        ? toASSColor(s.color_bg || '#000000', Math.round(255 - (s.opacity_bg || 150)))
+        ? toASSColor(s.color_bg || '#000000', Math.round(255 - (s.opacity_bg ?? 150)))
         : shadowColor;
 
     // 下划线
@@ -844,8 +936,28 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
         const animTag = buildAnimTags(seg.start, seg.end);
         const overrideOpen = `{${posTag}${animTag}${segStyleTags}}`;
 
+        // ── 仅显示当前激活单词 (only_show_active_word) ──
+        if (s.only_show_active_word && seg.words && seg.words.length > 0) {
+            for (const w of seg.words) {
+                const wText = w.word || '';
+                if (!wText.trim()) continue;
+                const wPosTag = buildPosTags(w.start, w.end, segStyle);
+                const wAnimTag = buildAnimTags(w.start, w.end);
+                const wOverrideOpen = `{${wPosTag}${wAnimTag}${segStyleTags}}`;
+                events.push(`Dialogue: 0,${toASSTime(w.start)},${toASSTime(w.end)},Default,,0,0,0,,${wOverrideOpen}${wText}`);
+
+                // ── 多层描边扩展 Dialogue (底层先画) ──
+                if (seEnabled) {
+                    const seLayers = parseInt(s.stroke_expand_layers) || 3;
+                    for (let li = seLayers - 1; li >= 0; li--) {
+                        const layerNum = -(10 + li);
+                        events.push(`Dialogue: ${layerNum},${toASSTime(w.start)},${toASSTime(w.end)},SE_Layer${li},,0,0,0,,{${wPosTag}${wAnimTag}}${wText}`);
+                    }
+                }
+            }
+        }
         // ── 打字机效果 (typewriter) ──
-        if (animInType === 'typewriter' && seg.words && seg.words.length > 0) {
+        else if (animInType === 'typewriter' && seg.words && seg.words.length > 0) {
             // 用 \kf 逐字显示，灰色→白色过渡
             const unrevealedColor = toASSColor(s.tw_unrevealed_color || '#808080');
             const revealedColor = toASSColor(s.color_text || '#FFFFFF');
@@ -878,7 +990,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
         }
 
         // ── 多层描边扩展 Dialogue (底层先画) ──
-        if (seEnabled) {
+        if (seEnabled && !s.only_show_active_word) {
             const seLayers = parseInt(s.stroke_expand_layers) || 3;
             for (let li = seLayers - 1; li >= 0; li--) {
                 // 描边层在主文字下方 (layer -10 - li)
