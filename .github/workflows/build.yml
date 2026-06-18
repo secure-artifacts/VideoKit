@@ -240,18 +240,18 @@ jobs:
         run: |
           mkdir -p vendor/linux/ffmpeg/bin
           
-          # 下载静态编译的 FFmpeg
-          wget -q https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz
-          tar -xf ffmpeg-release-amd64-static.tar.xz
+          # 下载 BtbN 编译的 Linux x64 FFmpeg
+          wget -q https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz
+          tar -xf ffmpeg-master-latest-linux64-gpl.tar.xz
           
-          # 找到解压目录并复制
-          FFMPEG_DIR=$(ls -d ffmpeg-*-amd64-static)
-          cp "$FFMPEG_DIR/ffmpeg" vendor/linux/ffmpeg/bin/
-          cp "$FFMPEG_DIR/ffprobe" vendor/linux/ffmpeg/bin/
+          # 复制二进制文件
+          FFMPEG_DIR="ffmpeg-master-latest-linux64-gpl"
+          cp "$FFMPEG_DIR/bin/ffmpeg" vendor/linux/ffmpeg/bin/
+          cp "$FFMPEG_DIR/bin/ffprobe" vendor/linux/ffmpeg/bin/
           chmod +x vendor/linux/ffmpeg/bin/*
           
           # 清理
-          rm -rf ffmpeg-release-amd64-static.tar.xz "$FFMPEG_DIR"
+          rm -rf ffmpeg-master-latest-linux64-gpl.tar.xz "$FFMPEG_DIR"
           
           echo "✅ FFmpeg 安装完成"
           ls -la vendor/linux/ffmpeg/bin/
