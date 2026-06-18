@@ -84,3 +84,12 @@ codeql-db/
 *.sarif
 electron/pipe_frames.raw
 .codeql-db/
+
+# ==================== 临时测试媒体与项目文件 ====================
+*.wav
+*.drt
+*.fcpxml
+test-listener.js
+parse_sarif.py
+scratch_detail.py
+security_best_practices_report.md
