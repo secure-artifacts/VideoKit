@@ -27,10 +27,16 @@ function _canvasToRawRGBA(canvas) {
  */
 function _loadImage(src) {
     return new Promise((resolve, reject) => {
+        let normSrc = src;
+        if (normSrc && typeof normSrc === 'string' && normSrc.startsWith('file://')) {
+            if (window.electronAPI && typeof window.electronAPI.toFileUrl === 'function') {
+                normSrc = window.electronAPI.toFileUrl(normSrc);
+            }
+        }
         const img = new Image();
         img.onload = () => resolve(img);
-        img.onerror = () => reject(new Error(`图片加载失败: ${src}`));
-        img.src = src;
+        img.onerror = () => reject(new Error(`图片加载失败: ${normSrc}`));
+        img.src = normSrc;
     });
 }
 
@@ -332,6 +338,12 @@ async function reelsWysiwygExport(params) {
 
     const isMultiClip = bgMode === 'multi' && Array.isArray(bgClipPool) && bgClipPool.length > 0;
 
+    // ── 多素材诊断日志 ──
+    console.log(`[WYSIWYG-EXPORT] bgMode=${bgMode}, bgClipPool=${Array.isArray(bgClipPool) ? bgClipPool.length : 'N/A'}, isMultiClip=${isMultiClip}, backgroundPath=${backgroundPath || '(empty)'}`);
+    if (isMultiClip) {
+        console.log(`[WYSIWYG-EXPORT] 多素材池:`, bgClipPool);
+    }
+
     if (!canvas) throw new Error('需要提供 canvas');
     if (!backgroundPath && !isMultiClip && !contentVideoBlurBg && !contentVideoDirectBg) throw new Error('缺少背景素材');
     if (!outputPath) throw new Error('缺少输出路径');
@@ -390,6 +402,10 @@ async function reelsWysiwygExport(params) {
     let duration = 0;
     const _audioDurFactor = (audioDurScale || 100) / 100;
     const _bgDurFactor = (bgDurScale || 100) / 100;
+    const rawSubDuration = Array.isArray(segments) && segments.length > 0
+        ? (parseFloat(segments[segments.length - 1].end) || 0)
+        : 0;
+    const effectiveSubDuration = voicePath ? rawSubDuration * _audioDurFactor : rawSubDuration;
 
     let maxFlipperDuration = 0;
     if (Array.isArray(taskOverlays)) {
@@ -458,37 +474,42 @@ async function reelsWysiwygExport(params) {
                 }
             }
             if (cvDur > 0) {
-                duration = cvDur;
+                duration = Math.max(cvDur, effectiveSubDuration);
             }
         }
         if (!duration || duration <= 0) {
             if (isMultiClip) {
-                // 多素材模式：累加素材池总时长
+                // 多素材模式：按实际拼接后的有效时长计算。
+                // 带转场时相邻素材会重叠 bgTransDur 秒，不能用素材时长简单相加，
+                // 否则导出端会为了补足目标时长再次从素材池开头取片段。
                 log(`正在获取多素材池时长 (${bgClipPool.length} 个)...`);
                 let poolTotalDur = 0;
+                let poolClipCount = 0;
                 for (const clipPath of bgClipPool) {
                     if (_isImageFile(clipPath)) {
                         poolTotalDur += 5.0; // 图片默认 5 秒
+                        poolClipCount++;
                     } else {
                         const clipDur = await window.electronAPI.getMediaDuration(clipPath);
-                        if (clipDur > 0) poolTotalDur += clipDur;
+                        if (clipDur > 0) {
+                            poolTotalDur += clipDur;
+                            poolClipCount++;
+                        }
                     }
                 }
-                if (poolTotalDur > 0 && _bgDurFactor !== 1.0) {
-                    duration = poolTotalDur * _bgDurFactor;
-                    log(`多素材池总时长: ${poolTotalDur.toFixed(2)}s × ${bgDurScale}% = ${duration.toFixed(2)}s`);
-                } else {
-                    duration = poolTotalDur;
-                    log(`多素材池总时长: ${duration.toFixed(2)}s`);
-                }
+                const scaledPoolDur = poolTotalDur * _bgDurFactor;
+                const transOverlap = bgTransition !== 'none' ? Math.max(0, bgTransDur || 0) : 0;
+                const overlapTotal = transOverlap > 0 ? transOverlap * Math.max(0, poolClipCount - 1) : 0;
+                duration = Math.max(0.5, scaledPoolDur - overlapTotal, effectiveSubDuration);
+                log(`多素材池有效时长: ${scaledPoolDur.toFixed(2)}s - 转场重叠 ${overlapTotal.toFixed(2)}s = ${duration.toFixed(2)}s`);
             } else if (backgroundPath) {
                 log('正在获取背景视频时长...');
                 let rawBgDur = await window.electronAPI.getMediaDuration(backgroundPath);
                 if (rawBgDur > 0 && _bgDurFactor !== 1.0) {
-                    duration = rawBgDur * _bgDurFactor;
+                    duration = Math.max(rawBgDur * _bgDurFactor, effectiveSubDuration);
                     log(`背景原始时长: ${rawBgDur.toFixed(2)}s × ${bgDurScale}% = ${duration.toFixed(2)}s`);
                 } else {
-                    duration = rawBgDur;
+                    duration = Math.max(rawBgDur, effectiveSubDuration);
                 }
             }
         }
@@ -604,6 +625,13 @@ async function reelsWysiwygExport(params) {
         totalBgFrames = prepResult.frameCount;
         bgAudioPath = prepResult.bgAudioPath || null;
         log(`背景帧提取完成: ${totalBgFrames} 帧 → ${framesDir}`);
+        // ── 安全检查：如果是多素材模式但提取了 0 帧，说明 FFmpeg 拼接出了问题 ──
+        if (totalBgFrames === 0 && isMultiClip) {
+            throw new Error(`多素材拼接失败：FFmpeg 提取了 0 帧。素材池: ${bgClipPool.length} 个文件`);
+        }
+        if (totalBgFrames === 0 && !contentVideoBlurBg && !contentVideoDirectBg) {
+            log('⚠️ 警告: 背景帧数为 0，导出可能产生黑屏');
+        }
         progress(18);
     }
 
@@ -791,9 +819,9 @@ async function reelsWysiwygExport(params) {
             }
 
             // 加载背景帧（兼容 jpg/png，优先使用内存预缓存）
-            if (!contentVideoBlurBg && !contentVideoDirectBg) {
+            if (!contentVideoBlurBg && !contentVideoDirectBg && totalBgFrames > 0) {
                 const bgFrameIdx = Math.min(frameIdx, totalBgFrames - 1);
-                if (bgFrameIdx !== currentBgIdx) {
+                if (bgFrameIdx >= 0 && bgFrameIdx !== currentBgIdx) {
                     if (_bgFrameCache && _bgFrameCache[bgFrameIdx]) {
                         // 🚀 内存命中
                         currentBgImg = _bgFrameCache[bgFrameIdx];

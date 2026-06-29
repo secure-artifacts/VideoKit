@@ -4151,7 +4151,7 @@ function _calculatePreviewSegments(task) {
             if (end != null && end > 0) {
                 dur = end - start;
             } else {
-                if (videoEl && videoEl.dataset && videoEl.dataset.multiBgPath === path && isFinite(videoEl.duration) && videoEl.duration > 0) {
+                if (videoEl && videoEl.dataset && videoEl.dataset.multiPath === path && isFinite(videoEl.duration) && videoEl.duration > 0) {
                     dur = videoEl.duration - start;
                 } else {
                     dur = 5;
@@ -4503,7 +4503,7 @@ function _getPreviewMultiClipDuration(path, videoEl, task) {
         } else {
             if (_reelsState._multiBgDurations && _reelsState._multiBgDurations[path] > 0) {
                 dur = _reelsState._multiBgDurations[path] - start;
-            } else if (videoEl && videoEl.dataset && videoEl.dataset.multiBgPath === path && isFinite(videoEl.duration) && videoEl.duration > 0) {
+            } else if (videoEl && videoEl.dataset && videoEl.dataset.multiPath === path && isFinite(videoEl.duration) && videoEl.duration > 0) {
                 dur = videoEl.duration - start;
             } else {
                 dur = 5;
@@ -4581,9 +4581,23 @@ function _syncPreviewMultiPlayers(task, clips) {
     const cfg = _getPreviewAudioMixConfig();
     const effectiveBgGain = _getEffectiveBgVolumePercent(task, cfg.bgGain * 100) / 100;
 
-    const syncPlayer = (player, path, localTime) => {
+    const syncPlayer = (player, path, localTime, gainMultiplier = 1) => {
         const url = _toPlayablePath(path, null);
-        if (player.src !== url || player.dataset.multiPath !== path) {
+        
+        const norm = (s) => {
+            if (!s) return '';
+            try {
+                let dec = decodeURIComponent(s);
+                dec = dec.replace(/^file:\/\/\//i, '/').replace(/^file:\/\//i, '/');
+                dec = dec.replace(/\\/g, '/');
+                dec = dec.replace(/\/+/g, '/');
+                return dec;
+            } catch (_) {
+                return s;
+            }
+        };
+
+        if (norm(player.src) !== norm(url) || player.dataset.multiPath !== path) {
             player.pause();
             player.src = url;
             player.dataset.multiPath = path;
@@ -4600,7 +4614,7 @@ function _syncPreviewMultiPlayers(task, clips) {
         // Apply volume/muted status on every sync, especially after load()
         const ctx = _reelsState._audioCtx;
         const useWebAudio = !!(ctx && _reelsState._gainNodes);
-        const vol = effectiveBgGain;
+        const vol = Math.max(0, Math.min(1, effectiveBgGain * gainMultiplier));
         if (useWebAudio && _reelsState._gainNodes.has(player)) {
             const gainNode = _reelsState._gainNodes.get(player);
             gainNode.gain.setValueAtTime(vol, ctx.currentTime);
@@ -4621,31 +4635,34 @@ function _syncPreviewMultiPlayers(task, clips) {
     if (clips.transition) {
         const outgoing = clips.transition;
         const incoming = clips.current;
+        const transitionProgress = Math.max(0, Math.min(1, outgoing.progress || 0));
+        const outgoingGain = 1 - transitionProgress;
+        const incomingGain = transitionProgress;
 
         if (outgoing.isImage && incoming.isImage) {
             video.pause();
             fadeVideo.pause();
         } else if (outgoing.isImage) {
             video.style.display = 'block';
-            syncPlayer(video, incoming.path, incoming.localTime);
+            syncPlayer(video, incoming.path, incoming.localTime, 1);
             fadeVideo.pause();
         } else if (incoming.isImage) {
             video.style.display = 'block';
-            syncPlayer(video, outgoing.path, outgoing.localTime);
+            syncPlayer(video, outgoing.path, outgoing.localTime, 1);
             fadeVideo.pause();
         } else {
             video.style.display = 'block';
             fadeVideo.style.display = 'block';
 
             if (video.dataset.multiPath === outgoing.path) {
-                syncPlayer(video, outgoing.path, outgoing.localTime);
-                syncPlayer(fadeVideo, incoming.path, incoming.localTime);
+                syncPlayer(video, outgoing.path, outgoing.localTime, outgoingGain);
+                syncPlayer(fadeVideo, incoming.path, incoming.localTime, incomingGain);
             } else if (fadeVideo.dataset.multiPath === outgoing.path) {
-                syncPlayer(fadeVideo, outgoing.path, outgoing.localTime);
-                syncPlayer(video, incoming.path, incoming.localTime);
+                syncPlayer(fadeVideo, outgoing.path, outgoing.localTime, outgoingGain);
+                syncPlayer(video, incoming.path, incoming.localTime, incomingGain);
             } else {
-                syncPlayer(video, outgoing.path, outgoing.localTime);
-                syncPlayer(fadeVideo, incoming.path, incoming.localTime);
+                syncPlayer(video, outgoing.path, outgoing.localTime, outgoingGain);
+                syncPlayer(fadeVideo, incoming.path, incoming.localTime, incomingGain);
             }
         }
     } else {
@@ -5058,12 +5075,17 @@ function _getPreviewDuration() {
     }
 
     // 自定义时长优先
-    if (task && task.customDuration && task.customDuration > 0) {
-        return task.customDuration + offsetDur;
+    const globalCustomEl = document.getElementById('reels-custom-duration');
+    const globalCustomDuration = parseFloat(globalCustomEl ? globalCustomEl.value : '0') || 0;
+    const effectiveCustomDuration = (task && task.customDuration && task.customDuration > 0)
+        ? task.customDuration
+        : globalCustomDuration;
+    if (effectiveCustomDuration > 0) {
+        return effectiveCustomDuration + offsetDur;
     }
     // 有音频时以变速后的音频时长为准（背景自动循环）
     if (scaledADur > 0) {
-        return Math.max(scaledADur, subDur * aDurScale) + offsetDur;
+        return scaledADur + offsetDur;
     }
 
     // ── 内容视频 (Content Video) 时长优先于背景 ──
@@ -5095,9 +5117,11 @@ function _getPreviewDuration() {
             return subDur + offsetDur;
         }
         const pool = _getPreviewMultiClipPool(task);
-        const multiDur = pool.reduce((sum, path) => {
+        const rawMultiDur = pool.reduce((sum, path) => {
             return sum + _getPreviewMultiClipDuration(path, video, task);
         }, 0);
+        const transOverlap = task.bgTransition !== 'none' ? (parseFloat(task.bgTransDur) || 0.5) : 0;
+        const multiDur = Math.max(0.5, rawMultiDur - transOverlap * Math.max(0, pool.length - 1));
         if (multiDur > 0) return Math.max(multiDur, subDur) + offsetDur;
     }
 
@@ -8848,10 +8872,17 @@ async function reelsStartExport() {
         }
     }
 
+    let customDuration = parseFloat((document.getElementById('reels-custom-duration') || {}).value || '0');
+    if (!Number.isFinite(customDuration) || customDuration < 0) customDuration = 0;
+
     // ── 仅导出已勾选的任务 ──
     const selectedForExport = _reelsState.tasks.filter(t => t._exportSelected !== false);
     if (selectedForExport.length === 0) {
-        alert('没有选中任何任务用于导出。请在任务列表中勾选要导出的任务。');
+        if (typeof showToast === 'function') {
+            showToast('没有选中任何任务用于导出。请在任务列表中勾选要导出的任务。', 'warning');
+        } else {
+            alert('没有选中任何任务用于导出。请在任务列表中勾选要导出的任务。');
+        }
         return;
     }
 
@@ -8892,6 +8923,17 @@ async function reelsStartExport() {
             invalidTasks.push(`${idx + 1}. ${(t.fileName || t.baseName || '未命名任务')} 缺少: 背景`);
             return false;
         }
+
+        // ── 多素材模式：只要能确定输出时长即可直出 ──
+        if (t.bgMode === 'multi') {
+            const hasDur = hasVoice || hasSub || (t.customDuration && t.customDuration > 0) || (customDuration && customDuration > 0);
+            if (hasDur || hasOverlay || hasAnyOverlay) {
+                return true;
+            }
+            invalidTasks.push(`${idx + 1}. ${(t.fileName || t.baseName || '未命名任务')} 无法确定输出时长，请设置输出时长或添加配音/字幕`);
+            return false;
+        }
+
         // 有字幕、有文字覆层、有任意覆层 => 直接通过
         if (hasSub || hasOverlay || hasAnyOverlay) {
             if (hasVoice) return true;
@@ -8902,7 +8944,7 @@ async function reelsStartExport() {
             // 无配音时仅兼容视频背景（旧模式）
             const allowNoVoice = !_isImagePath(bgPath);
             if (!allowNoVoice) {
-                invalidTasks.push(`${idx + 1}. ${(t.fileName || t.baseName || '未命名任务')} 缺少: 人声音频`);
+                invalidTasks.push(`${idx + 1}. ${(t.fileName || t.baseName || '未命名任务')} 缺少: 人声音频（图片背景添加字幕时必须配合音频以确定字幕时间轴与总时长）`);
             }
             return allowNoVoice;
         }
@@ -8913,12 +8955,30 @@ async function reelsStartExport() {
         if (hasVoice) {
             return true; // 有配音可以确定时长
         }
-        invalidTasks.push(`${idx + 1}. ${(t.fileName || t.baseName || '未命名任务')} 缺少: 字幕或人声音频`);
+        invalidTasks.push(`${idx + 1}. ${(t.fileName || t.baseName || '未命名任务')} 缺少: 字幕、人声音频或覆层卡片（图片背景需要添加字幕+音频、或仅人声音频、或覆层卡片才能确定导出内容与时长）`);
         return false;
     });
+
     if (tasks.length === 0) {
         const extra = invalidTasks.length > 0 ? `\n\n任务问题:\n${invalidTasks.slice(0, 8).join('\n')}` : '';
-        alert(`没有可导出的任务${extra}`);
+        const msg = `没有可导出的任务${extra}`;
+        _reelsUpdateLastErrorUI(msg);
+
+        const statusEl = document.getElementById('reels-export-status');
+        if (statusEl) statusEl.textContent = `❌ 导出失败: ${msg.replace(/\n/g, ' ')}`;
+
+        const exportBtn = document.getElementById('reels-export-btn');
+        if (exportBtn) {
+            exportBtn.disabled = false;
+            exportBtn.innerHTML = '🚀 开始导出';
+        }
+        _reelsState.isExporting = false;
+
+        if (typeof showToast === 'function') {
+            showToast('没有可导出的任务，请在下方“最后错误”查看详情', 'error');
+        } else {
+            alert(msg);
+        }
         return;
     }
 
@@ -8955,7 +9015,7 @@ async function reelsStartExport() {
     let loopFadeDur = parseFloat(loopFadeDurEl ? loopFadeDurEl.value : '1');
     if (!Number.isFinite(loopFadeDur) || loopFadeDur <= 0) loopFadeDur = 1.0;
     loopFadeDur = Math.max(0.1, Math.min(3, loopFadeDur));
-    let customDuration = parseFloat((document.getElementById('reels-custom-duration') || {}).value || '0');
+    customDuration = parseFloat((document.getElementById('reels-custom-duration') || {}).value || '0');
     if (!Number.isFinite(customDuration) || customDuration < 0) customDuration = 0;
 
     const exportFormat = (document.getElementById('reels-export-format') || {}).value || 'mp4';

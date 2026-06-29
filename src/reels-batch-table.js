@@ -1526,6 +1526,17 @@ function _createTaskFromTemplate(state, taskName) {
         newTask.segments = [];
         newTask.videoPath = null;
         newTask.srcUrl = null;
+        // Filter out empty textcard and scroll overlays to prevent empty overlay boxes,
+        // since they will be auto-created on demand with template styles when user inserts text.
+        if (newTask.overlays) {
+            newTask.overlays = newTask.overlays.filter(ov => {
+                if (!ov) return false;
+                // Keep fixed stickers/logos, and media overlays (images, videos)
+                if (ov.fixed_text) return true;
+                if (ov.type === 'image' || ov.type === 'video' || ov.type === 'pip') return true;
+                return false; // Remove template-cloned empty textcard/scroll
+            });
+        }
         return newTask;
     } else {
         return {
@@ -6368,7 +6379,7 @@ function _applyBatchTableChanges(stateOverride = null, options = {}) {
         const idx = parseInt(el.dataset.idx);
         const task = state.tasks[idx];
         if (!task) return;
-        if (el.value.trim() === '' && !_findBatchOverlayByIdOrIdx(task, el.dataset.cardId, null, el.dataset.cardIdx, 'textcard')) return;
+        if (!_findBatchOverlayByIdOrIdx(task, el.dataset.cardId, null, el.dataset.cardIdx, 'textcard')) return;
         _applyOverlayFieldWithTarget(task, 'overlay_flipper_enabled', el.value, el.dataset.cardId, el.dataset.cardIdx, 'textcard');
     });
 
@@ -6376,7 +6387,7 @@ function _applyBatchTableChanges(stateOverride = null, options = {}) {
         const idx = parseInt(el.dataset.idx);
         const task = state.tasks[idx];
         if (!task) return;
-        if (el.value.trim() === '' && !_findBatchOverlayByIdOrIdx(task, el.dataset.cardId, null, el.dataset.cardIdx, 'textcard')) return;
+        if (!_findBatchOverlayByIdOrIdx(task, el.dataset.cardId, null, el.dataset.cardIdx, 'textcard')) return;
         _applyOverlayFieldWithTarget(task, 'overlay_flipper_duration', el.value, el.dataset.cardId, el.dataset.cardIdx, 'textcard');
     });
 
@@ -6384,7 +6395,7 @@ function _applyBatchTableChanges(stateOverride = null, options = {}) {
         const idx = parseInt(el.dataset.idx);
         const task = state.tasks[idx];
         if (!task) return;
-        if (el.value.trim() === '' && !_findBatchOverlayByIdOrIdx(task, el.dataset.cardId, null, el.dataset.cardIdx, 'textcard')) return;
+        if (!_findBatchOverlayByIdOrIdx(task, el.dataset.cardId, null, el.dataset.cardIdx, 'textcard')) return;
         _applyOverlayFieldWithTarget(task, 'overlay_flipper_lines', el.value, el.dataset.cardId, el.dataset.cardIdx, 'textcard');
     });
 
@@ -6392,7 +6403,7 @@ function _applyBatchTableChanges(stateOverride = null, options = {}) {
         const idx = parseInt(el.dataset.idx);
         const task = state.tasks[idx];
         if (!task) return;
-        if (el.value.trim() === '' && !_findBatchOverlayByIdOrIdx(task, el.dataset.cardId, null, el.dataset.cardIdx, 'textcard')) return;
+        if (!_findBatchOverlayByIdOrIdx(task, el.dataset.cardId, null, el.dataset.cardIdx, 'textcard')) return;
         _applyOverlayFieldWithTarget(task, 'overlay_flipper_effect', el.value, el.dataset.cardId, el.dataset.cardIdx, 'textcard');
     });
 
@@ -6400,7 +6411,7 @@ function _applyBatchTableChanges(stateOverride = null, options = {}) {
         const idx = parseInt(el.dataset.idx);
         const task = state.tasks[idx];
         if (!task) return;
-        if (el.value.trim() === '' && !_findBatchOverlayByIdOrIdx(task, el.dataset.cardId, null, el.dataset.cardIdx, 'textcard')) return;
+        if (!_findBatchOverlayByIdOrIdx(task, el.dataset.cardId, null, el.dataset.cardIdx, 'textcard')) return;
         _applyOverlayFieldWithTarget(task, 'overlay_flipper_loop', el.value, el.dataset.cardId, el.dataset.cardIdx, 'textcard');
     });
 
@@ -6408,7 +6419,7 @@ function _applyBatchTableChanges(stateOverride = null, options = {}) {
         const idx = parseInt(el.dataset.idx);
         const task = state.tasks[idx];
         if (!task) return;
-        if (el.value.trim() === '' && !_findBatchOverlayByIdOrIdx(task, el.dataset.cardId, null, el.dataset.cardIdx, 'textcard')) return;
+        if (!_findBatchOverlayByIdOrIdx(task, el.dataset.cardId, null, el.dataset.cardIdx, 'textcard')) return;
         _applyOverlayFieldWithTarget(task, 'overlay_flipper_transition_duration', el.value, el.dataset.cardId, el.dataset.cardIdx, 'textcard');
     });
 
@@ -10302,23 +10313,6 @@ function _batchAddEmptyRow() {
     const taskName = _generateUniqueCardName(state.tasks, 'card');
     const newTask = _createTaskFromTemplate(state, taskName);
     
-    // Clear texts in overlays of the new task so it starts empty
-    if (newTask.overlays) {
-        newTask.overlays.forEach(ov => {
-            if (ov && !ov.fixed_text) {
-                if (ov.type === 'textcard' || !ov.type || ov.type === '') {
-                    ov.title_text = '';
-                    ov.body_text = '';
-                    ov.footer_text = '';
-                } else if (ov.type === 'scroll') {
-                    ov.scroll_title = '';
-                    ov.content = '';
-                } else if (ov.type === 'text') {
-                    ov.content = '';
-                }
-            }
-        });
-    }
     newTask.ttsText = '';
     newTask.ttsVoiceId = '';
     newTask.pipPath = '';
@@ -11737,6 +11731,9 @@ function _showBatchModeDialog(fileCount, field) {
                 ${isSingle ? `<button data-mode="applyall" style="padding:10px 16px;border:1px solid #7b5aab;border-radius:8px;background:#3a2a5a;color:#d0b0ff;cursor:pointer;text-align:left;font-size:13px;">
                     🔄 <b>应用到全部行</b> — 所有行都用这个文件
                 </button>` : ''}
+                ${field === 'bg' && fileCount > 1 ? `<button data-mode="merge_multi" style="padding:10px 16px;border:1px solid #4a8aff;border-radius:8px;background:#1a2a4a;color:#8ac;cursor:pointer;text-align:left;font-size:13px;">
+                    🎬 <b>多素材拼接</b> — 合并到当前行，导出时自动拼接切换
+                </button>` : ''}
                 ${field === 'bg' ? `<button data-mode="fill_hook" style="padding:10px 16px;border:1px solid #7a6a4a;border-radius:8px;background:#3a3a2a;color:#e0d0a0;cursor:pointer;text-align:left;font-size:13px;margin-bottom:8px;">
                     🪝 <b>填充到前置Hook</b> — 将视频/图片填入Hook列
                 </button>
@@ -11912,6 +11909,33 @@ async function _batchAssignFiles(files, field) {
             }
             _assignFileToTask(state.tasks[taskIdx], file, 'hook');
             taskIdx++;
+        }
+    } else if (mode === 'merge_multi') {
+        // 多素材拼接：合并所有文件到当前选中行（或第一行）的多素材背景池
+        let targetIdx = state.selectedIdx >= 0 ? state.selectedIdx : 0;
+        if (targetIdx >= state.tasks.length) {
+            state.tasks.push(_createEmptyTask());
+            targetIdx = state.tasks.length - 1;
+        }
+        const task = state.tasks[targetIdx];
+        const pool = [];
+        for (const file of files) {
+            const filePath = (typeof getFileNativePath === 'function') ? getFileNativePath(file) : (file.path || file.name);
+            if (filePath && !pool.includes(filePath)) pool.push(filePath);
+        }
+        if (pool.length > 0) {
+            task.bgMode = 'multi';
+            task.bgClipPool = pool;
+            task.bgClipActivePool = [];
+            task.bgClipOrder = task.bgClipOrder || 'sequence';
+            task.bgTransition = task.bgTransition || 'crossfade';
+            task.bgTransDur = task.bgTransDur ?? 0.5;
+            task.bgPath = pool[0];
+            task.videoPath = pool[0];
+            task.bgSrcUrl = '';
+            if (typeof showToast === 'function') showToast(`🎬 已将 ${pool.length} 个素材合并为多素材拼接背景`, 'success', 5000);
+            if (typeof reelsSelectTask === 'function') reelsSelectTask(targetIdx);
+            if (typeof window.reelsSyncBackgroundTabUI === 'function') window.reelsSyncBackgroundTabUI(task);
         }
     }
 

@@ -218,9 +218,11 @@ async function prepareBg(opts) {
             } else if (start != null && start > 0) {
                 clipDur = rawDur - start;
             }
+            const usableRawDuration = Math.max(clipDur, 0.5);
             clipDurations.push({
                 path: clip,
-                duration: Math.max(clipDur, 0.5) * ptsFactor,
+                duration: usableRawDuration * ptsFactor,
+                rawDuration: usableRawDuration,
                 isImage: isImageMedia(clip),
                 trimStart: start,
                 trimEnd: end
@@ -491,8 +493,9 @@ async function prepareBg(opts) {
             let attempts = 0;
             while (totalDur < duration && attempts < 200) {
                 const pick = orderedClipDurations[selectedClips.length % orderedClipDurations.length];
-                selectedClips.push(pick);
-                totalDur += pick.duration - (selectedClips.length > 1 ? transOverlap : 0);
+                const clipInstance = { ...pick };
+                selectedClips.push(clipInstance);
+                totalDur += clipInstance.duration - (selectedClips.length > 1 ? transOverlap : 0);
                 attempts++;
             }
             // 同样，我们需要校准最后一个 clip 的 duration 以免超出总 duration
@@ -519,7 +522,9 @@ async function prepareBg(opts) {
                 await runFFmpegSync(ffmpeg, args);
                 return { framesDir, frameCount: 1 };
             } else {
-                const shouldLoop = duration > clip.duration + 0.1;
+                const requiredInputDur = duration / Math.max(ptsFactor, 0.0001);
+                const rawDur = clip.rawDuration || requiredInputDur;
+                const shouldLoop = requiredInputDur > rawDur + 0.1;
                 await extractSimpleLoopWithTrim(ffmpeg, clip.path, framesDir, scaleCropFilter, fps, duration, ptsFactor, shouldLoop, clip.trimStart, clip.trimEnd);
             }
         } else {
@@ -529,6 +534,12 @@ async function prepareBg(opts) {
                 if (clip.isImage) {
                     args.push('-loop', '1', '-t', String(clip.duration), '-i', clip.path);
                 } else {
+                    const requiredInputDur = clip.duration / Math.max(ptsFactor, 0.0001);
+                    const rawDur = clip.rawDuration || requiredInputDur;
+                    const shouldLoop = requiredInputDur > rawDur + 0.1;
+                    if (shouldLoop) {
+                        args.push('-stream_loop', '-1');
+                    }
                     if (clip.trimStart != null && clip.trimStart > 0) {
                         args.push('-ss', String(clip.trimStart));
                     }
@@ -540,7 +551,6 @@ async function prepareBg(opts) {
             // 构建 filter_complex
             // xfade/concat 对输入流参数很敏感：混合手机视频、图片、不同 fps/SAR/pix_fmt
             // 时如果不先归一化，容易报 timebase/SAR 不一致，或输出抖帧/黑帧。
-            const normalizeVideoFilter = `${scaleCropFilter},fps=${fps},setsar=1,format=yuv420p,settb=AVTB,${ptsFilter}`;
             const filterParts = [];
             
             if (bgTransition !== 'none' && bgTransDur > 0) {
@@ -558,6 +568,9 @@ async function prepareBg(opts) {
 
                 // 预处理每个输入
                 for (let i = 0; i < selectedClips.length; i++) {
+                    const clip = selectedClips[i];
+                    const clipPtsFilter = clip.isImage ? 'setpts=PTS-STARTPTS' : ptsFilter;
+                    const normalizeVideoFilter = `${scaleCropFilter},fps=${fps},setsar=1,format=yuv420p,settb=AVTB,${clipPtsFilter}`;
                     filterParts.push(`[${i}:v]${normalizeVideoFilter}[v${i}]`);
                 }
 
@@ -599,6 +612,9 @@ async function prepareBg(opts) {
             } else {
                 // 无转场: concat 硬切
                 for (let i = 0; i < selectedClips.length; i++) {
+                    const clip = selectedClips[i];
+                    const clipPtsFilter = clip.isImage ? 'setpts=PTS-STARTPTS' : ptsFilter;
+                    const normalizeVideoFilter = `${scaleCropFilter},fps=${fps},setsar=1,format=yuv420p,settb=AVTB,${clipPtsFilter}`;
                     filterParts.push(`[${i}:v]${normalizeVideoFilter}[v${i}]`);
                 }
                 const concatLabels = selectedClips.map((_, i) => `[v${i}]`).join('');
@@ -623,6 +639,15 @@ async function prepareBg(opts) {
         const files = fs.readdirSync(framesDir).filter(f => f.endsWith('.jpg') || f.endsWith('.png'));
         console.log(`[WYSIWYG-BG] 多素材帧提取完成: ${files.length} 帧`);
 
+        // ── 安全检查：0 帧说明 FFmpeg 拼接失败 ──
+        if (files.length === 0) {
+            console.error(`[WYSIWYG-BG] ❌ 多素材拼接产出 0 帧！selectedClips: ${selectedClips.length}, duration: ${duration}s`);
+            for (const clip of selectedClips) {
+                console.error(`  - ${clip.path} (dur=${clip.duration.toFixed(2)}s, isImage=${clip.isImage})`);
+            }
+            return { error: `多素材拼接失败：FFmpeg 产出 0 帧（${selectedClips.length} 个片段, 目标 ${duration}s）`, framesDir, frameCount: 0 };
+        }
+
         // Stitch background audio if any clip has audio
         let bgAudioPath = null;
         try {
@@ -641,6 +666,12 @@ async function prepareBg(opts) {
                 for (const clip of selectedClips) {
                     const clipHasAudio = !clip.isImage && await hasAudioTrack(clip.path);
                     if (clipHasAudio) {
+                        const requiredInputDur = clip.duration / Math.max(ptsFactor, 0.0001);
+                        const rawDur = clip.rawDuration || requiredInputDur;
+                        const shouldLoop = requiredInputDur > rawDur + 0.1;
+                        if (shouldLoop) {
+                            audioArgs.push('-stream_loop', '-1');
+                        }
                         if (clip.trimStart != null && clip.trimStart > 0) {
                             audioArgs.push('-ss', String(clip.trimStart));
                         }
@@ -653,8 +684,28 @@ async function prepareBg(opts) {
                     }
                     inputIdx++;
                 }
-                const concatLabels = selectedClips.map((_, i) => `[a${i}]`).join('');
-                filterParts.push(`${concatLabels}concat=n=${selectedClips.length}:v=0:a=1[aout]`);
+                const rawTransitionDur = bgTransition !== 'none' && bgTransDur > 0
+                    ? bgTransDur / Math.max(ptsFactor, 0.0001)
+                    : 0;
+                const shortestRawClipDur = selectedClips.reduce((min, clip) => {
+                    const rawDur = clip.duration / Math.max(ptsFactor, 0.0001);
+                    return Math.min(min, rawDur);
+                }, Infinity);
+                const audioFadeDur = Number.isFinite(shortestRawClipDur)
+                    ? Math.min(rawTransitionDur, Math.max(0, shortestRawClipDur - 0.05))
+                    : 0;
+
+                if (selectedClips.length > 1 && audioFadeDur > 0.01) {
+                    let prevLabel = '[a0]';
+                    for (let i = 1; i < selectedClips.length; i++) {
+                        const outLabel = i === selectedClips.length - 1 ? '[aout]' : `[af${i}]`;
+                        filterParts.push(`${prevLabel}[a${i}]acrossfade=d=${audioFadeDur.toFixed(3)}:c1=tri:c2=tri${outLabel}`);
+                        prevLabel = outLabel;
+                    }
+                } else {
+                    const concatLabels = selectedClips.map((_, i) => `[a${i}]`).join('');
+                    filterParts.push(`${concatLabels}concat=n=${selectedClips.length}:v=0:a=1[aout]`);
+                }
                 
                 const outWav = path.join(framesDir, 'bg_audio.wav');
                 audioArgs.push(

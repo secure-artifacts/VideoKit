@@ -47,6 +47,44 @@ function isGladiaRateLimit(status, body) {
         errText.includes('quota');
 }
 
+function classifyGladiaError(message) {
+    const text = String(message || '');
+    const lower = text.toLowerCase();
+    if (text.includes('401') || lower.includes('unauthorized') || lower.includes('invalid api key')) {
+        return {
+            type: 'auth',
+            friendly: '401 Unauthorized (接口鉴权失败，请检查 Key 是否正确或已过期)',
+        };
+    }
+    if (text.includes('403') || lower.includes('forbidden')) {
+        return {
+            type: 'auth',
+            friendly: '403 Forbidden (无权限，可能账号受限)',
+        };
+    }
+    if (text.includes('LIMIT_EXCEEDED') ||
+        text.includes('429') ||
+        lower.includes('rate limit') ||
+        lower.includes('limit exceeded') ||
+        lower.includes('too many requests') ||
+        lower.includes('quota')) {
+        return {
+            type: 'rate_limit',
+            friendly: '请求频率超限/额度限制 (429 Rate limit)。免费试用账号通常会被每小时 transcription 请求数限制，即使月度音频额度未用完也会触发。',
+        };
+    }
+    if (lower.includes('timeout') || text.includes('超时')) {
+        return {
+            type: 'timeout',
+            friendly: '连接超时 (Timeout)',
+        };
+    }
+    return {
+        type: 'other',
+        friendly: text || '未知错误',
+    };
+}
+
 // ==================== HTTP 请求工具 ====================
 
 function gladiaRequest(method, urlStr, headers, body, timeout = 120000) {
@@ -511,6 +549,7 @@ async function transcribeAudioFull(mediaPath, apiKeys, language, jsonPath, txtPa
 
         let success = false;
         const keyErrors = [];
+        const keyErrorTypes = [];
 
         // 尝试每个 key，每个 key 最多重试 3 次
         for (let keyAttempt = curKeyIndex; keyAttempt < apiKeys.length; keyAttempt++) {
@@ -557,22 +596,29 @@ async function transcribeAudioFull(mediaPath, apiKeys, language, jsonPath, txtPa
                 break;
             } else {
                 const maskedKey = apiKey.length > 8 ? `${apiKey.slice(0, 4)}...${apiKey.slice(-4)}` : '***';
-                let friendlyError = lastKeyError || '未知错误';
-                if (friendlyError.includes('401')) {
-                    friendlyError = '401 Unauthorized (接口鉴权失败，请检查 Key 是否正确或已过期)';
-                } else if (friendlyError.includes('403')) {
-                    friendlyError = '403 Forbidden (无权限，可能账号受限)';
-                } else if (friendlyError.includes('LIMIT_EXCEEDED') || friendlyError.toLowerCase().includes('rate limit') || friendlyError.toLowerCase().includes('quota')) {
-                    friendlyError = '请求频率超限/额度限制 (429 Rate limit)。免费试用账号通常会被每小时 transcription 请求数限制，即使月度音频额度未用完也会触发。';
-                } else if (friendlyError.includes('timeout') || friendlyError.includes('超时')) {
-                    friendlyError = '连接超时 (Timeout)';
-                }
-                keyErrors.push(`- Key #${keyAttempt + 1} (${maskedKey}): ${friendlyError}`);
+                const classified = classifyGladiaError(lastKeyError);
+                keyErrorTypes.push(classified.type);
+                keyErrors.push(`- Key #${keyAttempt + 1} (${maskedKey}): ${classified.friendly}`);
             }
         }
 
         if (!success) {
-            throw new Error(`转录失败: 所有 API key 均不可用。\n详细错误原因：\n${keyErrors.join('\n')}`);
+            const uniqueTypes = [...new Set(keyErrorTypes)];
+            let summary = '转录失败';
+            if (uniqueTypes.length === 1 && uniqueTypes[0] === 'rate_limit') {
+                summary = 'Gladia 请求频率超限或额度限制，不是 Key 无效。请稍后重试、减少连续批量转录，或更换有额度的 Key。';
+            } else if (uniqueTypes.length === 1 && uniqueTypes[0] === 'auth') {
+                summary = 'Gladia Key 鉴权失败，请检查 Key 是否正确、过期或账号权限受限。';
+            } else if (uniqueTypes.length === 1 && uniqueTypes[0] === 'timeout') {
+                summary = 'Gladia 请求超时，可能是网络或接口响应过慢。请稍后重试。';
+            } else if (uniqueTypes.includes('rate_limit')) {
+                summary = 'Gladia 转录失败，其中包含请求频率超限/额度限制。';
+            } else if (uniqueTypes.includes('auth')) {
+                summary = 'Gladia 转录失败，其中包含 Key 鉴权失败。';
+            } else {
+                summary = 'Gladia 转录失败，具体原因见下方明细。';
+            }
+            throw new Error(`${summary}\n详细错误原因：\n${keyErrors.join('\n')}`);
         }
 
         curStartTime += duration;

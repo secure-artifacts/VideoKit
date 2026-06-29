@@ -53,10 +53,16 @@ function _blobToArrayBuffer(blob) {
  */
 function _layeredLoadImage(src) {
     return new Promise((resolve, reject) => {
+        let normSrc = src;
+        if (normSrc && typeof normSrc === 'string' && normSrc.startsWith('file://')) {
+            if (window.electronAPI && typeof window.electronAPI.toFileUrl === 'function') {
+                normSrc = window.electronAPI.toFileUrl(normSrc);
+            }
+        }
         const img = new Image();
         img.onload = () => resolve(img);
-        img.onerror = () => reject(new Error(`图片加载失败: ${src}`));
-        img.src = src;
+        img.onerror = () => reject(new Error(`图片加载失败: ${normSrc}`));
+        img.src = normSrc;
     });
 }
 
@@ -291,6 +297,10 @@ async function reelsLayeredExport(params) {
     // ── 获取时长 ──
     const _audioDurFactor = (audioDurScale || 100) / 100;
     const _bgDurFactor = (bgDurScale || 100) / 100;
+    const rawSubDuration = Array.isArray(segments) && segments.length > 0
+        ? (parseFloat(segments[segments.length - 1].end) || 0)
+        : 0;
+    const effectiveSubDuration = voicePath ? rawSubDuration * _audioDurFactor : rawSubDuration;
     let duration = 0;
 
     if (customDuration > 0) {
@@ -307,29 +317,33 @@ async function reelsLayeredExport(params) {
         }
         if (!duration || duration <= 0) {
             if (isMultiClip) {
-                // 多素材模式：累加素材池总时长
+                // 多素材模式：按实际拼接后的有效时长计算，扣掉转场重叠。
                 log(`正在获取多素材池时长 (${bgClipPool.length} 个)...`);
                 let poolTotalDur = 0;
+                let poolClipCount = 0;
                 for (const clipPath of bgClipPool) {
                     if (_isLayeredImageFile(clipPath)) {
                         poolTotalDur += 5.0; // 图片默认 5 秒
+                        poolClipCount++;
                     } else {
                         const clipDur = await window.electronAPI.getMediaDuration(clipPath);
-                        if (clipDur > 0) poolTotalDur += clipDur;
+                        if (clipDur > 0) {
+                            poolTotalDur += clipDur;
+                            poolClipCount++;
+                        }
                     }
                 }
-                if (poolTotalDur > 0 && _bgDurFactor !== 1.0) {
-                    duration = poolTotalDur * _bgDurFactor;
-                } else {
-                    duration = poolTotalDur;
-                }
-                log(`多素材池总时长: ${duration.toFixed(2)}s`);
+                const scaledPoolDur = poolTotalDur * _bgDurFactor;
+                const transOverlap = bgTransition !== 'none' ? Math.max(0, bgTransDur || 0) : 0;
+                const overlapTotal = transOverlap > 0 ? transOverlap * Math.max(0, poolClipCount - 1) : 0;
+                duration = Math.max(0.5, scaledPoolDur - overlapTotal, effectiveSubDuration);
+                log(`多素材池有效时长: ${duration.toFixed(2)}s`);
             } else if (backgroundPath) {
                 let rawBgDur = await window.electronAPI.getMediaDuration(backgroundPath);
                 if (rawBgDur > 0 && _bgDurFactor !== 1.0) {
-                    duration = rawBgDur * _bgDurFactor;
+                    duration = Math.max(rawBgDur * _bgDurFactor, effectiveSubDuration);
                 } else {
-                    duration = rawBgDur;
+                    duration = Math.max(rawBgDur, effectiveSubDuration);
                 }
             } else if (contentVideoPath) {
                 let rawCvDur = await window.electronAPI.getMediaDuration(contentVideoPath);
@@ -341,7 +355,7 @@ async function reelsLayeredExport(params) {
                     } else if (trimS > 0) {
                         rawCvDur = Math.max(0, rawCvDur - trimS);
                     }
-                    duration = rawCvDur;
+                    duration = Math.max(rawCvDur, effectiveSubDuration);
                 }
             }
         }

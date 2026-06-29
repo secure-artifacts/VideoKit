@@ -336,6 +336,13 @@
 
         for (const media of [state.bgVideo, state.bgFadeVideo, state.audio, state.bgmAudio, state.contentVideo, state.hookVideo, state.coverVideo]) {
             media.addEventListener('loadedmetadata', () => {
+                if ((media === state.bgVideo || media === state.bgFadeVideo) && media.dataset.multiPath && media.duration > 0) {
+                    const rs = window._reelsState;
+                    if (rs) {
+                        if (!rs._multiBgDurations) rs._multiBgDurations = {};
+                        rs._multiBgDurations[media.dataset.multiPath] = media.duration;
+                    }
+                }
                 state.duration = computeDuration();
                 syncMediaToTime(getCurrentTime());
                 render();
@@ -781,6 +788,7 @@
         if (state.isPlaying) {
             const task = getTask();
             const offset = getTimelineOffset(task);
+            if (isMultiBackgroundTask(task)) return Math.max(0, (performance.now() / 1000) - state.startedAt);
             if (offset > 0) return Math.max(0, (performance.now() / 1000) - state.startedAt);
             if (state.audio.src && !state.audio.paused) return (state.audio.currentTime || 0) * getAudioDurationScale(task);
             if (state.bgVideo.src && !state.bgVideo.paused) return (state.bgVideo.currentTime || 0) * getBgDurationScale(task);
@@ -801,11 +809,12 @@
         const hookDurRaw = mediaDuration(state.hookVideo);
         const coverDurRaw = mediaDuration(state.coverVideo);
         const atTimelineEnd = isAtTimelineEnd(time);
+        const isMultiBg = isMultiBackgroundTask(task);
 
         if (state.audio.src && audioDur > 0) {
             setMediaTime(state.audio, clamp(mainTime / getAudioDurationScale(task), 0, audioDur));
         }
-        if (state.bgVideo.src && bgDur > 0) {
+        if (!isMultiBg && state.bgVideo.src && bgDur > 0) {
             const bgTime = mainTime / getBgDurationScale(task);
             setMediaTime(state.bgVideo, isLoopEnabled() ? loopMediaTime(bgTime, bgDur, atTimelineEnd) : clamp(bgTime, 0, bgDur));
         }
@@ -844,10 +853,11 @@
         const bgDur = mediaDuration(state.bgVideo);
         const bgmDur = mediaDuration(state.bgmAudio);
         const contentDur = mediaDuration(state.contentVideo);
+        const isMultiBg = isMultiBackgroundTask(task);
         const hasAudioClock = !!(state.audio.src && !state.audio.paused);
-        const bgIsClock = !hasAudioClock && state.bgVideo.src && !state.bgVideo.paused;
+        const bgIsClock = !isMultiBg && !hasAudioClock && state.bgVideo.src && !state.bgVideo.paused;
         const contentIsClock = !hasAudioClock && !bgIsClock && state.contentVideo.src && !state.contentVideo.paused;
-        if (hasAudioClock && state.bgVideo.src && bgDur > 0) {
+        if (!isMultiBg && hasAudioClock && state.bgVideo.src && bgDur > 0) {
             const bgTime = mainTime / getBgDurationScale(task);
             const target = isLoopEnabled() ? positiveModulo(bgTime, bgDur) : clamp(bgTime, 0, bgDur);
             setMediaTime(state.bgVideo, target);
@@ -1144,13 +1154,40 @@
         const bgDurFactor = Math.max(0.01, numberOr(task && task.bgDurScale, 100) / 100);
         const playbackRate = 1 / bgDurFactor;
         const shouldPlay = state.isPlaying && !getPhaseInfo(getCurrentTime(), task).inCover && !getPhaseInfo(getCurrentTime(), task).inHook;
+        const bgBaseGain = Math.max(0, effectiveBgVolume(task) / 100);
         const needed = [];
         if (clips.transition && !clips.transition.isImage) needed.push(clips.transition);
         if (clips.current && !clips.current.isImage) needed.push(clips.current);
 
-        const assign = (video, clip) => {
+        const setPreviewVideoGain = (video, gain) => {
+            const nextGain = clamp(gain, 0, 1);
+            const gainNode = state.gainNodes && state.gainNodes.get(video);
+            if (gainNode && state.audioCtx) {
+                gainNode.gain.setValueAtTime(nextGain, state.audioCtx.currentTime);
+                video.volume = nextGain > 0 ? 1 : 0;
+            } else {
+                video.volume = nextGain;
+            }
+            video.muted = nextGain <= 0.001;
+        };
+
+        const assign = (video, clip, gain) => {
             const url = toPlayablePath(clip.path);
-            if (video.dataset.multiPath !== clip.path || video.src !== url) {
+            
+            const norm = (s) => {
+                if (!s) return '';
+                try {
+                    let dec = decodeURIComponent(s);
+                    dec = dec.replace(/^file:\/\/\//i, '/').replace(/^file:\/\//i, '/');
+                    dec = dec.replace(/\\/g, '/');
+                    dec = dec.replace(/\/+/g, '/');
+                    return dec;
+                } catch (_) {
+                    return s;
+                }
+            };
+
+            if (video.dataset.multiPath !== clip.path || norm(video.src) !== norm(url)) {
                 video.pause();
                 video.dataset.multiPath = clip.path;
                 video.src = url;
@@ -1160,13 +1197,22 @@
             const dur = mediaDuration(video);
             const target = dur > 0 ? Math.min(clip.localTime, Math.max(0, dur - 0.03)) : clip.localTime;
             setMediaTime(video, target);
+            setPreviewVideoGain(video, gain);
             if (shouldPlay && video.paused) video.play().catch(() => {});
             if (!shouldPlay && !video.paused) video.pause();
         };
 
-        if (needed[0]) assign(state.bgVideo, needed[0]);
+        let firstGain = bgBaseGain;
+        let secondGain = bgBaseGain;
+        if (clips.transition && needed.length > 1) {
+            const progress = clamp(numberOr(clips.transition.progress, 0), 0, 1);
+            firstGain = bgBaseGain * (1 - progress);
+            secondGain = bgBaseGain * progress;
+        }
+
+        if (needed[0]) assign(state.bgVideo, needed[0], firstGain);
         else state.bgVideo.pause();
-        if (needed[1]) assign(state.bgFadeVideo, needed[1]);
+        if (needed[1]) assign(state.bgFadeVideo, needed[1], secondGain);
         else state.bgFadeVideo.pause();
     }
 
@@ -1578,11 +1624,11 @@
             return maxFlipperDuration + offset;
         }
 
-        const custom = parseFloat(task.customDuration || 0);
+        const custom = getEffectiveCustomDuration(task);
         if (custom > 0) return custom + offset;
         const audioDur = mediaDuration(state.audio);
         const audioScale = getAudioDurationScale(task);
-        if (audioDur > 0) return Math.max(audioDur * Math.max(0.01, audioScale), subtitleDuration(task)) + offset;
+        if (audioDur > 0) return (audioDur * Math.max(0.01, audioScale)) + offset;
         const cvDur = mediaDuration(state.contentVideo);
         if (cvDur > 0) {
             const trimStart = parseFloat(task.contentVideoTrimStart) || 0;
@@ -1591,10 +1637,18 @@
             return Math.max(usable, subtitleDuration(task)) + offset;
         }
         const bgDur = mediaDuration(state.bgVideo);
-        const multiDur = task.bgMode === 'multi' ? getMultiBackgroundDuration(task) : 0;
-        const bgmDur = mediaDuration(state.bgmAudio);
+        const isMultiBg = isMultiBackgroundTask(task);
+        const multiDur = isMultiBg ? getMultiBackgroundDuration(task) : 0;
         const subDur = subtitleDuration(task);
-        return Math.max(bgDur * getBgDurationScale(task), multiDur, bgmDur, subDur, state.bgImage ? 5 : 0, state.contentImage ? 5 : 0) + offset;
+        return Math.max(isMultiBg ? 0 : bgDur * getBgDurationScale(task), multiDur, subDur, state.bgImage ? 5 : 0, state.contentImage ? 5 : 0) + offset;
+    }
+
+    function getEffectiveCustomDuration(task) {
+        const taskCustom = parseFloat(task && task.customDuration || 0);
+        if (taskCustom > 0) return taskCustom;
+        const globalEl = document.getElementById('reels-custom-duration');
+        const globalCustom = parseFloat(globalEl ? globalEl.value : '0');
+        return Number.isFinite(globalCustom) && globalCustom > 0 ? globalCustom : 0;
     }
 
     function subtitleDuration(task) {
@@ -1678,6 +1732,10 @@
         return active.length > 0 ? active : pool;
     }
 
+    function isMultiBackgroundTask(task) {
+        return !!(task && task.bgMode === 'multi' && getEffectiveBgClipPool(task).length > 0);
+    }
+
     function getPreviewMultiClipPool(task) {
         const pool = getEffectiveBgClipPool(task);
         const isRandom = task && (task.bgClipOrder === 'random' || task.bgClipOrder === 'random_align');
@@ -1729,30 +1787,233 @@
         });
 
         const isAlign = task && (task.bgClipOrder === 'random_align' || task.bgClipOrder === 'sequence_align');
-        const subDur = subtitleDuration(task);
-        const audioDur = mediaDuration(state.audio);
-        const totalDur = Math.max(audioDur || 0, subDur || 0, clips.reduce((sum, c) => sum + c.baseDuration, 0), 5);
+        const audioScale = getAudioDurationScale(task);
+        const rawSegments = Array.isArray(task && task.segments) ? task.segments : [];
+        const audioDurRaw = mediaDuration(state.audio);
+        const hasAudioDuration = audioDurRaw > 0;
+        const segments = hasAudioDuration && Math.abs(audioScale - 1) > 0.001
+            ? rawSegments.map(seg => ({
+                ...seg,
+                start: numberOr(seg.start, 0) * audioScale,
+                end: numberOr(seg.end, 0) * audioScale,
+                words: Array.isArray(seg.words) ? seg.words.map(w => ({
+                    ...w,
+                    start: numberOr(w.start, 0) * audioScale,
+                    end: numberOr(w.end, 0) * audioScale,
+                })) : seg.words,
+            }))
+            : rawSegments;
+        const subDur = segments.length ? numberOr(segments[segments.length - 1].end, 0) : 0;
+        const transitionTypeForDuration = task && task.bgTransition || 'crossfade';
+        const transitionOverlap = transitionTypeForDuration !== 'none' ? Math.max(0, numberOr(task && task.bgTransDur, 0.5)) : 0;
+        const poolRawDur = clips.reduce((sum, c) => sum + c.baseDuration, 0);
+        const poolDur = Math.max(0.5, poolRawDur - transitionOverlap * Math.max(0, clips.length - 1));
+        const totalDur = hasAudioDuration
+            ? Math.max(audioDurRaw * audioScale, 0.5)
+            : Math.max(subDur || 0, poolDur, 5);
         const result = [];
 
-        if (isAlign && Array.isArray(task.segments) && task.segments.length > 0) {
-            const minDur = Math.max(1, numberOr(task.bgMinClipDur, 5) - 1);
-            const maxDur = Math.max(minDur + 0.1, numberOr(task.bgMaxClipDur, 7) + 1);
-            const cuts = [0];
-            let last = 0;
-            for (const seg of task.segments) {
-                const end = numberOr(seg.end, 0) - 0.2;
-                if (end > last + minDur && end < last + maxDur && end < totalDur) {
-                    cuts.push(Math.max(0.1, end));
-                    last = end;
-                } else if (end >= last + maxDur && last + maxDur < totalDur) {
-                    cuts.push(last + Math.min(maxDur, Math.max(minDur, numberOr(task.bgMinClipDur, 5))));
-                    last = cuts[cuts.length - 1];
+        if (isAlign && segments.length > 0) {
+            const cutPoints = [0];
+            const preSwitchOffset = 0.2;
+            const bgMinClipDur = task.bgMinClipDur !== undefined ? numberOr(task.bgMinClipDur, 5) : 5;
+            const bgMaxClipDur = task.bgMaxClipDur !== undefined ? numberOr(task.bgMaxClipDur, 7) : 7;
+            const originalScript = task.ttsText || task.aiScript || task.txtContent || '';
+
+            const getSentenceBoundaries = (segs, originalText) => {
+                const strongBoundaries = new Set();
+                const weakBoundaries = new Set();
+                if (!segs || segs.length === 0) return { strongBoundaries, weakBoundaries };
+
+                const lastIdx = segs.length - 1;
+                strongBoundaries.add(lastIdx);
+
+                const sentencePunct = new Set([
+                    '。', '！', '？', '，', '、', '；', '：',
+                    '.', '!', '?', ',', ';', ':', '\n', '\r',
+                    '…', '—', '“', '”', '‘', '’', '（', '）',
+                    '(', ')', '[', ']', '【', '】'
+                ]);
+                const strongPunct = new Set(['。', '！', '？', '.', '!', '?', '\n', '\r', '…', '—']);
+
+                segs.forEach((seg, i) => {
+                    const txt = String(seg.edited_text || seg.text || '').trim();
+                    if (txt && sentencePunct.has(txt[txt.length - 1])) {
+                        const char = txt[txt.length - 1];
+                        if (strongPunct.has(char)) strongBoundaries.add(i);
+                        else weakBoundaries.add(i);
+                    }
+                });
+
+                if (!originalText) return { strongBoundaries, weakBoundaries };
+
+                const rawChars = Array.from(originalText);
+                const cleanOriginalText = [];
+                const cleanToRawMap = [];
+                for (let i = 0; i < rawChars.length; i++) {
+                    const char = rawChars[i];
+                    if (!/\s/.test(char) && !sentencePunct.has(char)) {
+                        cleanToRawMap.push(i);
+                        cleanOriginalText.push(char);
+                    }
+                }
+                const cleanOrigStr = cleanOriginalText.join('');
+
+                let accumulatedCleanText = '';
+                for (let idx = 0; idx < segs.length; idx++) {
+                    const segVal = segs[idx].edited_text || segs[idx].text || '';
+                    const cleanSegText = String(segVal)
+                        .replace(/\s+/g, '')
+                        .split('')
+                        .filter(c => !sentencePunct.has(c))
+                        .join('');
+
+                    accumulatedCleanText += cleanSegText;
+                    if (accumulatedCleanText.length === 0) continue;
+
+                    const matchIdx = cleanOrigStr.toLowerCase().indexOf(accumulatedCleanText.toLowerCase());
+                    if (matchIdx === -1) continue;
+
+                    const endCleanIdx = matchIdx + accumulatedCleanText.length - 1;
+                    const endRawIdx = cleanToRawMap[endCleanIdx];
+                    if (endRawIdx === undefined) continue;
+
+                    let isBoundary = false;
+                    let matchedChar = '';
+                    let k = endRawIdx + 1;
+                    for (; k < rawChars.length; k++) {
+                        const nextChar = rawChars[k];
+                        if (sentencePunct.has(nextChar)) {
+                            isBoundary = true;
+                            matchedChar = nextChar;
+                            break;
+                        }
+                        if (!/\s/.test(nextChar)) break;
+                    }
+                    if (k === rawChars.length) isBoundary = true;
+                    if (isBoundary) {
+                        if (k === rawChars.length || strongPunct.has(matchedChar)) strongBoundaries.add(idx);
+                        else weakBoundaries.add(idx);
+                    }
+                }
+                return { strongBoundaries, weakBoundaries };
+            };
+
+            const { strongBoundaries, weakBoundaries } = getSentenceBoundaries(segments, originalScript);
+            const strongCandidates = [];
+            const weakCandidates = [];
+            const allCandidates = [];
+
+            segments.forEach((seg, idx) => {
+                const endVal = numberOr(seg.end, 0);
+                if (endVal > 0) {
+                    const shiftedPt = Math.max(0.1, endVal - preSwitchOffset);
+                    if (shiftedPt < totalDur) {
+                        allCandidates.push(shiftedPt);
+                        if (strongBoundaries.has(idx)) strongCandidates.push(shiftedPt);
+                        else if (weakBoundaries.has(idx)) weakCandidates.push(shiftedPt);
+                    }
+                }
+            });
+
+            const sortedStrongCands = Array.from(new Set(strongCandidates)).sort((a, b) => a - b);
+            const sortedWeakCands = Array.from(new Set(weakCandidates)).sort((a, b) => a - b);
+            const sortedAllCands = Array.from(new Set(allCandidates)).sort((a, b) => a - b);
+
+            const preferredSplit = Math.max(1.0, bgMinClipDur > 0 ? Math.min(bgMaxClipDur, bgMinClipDur + 1) : 5);
+            const minOk = Math.max(1.0, bgMinClipDur - 1.0);
+            const maxOk = bgMaxClipDur + 1.0;
+            let lastCut = 0;
+            let candIdx = 0;
+
+            while (candIdx < sortedAllCands.length) {
+                const remainingAll = sortedAllCands.filter(pt => pt > lastCut + 0.01);
+                if (remainingAll.length === 0) break;
+
+                const remainingStrong = sortedStrongCands.filter(pt => pt > lastCut + 0.01);
+                const remainingWeak = sortedWeakCands.filter(pt => pt > lastCut + 0.01);
+
+                let bestPt = null;
+                for (const pt of remainingStrong) {
+                    const dist = pt - lastCut;
+                    if (dist >= minOk && dist <= maxOk) {
+                        if (bestPt === null || Math.abs(dist - preferredSplit) < Math.abs(bestPt - lastCut - preferredSplit)) {
+                            bestPt = pt;
+                        }
+                    }
+                }
+
+                if (bestPt === null) {
+                    for (const pt of remainingWeak) {
+                        const dist = pt - lastCut;
+                        if (dist >= minOk && dist <= maxOk) {
+                            if (bestPt === null || Math.abs(dist - preferredSplit) < Math.abs(bestPt - lastCut - preferredSplit)) {
+                                bestPt = pt;
+                            }
+                        }
+                    }
+                }
+
+                if (bestPt !== null) {
+                    cutPoints.push(bestPt);
+                    lastCut = bestPt;
+                    const idx = sortedAllCands.indexOf(bestPt);
+                    candIdx = idx !== -1 ? idx + 1 : candIdx + 1;
+                    continue;
+                }
+
+                const hasExceedingStrong = remainingStrong.some(pt => pt - lastCut > maxOk);
+                const hasExceedingWeak = remainingWeak.some(pt => pt - lastCut > maxOk);
+                if (!hasExceedingStrong && !hasExceedingWeak) break;
+
+                const smallerStrong = remainingStrong.filter(pt => pt - lastCut < minOk);
+                const smallerWeak = remainingWeak.filter(pt => pt - lastCut < minOk);
+                let forcedPt = null;
+                if (smallerStrong.length > 0) {
+                    forcedPt = smallerStrong[smallerStrong.length - 1];
+                } else if (smallerWeak.length > 0) {
+                    forcedPt = smallerWeak[smallerWeak.length - 1];
+                } else {
+                    for (const pt of remainingAll) {
+                        const dist = pt - lastCut;
+                        if (dist >= minOk && dist <= maxOk) {
+                            if (forcedPt === null || Math.abs(dist - preferredSplit) < Math.abs(forcedPt - lastCut - preferredSplit)) {
+                                forcedPt = pt;
+                            }
+                        }
+                    }
+                    if (forcedPt === null) forcedPt = lastCut + preferredSplit;
+                }
+
+                cutPoints.push(forcedPt);
+                lastCut = forcedPt;
+                const idx = sortedAllCands.indexOf(forcedPt);
+                candIdx = idx !== -1 ? idx + 1 : candIdx + 1;
+            }
+
+            if (bgMaxClipDur > 0) {
+                while ((totalDur - lastCut) > bgMaxClipDur) {
+                    const nextForcedCut = lastCut + preferredSplit;
+                    cutPoints.push(nextForcedCut);
+                    lastCut = nextForcedCut;
                 }
             }
-            if (cuts[cuts.length - 1] < totalDur) cuts.push(totalDur);
-            for (let i = 0; i < cuts.length - 1; i++) {
+            if (cutPoints.length > 1 && totalDur - cutPoints[cutPoints.length - 1] < 1.5) {
+                cutPoints[cutPoints.length - 1] = totalDur;
+            } else if (cutPoints[cutPoints.length - 1] < totalDur - 0.01) {
+                cutPoints.push(totalDur);
+            } else {
+                cutPoints[cutPoints.length - 1] = totalDur;
+            }
+
+            for (let i = 0; i < cutPoints.length - 1; i++) {
                 const clip = clips[i % clips.length];
-                result.push({ ...clip, start: cuts[i], end: cuts[i + 1], duration: cuts[i + 1] - cuts[i] });
+                result.push({
+                    ...clip,
+                    start: cutPoints[i],
+                    end: cutPoints[i + 1],
+                    duration: cutPoints[i + 1] - cutPoints[i],
+                });
             }
             return result;
         }
@@ -1763,7 +2024,8 @@
             const start = cursor;
             const end = Math.min(totalDur, start + clip.baseDuration);
             result.push({ ...clip, start, end, duration: end - start });
-            cursor = end;
+            if (end >= totalDur - 0.001) break;
+            cursor = Math.max(start + 0.01, end - transitionOverlap);
         }
         return result;
     }
