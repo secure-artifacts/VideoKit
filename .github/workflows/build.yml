@@ -99,6 +99,7 @@ jobs:
           path: |
             dist-electron/*.dmg
             dist-electron/*.zip
+            dist-electron/latest-mac.yml
           retention-days: 30
 
   # ==================== Windows 打包 ====================
@@ -211,6 +212,7 @@ jobs:
           path: |
             dist-electron/*.zip
             dist-electron/*.exe
+            dist-electron/latest.yml
           retention-days: 30
 
   # ==================== Linux 打包 ====================
@@ -276,6 +278,8 @@ jobs:
           path: |
             dist-electron/*.AppImage
             dist-electron/*.deb
+            dist-electron/latest-linux.yml
+            dist-electron/latest-linux-arm64.yml
           retention-days: 30
 
   # ==================== 创建 Release ====================
