@@ -62,12 +62,37 @@ function _canvasToRawRGBA(canvas) {
     return imageData.data.buffer.slice(0);
 }
 
+function toFileUrl(filePath) {
+    if (!filePath || typeof filePath !== 'string') return '';
+    let cleanPath = filePath;
+    if (/^file:\/\//i.test(cleanPath)) {
+        try {
+            cleanPath = decodeURIComponent(cleanPath.replace(/^file:\/\//i, ''));
+        } catch {
+            cleanPath = cleanPath.replace(/^file:\/\//i, '');
+        }
+    }
+    // Normalize backslashes to forward slashes for Windows compatibility
+    cleanPath = cleanPath.replace(/\\/g, '/');
+
+    if (process.platform === 'win32' || (cleanPath.includes(':') && !cleanPath.startsWith('/'))) {
+        if (!cleanPath.startsWith('/') && /^[a-zA-Z]:/.test(cleanPath)) {
+            cleanPath = '/' + cleanPath;
+        }
+    } else {
+        if (!cleanPath.startsWith('/')) {
+            cleanPath = '/' + cleanPath;
+        }
+    }
+    return `file://${cleanPath}`;
+}
+
 function _loadImage(src) {
     return new Promise((resolve, reject) => {
         const img = new Image();
         img.onload = () => resolve(img);
         img.onerror = () => reject(new Error('图片加载失败: ' + src));
-        img.src = src;
+        img.src = toFileUrl(src);
     });
 }
 
@@ -85,7 +110,7 @@ function _createVideoNode(src) {
             setTimeout(() => resolve(v), 300);
         };
         v.onerror = (e) => reject(new Error('HTML5 Video Load Failed: ' + src));
-        v.src = src.startsWith('file://') ? src : `file://${src}`;
+        v.src = toFileUrl(src);
     });
 }
 
@@ -110,7 +135,7 @@ function _isImageFile(filePath) {
 function loadScript(filePath) {
     return new Promise((resolve, reject) => {
         const script = document.createElement('script');
-        script.src = `file://${filePath}`;
+        script.src = toFileUrl(filePath);
         script.onload = () => resolve();
         script.onerror = () => {
             console.warn(`[Shadow] 脚本加载失败: ${filePath}, 尝试直接 eval...`);
@@ -225,7 +250,7 @@ ipcRenderer.on('render-chunk', async (event, config) => {
         let staticBgImg = null;
         if (!bgMemoryNode && backgroundPath && _isImageFile(backgroundPath)) {
             try {
-                staticBgImg = await _loadImage(backgroundPath.startsWith('file://') ? backgroundPath : `file://${backgroundPath}`);
+                staticBgImg = await _loadImage(toFileUrl(backgroundPath));
                 log('静态图片背景就绪');
             } catch (e) {
                 log(`⚠️ 背景图片加载失败: ${e.message}`);

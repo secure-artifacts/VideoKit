@@ -114,6 +114,53 @@ function _collectOverlaySearchDirs(taskOverlays) {
     return dirs;
 }
 
+function _cloneOverlaysForWysiwygExport(overlays) {
+    if (!Array.isArray(overlays)) return overlays;
+    const runtimeKeys = new Set([
+        '_allOverlays',
+        '_cachedUrl',
+        '_currentFrameImage',
+        '_dirty',
+        '_exportDuration',
+        '_exporting',
+        '_fcpxml_generating',
+        '_flipper_drawing',
+        '_frameCount',
+        '_framesDir',
+        '_imageEl',
+        '_img',
+        '_imgLoaded',
+        '_original_body_text',
+        '_original_footer_text',
+        '_original_title_text',
+        '_previewAtEnd',
+        '_renderedH',
+        '_renderedW',
+        '_renderedX',
+        '_renderedY',
+        '_scrollBodyCurX',
+        '_scrollBodyFirstLineY',
+        '_scrollBodyLineHeight',
+        '_selected',
+        '_sideBySideCacheOwner',
+        '_videoEl',
+    ]);
+    try {
+        return JSON.parse(JSON.stringify(overlays, (key, value) => {
+            if (runtimeKeys.has(key)) return undefined;
+            if (key && key.startsWith('_') && key !== '_templateName') return undefined;
+            if (typeof Element !== 'undefined' && value instanceof Element) return undefined;
+            if (typeof HTMLCanvasElement !== 'undefined' && value instanceof HTMLCanvasElement) return undefined;
+            if (typeof HTMLImageElement !== 'undefined' && value instanceof HTMLImageElement) return undefined;
+            if (typeof HTMLVideoElement !== 'undefined' && value instanceof HTMLVideoElement) return undefined;
+            return value;
+        }));
+    } catch (e) {
+        console.warn('[WYSIWYG] clone overlays failed, falling back to shallow copies:', e);
+        return overlays.map(ov => ov && typeof ov === 'object' ? { ...ov } : ov);
+    }
+}
+
 async function _resolveMissingOverlayPath(ov, taskOverlays, log) {
     const opath = _normalizeOverlayLocalPath(ov?.content || '');
     if (await _overlayLocalPathExists(opath)) return opath;
@@ -337,6 +384,7 @@ async function reelsWysiwygExport(params) {
     } = params;
 
     const isMultiClip = bgMode === 'multi' && Array.isArray(bgClipPool) && bgClipPool.length > 0;
+    taskOverlays = _cloneOverlaysForWysiwygExport(taskOverlays);
 
     // ── 多素材诊断日志 ──
     console.log(`[WYSIWYG-EXPORT] bgMode=${bgMode}, bgClipPool=${Array.isArray(bgClipPool) ? bgClipPool.length : 'N/A'}, isMultiClip=${isMultiClip}, backgroundPath=${backgroundPath || '(empty)'}`);
@@ -946,28 +994,7 @@ async function reelsWysiwygExport(params) {
                 ctx.restore();
             }
 
-            // ── 覆盖层（文字卡片等）──
-            if (taskOverlays && taskOverlays.length > 0 && window.ReelsOverlay) {
-                // 注入覆层列表引用（供跟随绑定），按面板图层顺序渲染。
-                for (const ov of taskOverlays.filter(ov => !ov.disabled)) {
-                    ov._allOverlays = taskOverlays;
-                    const ovStart = parseFloat(ov.start || 0);
-                    const ovEnd = parseFloat(ov.end || 9999);
-                    // scroll 覆层不受 end 限制（动画完成后保持最终位置）
-                    if (t >= ovStart && (ov.type === 'scroll' || t <= ovEnd)) {
-                        // 导出时不画辅助线和选中框
-                        const origSelected = ov._selected;
-                        ov._selected = false;
-                        ov._exporting = true;
-                        ov._exportDuration = duration; // 让 scroll 覆层知道实际导出时长
-                        ReelsOverlay.drawOverlay(ctx, ov, t, targetWidth, targetHeight);
-                        ov._selected = origSelected;
-                        ov._exporting = false;
-                    }
-                }
-            }
-
-            // ── 字幕（与预览完全相同的渲染器）──
+            // ── 字幕：与 V2/旧预览一致，先画字幕，再画文字卡片/覆层 ──
             if (showSubtitle) {
                 let activeSeg = segments.find(seg => t >= (seg.start || 0) && t <= (seg.end || 0));
                 // Scrolling/typewriter mode: find nearest segment during gaps (same as preview logic)
@@ -981,6 +1008,30 @@ async function reelsWysiwygExport(params) {
                 if (activeSeg) {
                     renderer.setContextSegments(segments);
                     renderer.renderSubtitle(style, activeSeg, t, targetWidth, targetHeight);
+                }
+            }
+
+            // ── 覆盖层（文字卡片等）──
+            if (taskOverlays && taskOverlays.length > 0 && window.ReelsOverlay) {
+                // 注入覆层列表引用（供跟随绑定），按面板图层顺序渲染。
+                for (const ov of taskOverlays.filter(ov => !ov.disabled)) {
+                    ov._allOverlays = taskOverlays;
+                    const ovStart = parseFloat(ov.start || 0);
+                    const ovEnd = parseFloat(ov.end || 9999);
+                    // scroll 覆层不受 end 限制（动画完成后保持最终位置）
+                    if (t >= ovStart && (ov.type === 'scroll' || t <= ovEnd)) {
+                        // 导出时不画辅助线和选中框
+                        const origSelected = ov._selected;
+                        try {
+                            ov._selected = false;
+                            ov._exporting = true;
+                            ov._exportDuration = duration; // 让 scroll 覆层知道实际导出时长
+                            ReelsOverlay.drawOverlay(ctx, ov, t, targetWidth, targetHeight);
+                        } finally {
+                            ov._selected = origSelected;
+                            delete ov._exporting;
+                        }
+                    }
                 }
             }
 

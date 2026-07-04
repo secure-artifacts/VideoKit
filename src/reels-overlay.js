@@ -469,14 +469,34 @@ function createScrollOverlay(opts = {}) {
 
 function _normalizeLocalMediaPath(p) {
     if (!p || typeof p !== 'string') return '';
-    if (/^(local-media|file|https?|blob|data):/i.test(p)) return p;
-    if (p.startsWith('/') || /^[a-zA-Z]:[/\\]/i.test(p)) {
-        if (window.electronAPI && typeof window.electronAPI.toFileUrl === 'function') {
-            return window.electronAPI.toFileUrl(p);
-        }
-        return `local-media://${p}`;
+    if (/^(local-media|https?|blob|data):/i.test(p)) return p;
+    
+    let clean = p;
+    if (clean.startsWith('file://')) {
+        clean = clean.substring(7);
     }
-    return p;
+    // Normalize backslashes to forward slashes for Windows compatibility
+    clean = clean.replace(/\\/g, '/');
+
+    const isWin = (typeof process !== 'undefined' && process.platform === 'win32') || navigator.userAgent.toLowerCase().includes('windows');
+    if (isWin || (clean.includes(':') && !clean.startsWith('/'))) {
+        if (!clean.startsWith('/') && /^[a-zA-Z]:/.test(clean)) {
+            clean = '/' + clean;
+        }
+    } else {
+        if (!clean.startsWith('/')) {
+            clean = '/' + clean;
+        }
+    }
+    
+    if (window.electronAPI && typeof window.electronAPI.toFileUrl === 'function') {
+        return window.electronAPI.toFileUrl(clean);
+    }
+    // For shadow-renderer (loaded via file: protocol in BrowserWindow with webSecurity: false)
+    if (window.location.protocol === 'file:') {
+        return `file://${clean}`;
+    }
+    return `local-media://${clean}`;
 }
 
 const _imageCache = {};
