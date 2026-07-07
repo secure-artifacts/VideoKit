@@ -111,6 +111,22 @@ function buildAtempoChainForDurationScale(durationScale = 100) {
     return filters.join(',');
 }
 
+function getSessionVideoDuration(session) {
+    const explicit = Number(session && session.targetDuration);
+    if (Number.isFinite(explicit) && explicit > 0) return explicit;
+    const frames = Number(session && session.frameCount);
+    const fps = Number(session && session.fps);
+    if (Number.isFinite(frames) && frames > 0 && Number.isFinite(fps) && fps > 0) {
+        return frames / fps;
+    }
+    return 0;
+}
+
+function outputDurationArgs(session) {
+    const duration = getSessionVideoDuration(session);
+    return duration > 0 ? ['-t', duration.toFixed(6)] : [];
+}
+
 // ═══════════════════════════════════════════════════════
 // 辅助: 递归搜索文件（限深度，跳过隐藏目录）
 // ═══════════════════════════════════════════════════════
@@ -1065,6 +1081,8 @@ async function startSession(opts) {
         audioDurScale = 100,
         reverbEnabled = false, reverbPreset = 'hall', reverbMix = 30, stereoWidth = 100, audioFxTarget = 'all',
         renderedAudioPath = null,
+        targetDuration = 0,
+        totalFrames = 0,
         useGPU = false,
     } = opts;
 
@@ -1204,6 +1222,7 @@ async function startSession(opts) {
         '-colorspace', 'bt709',
         '-color_primaries', 'bt709',
         '-color_trc', 'bt709',
+        ...(totalFrames > 0 ? ['-frames:v', String(totalFrames)] : []),
         '-movflags', '+faststart',
         tempVideo
     );
@@ -1220,6 +1239,8 @@ async function startSession(opts) {
         audioDurScale,
         reverbEnabled, reverbPreset, reverbMix, stereoWidth, audioFxTarget,
         renderedAudioPath,
+        targetDuration,
+        totalFrames,
         width, height, fps,
         stderr: '', frameCount: 0, bytesWritten: 0,
         closed: false, encoderExited: false, encoderExitCode: null,
@@ -1638,7 +1659,7 @@ async function mixAudio(session) {
 
         if (audioInputs.length === 0) {
             console.log('[WYSIWYG] 无配音且无音频源，直接拷贝视频');
-            args = ['-y', '-i', tempVideo, '-c:v', 'copy', '-an', '-movflags', '+faststart', outputPath];
+            args = ['-y', '-i', tempVideo, '-c:v', 'copy', '-an', ...outputDurationArgs(session), '-movflags', '+faststart', outputPath];
         } else {
             console.log(`[WYSIWYG] 无配音，混合 ${audioInputs.length} 个音频源`);
             args = ['-y', '-i', tempVideo];
@@ -1667,7 +1688,7 @@ async function mixAudio(session) {
             }
             args.push('-filter_complex', filterParts.join(';'),
                 '-map', '0:v', '-map', '[aout]',
-                '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-shortest', '-movflags', '+faststart', outputPath);
+                '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-shortest', ...outputDurationArgs(session), '-movflags', '+faststart', outputPath);
         }
     } else {
         args = ['-y', '-i', tempVideo, '-i', voicePath];
@@ -1808,7 +1829,7 @@ async function mixAudio(session) {
             '-map', '0:v', '-map', '[aout]',
         );
 
-        args.push('-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-shortest', '-movflags', '+faststart', outputPath);
+        args.push('-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-shortest', ...outputDurationArgs(session), '-movflags', '+faststart', outputPath);
     }
 
     if (session.reverbEnabled) {
@@ -2192,6 +2213,8 @@ async function parallelExport(opts, mainWindow) {
         width: targetWidth,
         height: targetHeight,
         fps,
+        targetDuration: totalFrames > 0 ? totalFrames / fps : duration,
+        frameCount: totalFrames,
         stderr: '',
     };
 

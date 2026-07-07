@@ -567,7 +567,8 @@ async function reelsWysiwygExport(params) {
             log(`无法获取时长，使用默认 ${duration}s`);
         }
     }
-    const totalFrames = Math.ceil(duration * fps);
+    const totalFrames = Math.max(1, Math.round(duration * fps));
+    const outputDuration = totalFrames / fps;
     log(`时长: ${duration.toFixed(2)}s, 帧数: ${totalFrames}, FPS: ${fps}`);
     if (bgScale !== 100) log(`背景缩放: ${bgScale}%`);
     if (bgX !== 0 || bgY !== 0) log(`背景偏移: X=${bgX}%, Y=${bgY}%`);
@@ -770,6 +771,8 @@ async function reelsWysiwygExport(params) {
         bgY: bgY || 0,
         bgDurScale: bgDurScale || 100,
         audioDurScale: audioDurScale || 100,
+        targetDuration: outputDuration,
+        totalFrames,
         reverbEnabled,
         reverbPreset,
         reverbMix,
