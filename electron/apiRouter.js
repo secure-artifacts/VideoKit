@@ -1210,6 +1210,7 @@ async function routeAPI(endpoint, data, progressSender = null) {
                     } catch (e) {
                         console.error('[Watermark Route] Error:', file, e.message);
                         allResults.push({ error: e.message, file });
+                    }
                 }
             } else if (mode === 'custom_logo' || ['hailuo', 'vidu', 'veo', 'heygen', 'dream', 'ai_generated'].includes(mode)) {
                 // 图片 Logo 叠加 (自定义或内置预设)
