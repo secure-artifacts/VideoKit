@@ -122,24 +122,13 @@ function checkWorkflowConfigs() {
 
     try {
         const content = fs.readFileSync(workflowPath, 'utf8');
-        const requiredArtifacts = [
-            'dist-electron/latest-mac.yml',
-            'dist-electron/latest.yml',
-            'dist-electron/latest-linux.yml',
-            'dist-electron/latest-linux-arm64.yml'
-        ];
+        const requiredString = 'dist-electron/*.yml';
+        const occurrences = (content.split(requiredString).length - 1);
 
-        let missing = [];
-        requiredArtifacts.forEach(art => {
-            if (!content.includes(art)) {
-                missing.push(art);
-            }
-        });
-
-        if (missing.length > 0) {
-            printError(`GitHub Actions 配置文件中未包含以下自动更新元数据配置文件：\n  - ${missing.join('\n  - ')}`);
+        if (occurrences < 3) {
+            printError(`GitHub Actions 配置文件中未完整配置 "dist-electron/*.yml" 上传（当前仅发现 ${occurrences} 处，应至少有 3 处分别用于 Mac, Win, Linux）`);
         } else {
-            printPass('Actions 产物上传配置完整');
+            printPass('Actions 自动更新配置已适配通用 *.yml 通配符');
         }
     } catch (e) {
         printError(`校验 Actions 配置文件失败: ${e.message}`);
