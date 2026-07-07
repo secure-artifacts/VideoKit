@@ -200,9 +200,9 @@ async function prepareBg(opts) {
     const scaledW = Math.round(targetWidth * scaleFactor);
     const scaledH = Math.round(targetHeight * scaleFactor);
     if (scaleFactor >= 1.0) {
-        scaleCropFilter = `scale=${scaledW}:${scaledH}:force_original_aspect_ratio=increase,crop=${targetWidth}:${targetHeight}:'max(0, min(in_w-out_w, ((in_w-out_w)/2)*(1-(${bgX}/100))))':'max(0, min(in_h-out_h, ((in_h-out_h)/2)*(1-(${bgY}/100))))'`;
+        scaleCropFilter = `scale=${scaledW}:${scaledH}:force_original_aspect_ratio=increase,crop=${targetWidth}:${targetHeight}:'max(0, min(in_w-out_w, ((in_w-out_w)/2)*(1-(${bgX}/100))))':'max(0, min(in_h-out_h, ((in_h-out_h)/2)*(1-(${bgY}/100))))',setsar=1`;
     } else {
-        scaleCropFilter = `scale=${scaledW}:${scaledH}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:'max(0, min(ow-iw, ((ow-iw)/2)*(1+(${bgX}/100))))':'max(0, min(oh-ih, ((oh-ih)/2)*(1+(${bgY}/100))))':color=black`;
+        scaleCropFilter = `scale=${scaledW}:${scaledH}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:'max(0, min(ow-iw, ((ow-iw)/2)*(1+(${bgX}/100))))':'max(0, min(oh-ih, ((oh-ih)/2)*(1+(${bgY}/100))))':color=black,setsar=1`;
     }
     if (bgFlipH) scaleCropFilter += ',hflip';
     if (bgFlipV) scaleCropFilter += ',vflip';
@@ -1182,9 +1182,9 @@ async function startSession(opts) {
         const scaledW = Math.round(width * scaleFactor);
         const scaledH = Math.round(height * scaleFactor);
         if (scaleFactor >= 1.0) {
-            scaleCropFilter = `scale=${scaledW}:${scaledH}:force_original_aspect_ratio=increase,crop=${width}:${height}:'max(0, min(in_w-out_w, ((in_w-out_w)/2)*(1-(${bgX}/100))))':'max(0, min(in_h-out_h, ((in_h-out_h)/2)*(1-(${bgY}/100))))'`;
+            scaleCropFilter = `scale=${scaledW}:${scaledH}:force_original_aspect_ratio=increase,crop=${width}:${height}:'max(0, min(in_w-out_w, ((in_w-out_w)/2)*(1-(${bgX}/100))))':'max(0, min(in_h-out_h, ((in_h-out_h)/2)*(1-(${bgY}/100))))',setsar=1`;
         } else {
-            scaleCropFilter = `scale=${scaledW}:${scaledH}:force_original_aspect_ratio=decrease,pad=${width}:${height}:'max(0, min(ow-iw, ((ow-iw)/2)*(1+(${bgX}/100))))':'max(0, min(oh-ih, ((oh-ih)/2)*(1+(${bgY}/100))))':color=black`;
+            scaleCropFilter = `scale=${scaledW}:${scaledH}:force_original_aspect_ratio=decrease,pad=${width}:${height}:'max(0, min(ow-iw, ((ow-iw)/2)*(1+(${bgX}/100))))':'max(0, min(oh-ih, ((oh-ih)/2)*(1+(${bgY}/100))))':color=black,setsar=1`;
         }
         if (opts.bgFlipH) scaleCropFilter += ',hflip';
         if (opts.bgFlipV) scaleCropFilter += ',vflip';
