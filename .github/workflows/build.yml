@@ -303,6 +303,10 @@ jobs:
       - name: 📋 列出文件
         run: ls -la all-builds/
 
+      - name: 🧹 清理多余文件
+        run: |
+          rm -f all-builds/builder-debug.yml
+
       - name: Attest Build Provenance
         uses: actions/attest-build-provenance@v2
         with:
