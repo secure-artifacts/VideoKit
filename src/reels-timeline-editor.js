@@ -61,6 +61,7 @@ class ReelsTimelineEditor {
         this._scrollX = 0;
         this._scrollY = 0;
         this._pxPerSec = 80;          // 缩放
+        this._autoFitDuration = true; // 任务加载时默认显示完整时长
         this._selectedClip = null;    // {trackIdx, clipIdx}
         this._hoveredClip = null;
 
@@ -121,6 +122,7 @@ class ReelsTimelineEditor {
         this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         this._canvasW = Math.floor(rect.width);
         this._canvasH = Math.floor(rect.height);
+        if (this._autoFitDuration) this._fitDurationToViewport();
     }
 
     // ═══════════════════════════════════════════════
@@ -129,6 +131,16 @@ class ReelsTimelineEditor {
 
     setDuration(dur) {
         this._duration = Math.max(1, dur);
+        this._autoFitDuration = true;
+        this._scrollX = 0;
+        this._fitDurationToViewport();
+    }
+
+    _fitDurationToViewport() {
+        if (!this._canvasW || !this._duration) return;
+        // 右侧留出少量余量，避免最后一个刻度文字和播放头被裁切。
+        const availableWidth = Math.max(1, this._canvasW - TL_HEADER_W - 24);
+        this._pxPerSec = Math.max(0.1, Math.min(1000, availableWidth / this._duration));
     }
 
     setPlayhead(timeSec) {
@@ -283,7 +295,7 @@ class ReelsTimelineEditor {
         // 刻度
         const step = this._calcRulerStep();
         const startTime = Math.floor(this._scrollX / this._pxPerSec / step) * step;
-        const endTime = (this._scrollX + W - TL_HEADER_W) / this._pxPerSec + startTime;
+        const endTime = (this._scrollX + W - TL_HEADER_W) / this._pxPerSec;
 
         ctx.font = '10px monospace';
         ctx.textAlign = 'center';
@@ -619,6 +631,7 @@ class ReelsTimelineEditor {
 
         if (e.ctrlKey || e.metaKey) {
             // 缩放
+            this._autoFitDuration = false;
             const factor = e.deltaY > 0 ? 0.85 : 1.18;
             this._pxPerSec = Math.max(10, Math.min(1000, this._pxPerSec * factor));
         } else if (e.shiftKey) {

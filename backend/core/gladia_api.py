@@ -223,7 +223,7 @@ def transcribe_local_audio(file_path, api_key="", language_behaviour="automatic 
                             return transcribe_local_audio(
                                 file_path,
                                 api_key=cur_api_key,
-                                language_behaviour="manual",
+                                language_behaviour=language_behaviour,
                                 language=language,
                                 diarization=False,
                                 toggle_word_timestamps=True,
@@ -325,10 +325,16 @@ def get_json_result(transcribe_result, last_result, full_text, start_time):
 def transcribe_audio_from_gladia(media_path, api_keys, language, json_path, txt_path, min_minutes=5.0):
     """通过Gladia转录音频的对外接口"""
     print(language)
-    if language not in languages:
-        print(f"不支持的语种 {language}")
-        yield f"不支持的语种 {language}"
-        return None
+    if language == "auto" or language == "automatic":
+        language_behaviour = "automatic single language"
+        gladia_lang = ""
+    else:
+        if language not in languages:
+            print(f"不支持的语种 {language}")
+            yield f"不支持的语种 {language}"
+            return None
+        language_behaviour = "manual"
+        gladia_lang = language
     
     output_path = "./gladia_tmp"
 
@@ -378,8 +384,8 @@ def transcribe_audio_from_gladia(media_path, api_keys, language, json_path, txt_
             result_word_ts = transcribe_local_audio(
                 audio_segm_path,
                 api_key=cur_api_key,
-                language_behaviour="manual",
-                language=language,
+                language_behaviour=language_behaviour,
+                language=gladia_lang,
                 diarization=False,
                 toggle_word_timestamps=True,
                 output_format="json"

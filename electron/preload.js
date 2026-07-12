@@ -147,6 +147,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
     // 选择目录
     selectDirectory: () => ipcRenderer.invoke('select-directory'),
+    selectDirectories: () => ipcRenderer.invoke('select-directories'),
     selectFiles: (options) => ipcRenderer.invoke('select-files', options),
     saveFile: (options) => ipcRenderer.invoke('save-file', options),
 
@@ -241,6 +242,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
         const handler = (event, data) => callback(data);
         ipcRenderer.on('auto-edit-progress', handler);
         return () => ipcRenderer.removeListener('auto-edit-progress', handler);
+    },
+
+    onSubtitleProgress: (callback) => {
+        const handler = (_event, data) => callback(data);
+        ipcRenderer.on('subtitle-progress', handler);
+        return () => ipcRenderer.removeListener('subtitle-progress', handler);
     },
 
     // 在 Finder/Explorer 中高亮显示文件

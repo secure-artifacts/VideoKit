@@ -464,7 +464,9 @@ class ReelsRichTextEditor {
         const popupW = Math.max(480, Math.min(680, (rect?.w || 300) + 220));
 
         // 尝试获取预览区域右边界，让编辑器定位到预览右侧
-        const previewViewport = document.getElementById('reels-preview-viewport');
+        const previewViewport = (window.ReelsPreviewV2?.isOpen?.()
+            ? window.ReelsPreviewV2.getViewportElement?.()
+            : null) || document.getElementById('reels-preview-viewport');
         const previewRect = previewViewport ? previewViewport.getBoundingClientRect() : null;
 
         let popupX, popupY;

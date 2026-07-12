@@ -360,10 +360,15 @@ class ReelsOverlayPanel {
                             <option value="400">Regular</option><option value="500">Medium</option><option value="600">SemiBold</option>
                             <option value="700" selected>Bold</option><option value="800">ExtraBold</option><option value="900">Black</option>
                         </select>
+                        <label>开启描边</label><input type="checkbox" id="rop-use-stroke">
                         <label>描边色</label><input type="color" id="rop-stroke-color" class="rop-color" value="#000000">
                         <label>描边宽</label><input type="number" id="rop-stroke-width" class="rop-input" min="0" max="20" step="0.5" value="0">
+                        <label>开启阴影</label><input type="checkbox" id="rop-shadow-enabled">
                         <label>阴影色</label><input type="color" id="rop-shadow-color" class="rop-color" value="#000000">
                         <label>阴影模糊</label><input type="number" id="rop-shadow-blur" class="rop-input" min="0" max="50" value="0">
+                        <label>阴影 X</label><input type="number" id="rop-shadow-offset-x" class="rop-input" min="-100" max="100" step="0.5" value="4">
+                        <label>阴影 Y</label><input type="number" id="rop-shadow-offset-y" class="rop-input" min="-100" max="100" step="0.5" value="4">
+                        <label>阴影不透明%</label><input type="number" id="rop-shadow-opacity" class="rop-input" min="0" max="100" step="1" value="47">
                     </div>
                 </div>
 
@@ -1325,8 +1330,8 @@ class ReelsOverlayPanel {
             'rop-name', 'rop-fixed-text',
             'rop-x', 'rop-y', 'rop-w', 'rop-h', 'rop-rotation', 'rop-opacity',
             'rop-start', 'rop-end', 'rop-content', 'rop-font', 'rop-fontsize',
-            'rop-color', 'rop-bold', 'rop-font-weight', 'rop-stroke-color', 'rop-stroke-width',
-            'rop-shadow-color', 'rop-shadow-blur', 'rop-scale', 'rop-flip-h', 'rop-video-offset', 'rop-keep-aspect',
+            'rop-color', 'rop-bold', 'rop-font-weight', 'rop-use-stroke', 'rop-stroke-color', 'rop-stroke-width',
+            'rop-shadow-enabled', 'rop-shadow-color', 'rop-shadow-blur', 'rop-shadow-offset-x', 'rop-shadow-offset-y', 'rop-shadow-opacity', 'rop-scale', 'rop-flip-h', 'rop-video-offset', 'rop-keep-aspect',
             'rop-flip-v', 'rop-blend', 'rop-anim-in', 'rop-anim-out',
             'rop-bind-scroll-target', 'rop-bind-scroll-offset-y', 'rop-bind-scroll-offset-x',
             'rop-bind-scroll-clamp-min-y', 'rop-bind-scroll-clamp-max-y', 'rop-bind-scroll-follow-x',
@@ -2724,9 +2729,12 @@ class ReelsOverlayPanel {
     }
 
     _getCanvasSize() {
+        const v2Size = window.ReelsPreviewV2?.isOpen?.()
+            ? window.ReelsPreviewV2.getCanvasSize?.()
+            : null;
         const c = document.getElementById('reels-preview-canvas');
-        const w = (c && c.width) ? c.width : 1080;
-        const h = (c && c.height) ? c.height : 1920;
+        const w = v2Size?.width || ((c && c.width) ? c.width : 1080);
+        const h = v2Size?.height || ((c && c.height) ? c.height : 1920);
         return { w, h, cx: w / 2, cy: h / 2 };
     }
 
@@ -2855,8 +2863,13 @@ class ReelsOverlayPanel {
         // 9999 = 全程，面板显示实际时长但不修改数据
         let displayEnd = ov.end || 0;
         if (displayEnd >= 9999) {
+            const v2Duration = window.ReelsPreviewV2?.isOpen?.()
+                ? window.ReelsPreviewV2.getDuration?.()
+                : 0;
             const mediaEl = document.getElementById('reels-preview-video') || document.querySelector('#reels-preview video');
-            if (mediaEl && mediaEl.duration && isFinite(mediaEl.duration)) {
+            if (v2Duration && isFinite(v2Duration)) {
+                displayEnd = _ropRound(v2Duration);
+            } else if (mediaEl && mediaEl.duration && isFinite(mediaEl.duration)) {
                 displayEnd = _ropRound(mediaEl.duration);
             } else {
                 displayEnd = 9999; // 保持原值
@@ -2908,10 +2921,15 @@ class ReelsOverlayPanel {
             const fw = Math.max(100, Math.min(900, parseInt(ov.font_weight || (ov.bold ? 700 : 400), 10) || 400));
             this._val('rop-font-weight', fw);
             this._val('rop-bold', fw >= 600);
+            this._val('rop-use-stroke', !!ov.use_stroke);
             this._val('rop-stroke-color', ov.stroke_color || '#000000');
             this._val('rop-stroke-width', ov.stroke_width || 0);
+            this._val('rop-shadow-enabled', !!ov.shadow_enabled);
             this._val('rop-shadow-color', ov.shadow_color || '#000000');
             this._val('rop-shadow-blur', ov.shadow_blur || 0);
+            this._val('rop-shadow-offset-x', ov.shadow_offset_x ?? 4);
+            this._val('rop-shadow-offset-y', ov.shadow_offset_y ?? 4);
+            this._val('rop-shadow-opacity', Math.round((ov.shadow_opacity ?? 120) / 255 * 100));
         }
 
         if (ov.type === 'image' || ov.type === 'video') {
@@ -3374,8 +3392,13 @@ class ReelsOverlayPanel {
         const panelEnd = _ropRound(this._get('rop-end'));
         if (ov.end >= 9999) {
             // 检查用户是否手动修改了结束时间
+            const v2Duration = window.ReelsPreviewV2?.isOpen?.()
+                ? window.ReelsPreviewV2.getDuration?.()
+                : 0;
             const mediaEl = document.getElementById('reels-preview-video') || document.querySelector('#reels-preview video');
-            const videoDur = (mediaEl && mediaEl.duration && isFinite(mediaEl.duration)) ? _ropRound(mediaEl.duration) : 9999;
+            const videoDur = (v2Duration && isFinite(v2Duration))
+                ? _ropRound(v2Duration)
+                : ((mediaEl && mediaEl.duration && isFinite(mediaEl.duration)) ? _ropRound(mediaEl.duration) : 9999);
             if (panelEnd === videoDur || panelEnd >= 9999) {
                 // 用户没改，保持 9999（全程）
             } else {
@@ -3411,10 +3434,15 @@ class ReelsOverlayPanel {
             const fw = Math.max(100, Math.min(900, parseInt(this._get('rop-font-weight') || (this._get('rop-bold') ? 700 : 400), 10) || 400));
             ov.font_weight = fw;
             ov.bold = fw >= 600;
+            ov.use_stroke = this._get('rop-use-stroke');
             ov.stroke_color = this._get('rop-stroke-color');
             ov.stroke_width = this._get('rop-stroke-width');
+            ov.shadow_enabled = this._get('rop-shadow-enabled');
             ov.shadow_color = this._get('rop-shadow-color');
             ov.shadow_blur = this._get('rop-shadow-blur');
+            ov.shadow_offset_x = this._get('rop-shadow-offset-x');
+            ov.shadow_offset_y = this._get('rop-shadow-offset-y');
+            ov.shadow_opacity = Math.round(Math.max(0, Math.min(100, this._get('rop-shadow-opacity'))) / 100 * 255);
         }
 
         if (ov.type === 'image' || ov.type === 'video') {

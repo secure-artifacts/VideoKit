@@ -195,6 +195,9 @@ async function runAutoEditByScript(data = {}, progressSender = null) {
         manualTranscripts: data.manual_transcripts || data.manualTranscripts,
         forceMismatch: data.force_mismatch === true || data.force_mismatch === 'true',
         clipSpeeds: data.clip_speeds || {},
+        analysisOnly: data.analysis_only === true || data.analysis_only === 'true',
+        reviewSegments: data.review_segments || data.reviewSegments || [],
+        fitMode: data.fit_mode || data.fitMode || 'cover',
         onProgress: progressSender,
     });
 }
@@ -320,7 +323,7 @@ function registerAPIHandlers() {
         try {
             const result = await routeAPI(endpoint, data || {}, (progress) => {
                 try {
-                    event.sender.send('auto-edit-progress', progress);
+                    event.sender.send(endpoint === 'subtitle/generate' ? 'subtitle-progress' : 'auto-edit-progress', progress);
                 } catch (_) { }
             });
             return { success: true, data: result };
@@ -1426,6 +1429,14 @@ async function routeAPI(endpoint, data, progressSender = null) {
         case 'subtitle/generate': {
             if (!data.audio_path && !data.audio_file_path) throw new Error('缺少音频文件路径');
             const audioPath = data.audio_path || data.audio_file_path;
+            if (!fs.existsSync(audioPath)) {
+                throw new Error(`音频文件不存在或无法读取: ${audioPath}`);
+            }
+            try {
+                if (!fs.statSync(audioPath).isFile()) throw new Error('选择的不是文件');
+            } catch (error) {
+                throw new Error(`无法读取音频文件: ${error.message}`);
+            }
             const gladiaKeysData = settingsService.loadGladiaKeys();
             let gladiaKeys = gladiaKeysData.keys || [];
             if (data.gladia_keys) {
@@ -1500,7 +1511,8 @@ async function routeAPI(endpoint, data, progressSender = null) {
                 console.log(`[字幕对齐] 🎙️ 正在调用 Gladia 进行语音识别${forceTranscribe ? '（强制重新转录）' : ''}...`);
                 const cutLength = parseFloat(data.audio_cut_length || 5.0);
                 const result = await gladiaService.transcribeAudioFull(
-                    audioPath, gladiaKeys, langEnName, jsonPath, txtPath, cutLength
+                    audioPath, gladiaKeys, langEnName, jsonPath, txtPath, cutLength,
+                    (message) => progressSender?.({ stage: 'transcribe', message })
                 );
                 generationSubtitleArray = result.wordTimeInfo;
                 generationSubtitleText = result.fullText;
@@ -1610,6 +1622,7 @@ async function routeAPI(endpoint, data, progressSender = null) {
                 const exportFcpxml = data.export_fcpxml === true || data.export_fcpxml === 'true';
                 const seamlessFcpxml = data.seamless_fcpxml === true || data.seamless_fcpxml === 'true';
 
+                progressSender?.({ stage: 'align', message: '正在对齐字幕时间轴' });
                 const alignResult = audioSubtitleSearchDifferentStrong(
                     currentLanguage, outputDir, fileName,
                     generationSubtitleArray, generationSubtitleText,

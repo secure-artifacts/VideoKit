@@ -3478,17 +3478,24 @@ function _bindBatchTableEvents() {
         // Wait briefly for TTS results to settle
         await new Promise(resolve => setTimeout(resolve, 500));
 
-        // Step 3: Run Subtitle Alignment (only if there are tasks with txtContent + audio)
+        // Step 3: 只对 TTS 阶段没有成功产出 SRT 的任务做补充对齐。
+        // TTS 流程本身可能已经逐行生成并对齐 SRT，不能在收尾时强制重跑，
+        // 否则会先删除正确的旧 SRT，并在任何一行重跑失败时造成文件丢失。
         const tasksWithTextAndAudio = targetIdxs.filter(idx => {
             const t = tasks[idx];
-            return (t.txtContent && t.txtContent.trim()) && t.audioPath;
+            return (t.txtContent && t.txtContent.trim()) && t.audioPath && !t.aligned && !t.srtPath;
         });
         if (tasksWithTextAndAudio.length > 0) {
-            showToast(`🚀 全家桶 Step 3/3：字幕对齐中 (${tasksWithTextAndAudio.length} 行)...`, 'info');
-            await _batchAlignAllTasks(true); // 强制使用专业对齐重新执行
+            showToast(`🚀 全家桶 Step 3/3：补充对齐未生成 SRT 的任务 (${tasksWithTextAndAudio.length} 行)...`, 'info');
+            await _batchAlignAllTasks({
+                targetIndices: tasksWithTextAndAudio,
+                forceRealign: false,
+                forceTranscribe: false,
+            });
             showToast('🎉 全家桶三步流水线全部完成！', 'success', 5000);
         } else {
-            showToast('✅ 全家桶完成（AI + 配音）。无人声-断行文案，跳过对齐步骤。', 'success', 5000);
+            const completedCount = targetIdxs.filter(idx => tasks[idx]?.aligned || tasks[idx]?.srtPath).length;
+            showToast(`✅ 全家桶完成。${completedCount > 0 ? `已有 ${completedCount} 行 SRT 对齐成功，无需重复对齐。` : '没有需要补充对齐的任务。'}`, 'success', 5000);
         }
     });
 
@@ -3832,10 +3839,14 @@ function _bindBatchTableEvents() {
                 if (typeof _applyPreviewAudioMix === 'function') {
                     _applyPreviewAudioMix();
                 } else {
-                    const cvVideo = document.getElementById('reels-preview-contentvideo');
-                    if (cvVideo) {
-                        cvVideo.volume = Math.min(1.0, val / 100);
-                        cvVideo.muted = val === 0;
+                    if (window.ReelsPreviewV2?.isOpen?.()) {
+                        window.ReelsPreviewV2.syncAudio?.();
+                    } else {
+                        const cvVideo = document.getElementById('reels-preview-contentvideo');
+                        if (cvVideo) {
+                            cvVideo.volume = Math.min(1.0, val / 100);
+                            cvVideo.muted = val === 0;
+                        }
                     }
                 }
             }
@@ -12693,8 +12704,11 @@ function _buildBatchAlignTripleReport(taskName, recognizedText, matchedCandidate
     const recognizedNorm = _normalizeStrictSubtitleMatch(recognizedText);
     const matchedNorm = _normalizeStrictSubtitleMatch(matchedText);
     const srtNorm = _normalizeStrictSubtitleMatch(srtText);
-    const allSame = !!recognizedNorm && recognizedNorm === matchedNorm && matchedNorm === srtNorm;
-    return `${taskName}: ${allSame ? '✅ 三列一致' : '⚠️ 三列不一致'} ${label} 第 ${rowNo} 行（${matchDesc}）\n` +
+    // ASR 识别文案允许有口头词、拼写和标点差异，不能用来否决已按正确原文生成的 SRT。
+    // 硬校验只检查“找到的文案”与“SRT 文案”是否一致。
+    const allSame = !!matchedNorm && matchedNorm === srtNorm;
+    const recognizedExact = !!recognizedNorm && recognizedNorm === matchedNorm;
+    return `${taskName}: ${allSame ? '✅ 文案与 SRT 一致' : '⚠️ 文案与 SRT 不一致'}${recognizedExact ? '' : '（识别稿仅供参考）'} ${label} 第 ${rowNo} 行（${matchDesc}）\n` +
         `| 识别文案 | 找到的文案 | SRT 文案 |\n` +
         `| ${_compactBatchAlignText(recognizedText)} | ${_compactBatchAlignText(matchedText)} | ${_compactBatchAlignText(srtText)} |`;
 }
@@ -12706,9 +12720,12 @@ function _buildBatchAlignTripleTableRow(taskName, recognizedText, matchedCandida
     const recognizedNorm = _normalizeStrictSubtitleMatch(recognizedText);
     const matchedNorm = _normalizeStrictSubtitleMatch(matchedText);
     const srtNorm = _normalizeStrictSubtitleMatch(srtText);
-    const allSame = !!recognizedNorm && recognizedNorm === matchedNorm && matchedNorm === srtNorm;
+    // 只有原文和最终 SRT 不一致才是生成失败；ASR 文本差异只做提示。
+    const allSame = !!matchedNorm && matchedNorm === srtNorm;
+    const recognizedExact = !!recognizedNorm && recognizedNorm === matchedNorm;
     return {
         allSame,
+        recognizedExact,
         summary: `${taskName} | ${allSame ? '✅一致' : '⚠️不一致'} | ${label}第${rowNo}行 | ${matchDesc}`,
         taskName,
         label,
@@ -12719,7 +12736,7 @@ function _buildBatchAlignTripleTableRow(taskName, recognizedText, matchedCandida
         matchedText: String(matchedText || '').replace(/\s+/g, ' ').trim(),
         srtText: String(srtText || '').replace(/\s+/g, ' ').trim(),
         table: [
-            `任务: ${taskName}  ${allSame ? '✅ 三列一致' : '⚠️ 三列不一致'}  (${label}第${rowNo}行 / ${matchDesc})`,
+            `任务: ${taskName}  ${allSame ? '✅ 文案与 SRT 一致' : '⚠️ 文案与 SRT 不一致'}${recognizedExact ? '' : ' / 识别稿有差异'}  (${label}第${rowNo}行 / ${matchDesc})`,
             `识别源: ${audioPath}`,
             `┌──────────┬────────────────────────────────────────┐`,
             `│ 识别文案 │ ${String(recognizedText || '').replace(/\s+/g, ' ').trim()}`,
@@ -12746,7 +12763,7 @@ function _showBatchAlignResultModal({ title, sourceInfo, rows, failDetails, foot
             <tr>
                 <td style="width:120px;vertical-align:top;padding:10px;border-bottom:1px solid #d8dde6;font-weight:700;color:${r.allSame ? '#15803d' : '#b45309'};">
                     ${esc(r.taskName)}<br>
-                    <span style="font-size:11px;font-weight:600;">${r.allSame ? '一致' : '不一致'}</span><br>
+                    <span style="font-size:11px;font-weight:600;">${r.manualConfirmed ? '人工确认通过' : (r.allSame ? (r.recognizedExact === false ? '已生成，识别稿有差异' : '一致') : '待人工处理')}</span><br>
                     <span style="font-size:11px;color:#6b7280;">${esc(r.label)}第${r.rowNo}行</span>
                 </td>
                 <td style="vertical-align:top;padding:10px;border-bottom:1px solid #d8dde6;">${textCell(r.recognizedText)}</td>
@@ -12768,6 +12785,13 @@ function _showBatchAlignResultModal({ title, sourceInfo, rows, failDetails, foot
                 <button data-close style="border:none;background:#e5e7eb;color:#111827;border-radius:8px;padding:7px 12px;font-size:13px;cursor:pointer;">关闭</button>
             </div>
             <div style="padding:16px 20px;overflow:auto;">
+                <div style="margin-bottom:14px;padding:10px 12px;background:#eef6ff;border:1px solid #bfdbfe;border-radius:8px;color:#1e3a5f;font-size:12px;line-height:1.6;">
+                    <b>处理说明：</b>
+                    “一致”表示自动校验通过；
+                    “已生成，识别稿有差异”表示 SRT 与选中原文一致，但需听音频确认是语音说错还是识别偏差；
+                    “人工确认通过”可继续预览和导出；
+                    “待人工处理”表示 SRT 已保留，请核对音频、原文和 SRT 后重新对齐或人工确认。
+                </div>
                 ${(rows || []).length ? `
                     <table style="width:100%;border-collapse:collapse;table-layout:fixed;background:white;border:1px solid #d8dde6;border-radius:8px;overflow:hidden;">
                         <thead>
@@ -12808,6 +12832,9 @@ async function _discardTaskSrtBeforeRefind(task, taskName) {
     task.alignedAt = '';
     task.alignSource = '';
     task.alignMatchedText = '';
+    task.alignManualConfirmed = false;
+    task.alignManualConfirmReason = '';
+    task.alignReviewPending = false;
     task.autoMatchedSourceIndex = null;
     task.autoMatchedSourceField = '';
     task.autoMatchedSourceLabel = '';
@@ -13640,11 +13667,39 @@ async function _batchAlignAllTasks(overrideForce = false) {
                         tripleReportRows.push(triple);
                         console.log(`[BatchAlign] 三列完整核对\n${triple.full}`);
                         if (!triple.allSame) {
-                            await _deleteGeneratedSubtitleFiles(data.files, taskName);
-                            task.srtPath = '';
-                            task.segments = [];
-                            task.aligned = false;
-                            throw new Error(`三列不一致，已删除生成的 SRT。\n\n${triple.table}`);
+                            const keepSrt = window.confirm(
+                                `${taskName}：原文与最终 SRT 文案不一致。\n\n` +
+                                `说明：这可能是断行、字符归一化或实际文案差异导致。SRT 已保留，请对照音频检查字幕内容和时间轴。\n\n` +
+                                `点击“确定”：确认没问题，保留并继续。\n` +
+                                `点击“取消”：保留 SRT，标记为待处理；修改原文或音频后再执行重新对齐。`
+                            );
+                            if (keepSrt) {
+                                triple.allSame = true;
+                                triple.manualConfirmed = true;
+                                triple.matchDesc = `${triple.matchDesc || ''} / 人工确认`;
+                                task.alignManualConfirmed = true;
+                                task.alignManualConfirmReason = 'source_srt_difference';
+                            } else {
+                                task.aligned = false;
+                                task.alignReviewPending = true;
+                                throw new Error(`原文与 SRT 不一致，SRT 已保留，等待人工处理。\n\n${triple.table}`);
+                            }
+                        } else if (!triple.recognizedExact) {
+                            const acceptRecognizedDifference = window.confirm(
+                                `${taskName}：识别稿与原文有差异，但原文与 SRT 一致。\n\n` +
+                                `说明：可能是语音本身说错、漏读/多读，也可能只是语音识别偏差。请先听音频，再对照原文和 SRT。\n\n` +
+                                `点击“确定”：确认没问题，继续使用。\n` +
+                                `点击“取消”：保留 SRT，标记为待处理；可修改音频/原文，或选择识别稿后重新生成。`
+                            );
+                            if (acceptRecognizedDifference) {
+                                triple.manualConfirmed = true;
+                                task.alignManualConfirmed = true;
+                                task.alignManualConfirmReason = 'recognized_text_difference';
+                            } else {
+                                task.aligned = false;
+                                task.alignReviewPending = true;
+                                throw new Error('识别稿与原文有差异，SRT 已保留，等待人工处理。');
+                            }
                         }
                     }
                 }
@@ -15805,11 +15860,17 @@ function _showCropModal(idx) {
                 else if (preset === '1_2') targetRatio = 1 / 2;
 
                 let srcW = 1080, srcH = 1920;
+                const v2Dimensions = window.ReelsPreviewV2?.isOpen?.()
+                    ? window.ReelsPreviewV2.getContentDimensions?.()
+                    : null;
                 const cvVideo = document.getElementById('reels-preview-contentvideo');
                 const img = window._reelsState.previewContentImage;
                 const seq = window._reelsState.cvSequence;
 
-                if (cvVideo && cvVideo.videoWidth > 0) {
+                if (v2Dimensions?.width > 0 && v2Dimensions?.height > 0) {
+                    srcW = v2Dimensions.width;
+                    srcH = v2Dimensions.height;
+                } else if (cvVideo && cvVideo.videoWidth > 0) {
                     srcW = cvVideo.videoWidth;
                     srcH = cvVideo.videoHeight;
                 } else if (img && img.naturalWidth > 0) {

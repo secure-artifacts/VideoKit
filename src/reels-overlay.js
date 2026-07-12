@@ -1401,10 +1401,11 @@ function _drawTextOverlay(ctx, ov, x, y, w, h, currentTime) {
     // ── 阴影 ──
     if (ov.shadow_enabled) {
         ctx.save();
-        const sx = parseFloat(ov.shadow_offset_x || 4);
-        const sy = parseFloat(ov.shadow_offset_y || 4);
-        const blur = parseFloat(ov.shadow_blur || 4);
-        const shadowAlpha = (ov.shadow_opacity || 120) / 255;
+        // 0 是有效设置（无偏移/完全透明），不能用 || 把它回退成默认值。
+        const sx = parseFloat(ov.shadow_offset_x ?? 4);
+        const sy = parseFloat(ov.shadow_offset_y ?? 4);
+        const blur = parseFloat(ov.shadow_blur ?? 4);
+        const shadowAlpha = (ov.shadow_opacity ?? 120) / 255;
 
         ctx.shadowColor = _withAlpha(ov.shadow_color || '#000000', shadowAlpha);
         ctx.shadowBlur = blur;
@@ -1419,7 +1420,7 @@ function _drawTextOverlay(ctx, ov, x, y, w, h, currentTime) {
     if (ov.use_stroke) {
         ctx.save();
         ctx.strokeStyle = ov.stroke_color || '#000000';
-        ctx.lineWidth = parseFloat(ov.stroke_width || 2) * 2;
+        ctx.lineWidth = parseFloat(ov.stroke_width ?? 2) * 2;
         ctx.lineJoin = 'round';
         ctx.miterLimit = 2;
 
@@ -3084,9 +3085,14 @@ function _drawScrollOverlay(ctx, ov, clipX, clipY, clipW, clipH, currentTime, ca
         if (ov._exportDuration && ov._exportDuration > 0) {
             end = ov._exportDuration; // 导出时由导出引擎设置
         } else {
+            const v2Duration = window.ReelsPreviewV2?.isOpen?.()
+                ? window.ReelsPreviewV2.getDuration?.()
+                : 0;
             const mediaEl = document.getElementById('reels-preview-video') || document.querySelector('#reels-preview video');
             const audioEl = document.getElementById('reels-preview-audio');
-            if (audioEl && audioEl.duration && isFinite(audioEl.duration) && audioEl.duration > 0) {
+            if (v2Duration && isFinite(v2Duration) && v2Duration > 0) {
+                end = v2Duration;
+            } else if (audioEl && audioEl.duration && isFinite(audioEl.duration) && audioEl.duration > 0) {
                 end = audioEl.duration;
             } else if (mediaEl && mediaEl.duration && isFinite(mediaEl.duration)) {
                 end = mediaEl.duration;

@@ -42,6 +42,8 @@
         hookSig: '',
         coverSig: '',
         dragSeek: false,
+        seekFrameLock: null,
+        seekFrameToken: 0,
         legacyEls: [],
         resizeObserver: null,
         lastLegacyTime: null,
@@ -71,6 +73,8 @@
     function init() {
         injectStyles();
         installOpenButton();
+        // V2 是默认预览；用户仍可通过工具栏按钮切回原预览。
+        open();
     }
 
     function installOpenButton() {
@@ -294,8 +298,8 @@
                     <div class="rpv2-time" data-role="time">00:00/00:00</div>
                     <input class="rpv2-seek" data-role="seek" type="range" min="0" max="1000" value="0" step="1">
                     <label class="rpv2-check" title="循环播放"><input data-role="loop" type="checkbox" checked>循环</label>
-                    <label class="rpv2-check" title="显示字幕"><input data-role="subs" type="checkbox" checked>字幕</label>
-                    <label class="rpv2-check" title="显示覆层"><input data-role="overlays" type="checkbox" checked>覆层</label>
+                    <label class="rpv2-check" title="仅在预览中显示/隐藏字幕，不改变导出设置"><input data-role="subs" type="checkbox" checked>字幕(预览)</label>
+                    <label class="rpv2-check" title="仅在预览中显示/隐藏覆层，不改变导出设置"><input data-role="overlays" type="checkbox" checked>覆层(预览)</label>
                     <button class="rpv2-icon-btn" data-action="fit" title="适应窗口">适</button>
                     <button class="rpv2-icon-btn" data-action="zoom-out" title="缩小">−</button>
                     <span class="rpv2-zoom-label" data-role="zoom-label">100%</span>
@@ -347,6 +351,8 @@
                 syncMediaToTime(getCurrentTime());
                 render();
             });
+            media.addEventListener('seeked', () => releaseSeekFrameWhenReady());
+            media.addEventListener('canplay', () => releaseSeekFrameWhenReady());
             media.addEventListener('ended', onMediaEnded);
         }
 
@@ -780,19 +786,66 @@
         const next = dur > 0 ? (parseFloat(e.target.value || '0') / 1000) * dur : 0;
         state.pausedAt = next;
         state.startedAt = performance.now() / 1000 - next;
+        const token = ++state.seekFrameToken;
+        state.seekFrameLock = { token, target: next, createdAt: performance.now() };
         syncMediaToTime(next);
+        prepareMultiBackgroundSeek(next);
+        updateTimeUI(next, dur);
+        // 某些编码不会稳定发出 seeked；短延时兜底会重新检查，而不是直接清屏。
+        setTimeout(() => {
+            if (state.seekFrameLock?.token === token) releaseSeekFrameWhenReady(true);
+        }, 180);
+    }
+
+    function prepareMultiBackgroundSeek(time) {
+        const task = getTask();
+        if (!isMultiBackgroundTask(task)) return;
+        const phase = getPhaseInfo(time, task);
+        const clips = resolveMultiBackgroundAtTime(task, phase.mainTime);
+        if (clips) syncMultiVideoPlayers(task, clips);
+    }
+
+    function getSeekVisualMedia(time, task) {
+        const phase = getPhaseInfo(time, task);
+        if (phase.inCover) return [state.coverVideo].filter(media => media?.src);
+        if (phase.inHook) return [state.hookVideo].filter(media => media?.src);
+        if (isMultiBackgroundTask(task)) {
+            return [state.bgVideo, state.bgFadeVideo].filter(media => media?.src);
+        }
+        if (task && (task.contentVideoDirectBg || task.contentVideoBlurBg)) {
+            return [state.contentVideo].filter(media => media?.src);
+        }
+        const media = [];
+        if (state.bgVideo.src) media.push(state.bgVideo);
+        if (task?.contentVideoPath && state.contentVideo.src) media.push(state.contentVideo);
+        return media;
+    }
+
+    function isSeekFramePending(lock = state.seekFrameLock) {
+        if (!lock) return false;
+        const media = getSeekVisualMedia(lock.target, getTask());
+        if (media.length === 0) return false;
+        // currentTime 赋值后的同一任务内 seeking 可能尚未变 true，至少保留一帧。
+        if (performance.now() - lock.createdAt < 20) return true;
+        return media.some(item => item.seeking || item.readyState < 2);
+    }
+
+    function releaseSeekFrameWhenReady(forceCheck = false) {
+        const lock = state.seekFrameLock;
+        if (!lock) return;
+        if (isSeekFramePending(lock) && !forceCheck) return;
+        if (isSeekFramePending(lock) && forceCheck && performance.now() - lock.createdAt < 1200) {
+            setTimeout(() => releaseSeekFrameWhenReady(true), 80);
+            return;
+        }
+        state.seekFrameLock = null;
         render();
     }
 
     function getCurrentTime() {
         if (state.isPlaying) {
-            const task = getTask();
-            const offset = getTimelineOffset(task);
-            if (isMultiBackgroundTask(task)) return Math.max(0, (performance.now() / 1000) - state.startedAt);
-            if (offset > 0) return Math.max(0, (performance.now() / 1000) - state.startedAt);
-            if (state.audio.src && !state.audio.paused) return (state.audio.currentTime || 0) * getAudioDurationScale(task);
-            if (state.bgVideo.src && !state.bgVideo.paused) return (state.bgVideo.currentTime || 0) * getBgDurationScale(task);
-            if (state.contentVideo.src && !state.contentVideo.paused) return state.contentVideo.currentTime || 0;
+            // V2 是合成时间轴；背景/BGM/内容视频都可能循环，它们的
+            // currentTime 只是素材局部时间，不能作为总时间，否则每次循环都会跳回 0。
             return Math.max(0, (performance.now() / 1000) - state.startedAt);
         }
         return state.pausedAt || 0;
@@ -911,7 +964,6 @@
 
     function render() {
         if (!state.canvas) return;
-        syncLegacySeekTime();
         const task = getTask();
         const ctx = state.canvas.getContext('2d');
         const w = state.canvas.width;
@@ -922,6 +974,13 @@
         state.duration = dur;
         applyAudioVolumes(task);
         applyPlaybackRates(task);
+
+        // seek 目标帧尚未解码时保持 Canvas 上一帧，避免清屏后短暂出现黑色。
+        if (state.seekFrameLock && isSeekFramePending()) {
+            updateTimeUI(state.seekFrameLock.target, dur);
+            return;
+        }
+        if (state.seekFrameLock) state.seekFrameLock = null;
 
         if (!task) {
             ctx.clearRect(0, 0, w, h);
@@ -949,15 +1008,43 @@
         syncMediaWhilePlaying(t);
         const phase = getPhaseInfo(t, task);
         const drawTime = phase.mainTime;
+        const overlayTime = phase.inCover ? phase.time : drawTime;
+        // 与原始预览一致：配音时长缩放后，用原始音频时间查找/渲染字幕。
+        const subtitleTime = drawTime / getAudioDurationScale(task);
 
         ctx.clearRect(0, 0, w, h);
         drawBackground(ctx, task, w, h, phase);
         drawGlobalMask(ctx, getResolvedStyle(task), w, h, phase);
         drawContentVideo(ctx, task, w, h, phase);
-        drawSubtitles(ctx, task, drawTime, w, h, phase);
-        drawOverlays(ctx, task, drawTime, w, h, phase);
+        drawSubtitles(ctx, task, subtitleTime, w, h, phase);
+        drawOverlays(ctx, task, overlayTime, w, h, phase);
         drawWatermarks(ctx, w, h);
         updateTimeUI(Math.min(t, dur || t), dur);
+        syncTimelinePlayhead(t, task);
+        syncTimelineDuration(dur, task);
+    }
+
+    function syncTimelinePlayhead(absoluteTime, task) {
+        const editor = window._reelsState && window._reelsState.timelineEditor;
+        if (!editor || typeof editor.setPlayhead !== 'function') return;
+        editor.setPlayhead(absoluteToTimeline(absoluteTime, task));
+    }
+
+    function syncTimelineDuration(absoluteDuration, task) {
+        const editor = window._reelsState && window._reelsState.timelineEditor;
+        if (!editor || typeof editor.setDuration !== 'function') return;
+        const timelineDuration = absoluteToTimeline(absoluteDuration, task);
+        if (Math.abs((editor._duration || 0) - timelineDuration) > 0.01) {
+            editor.setDuration(timelineDuration);
+        }
+    }
+
+    function absoluteToTimeline(absoluteTime, task = getTask()) {
+        return Math.max(0, (numberOr(absoluteTime, 0) - getTimelineOffset(task)) / getAudioDurationScale(task));
+    }
+
+    function timelineToAbsolute(timelineTime, task = getTask()) {
+        return Math.max(0, numberOr(timelineTime, 0) * getAudioDurationScale(task) + getTimelineOffset(task));
     }
 
     function syncLegacySeekTime() {
@@ -1280,7 +1367,7 @@
         if (!show || !state.renderer || !task || phase.inCover || phase.inHook) return;
 
         const style = getResolvedStyle(task);
-        const segment = findActiveSegment(task, time);
+        const segment = findActiveSegment(task, time, style);
         if (!style || !segment) return;
 
         try {
@@ -1302,6 +1389,11 @@
             : (phase.inHook ? [] : getLiveOverlays(task));
         for (const ov of overlays) {
             if (!ov || ov.disabled) continue;
+            const start = numberOr(ov.start, 0);
+            const end = numberOr(ov.end, 9999);
+            // 与 WYSIWYG 输出一致：普通覆层只在时间范围内显示；
+            // 滚动覆层到达结束时间后保留最终位置。
+            if (time < start || (ov.type !== 'scroll' && time > end)) continue;
             try {
                 ov._allOverlays = overlays;
                 window.ReelsOverlay.drawOverlay(ctx, ov, time, w, h);
@@ -1579,10 +1671,20 @@
         return task.overlays || [];
     }
 
-    function findActiveSegment(task, time) {
+    function findActiveSegment(task, time, style = null) {
         const segs = task && Array.isArray(task.segments) ? task.segments : [];
         if (segs.length === 0) return null;
-        return segs.find(seg => time >= numberOr(seg.start, 0) && time <= numberOr(seg.end, 0)) || null;
+        const active = segs.find(seg => time >= numberOr(seg.start, 0) && time <= numberOr(seg.end, 0));
+        if (active) return active;
+        if (!(style && (style.scrolling_mode || style.fullpage_typewriter))) return null;
+
+        // 滚动/打字机模式在句间空隙保留最近一个已开始的片段。
+        let nearest = null;
+        for (const seg of segs) {
+            if (numberOr(seg.start, 0) <= time) nearest = seg;
+            else break;
+        }
+        return nearest;
     }
 
     function getResolvedStyle(task) {
@@ -2083,7 +2185,13 @@
     function getHookDuration(task) {
         if (!task || !getHookPath(task)) return 0;
         const rawDur = mediaDuration(state.hookVideo);
-        if (!(rawDur > 0)) return 0;
+        if (!(rawDur > 0)) {
+            // Hook 元数据尚未加载时，沿用任务/旧预览已经解析出的时长，
+            // 避免时间线刻度在媒体 loadedmetadata 前后发生跳变。
+            const knownDuration = numberOr(task.hookDuration,
+                numberOr(window._reelsState && window._reelsState.hookDuration, 0));
+            return Math.max(0, knownDuration);
+        }
         const trimStart = Math.max(0, numberOr(task.hookTrimStart, 0));
         const trimEndRaw = numberOr(task.hookTrimEnd, 0);
         const trimEnd = trimEndRaw > trimStart ? trimEndRaw : rawDur;
@@ -2563,7 +2671,41 @@
         return tag === 'input' || tag === 'textarea' || tag === 'select' || el.isContentEditable;
     }
 
-    window.ReelsPreviewV2 = { open, close, render, reload: () => loadCurrentTask(true) };
+    window.ReelsPreviewV2 = {
+        open,
+        close,
+        render,
+        reload: () => loadCurrentTask(true),
+        isOpen: () => state.isOpen,
+        getCanvas: () => state.isOpen ? state.canvas : null,
+        getViewportElement: () => state.isOpen
+            ? (state.root?.querySelector('.rpv2-stage-wrap') || state.root)
+            : null,
+        getCanvasSize: () => state.isOpen && state.canvas
+            ? { width: state.canvas.width, height: state.canvas.height }
+            : null,
+        togglePlay,
+        seek: (time) => {
+            if (!state.isOpen) return;
+            const duration = computeDuration();
+            state.pausedAt = clamp(numberOr(time, 0), 0, duration || Number.MAX_SAFE_INTEGER);
+            if (state.isPlaying) state.startedAt = performance.now() / 1000 - state.pausedAt;
+            syncMediaToTime(state.pausedAt);
+            render();
+        },
+        getCurrentTime,
+        getDuration: computeDuration,
+        getTimelineDuration: () => absoluteToTimeline(computeDuration()),
+        timelineToAbsolute,
+        absoluteToTimeline,
+        getContentDimensions: () => {
+            const source = getContentSource();
+            const width = numberOr(source && (source.videoWidth || source.naturalWidth || source.width), 0);
+            const height = numberOr(source && (source.videoHeight || source.naturalHeight || source.height), 0);
+            return width > 0 && height > 0 ? { width, height } : null;
+        },
+        syncAudio: () => applyAudioVolumes(getTask()),
+    };
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);

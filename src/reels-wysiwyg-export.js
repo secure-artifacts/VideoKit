@@ -954,6 +954,14 @@ async function reelsWysiwygExport(params) {
                 }
             }
 
+            // ── 全局蒙版：与原始预览/V2 一致，只压暗背景层 ──
+            if (hasMask) {
+                ctx.save();
+                ctx.globalAlpha = maskOpacity;
+                ctx.fillStyle = maskColor;
+                ctx.fillRect(0, 0, targetWidth, targetHeight);
+                ctx.restore();
+            }
 
             // ── 绘制合并内容视频 ──
             if (contentVideoPath && currentCvImg && !contentVideoDirectBg) {
@@ -986,15 +994,6 @@ async function reelsWysiwygExport(params) {
                 }
                 
                 _drawImageFlipped(ctx, currentCvImg, sx, sy, sWidth, sHeight, drawX, drawY, drawW, drawH, contentVideoFlipH, contentVideoFlipV);
-            }
-
-            // ── 全局蒙版 ──
-            if (hasMask) {
-                ctx.save();
-                ctx.globalAlpha = maskOpacity;
-                ctx.fillStyle = maskColor;
-                ctx.fillRect(0, 0, targetWidth, targetHeight);
-                ctx.restore();
             }
 
             // ── 字幕：与 V2/旧预览一致，先画字幕，再画文字卡片/覆层 ──

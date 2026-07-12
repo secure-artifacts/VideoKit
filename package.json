@@ -1,6 +1,6 @@
 {
   "name": "videokit",
-  "version": "4.4.7",
+  "version": "4.4.8",
   "description": "视频工具包-批量：音频生成-reels视频制作-多媒体转换",
   "author": {
     "name": "TimCode",
@@ -17,6 +17,7 @@
     "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && node scripts/run-electron-dev.js\"",
     "electron:build": "npm run build && electron-builder",
     "start": "npm run electron:dev",
+    "test": "node --test tests/*.test.js",
     "pack:mac-arm64": "npm run build && electron-builder --mac --arm64 -c.mac.artifactName=\"\\${productName}-\\${version}-macOS M-series (arm64).\\${ext}\"",
     "pack:mac-x64": "npm run build && electron-builder --mac --x64 -c.mac.artifactName=\"\\${productName}-\\${version}-macOS Intel (x64).\\${ext}\"",
     "pack:mac-universal": "npm run build && electron-builder --mac --arm64 --x64",

@@ -1198,7 +1198,11 @@ async function startSession(opts) {
             }
         }
 
-        const filterComplex = `[0:v]${scaleCropFilter},${ptsFilter}[bg];[1:v]scale=in_range=full:in_color_matrix=bt709:out_range=limited:out_color_matrix=bt709,format=yuva420p[fg];[bg][fg]overlay=0:0:format=auto:shortest=1[outv]`;
+        // 背景素材可能是 50/60fps，而 Canvas 前景通常按 25/30fps 写入。
+        // overlay 默认可继承高帧率背景的时间基，导致 FFmpeg 输出帧数约为写入帧数的 2 倍，
+        // 提前达到 -frames:v 后以 code=0 正常退出，随后的管道写入却会被上层误报为失败。
+        // 在最终输出端固定任务帧率，保证一个 Canvas 帧对应一个输出帧。
+        const filterComplex = `[0:v]${scaleCropFilter},${ptsFilter}[bg];[1:v]scale=in_range=full:in_color_matrix=bt709:out_range=limited:out_color_matrix=bt709,format=yuva420p[fg];[bg][fg]overlay=0:0:format=auto:shortest=1,fps=${fps}[outv]`;
         args.push('-filter_complex', filterComplex, '-map', '[outv]');
 
     } else {
@@ -2070,17 +2074,23 @@ async function parallelExport(opts, mainWindow) {
                 },
             });
 
+            const cleanupListeners = () => {
+                ipcMain.removeListener('chunk-result', onResult);
+                ipcMain.removeListener('chunk-progress', onProgress);
+                ipcMain.removeListener('shadow-renderer-ready', onReady);
+            };
+
             const timeout = setTimeout(() => {
                 console.error(`[Parallel] Chunk ${chunk.chunkId} 超时 (5min)`);
                 try { win.close(); } catch(_) {}
+                cleanupListeners();
                 reject(new Error(`Chunk ${chunk.chunkId} 渲染超时`));
             }, 5 * 60 * 1000);
 
             const onResult = (event, result) => {
                 if (result.chunkId !== chunk.chunkId) return;
                 clearTimeout(timeout);
-                ipcMain.removeListener('chunk-result', onResult);
-                ipcMain.removeListener('chunk-progress', onProgress);
+                cleanupListeners();
                 try { win.close(); } catch(_) {}
 
                 if (result.success) {
@@ -2106,13 +2116,17 @@ async function parallelExport(opts, mainWindow) {
                 }
             };
 
-            const onReady = () => {
+            const onReady = (event) => {
+                // 每个影子窗口都会发就绪事件；不过滤 sender 会让第一个窗口
+                // 强行触发所有切片，造成其他窗口丢任务或开始时帧不稳。
+                if (event.sender !== win.webContents) return;
                 ipcMain.removeListener('shadow-renderer-ready', onReady);
                 win.webContents.send('render-chunk', {
                     chunkId: chunk.chunkId,
                     scriptPaths,
                     startFrame: chunk.startFrame,
                     endFrame: chunk.endFrame,
+                    totalDuration: duration,
                     fps,
                     targetWidth,
                     targetHeight,
@@ -2141,7 +2155,9 @@ async function parallelExport(opts, mainWindow) {
 
             ipcMain.on('chunk-result', onResult);
             ipcMain.on('chunk-progress', onProgress);
-            ipcMain.once('shadow-renderer-ready', onReady);
+            // 必须用 on 而不是 once：第一个窗口的 ready 事件对其他窗口而言是不匹配的，
+            // 不匹配时仍需保留它们的监听器，直至各自真正就绪。
+            ipcMain.on('shadow-renderer-ready', onReady);
 
             win.loadFile(htmlPath).catch(reject);
         });

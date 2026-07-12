@@ -160,6 +160,7 @@ ipcRenderer.on('render-chunk', async (event, config) => {
         scriptPaths,        // { canvasRenderer, overlay, animEngine }
         startFrame,          // 起始帧号（含）
         endFrame,            // 结束帧号（不含）
+        totalDuration,       // 全片总时长（不是当前切片时长）
         fps,
         targetWidth,
         targetHeight,
@@ -296,7 +297,7 @@ ipcRenderer.on('render-chunk', async (event, config) => {
         const hasMask = !!style.global_mask_enabled;
         const maskColor = style.global_mask_color || '#000000';
         const maskOpacity = style.global_mask_opacity ?? 0.5;
-        const duration = endFrame / fps; // 全局时长（用于 overlay 等计算）
+        const duration = Number(totalDuration) > 0 ? Number(totalDuration) : (endFrame / fps);
 
         // 7. 主渲染循环
         const t0 = Date.now();

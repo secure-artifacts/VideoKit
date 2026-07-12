@@ -323,6 +323,9 @@ function setKeyEnabled(apiKey, enabled, reason = '', source = 'auto') {
 function classifyError(errInfo) {
     const merged = `${errInfo.message} ${errInfo.detailStatus} ${errInfo.detailCode}`.toLowerCase();
     const status = errInfo.httpStatus;
+    const explicitInvalidKey = /(^|[\s:_-])(invalid[_\s-]?api[_\s-]?key|invalid[_\s-]?xi[_\s-]?api[_\s-]?key)([\s:_-]|$)/i.test(
+        `${errInfo.message || ''} ${errInfo.detailCode || ''}`
+    );
 
     // --- 额度/余量相关 → 自动停用 + 轮换下一个 Key ---
     if (merged.includes('quota_exceeded') || merged.includes('exceeded your character limit') ||
@@ -335,8 +338,7 @@ function classifyError(errInfo) {
     }
 
     // --- Key 无效/过期 → 自动停用 + 轮换 ---
-    if (merged.includes('invalid api key') || merged.includes('invalid_api_key') ||
-        merged.includes('unauthorized') || status === 401) {
+    if (explicitInvalidKey || status === 401) {
         return {
             category: 'auth', retryable: true, autoDisable: true,
             userMessage: '🔑 Key 无效：API Key 不正确或已过期，自动切换下一个 Key'
@@ -424,6 +426,60 @@ function classifyError(errInfo) {
     };
 }
 
+function getFailureEvidence(error, phase) {
+    const info = error?.errInfo || {};
+    const message = String(info.message || error?.message || '').replace(/\s+/g, ' ').trim().slice(0, 220);
+    return {
+        phase: error?.phase || phase,
+        httpStatus: Number(info.httpStatus) || 0,
+        code: String(info.detailCode || info.detailStatus || error?.code || '').slice(0, 80),
+        message,
+    };
+}
+
+// Key 轮换不能用“最后一个 Key 的错误”代表整次请求：多个 Key 可能分别遇到
+// 额度、限流、网络和鉴权问题。汇总后再给结论，避免把真实原因误报为 Key 无效。
+function formatRotationFailures(failures, total) {
+    const attempts = failures.filter(Boolean);
+    if (attempts.length === 0) return `所有 Key 均尝试失败 (共 ${total} 个)，但没有获得可用错误详情。`;
+
+    const labels = {
+        auth: '鉴权失败', quota: '额度不足', permission: '权限/订阅不足',
+        rate_limit: '频率限制', ip_blocked: 'IP 受限', timeout: '超时',
+        server_error: '服务端错误', unknown: '未知错误',
+    };
+    const categories = [...new Set(attempts.map(item => item.classified.category))];
+    const summary = categories.map(category => {
+        const count = attempts.filter(item => item.classified.category === category).length;
+        return `${labels[category] || category} ${count} 个`;
+    }).join('、');
+
+    let conclusion;
+    if (categories.length === 1 && categories[0] === 'auth') {
+        conclusion = '所有尝试都是鉴权失败，请检查 Key 是否正确、过期或已被禁用。';
+    } else if (categories.length === 1 && categories[0] === 'quota') {
+        conclusion = '所有尝试都是额度不足，不是 Key 无效。';
+    } else if (categories.length === 1 && categories[0] === 'rate_limit') {
+        conclusion = '所有尝试都触发频率限制，请稍后重试。';
+    } else if (categories.length > 1) {
+        conclusion = '多个 Key 的失败原因不一致，不能仅根据最后一次错误判定真正根因。';
+    } else {
+        conclusion = `所有尝试均为${labels[categories[0]] || categories[0]}。`;
+    }
+
+    const details = attempts.map(item => {
+        const evidence = item.evidence || {};
+        const meta = [
+            evidence.phase && `阶段: ${evidence.phase}`,
+            evidence.httpStatus && `HTTP ${evidence.httpStatus}`,
+            evidence.code && `code: ${evidence.code}`,
+        ].filter(Boolean).join('，');
+        const raw = evidence.message ? `；服务端返回: ${evidence.message}` : '';
+        return `- Key #${item.index}: ${item.classified.userMessage}${meta ? ` (${meta})` : ''}${raw}`;
+    }).join('\n');
+    return `所有 Key 均尝试失败 (共 ${total} 个)。汇总：${summary}。\n${conclusion}\n尝试明细：\n${details}`;
+}
+
 // ==================== TTS 核心 ====================
 
 async function requestTTS(apiKey, voiceId, text, modelId, stability, outputFormat, autoDeleteOnLimit = true) {
@@ -487,6 +543,7 @@ async function requestTTS(apiKey, voiceId, text, modelId, stability, outputForma
         const error = new Error(classified.userMessage);
         error.classified = classified;
         error.errInfo = errInfo;
+        error.phase = '文本转语音';
         throw error;
     }
 
@@ -499,7 +556,7 @@ async function requestTTSWithRotation(keys, voiceId, text, modelId, stability, o
     const preferred = keyIndex != null ? selectKey(keys, keyIndex) : null;
     const keysToTry = preferred ? [preferred, ...keys.filter(k => k !== preferred)] : [...keys];
 
-    let lastErr = null;
+    const failures = [];
     for (let i = 0; i < keysToTry.length; i++) {
         const apiKey = keysToTry[i];
         const keyLabel = `Key${i + 1}`;
@@ -507,7 +564,6 @@ async function requestTTSWithRotation(keys, voiceId, text, modelId, stability, o
             const audio = await requestTTS(apiKey, voiceId, text, modelId, stability, outputFormat);
             return { audio, usedKey: apiKey };
         } catch (e) {
-            lastErr = e;
             const classified = e.classified || classifyError({ message: e.message, httpStatus: 0, detailStatus: '', detailCode: '' });
 
             // 不可轮换的错误（音色/模型/输入问题）→ 直接抛出，不试其他 Key
@@ -522,11 +578,10 @@ async function requestTTSWithRotation(keys, voiceId, text, modelId, stability, o
             if (classified.autoDisable) {
                 try { setKeyEnabled(apiKey, false, classified.category); } catch { }
             }
+            failures.push({ index: i + 1, classified, evidence: getFailureEvidence(e, '文本转语音') });
         }
     }
-    const finalClassified = lastErr?.classified;
-    const summary = finalClassified ? finalClassified.userMessage : (lastErr?.message || '未知错误');
-    throw new Error(`所有 Key 均尝试失败 (共 ${keysToTry.length} 个)。最后错误: ${summary}`);
+    throw new Error(formatRotationFailures(failures, keysToTry.length));
 }
 
 async function requestSpeechToSpeech(apiKey, voiceId, audioPath, opts = {}) {
@@ -559,6 +614,7 @@ async function requestSpeechToSpeech(apiKey, voiceId, audioPath, opts = {}) {
         const error = new Error(classified.userMessage);
         error.classified = classified;
         error.errInfo = errInfo;
+        error.phase = '语音转语音';
         throw error;
     }
     return res.body;
@@ -569,7 +625,7 @@ async function requestSpeechToSpeechWithRotation(keys, voiceId, audioPath, opts 
 
     const preferred = opts.keyIndex != null ? selectKey(keys, opts.keyIndex) : null;
     const keysToTry = preferred ? [preferred, ...keys.filter(k => k !== preferred)] : [...keys];
-    let lastErr = null;
+    const failures = [];
 
     for (let i = 0; i < keysToTry.length; i++) {
         const apiKey = keysToTry[i];
@@ -577,7 +633,6 @@ async function requestSpeechToSpeechWithRotation(keys, voiceId, audioPath, opts 
             const audio = await requestSpeechToSpeech(apiKey, voiceId, audioPath, opts);
             return { audio, usedKey: apiKey };
         } catch (e) {
-            lastErr = e;
             const classified = e.classified || classifyError({ message: e.message, httpStatus: 0, detailStatus: '', detailCode: '' });
             if (!classified.retryable) throw new Error(classified.userMessage || e.message);
             const hasNext = i < keysToTry.length - 1;
@@ -585,10 +640,11 @@ async function requestSpeechToSpeechWithRotation(keys, voiceId, audioPath, opts 
             if (classified.autoDisable) {
                 try { setKeyEnabled(apiKey, false, classified.category); } catch { }
             }
+            failures.push({ index: i + 1, classified, evidence: getFailureEvidence(e, '语音转语音') });
         }
     }
 
-    throw lastErr || new Error('所有 ElevenLabs Key 均失败');
+    throw new Error(formatRotationFailures(failures, keysToTry.length));
 }
 
 // ==================== 音色管理 ====================

@@ -122,6 +122,12 @@ function scoreWordCandidate(candidateWords, targetWords) {
     const precision = lcs / candidateWords.length;
     const recall = lcs / targetWords.length;
     const f1 = (2 * precision * recall) / (precision + recall);
+    const candidateSet = new Set(candidateWords);
+    const distinctive = targetWords.filter(word => word.length >= 4 || /\d/.test(word));
+    const keywordRecall = distinctive.length
+        ? distinctive.filter(word => candidateSet.has(word)).length / distinctive.length
+        : recall;
+    const lengthRatio = Math.min(candidateWords.length, targetWords.length) / Math.max(candidateWords.length, targetWords.length, 1);
     
     let penalty = 0;
     if (candidateWords.length > 0) {
@@ -132,7 +138,7 @@ function scoreWordCandidate(candidateWords, targetWords) {
             penalty += 0.08;
         }
     }
-    return Math.max(0, Math.min(1, f1 - penalty));
+    return Math.max(0, Math.min(1, f1 * 0.7 + keywordRecall * 0.2 + lengthRatio * 0.1 - penalty));
 }
 
 function findBestWordWindow(words, targetText, minScore = 0.52) {
@@ -682,7 +688,21 @@ async function transcribeClip(clipPath, language, gladiaKeys, cacheDir, force, m
         .digest('hex')
         .slice(0, 12);
     const baseName = path.parse(clipPath).name.replace(/[^\w.-]+/g, '_');
-    const langCode = language || 'auto';
+    let langCode = 'auto';
+    let langEnName = 'auto';
+    if (language && language !== 'auto') {
+        langCode = language;
+        for (const [code, info] of Object.entries(subtitleUtils.LANGUAGES)) {
+            if (info.name === language || info.code === language) {
+                langCode = code;
+                langEnName = info.language;
+                break;
+            }
+        }
+        if (langEnName === 'auto') {
+            langEnName = subtitleUtils.getLanguage(langCode) || langCode;
+        }
+    }
     const jsonPath = path.join(cacheDir, `${langCode}_${baseName}_${cacheKey}_autoedit.json`);
     const txtPath = path.join(cacheDir, `${langCode}_${baseName}_${cacheKey}_autoedit.txt`);
 
@@ -693,8 +713,6 @@ async function transcribeClip(clipPath, language, gladiaKeys, cacheDir, force, m
             source: 'cache',
         };
     }
-
-    const langEnName = subtitleUtils.getLanguage(langCode) || language || 'auto';
     const result = await gladiaService.transcribeAudioFull(
         clipPath,
         gladiaKeys,
@@ -872,10 +890,13 @@ async function autoEditByScript(opts = {}) {
         clipPathCounts[c] = (clipPathCounts[c] || 0) + 1;
     }
 
-    const gladiaKeys = Array.isArray(opts.gladiaKeys) ? opts.gladiaKeys.filter(Boolean) : [];
-    if (gladiaKeys.length === 0) throw new Error('未配置 Gladia API Key，无法自动识别片段语音');
     const manualSubtitleMap = opts.manualSubtitleMap || opts.manual_subtitle_map || {};
     const manualTranscripts = opts.manualTranscripts || opts.manual_transcripts || {};
+    const gladiaKeys = Array.isArray(opts.gladiaKeys) ? opts.gladiaKeys.filter(Boolean) : [];
+    const everyClipHasLocalText = clips.every(clip => manualTranscripts[clip] || manualSubtitleMap[clip]);
+    if (gladiaKeys.length === 0 && !everyClipHasLocalText) {
+        throw new Error('部分片段没有本地字幕或手动转录，请配置 Gladia API Key 后再分析');
+    }
 
     const now = new Date();
     const y = now.getFullYear();
@@ -896,9 +917,16 @@ async function autoEditByScript(opts = {}) {
     const minScore = Math.max(0.1, Math.min(1, Number(opts.minScore ?? opts.min_score ?? 0.52)));
     const forceTranscribe = opts.forceTranscribe === true || opts.force_transcribe === true;
     const burnSubtitles = opts.burnSubtitles === true || opts.burn_subtitles === true;
-    const targetWidth = parseInt(opts.targetWidth || opts.target_width || 1080, 10);
-    const targetHeight = parseInt(opts.targetHeight || opts.target_height || 1920, 10);
-    const fps = parseInt(opts.fps || 30, 10);
+    const firstResolution = await ffmpegService.getResolution(clips[0]);
+    const [sourceWidth, sourceHeight] = String(firstResolution || '').split('x').map(Number);
+    const sourceFps = await ffmpegService.getFrameRate(clips[0]);
+    const targetWidth = parseInt(opts.targetWidth || opts.target_width || sourceWidth || 1080, 10);
+    const targetHeight = parseInt(opts.targetHeight || opts.target_height || sourceHeight || 1920, 10);
+    const fps = Number(opts.fps) > 0 ? Number(opts.fps) : (sourceFps || 30);
+    const fitMode = opts.fitMode === 'contain' || opts.fit_mode === 'contain' ? 'contain' : 'cover';
+    const videoFitFilter = fitMode === 'contain'
+        ? `scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2:black`
+        : `scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=increase,crop=${targetWidth}:${targetHeight}`;
     const crf = parseInt(opts.crf || 18, 10);
     const preset = opts.preset || 'fast';
     const matchMode = opts.matchMode || opts.match_mode || 'script';
@@ -1242,7 +1270,16 @@ async function autoEditByScript(opts = {}) {
 
                     // 如果转录为空，将提取出来的音频 wav 文件拷贝到输出目录供用户排查声音
                     if (!transcription.wordTimeInfo || transcription.wordTimeInfo.length === 0) {
-                        const langCode = language || 'auto';
+                        let langCode = 'auto';
+                        if (language && language !== 'auto') {
+                            langCode = language;
+                            for (const [code, info] of Object.entries(subtitleUtils.LANGUAGES)) {
+                                if (info.name === language || info.code === language) {
+                                    langCode = code;
+                                    break;
+                                }
+                            }
+                        }
                         const stat = fs.statSync(clipPath);
                         const cacheKey = crypto
                             .createHash('sha1')
@@ -1268,6 +1305,7 @@ async function autoEditByScript(opts = {}) {
                 let matchScore = 0;
                 let wordStartIdx = -1;
                 let wordEndIdx = -1;
+                let duplicateOfSourceIndex = -1;
                 const matchedWordsArray = [];
 
                 if (words.length > 0) {
@@ -1286,6 +1324,32 @@ async function autoEditByScript(opts = {}) {
                         }
                     } else {
                         const clipText = words.map(w => w.norm).join(' ');
+                        const currentTranscriptionNorm = normalizeText(transcription.fullText);
+                        const duplicatePlan = currentTranscriptionNorm.length >= 12
+                            ? plans.find(previous => {
+                                const previousNorm = normalizeText(previous.transcription?.fullText);
+                                return previousNorm.length >= 12 && scoreCandidate(currentTranscriptionNorm, previousNorm) >= 0.92;
+                            })
+                            : null;
+
+                        // 仅在没有可重新评分的文案时才继承旧匹配。正常情况下始终重新做
+                        // 全局相似度匹配，避免前一个片段的错误结果被后一个重复片段继承。
+                        if (duplicatePlan && duplicatePlan.scriptWordStart !== -1 && filteredScriptWords.length === 0) {
+                            scriptWordStart = duplicatePlan.scriptWordStart;
+                            scriptWordEnd = duplicatePlan.scriptWordEnd;
+                            matchedText = duplicatePlan.matchedText;
+                            matchScore = duplicatePlan.matchScore;
+                            duplicateOfSourceIndex = duplicatePlan.sourceIndex;
+                            const clipWindow = findBestWordWindow(words, duplicatePlan.matchedText, minScore * 0.4);
+                            wordStartIdx = clipWindow?.startIdx ?? 0;
+                            wordEndIdx = clipWindow?.endIdx ?? (words.length - 1);
+                            const scriptSlice = filteredScriptWords.filter(word => word.wordIndex >= scriptWordStart && word.wordIndex <= scriptWordEnd);
+                            for (let idx = 0; idx < scriptSlice.length; idx++) {
+                                const clipIdx = Math.min(wordEndIdx, wordStartIdx + Math.round(idx * Math.max(0, wordEndIdx - wordStartIdx) / Math.max(1, scriptSlice.length - 1)));
+                                matchedWordsArray.push({ scriptWordIdx: scriptSlice[idx].wordIndex, clipWordIdx: clipIdx });
+                            }
+                            console.log(`[自动剪辑] 片段 #${i + 1} 与片段 #${duplicatePlan.sourceIndex + 1} 转录内容重复，继承同一文案区间`);
+                        } else {
                         let match = null;
                         let globalStart = -1;
                         let globalEnd = -1;
@@ -1310,14 +1374,16 @@ async function autoEditByScript(opts = {}) {
                             });
                         };
 
+                        // “已使用”只能作为轻微的消歧因素，不能从候选中排除。否则一段
+                        // 100% 重复朗读会被迫匹配到一条只有 30%～40% 的无关文案。
                         const globalMatch = filteredScriptWords.length
-                            ? findBestWordWindowAvoidingRanges(filteredScriptWords, clipText, minScore * 0.45, usedScriptRanges, 0)
+                            ? findBestWordWindow(filteredScriptWords, clipText, minScore * 0.45)
                             : null;
                         pushCandidate(globalMatch, 0, 'global', 0.25, 0);
 
                         const searchSlice = filteredScriptWords.slice(scriptCursor);
                         const cursorMatch = searchSlice.length
-                            ? findBestWordWindowAvoidingRanges(searchSlice, clipText, minScore * 0.50, usedScriptRanges, scriptCursor)
+                            ? findBestWordWindow(searchSlice, clipText, minScore * 0.50)
                             : null;
                         pushCandidate(cursorMatch, scriptCursor, 'cursor', 0.28, 0.025);
 
@@ -1401,6 +1467,7 @@ async function autoEditByScript(opts = {}) {
                                 }
                             }
                         }
+                        }
                     }
                 }
 
@@ -1434,6 +1501,7 @@ async function autoEditByScript(opts = {}) {
                     wordEndIdx,
                     matchedText: matchedText || transcription.fullText || '',
                     matchScore,
+                    duplicateOfSourceIndex,
                     start,
                     end,
                 });
@@ -1860,6 +1928,66 @@ async function autoEditByScript(opts = {}) {
         }
 
         const forceMismatch = opts.forceMismatch === true || opts.force_mismatch === true;
+        if (opts.analysisOnly === true || opts.analysis_only === true) {
+            const normalizedLineCounts = new Map();
+            for (const line of lines) {
+                const key = normalizeText(line);
+                if (key) normalizedLineCounts.set(key, (normalizedLineCounts.get(key) || 0) + 1);
+            }
+            const analysisSegments = plans.map((plan, index) => {
+                const info = allClipsMatchInfo[index] || {};
+                const hasDuplicateScript = splitScriptLines(plan.scriptText).some(line => (normalizedLineCounts.get(normalizeText(line)) || 0) > 1);
+                const isDuplicateClip = Number.isInteger(plan.duplicateOfSourceIndex) && plan.duplicateOfSourceIndex >= 0;
+                return {
+                    index: index + 1,
+                    source_index: plan.sourceIndex + 1,
+                    source: plan.realClipPath || plan.clipPath,
+                    script_start_line: Number.isInteger(info.scriptStartLine) && info.scriptStartLine >= 0 ? info.scriptStartLine + 1 : null,
+                    script_end_line: Number.isInteger(info.scriptEndLine) && info.scriptEndLine >= 0 ? info.scriptEndLine + 1 : null,
+                    script: plan.scriptText || '',
+                    recognized_text: plan.transcription.fullText || plan.matchedText || '',
+                    matched_text: plan.matchedText || '',
+                    match_score: Math.round((plan.matchScore || 0) * 1000) / 1000,
+                    similarity: info.similarity || 0,
+                    status: info.isMismatch || hasDuplicateScript || isDuplicateClip ? 'warning' : 'ready',
+                    ambiguity: isDuplicateClip
+                        ? `与原片段 #${plan.duplicateOfSourceIndex + 1} 朗读内容重复，已继承同一文案位置`
+                        : (hasDuplicateScript ? '文案中存在重复句，请结合前后顺序确认位置' : ''),
+                    duplicate_of_source_index: isDuplicateClip ? plan.duplicateOfSourceIndex + 1 : null,
+                    start: plan.start,
+                    end: plan.end,
+                    duration: Math.round((plan.end - plan.start) * 1000) / 1000,
+                    transcription_source: plan.transcription.source,
+                    word_timeline: (plan.words || []).map(word => ({
+                        word: word.raw,
+                        start: word.start,
+                        end: word.end,
+                    })),
+                };
+            });
+            const projectPath = path.join(outputDir, 'auto_edit_project.json');
+            const projectData = {
+                version: 1,
+                created_at: new Date().toISOString(),
+                clips,
+                script_text: lines.join('\n'),
+                    output_settings: { width: targetWidth, height: targetHeight, fps, source: 'first_clip', fit_mode: fitMode },
+                missing_blocks: missingBlocksInfo,
+                segments: analysisSegments,
+            };
+            fs.writeFileSync(projectPath, JSON.stringify(projectData, null, 2), 'utf-8');
+            return {
+                success: true,
+                analysis_only: true,
+                message: `分析完成: ${analysisSegments.length} 段，请审核后正式导出`,
+                output_dir: outputDir,
+                report_path: path.join(outputDir, 'mismatch_report.md'),
+                project_path: projectPath,
+                output_settings: { width: targetWidth, height: targetHeight, fps, source: 'first_clip', fit_mode: fitMode },
+                missing_blocks: missingBlocksInfo,
+                segments: analysisSegments,
+            };
+        }
         if ((hasMismatch || forceMismatch) && !ignoreMismatch) {
             throw new Error(JSON.stringify({
                 code: 'AUTOEDIT_TEXT_MISMATCH',
@@ -1868,6 +1996,28 @@ async function autoEditByScript(opts = {}) {
                 report_path: path.join(outputDir, 'mismatch_report.md'),
                 output_dir: outputDir
             }));
+        }
+
+        const reviewSegments = Array.isArray(opts.reviewSegments || opts.review_segments) ? (opts.reviewSegments || opts.review_segments) : [];
+        const hasReviewedTimeline = reviewSegments.length > 0;
+        if (reviewSegments.length > 0) {
+            const bySource = new Map(plans.map(plan => [plan.realClipPath || plan.clipPath, plan]));
+            const reviewedPlans = [];
+            for (const review of reviewSegments) {
+                if (review.enabled === false) continue;
+                const plan = bySource.get(review.source);
+                if (!plan) continue;
+                const start = Number(review.start);
+                const end = Number(review.end);
+                if (Number.isFinite(start) && Number.isFinite(end) && start >= 0 && end > start && end <= plan.duration + 0.01) {
+                    plan.start = start;
+                    plan.end = end;
+                }
+                if (typeof review.script === 'string' && review.script.trim()) plan.scriptText = review.script.trim();
+                reviewedPlans.push(plan);
+            }
+            if (reviewedPlans.length === 0) throw new Error('审核时间线中没有可导出的片段');
+            plans.splice(0, plans.length, ...reviewedPlans);
         }
 
         const coveredLines = new Set();
@@ -1910,10 +2060,10 @@ async function autoEditByScript(opts = {}) {
 
             let filterComplex;
             if (hasAudio) {
-                filterComplex = `[0:v]setpts=${vPts}*PTS,scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=increase,crop=${targetWidth}:${targetHeight},fps=${fps},setsar=1[v];[0:a]${atempoFilter},aformat=sample_rates=48000:channel_layouts=stereo[a]`;
+                filterComplex = `[0:v]setpts=${vPts}*PTS,${videoFitFilter},fps=${fps},setsar=1[v];[0:a]${atempoFilter},aformat=sample_rates=48000:channel_layouts=stereo[a]`;
             } else {
                 args.push('-f', 'lavfi', '-i', 'anullsrc=cl=stereo:r=48000');
-                filterComplex = `[0:v]setpts=${vPts}*PTS,scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=increase,crop=${targetWidth}:${targetHeight},fps=${fps},setsar=1[v];[1:a]aformat=sample_rates=48000:channel_layouts=stereo[a]`;
+                filterComplex = `[0:v]setpts=${vPts}*PTS,${videoFitFilter},fps=${fps},setsar=1[v];[1:a]aformat=sample_rates=48000:channel_layouts=stereo[a]`;
             }
 
             args.push(
@@ -1937,7 +2087,46 @@ async function autoEditByScript(opts = {}) {
             const srtStart = Math.max(0, timelineCursorMs - Math.round(boundaryTransitionSec * 1000));
             const srtEnd = srtStart + cutDurationMs;
 
-            if (plan.scriptWordStart !== -1) {
+            if (hasReviewedTimeline && plan.scriptText) {
+                const reviewedLines = splitScriptLines(plan.scriptText);
+                const lineMatches = [];
+                let wordCursor = 0;
+                for (const line of reviewedLines) {
+                    const scopedWords = (plan.words || []).slice(wordCursor);
+                    const match = scopedWords.length ? findBestWordWindow(scopedWords, line, 0.45) : null;
+                    if (!match || !scopedWords[match.startIdx] || !scopedWords[match.endIdx]) {
+                        lineMatches.length = 0;
+                        break;
+                    }
+                    const firstWord = scopedWords[match.startIdx];
+                    const lastWord = scopedWords[match.endIdx];
+                    lineMatches.push({
+                        text: line,
+                        start: Math.max(srtStart, srtStart + Math.round(((firstWord.start - plan.start) / speed) * 1000)),
+                        end: Math.min(srtEnd, srtStart + Math.round(((lastWord.end - plan.start) / speed) * 1000)),
+                    });
+                    wordCursor += match.endIdx + 1;
+                }
+
+                if (lineMatches.length === reviewedLines.length && lineMatches.every(item => item.end > item.start)) {
+                    srtItems.push(...lineMatches);
+                } else {
+                    // 没有可靠逐词定位时仍严格保留用户断行，按每行有效字符数分配片段时长。
+                    const weights = reviewedLines.map(line => Math.max(1, normalizeText(line).length));
+                    const totalWeight = weights.reduce((sum, value) => sum + value, 0);
+                    let cursorMs = srtStart;
+                    reviewedLines.forEach((line, lineIndex) => {
+                        const isLast = lineIndex === reviewedLines.length - 1;
+                        const lineEnd = isLast
+                            ? srtEnd
+                            : Math.min(srtEnd, cursorMs + Math.round((cutDurationMs * weights[lineIndex]) / totalWeight));
+                        srtItems.push({ start: cursorMs, end: Math.max(cursorMs + 50, lineEnd), text: line });
+                        cursorMs = lineEnd;
+                    });
+                }
+            }
+
+            if (!hasReviewedTimeline && plan.scriptWordStart !== -1) {
                 if (workflowMode === 'concat_first') {
                     const subStartMs = srtStart + Math.round(((plan.origStartSec - plan.start) / speed) * 1000);
                     const subEndMs = srtStart + Math.round(((plan.origEndSec - plan.start) / speed) * 1000);
@@ -2031,10 +2220,15 @@ async function autoEditByScript(opts = {}) {
                 end: plan.end,
                 duration: Math.round((plan.end - plan.start) * 1000) / 1000,
                 transcription_source: plan.transcription.source,
+                word_timeline: (plan.words || []).map(word => ({
+                    word: word.raw,
+                    start: word.start,
+                    end: word.end,
+                })),
             });
         }
 
-        if (workflowMode !== 'concat_first') {
+        if (!hasReviewedTimeline && workflowMode !== 'concat_first') {
             for (let l = 0; l < lines.length; l++) {
                 const lineWords = scriptWords.filter(w => w.lineIndex === l);
                 if (lineWords.length === 0) continue;
@@ -2078,7 +2272,7 @@ async function autoEditByScript(opts = {}) {
             });
             await ffmpegService.runCommand('ffmpeg', [
                 '-y', '-i', tempClips[0],
-                '-vf', `scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=increase,crop=${targetWidth}:${targetHeight},fps=${fps},setsar=1`,
+                '-vf', `${videoFitFilter},fps=${fps},setsar=1`,
                 '-c:v', 'libx264', '-crf', String(crf), '-preset', preset,
                 '-c:a', 'aac', '-b:a', '192k',
                 outputPath,
@@ -2279,6 +2473,7 @@ async function autoEditByScript(opts = {}) {
             unused_script_count: Math.max(0, lines.length - coveredLines.size),
             transition_type: transitionType,
             transition_duration: transitionDuration,
+            output_settings: { width: targetWidth, height: targetHeight, fps, source: 'first_clip', fit_mode: fitMode },
             segments: selected,
         };
     } finally {
@@ -2294,4 +2489,5 @@ module.exports = {
     findBestWordWindow,
     findBestScriptWindowForClip,
     computeAutoEditTransitionSec,
+    _test: { scoreCandidate, scoreWordCandidate },
 };

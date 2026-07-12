@@ -142,6 +142,29 @@ async function extractAudioFromVideo(videoPath, outputDir, audioFormat = 'wav') 
     });
 }
 
+/** 将任意 FFmpeg 可读的音/视频媒体标准化为语音识别用的 PCM WAV。 */
+async function normalizeMediaForTranscription(mediaPath, outputDir) {
+    if (!mediaPath || !fs.existsSync(mediaPath)) {
+        throw new Error(`音频文件不存在或无法读取: ${mediaPath || '未选择文件'}`);
+    }
+    fs.mkdirSync(outputDir, { recursive: true });
+    const outputPath = path.join(outputDir, 'transcription_input.wav');
+    const args = [
+        '-y', '-v', 'error', '-i', mediaPath,
+        '-map', '0:a:0?', '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le',
+        outputPath,
+    ];
+    return new Promise((resolve, reject) => {
+        execFile(resolveCmd('ffmpeg'), args, { timeout: 300000, maxBuffer: 4 * 1024 * 1024 }, (err, _stdout, stderr) => {
+            if (err || !fs.existsSync(outputPath) || fs.statSync(outputPath).size < 44) {
+                const detail = String(stderr || err?.message || '').trim();
+                return reject(new Error(`无法读取音轨或转换音频：${detail || '文件可能没有音轨、已损坏或编码不受支持'}`));
+            }
+            resolve(outputPath);
+        });
+    });
+}
+
 /**
  * 获取音频时长（秒）
  */
@@ -521,14 +544,9 @@ async function transcribeAudioFull(mediaPath, apiKeys, language, jsonPath, txtPa
 
     const settings = require('./settings');
     const tmpDir = path.join(settings.getSecureTmpDir(), `gladia_${crypto.randomUUID()}`);
-    let audioPath = mediaPath;
-
-    // 如果是视频，提取音频
-    const videoExts = ['.mp4', '.mov', '.mkv', '.flv', '.avi', '.wmv'];
-    if (videoExts.includes(path.extname(mediaPath).toLowerCase())) {
-        if (onProgress) onProgress('提取音频');
-        audioPath = await extractAudioFromVideo(mediaPath, tmpDir, 'wav');
-    }
+    // 统一成单声道 PCM WAV，避免 AAC/FLAC/OGG/特殊 WAV 编码直接进识别端时失败。
+    if (onProgress) onProgress('正在读取并转换音频');
+    const audioPath = await normalizeMediaForTranscription(mediaPath, tmpDir);
 
     // 切分音频
     if (onProgress) onProgress('切分音频');

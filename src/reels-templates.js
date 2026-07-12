@@ -268,7 +268,11 @@ function _captureCurrentTemplatePayload(name) {
     // 截取当前 Canvas 预览作为缩略图
     let thumbnail = '';
     try {
-        const canvas = document.getElementById('reels-preview-canvas') || document.querySelector('canvas');
+        // V2 使用独立 Canvas。优先截取当前正在显示的预览，
+        // 同时保留旧预览回退，避免已有模板流程受影响。
+        const v2 = window.ReelsPreviewV2;
+        const canvas = (v2?.isOpen?.() ? v2.getCanvas?.() : null)
+            || document.getElementById('reels-preview-canvas');
         if (canvas) {
             // 创建缩略图 canvas（270×480，9:16）
             const thumbCanvas = document.createElement('canvas');

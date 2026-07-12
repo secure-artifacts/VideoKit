@@ -1313,7 +1313,11 @@ async function mediaConvert(filePath, mode, outDir, options = {}) {
         'aac': { outputExt: '.aac', type: 'audio' },
         'flac': { outputExt: '.flac', type: 'audio' },
         'mp4': { outputExt: '.mp4', type: 'video' },
+        'h264': { outputExt: '_h264.mp4', type: 'video' },
+        'x264': { outputExt: '_x264.mp4', type: 'video' },
         'mov': { outputExt: '.mov', type: 'video' },
+        'dnxhr': { outputExt: '_dnxhr.mov', type: 'video' },
+        'dnxhr_hqx': { outputExt: '_dnxhr_hqx.mov', type: 'video' },
         'webm': { outputExt: '.webm', type: 'video' },
         'gif': { outputExt: '.gif', type: 'video' },
         'audio_black': { outputExt: '.mp4', type: 'audio_black' },
@@ -1353,10 +1357,20 @@ async function mediaConvert(filePath, mode, outDir, options = {}) {
         let args;
         switch (mode) {
             case 'mp4':
+            case 'h264':
                 args = ['-y', '-i', filePath, '-c:v', 'libx264', '-crf', '18', '-preset', 'medium', '-c:a', 'aac', outputPath];
+                break;
+            case 'x264':
+                args = ['-y', '-i', filePath, '-c:v', 'libx264', '-crf', String(options.crf || 23), '-preset', options.preset || 'slow', '-c:a', 'aac', '-b:a', '192k', outputPath];
                 break;
             case 'mov':
                 args = ['-y', '-i', filePath, '-c:v', 'libx264', '-crf', '18', '-preset', 'medium', '-c:a', 'aac', outputPath];
+                break;
+            case 'dnxhr':
+                args = ['-y', '-i', filePath, '-c:v', 'dnxhd', '-profile:v', 'dnxhr_hq', '-pix_fmt', 'yuv422p', '-c:a', 'pcm_s16le', outputPath];
+                break;
+            case 'dnxhr_hqx':
+                args = ['-y', '-i', filePath, '-c:v', 'dnxhd', '-profile:v', 'dnxhr_hqx', '-pix_fmt', 'yuv422p10le', '-c:a', 'pcm_s24le', outputPath];
                 break;
             case 'webm':
                 args = ['-y', '-i', filePath, '-c:v', 'libvpx-vp9', '-crf', '30', '-b:v', '0', '-c:a', 'libopus', outputPath];

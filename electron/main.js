@@ -1,7 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog, powerSaveBlocker, protocol, shell, net, screen, desktopCapturer } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { pathToFileURL } = require('url');
+const { Readable } = require('stream');
 const ffmpegService = require('./services/ffmpeg');
 const { initAutoUpdater } = require('./updater');
 
@@ -264,9 +264,9 @@ app.whenReady().then(async () => {
             // SBP-004: Validate file extension for security
             const allowedExtensions = [
                 // Video
-                '.mp4', '.webm', '.mkv', '.avi', '.mov', '.flv',
+                '.mp4', '.webm', '.mkv', '.avi', '.mov', '.flv', '.3gp',
                 // Audio
-                '.wav', '.mp3', '.m4a', '.aac', '.flac', '.ogg',
+                '.wav', '.mp3', '.m4a', '.aac', '.flac', '.ogg', '.opus', '.wma', '.aiff', '.aif', '.amr',
                 // Image
                 '.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp',
                 // Subtitles/Data
@@ -285,20 +285,71 @@ app.whenReady().then(async () => {
                 return new Response('Not Found', { status: 404 });
             }
 
-            const fileUrl = pathToFileURL(resolved).href;
-            const response = await net.fetch(fileUrl, {
-                method: request.method,
-                headers: request.headers
-            });
-            const newHeaders = new Headers(response.headers);
-            newHeaders.set('Access-Control-Allow-Origin', '*');
-            newHeaders.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, HEAD');
-            newHeaders.set('Access-Control-Allow-Headers', '*');
-            return new Response(response.body, {
-                status: response.status,
-                statusText: response.statusText,
-                headers: newHeaders
-            });
+            const stat = fs.statSync(resolved);
+            const size = stat.size;
+            const mimeTypes = {
+                '.mp4': 'video/mp4', '.webm': 'video/webm', '.mkv': 'video/x-matroska',
+                '.avi': 'video/x-msvideo', '.mov': 'video/quicktime', '.flv': 'video/x-flv', '.3gp': 'video/3gpp',
+                '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4',
+                '.aac': 'audio/aac', '.flac': 'audio/flac', '.ogg': 'audio/ogg', '.opus': 'audio/ogg',
+                '.wma': 'audio/x-ms-wma', '.aiff': 'audio/aiff', '.aif': 'audio/aiff', '.amr': 'audio/amr',
+                '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+                '.webp': 'image/webp', '.gif': 'image/gif', '.bmp': 'image/bmp',
+                '.json': 'application/json', '.txt': 'text/plain; charset=utf-8',
+                '.srt': 'application/x-subrip', '.vtt': 'text/vtt', '.xml': 'application/xml',
+                '.ttf': 'font/ttf', '.otf': 'font/otf', '.woff': 'font/woff', '.woff2': 'font/woff2',
+            };
+            const baseHeaders = {
+                'Content-Type': mimeTypes[ext] || 'application/octet-stream',
+                'Accept-Ranges': 'bytes',
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET, OPTIONS, HEAD',
+                'Access-Control-Allow-Headers': '*',
+                'Cache-Control': 'no-cache',
+            };
+
+            if (request.method === 'OPTIONS') {
+                return new Response(null, { status: 204, headers: baseHeaders });
+            }
+
+            const rangeHeader = request.headers.get('range');
+            let start = 0;
+            let end = Math.max(0, size - 1);
+            let status = 200;
+            if (rangeHeader) {
+                const match = /^bytes=(\d*)-(\d*)$/i.exec(rangeHeader.trim());
+                if (!match) {
+                    return new Response(null, {
+                        status: 416,
+                        headers: { ...baseHeaders, 'Content-Range': `bytes */${size}` },
+                    });
+                }
+                if (match[1] === '' && match[2] !== '') {
+                    const suffixLength = Math.min(size, parseInt(match[2], 10));
+                    start = Math.max(0, size - suffixLength);
+                } else {
+                    start = parseInt(match[1] || '0', 10);
+                    if (match[2] !== '') end = Math.min(end, parseInt(match[2], 10));
+                }
+                if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || start > end || start >= size) {
+                    return new Response(null, {
+                        status: 416,
+                        headers: { ...baseHeaders, 'Content-Range': `bytes */${size}` },
+                    });
+                }
+                status = 206;
+            }
+
+            const contentLength = Math.max(0, end - start + 1);
+            const headers = {
+                ...baseHeaders,
+                'Content-Length': String(contentLength),
+            };
+            if (status === 206) headers['Content-Range'] = `bytes ${start}-${end}/${size}`;
+            if (request.method === 'HEAD') return new Response(null, { status, headers });
+
+            const nodeStream = fs.createReadStream(resolved, { start, end });
+            return new Response(Readable.toWeb(nodeStream), { status, headers });
         } catch (e) {
             console.error('[local-media] Error:', e.message, 'File:', resolved);
             return new Response('Internal Error: ' + e.message, { status: 500 });
@@ -323,6 +374,14 @@ app.whenReady().then(async () => {
             return result.filePaths[0];
         }
         return null;
+    });
+
+    ipcMain.handle('select-directories', async () => {
+        const result = await dialog.showOpenDialog(mainWindow, {
+            properties: ['openDirectory', 'multiSelections'],
+            title: '选择多个视频文件夹（每个文件夹创建一个任务）'
+        });
+        return !result.canceled ? result.filePaths : [];
     });
 
     ipcMain.handle('select-files', async (event, options = {}) => {

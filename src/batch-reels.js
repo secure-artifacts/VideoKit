@@ -520,28 +520,34 @@ function _initReelsModule() {
     if (tlContainer && typeof ReelsTimelineEditor !== 'undefined') {
         _reelsState.timelineEditor = new ReelsTimelineEditor(tlContainer);
         _reelsState.timelineEditor.onSeek = (t, type) => {
-            const task = _getSelectedTask();
-            const hookDur = _reelsState.hookDuration || 0;
-            const coverDur = (task && task.cover && task.cover.enabled) ? (parseFloat(task.cover.duration) || 0.01) : 0;
-            const offsetDur = hookDur + coverDur;
-            const aDurScale = (task && task.audioDurScale) ? (task.audioDurScale / 100) : 1;
-            
-            const absoluteTarget = (t * aDurScale) + offsetDur;
-            _onSeek({ absoluteTarget, type });
-        };
-        _reelsState.timelineEditor.onClipSelect = (ti, ci, clip) => {
-            console.log('[Timeline] Selected clip', ti, ci, clip);
-            // 选中字幕块时跳转到该字幕的开始时间
-            if (clip && clip.start != null) {
+            if (window.ReelsPreviewV2?.isOpen?.()) {
+                window.ReelsPreviewV2.seek(window.ReelsPreviewV2.timelineToAbsolute(t));
+            } else {
                 const task = _getSelectedTask();
                 const hookDur = _reelsState.hookDuration || 0;
                 const coverDur = (task && task.cover && task.cover.enabled) ? (parseFloat(task.cover.duration) || 0.01) : 0;
                 const offsetDur = hookDur + coverDur;
                 const aDurScale = (task && task.audioDurScale) ? (task.audioDurScale / 100) : 1;
-
+                const absoluteTarget = (t * aDurScale) + offsetDur;
+                _onSeek({ absoluteTarget, type });
+            }
+        };
+        _reelsState.timelineEditor.onClipSelect = (ti, ci, clip) => {
+            console.log('[Timeline] Selected clip', ti, ci, clip);
+            // 选中字幕块时跳转到该字幕的开始时间
+            if (clip && clip.start != null) {
                 const midTime = (clip.start + (clip.end || clip.start)) / 2;
-                const absoluteTarget = (midTime * aDurScale) + offsetDur;
-                _onSeek({ absoluteTarget });
+                if (window.ReelsPreviewV2?.isOpen?.()) {
+                    window.ReelsPreviewV2.seek(window.ReelsPreviewV2.timelineToAbsolute(midTime));
+                } else {
+                    const task = _getSelectedTask();
+                    const hookDur = _reelsState.hookDuration || 0;
+                    const coverDur = (task && task.cover && task.cover.enabled) ? (parseFloat(task.cover.duration) || 0.01) : 0;
+                    const offsetDur = hookDur + coverDur;
+                    const aDurScale = (task && task.audioDurScale) ? (task.audioDurScale / 100) : 1;
+                    const absoluteTarget = (midTime * aDurScale) + offsetDur;
+                    _onSeek({ absoluteTarget });
+                }
             }
         };
         const syncEditedSubtitleSegment = (seg, newText) => {
@@ -1191,6 +1197,8 @@ function _bindReelsHotkeys() {
         if (tag === 'input' || tag === 'textarea' || (e.target && e.target.isContentEditable)) return;
         const panel = document.getElementById('batch-reels-panel');
         if (!panel || !panel.classList.contains('active')) return;
+        // V2 有自己的播放器和空格键处理，避免一次按键同时切换两套预览。
+        if (window.ReelsPreviewV2?.isOpen?.()) return;
         e.preventDefault();
         reelsTogglePlay();
     });
@@ -5369,6 +5377,9 @@ function _applyPreviewAudioMix() {
             bgmAudio.muted = true;
         }
     }
+
+    // 外围表格和控件仍统一调用本函数；V2 开启时同步其独立媒体节点。
+    window.ReelsPreviewV2?.syncAudio?.();
 }
 
 // ═══════════════════════════════════════════════════════
@@ -5813,10 +5824,16 @@ function _updateTimelineForTask(task) {
     if (task.customDuration && task.customDuration > 0) {
         contentDur = Math.max(contentDur, task.customDuration);
     }
-    const totalDur = contentDur;
+    // V2 与时间线使用相同的时长来源：它已包含配音/背景变速、多背景、
+    // 自定义时长和动态覆层等规则；时间线仍显示主内容时长（不含封面/Hook 偏移）。
+    const totalDur = window.ReelsPreviewV2?.isOpen?.()
+        ? window.ReelsPreviewV2.getTimelineDuration()
+        : contentDur;
     editor.loadAudioTrack(aDur, task.audioPath ? '人声' : '音频');
-    const bgTrackDur = task.audioPath ? totalDur : (task.contentVideoDirectBg ? cvDur : vDur);
-    const bgTrackName = task.audioPath ? '背景(循环)' : (task.contentVideoDirectBg ? '内容背景' : '背景');
+    // 背景在预览/输出中会循环覆盖整段内容，轨道也应显示实际覆盖时长，
+    // 不能在无配音时退回到单个背景素材的原始时长。
+    const bgTrackDur = totalDur;
+    const bgTrackName = task.contentVideoDirectBg ? '内容背景' : (totalDur > vDur + 0.01 ? '背景(循环)' : '背景');
     editor.loadBackgroundTrack(bgTrackDur, bgTrackName);
     editor.setDuration(totalDur);
 }
@@ -9722,6 +9739,7 @@ async function reelsStartExport() {
                 } catch(_) {}
                 const estimatedFrames = Math.ceil((estimatedDuration || 0) * 30);
                 const hasVideoOverlays = Array.isArray(task.overlays) && task.overlays.some(ov => ov && ov.type === 'video' && !ov.disabled);
+                const hasContentVideo = !!task.contentVideoPath;
                 let contentVideoIsDirSequence = false;
                 const cvPathForCheck = _normalizeLocalMediaPath(task.contentVideoPath || '');
                 if (cvPathForCheck && window.require) {
@@ -9730,15 +9748,19 @@ async function reelsStartExport() {
                         contentVideoIsDirSequence = fs.existsSync(cvPathForCheck) && fs.statSync(cvPathForCheck).isDirectory();
                     } catch (_) { }
                 }
-                // NOTE: Parallel shadow-render export is currently unstable for some素材组合
-                // (背景出现抖帧/重复帧/闪烁). Keep it off by default until renderer timing is fixed.
-                const parallelExportEnabled = false;
+                // 影子窗口的就绪竞态与切片时长错误已修复。仅在单背景、无视频覆层/内容视频的稳定组合
+                // 启用多核 Canvas 渲染；其他组合保留单线程以保证成片正确。
+                const parallelExportEnabled = true;
                 const shouldParallel = parallelExportEnabled
                     && memoryDecoderEnabled
+                    // 任务级并发时已经会并行。影子窗口切片使用全局 IPC 事件，
+                    // 为防止两个任务的同编号切片互相串结果，仅在单任务导出时开启切片并行。
+                    && concurrency === 1
                     && parallelConcurrency >= 2
-                    && estimatedDuration > 0
+                    && estimatedDuration >= 10
                     && _getEffectiveBgClipPool(task).length === 0
                     && !hasVideoOverlays
+                    && !hasContentVideo
                     && !contentVideoIsDirSequence
                     && window.electronAPI.parallelWysiwygExport;
 
@@ -9802,8 +9824,8 @@ async function reelsStartExport() {
                         unsubProgress();
                         console.warn(`[V3] 并行导出失败，回退单线程: ${parallelErr.message}`);
                     }
-                } else if (memoryDecoderEnabled && (hasVideoOverlays || contentVideoIsDirSequence || !parallelExportEnabled)) {
-                    console.log(`[V3] 跳过并行导出，回退单线程稳定渲染: enabled=${parallelExportEnabled}, overlayVideo=${hasVideoOverlays}, contentDirSeq=${contentVideoIsDirSequence}`);
+                } else if (memoryDecoderEnabled) {
+                    console.log(`[V3] 跳过切片并行，回退稳定渲染: enabled=${parallelExportEnabled}, taskConcurrency=${concurrency}, duration=${estimatedDuration.toFixed(1)}, overlayVideo=${hasVideoOverlays}, contentVideo=${hasContentVideo}, contentDirSeq=${contentVideoIsDirSequence}`);
                 }
 
                 // ═══ Fast Alpha Overlay 检测 ═══
