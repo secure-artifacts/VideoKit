@@ -9748,9 +9748,10 @@ async function reelsStartExport() {
                         contentVideoIsDirSequence = fs.existsSync(cvPathForCheck) && fs.statSync(cvPathForCheck).isDirectory();
                     } catch (_) { }
                 }
-                // 影子窗口的就绪竞态与切片时长错误已修复。仅在单背景、无视频覆层/内容视频的稳定组合
-                // 启用多核 Canvas 渲染；其他组合保留单线程以保证成片正确。
-                const parallelExportEnabled = true;
+                // 并行影子窗口在视频逐帧 seek 尚未完成时可能写入上一帧，成片会出现跳帧/抖动。
+                // 在有可靠的逐帧解码同步方案前，绝不能将它用于正式导出；保留实现供后续修复验证，
+                // 默认始终走已验证的单线程逐帧导出路径，优先保证帧完整和时间连续。
+                const parallelExportEnabled = false;
                 const shouldParallel = parallelExportEnabled
                     && memoryDecoderEnabled
                     // 任务级并发时已经会并行。影子窗口切片使用全局 IPC 事件，
