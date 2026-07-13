@@ -605,17 +605,19 @@ async function transcribeClip(clipPath, language, gladiaKeys, cacheDir, force, m
     let foundJson = manualJsonPaths.find(p => fs.existsSync(p));
     let foundTxt = manualTxtPaths.find(p => fs.existsSync(p));
 
-    if (foundJson && foundTxt) {
+    // “重新转录”应跳过自动发现的同名旁车文件；否则之前生成的空
+    // _transcription.json/.txt 会永远覆盖新的接口识别结果。
+    // 用户在界面中明确选择的 manualSubtitlePath 已在上方处理，不受影响。
+    if (!force && foundJson && foundTxt) {
         try {
             console.log(`[自动剪辑] 检测到同名本地手动转录文件，跳过 API 识别: ${foundJson}`);
             const rawData = JSON.parse(fs.readFileSync(foundJson, 'utf-8'));
             const wordTimeInfo = extractUtterances(rawData);
             const fullText = fs.readFileSync(foundTxt, 'utf-8').trim();
-            return {
-                wordTimeInfo,
-                fullText,
-                source: 'manual',
-            };
+            if (fullText && wordTimeInfo.length > 0) {
+                return { wordTimeInfo, fullText, source: 'manual' };
+            }
+            console.warn(`[自动剪辑] 自动发现的同名转录文件为空，将忽略并调用接口: ${foundJson}`);
         } catch (readErr) {
             console.error(`[自动剪辑] 读取手动转录文件失败:`, readErr);
         }
@@ -627,7 +629,7 @@ async function transcribeClip(clipPath, language, gladiaKeys, cacheDir, force, m
     ];
     let foundSrt = manualSrtPaths.find(p => fs.existsSync(p));
 
-    if (foundSrt) {
+    if (!force && foundSrt) {
         try {
             console.log(`[自动剪辑] 检测到同名本地手动 SRT 文件，跳过 API 识别: ${foundSrt}`);
             const srtContent = fs.readFileSync(foundSrt, 'utf-8');
@@ -670,11 +672,11 @@ async function transcribeClip(clipPath, language, gladiaKeys, cacheDir, force, m
                 });
             }
 
-            return {
-                wordTimeInfo,
-                fullText: fullTextList.join(' '),
-                source: 'manual_srt'
-            };
+            const fullText = fullTextList.join(' ').trim();
+            if (fullText && wordTimeInfo.length > 0) {
+                return { wordTimeInfo, fullText, source: 'manual_srt' };
+            }
+            console.warn(`[自动剪辑] 自动发现的同名 SRT 为空，将忽略并调用接口: ${foundSrt}`);
         } catch (readErr) {
             console.error(`[自动剪辑] 读取/解析手动 SRT 文件失败:`, readErr);
         }
@@ -707,20 +709,43 @@ async function transcribeClip(clipPath, language, gladiaKeys, cacheDir, force, m
     const txtPath = path.join(cacheDir, `${langCode}_${baseName}_${cacheKey}_autoedit.txt`);
 
     if (!force && fs.existsSync(jsonPath) && fs.existsSync(txtPath)) {
-        return {
-            wordTimeInfo: JSON.parse(fs.readFileSync(jsonPath, 'utf-8')),
-            fullText: fs.readFileSync(txtPath, 'utf-8').trim(),
-            source: 'cache',
-        };
+        const cachedText = fs.readFileSync(txtPath, 'utf-8').trim();
+        let cachedWords = [];
+        try {
+            cachedWords = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
+        } catch (cacheErr) {
+            console.warn(`[自动剪辑] 转录缓存损坏，将重新识别: ${txtPath}`, cacheErr.message);
+        }
+        // 空结果可能来自接口偶发异常、上传失败或一次错误的静音判断。
+        // 不能永久复用，否则有声素材之后每次都会被误标为“识别为空/无声”。
+        if (cachedText && Array.isArray(cachedWords) && cachedWords.length > 0) {
+            return {
+                wordTimeInfo: cachedWords,
+                fullText: cachedText,
+                source: 'cache',
+            };
+        }
+        console.warn(`[自动剪辑] 检测到空转录缓存，忽略缓存并重新调用识别: ${txtPath}`);
     }
-    const result = await gladiaService.transcribeAudioFull(
-        clipPath,
-        gladiaKeys,
-        langEnName,
-        jsonPath,
-        txtPath,
-        5.0
+    let result = await gladiaService.transcribeAudioFull(
+        clipPath, gladiaKeys, langEnName, jsonPath, txtPath, 5.0
     );
+    const hasRecognizedText = value => Boolean(
+        value?.fullText?.trim() && Array.isArray(value?.wordTimeInfo) && value.wordTimeInfo.length > 0
+    );
+    if (!hasRecognizedText(result)) {
+        console.warn(`[自动剪辑] Gladia 首次未返回文字，自动重试一次: ${clipPath}`);
+        result = await gladiaService.transcribeAudioFull(
+            clipPath, gladiaKeys, langEnName, jsonPath, txtPath, 5.0
+        );
+    }
+    if (!hasRecognizedText(result)) {
+        // 不保留空结果，避免下一次分析继续误用。
+        for (const emptyPath of [jsonPath, txtPath]) {
+            try { if (fs.existsSync(emptyPath)) fs.unlinkSync(emptyPath); } catch (_) { }
+        }
+        return { wordTimeInfo: [], fullText: '', source: 'empty_after_retry' };
+    }
     return { ...result, source: 'gladia' };
 }
 
@@ -1237,6 +1262,9 @@ async function autoEditByScript(opts = {}) {
                 }
                 const isCache = transcription.source === 'cache';
                 const isTextEmpty = !transcription.fullText || transcription.fullText.trim() === '' || transcription.fullText.startsWith('(转录失败:');
+                const emptyMessage = transcription.source === 'empty_after_retry'
+                    ? '接口自动重试后仍未返回文字；确认素材有声音时请重新识别'
+                    : '未识别到有效文字；可能是静音或声音过小';
                 let clipStatus = 'transcribed';
                 if (isFailed) {
                     clipStatus = 'failed';
@@ -1255,7 +1283,7 @@ async function autoEditByScript(opts = {}) {
                     total: clipCount,
                     clip_index: i,
                     clip_status: clipStatus,
-                    clip_error: isFailed ? errorMsg : (isTextEmpty ? '转录内容为空/无声' : null),
+                    clip_error: isFailed ? errorMsg : (isTextEmpty ? emptyMessage : null),
                     message: `已处理第 ${i + 1}/${clipCount} 个片段 (${isFailed ? '转录失败' : (isTextEmpty ? '转录为空/无声' : (isCache ? '使用缓存' : '新调用接口'))})`,
                 });
                 const words = flattenWords(transcription.wordTimeInfo);
@@ -2489,5 +2517,5 @@ module.exports = {
     findBestWordWindow,
     findBestScriptWindowForClip,
     computeAutoEditTransitionSec,
-    _test: { scoreCandidate, scoreWordCandidate },
+    _test: { scoreCandidate, scoreWordCandidate, transcribeClip },
 };

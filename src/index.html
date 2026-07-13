@@ -2164,11 +2164,11 @@
                 <label>同时分析 <input id="autoedit-batch-concurrency" type="number" class="input input-small" value="2" min="1" max="4" style="width:55px;"> 套</label>
                 <span id="autoedit-batch-summary" class="hint">0 个任务</span>
               </div>
-              <textarea id="autoedit-batch-paste" class="input" rows="7" style="width:100%;margin-top:10px;resize:vertical;" placeholder="从 Excel / Google Sheets 粘贴多个单元格。一个单元格是一套文案；单元格内部换行会完整保留。" onpaste="handleAutoEditBatchPaste(event)"></textarea>
+              <textarea id="autoedit-batch-paste" class="input" rows="5" style="width:100%;margin-top:10px;resize:vertical;" placeholder="直接从 Google Sheets / Excel 复制单元格并粘贴到这里。系统会立即识别：一个单元格 = 一套文案；单元格内部换行会完整保留。" onpaste="handleAutoEditBatchPaste(event)" oninput="handleAutoEditBatchTextInput(this.value)"></textarea>
               <div style="display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap;">
-                <button class="btn btn-secondary" onclick="parseAutoEditBatchPaste()">解析粘贴内容</button>
                 <button id="autoedit-batch-analyze-btn" class="btn btn-primary" onclick="startAutoEditBatchAnalysis()">批量分析</button>
-                <span class="hint">第 N 个单元格自动对应第 N 个文件夹。</span>
+                <button id="autoedit-batch-export-btn" class="btn btn-primary" onclick="startAutoEditBatchExport()">批量正式导出</button>
+                <span id="autoedit-batch-match-hint" class="hint">粘贴后自动识别；第 N 个单元格对应第 N 个文件夹。</span>
               </div>
               <div id="autoedit-batch-task-list" style="margin-top:12px;display:grid;grid-template-columns:repeat(auto-fill,minmax(390px,1fr));gap:10px;"></div>
             </div>

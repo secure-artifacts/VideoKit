@@ -11562,9 +11562,54 @@ if (origSubTabHandler) {
 // ==================== 文案自动剪辑模块 ====================
 
 let autoEditBatchTasks = [];
+let autoEditBatchScriptCells = [];
+let autoEditActiveBatchIndex = -1;
+let autoEditBatchRunning = false;
+let autoEditBatchInputTimer = null;
 
-function setAutoEditMode(mode) {
+function setAutoEditBatchRunning(running) {
+    autoEditBatchRunning = Boolean(running);
+    for (const id of ['autoedit-batch-analyze-btn', 'autoedit-batch-export-btn']) {
+        const button = document.getElementById(id);
+        if (button) button.disabled = autoEditBatchRunning;
+    }
+    if (document.getElementById('autoedit-batch-task-list')) renderAutoEditBatchTasks();
+}
+
+function getAutoEditRequestSettings() {
+    const customOutput = document.getElementById('autoedit-output-mode')?.value === 'custom';
+    const manualAudioPath = document.getElementById('autoedit-manual-audio-path')?.value?.trim() || '';
+    return {
+        language: document.getElementById('autoedit-language')?.value || 'auto',
+        match_mode: document.getElementById('autoedit-match-mode')?.value || 'script',
+        workflow_mode: document.getElementById('autoedit-workflow-mode')?.value || 'cut_first',
+        transition_type: document.getElementById('autoedit-transition-type')?.value || 'none',
+        transition_duration: parseFloat(document.getElementById('autoedit-transition-duration')?.value || '0.35'),
+        lead_pad: parseFloat(document.getElementById('autoedit-lead-pad')?.value || '0.04'),
+        tail_pad: parseFloat(document.getElementById('autoedit-tail-pad')?.value || '0.08'),
+        min_score: parseFloat(document.getElementById('autoedit-min-score')?.value || '0.52'),
+        burn_subtitles: document.getElementById('autoedit-burn-subtitles')?.checked || false,
+        export_mp3: document.getElementById('autoedit-export-mp3')?.checked !== false,
+        voice_changer_enabled: document.getElementById('autoedit-voicechanger-enabled')?.checked || false,
+        voice_changer_voice_id: document.getElementById('autoedit-voicechanger-voice')?.value || '',
+        voice_changer_replace_audio: document.getElementById('autoedit-voicechanger-replace')?.checked !== false,
+        voice_changer_remove_noise: document.getElementById('autoedit-voicechanger-noise')?.checked || false,
+        voice_changer_model_id: 'eleven_multilingual_sts_v2',
+        voice_changer_stability: parseFloat(document.getElementById('autoedit-voicechanger-stability')?.value || '0.5'),
+        voice_changer_similarity: parseFloat(document.getElementById('autoedit-voicechanger-similarity')?.value || '0.75'),
+        manual_audio_path: manualAudioPath,
+        manual_audio_replace: Boolean(manualAudioPath),
+        force_transcribe: document.getElementById('autoedit-force-transcribe')?.checked || false,
+        target_width: customOutput ? parseInt(document.getElementById('autoedit-target-width')?.value || '1080', 10) : undefined,
+        target_height: customOutput ? parseInt(document.getElementById('autoedit-target-height')?.value || '1920', 10) : undefined,
+        fps: customOutput ? parseFloat(document.getElementById('autoedit-target-fps')?.value || '0') || undefined : undefined,
+        fit_mode: document.getElementById('autoedit-fit-mode')?.value || 'cover'
+    };
+}
+
+function setAutoEditMode(mode, preserveBatchContext = false) {
     const batch = mode === 'batch';
+    if (!batch && !preserveBatchContext) autoEditActiveBatchIndex = -1;
     document.getElementById('autoedit-batch-panel').style.display = batch ? '' : 'none';
     document.getElementById('autoedit-single-panel').style.display = batch ? 'none' : '';
     document.getElementById('autoedit-mode-single').className = `btn ${batch ? 'btn-secondary' : 'btn-primary'}`;
@@ -11587,7 +11632,10 @@ function parseAutoEditClipboardCells(text) {
         } else cell += ch;
     }
     rows.at(-1).push(cell);
-    return rows.flat().map(v => v.replace(/\r\n/g, '\n').trim()).filter(Boolean);
+    const cells = rows.flat().map(v => v.replace(/\r\n/g, '\n').trim());
+    // 保留中间空单元格，否则后续文案会向前错配文件夹；只去掉粘贴末尾产生的空行。
+    while (cells.length > 0 && cells.at(-1) === '' && /(?:\r?\n)$/.test(text)) cells.pop();
+    return cells;
 }
 
 function handleAutoEditBatchPaste(event) {
@@ -11597,13 +11645,20 @@ function handleAutoEditBatchPaste(event) {
     document.getElementById('autoedit-batch-paste').value = text;
     applyAutoEditBatchScripts(parseAutoEditClipboardCells(text));
 }
+function handleAutoEditBatchTextInput(value) {
+    clearTimeout(autoEditBatchInputTimer);
+    autoEditBatchInputTimer = setTimeout(() => {
+        applyAutoEditBatchScripts(parseAutoEditClipboardCells(value), { silent: true });
+    }, 180);
+}
 function parseAutoEditBatchPaste() {
     applyAutoEditBatchScripts(parseAutoEditClipboardCells(document.getElementById('autoedit-batch-paste')?.value || ''));
 }
-function applyAutoEditBatchScripts(cells) {
+function applyAutoEditBatchScripts(cells, options = {}) {
+    autoEditBatchScriptCells = Array.isArray(cells) ? cells.slice() : [];
     autoEditBatchTasks.forEach((task, i) => { task.script = cells[i] || ''; });
     renderAutoEditBatchTasks();
-    showToast(`识别到 ${cells.length} 个文案单元格`, cells.length === autoEditBatchTasks.length ? 'success' : 'info');
+    if (!options.silent) showToast(`已自动识别 ${cells.length} 个文案单元格`, !autoEditBatchTasks.length || cells.length === autoEditBatchTasks.length ? 'success' : 'info');
 }
 
 async function selectAutoEditBatchFolders() {
@@ -11615,7 +11670,9 @@ async function selectAutoEditBatchFolders() {
         const entries = await window.electronAPI.scanDirectory(folder);
         const clips = entries.filter(x => !x.isDirectory && videoExt.test(x.name))
             .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })).map(x => x.path);
-        autoEditBatchTasks.push({ folder, name: window.electronAPI.pathBasename(folder), clips, script: '', thumbnail: '', status: clips.length ? 'waiting' : 'error', message: clips.length ? '等待文案' : '没有视频', result: null });
+        const index = autoEditBatchTasks.length;
+        const script = autoEditBatchScriptCells[index] || '';
+        autoEditBatchTasks.push({ folder, name: window.electronAPI.pathBasename(folder), clips, script, thumbnail: '', status: clips.length ? 'waiting' : 'error', message: clips.length ? (script ? '文案已配对' : '等待文案') : '没有视频', result: null });
     }
     renderAutoEditBatchTasks();
     for (const task of autoEditBatchTasks) {
@@ -11624,16 +11681,36 @@ async function selectAutoEditBatchFolders() {
 }
 function clearAutoEditBatchTasks() {
     autoEditBatchTasks = [];
+    autoEditBatchScriptCells = [];
     const el = document.getElementById('autoedit-batch-paste'); if (el) el.value = '';
     renderAutoEditBatchTasks();
 }
-function updateAutoEditBatchScript(index, value) { if (autoEditBatchTasks[index]) autoEditBatchTasks[index].script = value; }
+function updateAutoEditBatchScript(index, value) {
+    if (!autoEditBatchTasks[index]) return;
+    autoEditBatchTasks[index].script = value;
+    autoEditBatchScriptCells[index] = value;
+}
 
 function renderAutoEditBatchTasks() {
     const root = document.getElementById('autoedit-batch-task-list'); if (!root) return;
     const summary = document.getElementById('autoedit-batch-summary');
-    if (summary) summary.textContent = `${autoEditBatchTasks.length} 个任务 · ${autoEditBatchTasks.filter(t => t.script).length} 个已配文案`;
-    if (!autoEditBatchTasks.length) { root.innerHTML = '<div class="hint">请选择多个文件夹；一个文件夹生成一个任务。</div>'; return; }
+    const scriptCount = autoEditBatchScriptCells.length || autoEditBatchTasks.filter(t => t.script).length;
+    if (summary) summary.textContent = `${autoEditBatchTasks.length} 个文件夹 · ${scriptCount} 个文案单元格 · ${autoEditBatchTasks.filter(t => t.script).length} 个已配对`;
+    const matchHint = document.getElementById('autoedit-batch-match-hint');
+    if (matchHint) {
+        matchHint.textContent = !autoEditBatchTasks.length
+            ? (scriptCount ? `已识别 ${scriptCount} 个文案；请选择 ${scriptCount} 个文件夹自动配对。` : '粘贴后自动识别；第 N 个单元格对应第 N 个文件夹。')
+            : (scriptCount === autoEditBatchTasks.length ? `✅ ${scriptCount} 个文案与文件夹已一一配对` : `⚠️ 文件夹 ${autoEditBatchTasks.length} 个，文案 ${scriptCount} 个，数量不一致`);
+        matchHint.style.color = autoEditBatchTasks.length && scriptCount !== autoEditBatchTasks.length ? '#ff9f43' : '';
+    }
+    if (!autoEditBatchTasks.length) {
+        if (!autoEditBatchScriptCells.length) { root.innerHTML = '<div class="hint">先粘贴 Google Sheets 单元格，或先选择多个文件夹。</div>'; return; }
+        root.innerHTML = autoEditBatchScriptCells.map((script, i) => {
+            const lines = script.split(/\r?\n/).filter(line => line.trim()).length;
+            return `<div style="border:1px solid rgba(99,102,241,.3);border-radius:8px;padding:10px;background:rgba(99,102,241,.07);"><div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:6px;"><strong style="color:#a5b4fc;">文案单元格 #${i+1}</strong><span class="hint">${lines} 行</span></div><div style="white-space:pre-wrap;line-height:1.5;max-height:120px;overflow:auto;color:var(--text-primary);">${escapeHtml(script) || '<span style="color:#ff9f43;">空单元格（保留位置）</span>'}</div></div>`;
+        }).join('');
+        return;
+    }
     const colors = { waiting:'#8b95c0', analyzing:'#4dabf7', ready:'#51cf66', warning:'#ff9f43', error:'#ff6b6b' };
     root.innerHTML = autoEditBatchTasks.map((task, i) => {
         const lines = task.script.split(/\r?\n/).filter(x => x.trim()).length;
@@ -11641,34 +11718,90 @@ function renderAutoEditBatchTasks() {
         const pathArg = (task.clips[0] || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
         return `<div style="border:1px solid var(--border-color);border-radius:8px;padding:10px;background:var(--bg-tertiary);display:grid;grid-template-columns:128px 1fr;gap:10px;">
           <div>${task.thumbnail ? `<img src="${task.thumbnail}" onclick="window.playVideoClip('${pathArg}',0,0)" style="width:128px;height:82px;object-fit:cover;border-radius:6px;cursor:pointer;">` : '<div style="width:128px;height:82px;background:#111;border-radius:6px;display:grid;place-items:center;color:#777;">无缩略图</div>'}<div title="${escapeHtml(first)}" style="font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(first)}</div></div>
-          <div><div style="display:flex;justify-content:space-between;"><strong>#${i+1} ${escapeHtml(task.name)}</strong><span style="color:${colors[task.status]}">${escapeHtml(task.message)}</span></div><div class="hint">${task.clips.length} 个视频 · ${lines} 行文案</div><textarea class="input" rows="3" onchange="updateAutoEditBatchScript(${i},this.value)" style="width:100%;margin-top:6px;resize:vertical;">${escapeHtml(task.script)}</textarea>${task.result ? `<button class="btn btn-secondary" onclick="openAutoEditBatchReview(${i})" style="margin-top:6px;">审核时间线</button>` : ''}</div>
+          <div><div style="display:flex;justify-content:space-between;"><strong>#${i+1} ${escapeHtml(task.name)}</strong><span style="color:${colors[task.status] || '#8b95c0'}">${escapeHtml(task.message)}</span></div><div class="hint">${task.clips.length} 个视频 · ${lines} 行文案</div><textarea class="input" rows="3" onchange="updateAutoEditBatchScript(${i},this.value)" ${autoEditBatchRunning?'disabled':''} style="width:100%;margin-top:6px;resize:vertical;">${escapeHtml(task.script)}</textarea>${task.result?.analysis_only ? `<button class="btn btn-secondary" onclick="openAutoEditBatchReview(${i})" ${autoEditBatchRunning?'disabled':''} style="margin-top:6px;">审核时间线</button><button class="btn btn-primary" onclick="exportAutoEditBatchTask(${i})" ${autoEditBatchRunning||task.status==='analyzing'?'disabled':''} style="margin:6px 0 0 6px;">正式导出</button>` : ''}</div>
         </div>`;
     }).join('');
 }
 
-async function analyzeAutoEditBatchTask(task) {
+async function analyzeAutoEditBatchTask(task, settings = task.settings || getAutoEditRequestSettings()) {
     task.status='analyzing'; task.message='正在分析'; renderAutoEditBatchTasks();
+    const requestId=`autoedit-batch-analysis-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const unsubscribe=window.electronAPI?.onAutoEditProgress?.(progress=>{
+        if(progress?.request_id!==requestId)return;
+        task.message=progress.message||'正在分析'; renderAutoEditBatchTasks();
+    });
     try {
-        const response = await apiFetch(`${API_BASE}/media/convert`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ files:task.clips, clips:task.clips, mode:'auto_edit', analysis_only:true, script_text:task.script, output_dir:window.electronAPI.pathJoin(task.folder,'_auto_edit'), language:document.getElementById('autoedit-language')?.value||'auto', match_mode:document.getElementById('autoedit-match-mode')?.value||'script', workflow_mode:document.getElementById('autoedit-workflow-mode')?.value||'cut_first', min_score:parseFloat(document.getElementById('autoedit-min-score')?.value||'0.52'), fit_mode:document.getElementById('autoedit-fit-mode')?.value||'cover' }) });
+        task.settings={...settings};
+        const response = await apiFetch(`${API_BASE}/media/convert`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ files:task.clips, clips:task.clips, mode:'auto_edit', request_id:requestId, analysis_only:true, script_text:task.script, output_dir:window.electronAPI.pathJoin(task.folder,'_auto_edit'), ...task.settings }) });
         const data = await response.json(); if (!response.ok) throw new Error(data.error || '分析失败');
         task.result=data; const warnings=(data.segments||[]).filter(s=>s.status==='warning').length;
         task.status=warnings?'warning':'ready'; task.message=warnings?`${warnings} 项待审核`:'分析通过';
     } catch (e) { task.status='error'; task.message=e.message; }
+    finally { if(typeof unsubscribe==='function')unsubscribe(); }
     renderAutoEditBatchTasks();
 }
 async function startAutoEditBatchAnalysis() {
+    if(autoEditBatchRunning)return showToast('批量任务正在运行，请稍候','info');
     if (!autoEditBatchTasks.length) return showToast('请先选择多个文件夹','error');
+    if (autoEditBatchScriptCells.length && autoEditBatchScriptCells.length !== autoEditBatchTasks.length) return showToast(`文件夹 ${autoEditBatchTasks.length} 个，文案单元格 ${autoEditBatchScriptCells.length} 个，请确保数量一致`,'error');
     if (autoEditBatchTasks.some(t=>!t.script.trim())) return showToast('文案单元格数量与文件夹数量不一致','error');
     if (autoEditBatchTasks.some(t=>!t.clips.length)) return showToast('存在没有视频的文件夹','error');
     const n=Math.max(1,Math.min(4,parseInt(document.getElementById('autoedit-batch-concurrency')?.value||'2',10))); let cursor=0;
-    const worker=async()=>{ while(cursor<autoEditBatchTasks.length) await analyzeAutoEditBatchTask(autoEditBatchTasks[cursor++]); };
-    await Promise.all(Array.from({length:Math.min(n,autoEditBatchTasks.length)},worker)); showToast('批量分析完成','success');
+    const settings={...getAutoEditRequestSettings()};
+    setAutoEditBatchRunning(true);
+    try {
+        const worker=async()=>{ while(cursor<autoEditBatchTasks.length) await analyzeAutoEditBatchTask(autoEditBatchTasks[cursor++],settings); };
+        await Promise.all(Array.from({length:Math.min(n,autoEditBatchTasks.length)},worker));
+        const failed=autoEditBatchTasks.filter(task=>task.status==='error').length;
+        showToast(failed?`批量分析完成，${failed} 个失败`:'批量分析完成',failed?'error':'success');
+    } finally { setAutoEditBatchRunning(false); }
+}
+async function exportAutoEditBatchTask(index, options = {}) {
+    const task = autoEditBatchTasks[index];
+    if (!task?.result?.analysis_only) return showToast('请先完成该任务的分析', 'error');
+    const ownsLock = options.managed !== true;
+    if (ownsLock && autoEditBatchRunning) return showToast('批量任务正在运行，请稍候', 'info');
+    if(task.status==='analyzing')return;
+    if (ownsLock) setAutoEditBatchRunning(true);
+    task.status='analyzing'; task.message='正在正式导出'; renderAutoEditBatchTasks();
+    const requestId=`autoedit-batch-export-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const unsubscribe=window.electronAPI?.onAutoEditProgress?.(progress=>{
+        if(progress?.request_id!==requestId)return;
+        task.message=progress.message||'正在正式导出'; renderAutoEditBatchTasks();
+    });
+    try {
+        const reviewSegments=task.reviewSegments||(task.result.segments||[]).map(seg=>({source:seg.source,enabled:true,script:seg.script,start:Number(seg.start),end:Number(seg.end),speed:1}));
+        const response=await apiFetch(`${API_BASE}/media/convert`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({files:task.clips,clips:task.clips,mode:'auto_edit',request_id:requestId,analysis_only:false,review_segments:reviewSegments,ignore_mismatch:true,force_mismatch:false,script_text:task.script,output_dir:window.electronAPI.pathJoin(task.folder,'_auto_edit'),...(task.settings||getAutoEditRequestSettings()),force_transcribe:false})});
+        const data=await response.json(); if(!response.ok) throw new Error(data.error||'导出失败');
+        task.result=data; task.status='ready'; task.message='导出完成';
+        if(document.getElementById('autoedit-send-reels')?.checked) await sendAutoEditResultToReels(data,{silent:true});
+    } catch(e) { task.status='error'; task.message=e.message; }
+    finally {
+        if(typeof unsubscribe==='function')unsubscribe();
+        if(ownsLock)setAutoEditBatchRunning(false);
+    }
+    renderAutoEditBatchTasks();
+}
+async function startAutoEditBatchExport() {
+    if(autoEditBatchRunning)return showToast('批量任务正在运行，请稍候','info');
+    const ready=autoEditBatchTasks.map((task,index)=>({task,index})).filter(x=>x.task.result?.analysis_only);
+    if(!ready.length) return showToast('请先完成批量分析','error');
+    const risky=ready.filter(x=>(x.task.result.segments||[]).some(s=>s.status==='warning'));
+    if(risky.length && !confirm(`${risky.length} 个任务仍有待审核项目。继续将按当前分析结果导出；建议先逐套审核。确定继续吗？`)) return;
+    const n=Math.max(1,Math.min(4,parseInt(document.getElementById('autoedit-batch-concurrency')?.value||'2',10))); let cursor=0;
+    setAutoEditBatchRunning(true);
+    try {
+        const worker=async()=>{while(cursor<ready.length) await exportAutoEditBatchTask(ready[cursor++].index,{managed:true});};
+        await Promise.all(Array.from({length:Math.min(n,ready.length)},worker));
+        const failed=ready.filter(x=>x.task.status==='error').length;
+        showToast(failed?`批量导出完成，${failed} 个失败`:'批量导出完成',failed?'error':'success');
+    } finally { setAutoEditBatchRunning(false); }
 }
 function openAutoEditBatchReview(index) {
     const task=autoEditBatchTasks[index]; if(!task?.result)return;
     autoEditFiles=task.clips.map(path=>({path,name:path.split(/[/\\]/).pop(),status:'transcribed'}));
     document.getElementById('autoedit-script').value=task.script; updateAutoEditScriptCount(); renderAutoEditFiles();
-    autoEditLastResult=task.result; setAutoEditMode('single'); renderAutoEditResult(task.result); document.getElementById('autoedit-result-section')?.classList.remove('hidden');
+    autoEditActiveBatchIndex=index; autoEditLastResult=task.result; autoEditOutputDir=task.result.output_dir||window.electronAPI.pathJoin(task.folder,'_auto_edit'); setAutoEditMode('single',true); renderAutoEditResult(task.result); document.getElementById('autoedit-result-section')?.classList.remove('hidden');
 }
 
 let autoEditFiles = [];
@@ -11792,7 +11925,7 @@ function renderAutoEditFiles() {
         } else if (statusVal === 'failed') {
             statusHtml = `<span style="color: #ff6b6b; font-weight: 600; padding: 2px 6px; background: rgba(255,107,107,0.1); border-radius: 3px; font-size: 11px;" title="${escapeHtml(file.error || '转录失败')}">❌ 失败</span>`;
         } else if (statusVal === 'empty') {
-            statusHtml = `<span style="color: #f59f00; font-weight: 600; padding: 2px 6px; background: rgba(245,159,0,0.1); border-radius: 3px; font-size: 11px;" title="${escapeHtml(file.error || '转录内容为空，可能是无声段落/静音')}">⚠️ 识别为空/无声</span>`;
+            statusHtml = `<span style="color:#f59f00;font-weight:600;padding:2px 6px;background:rgba(245,159,0,.1);border-radius:3px;font-size:11px;" title="${escapeHtml(file.error || '接口重试后仍未返回文字；若素材有声音，请点击右侧重新识别')}">⚠️ 未识别到文字</span>`;
         } else if (statusVal === 'unmatched') {
             statusHtml = `<span style="color: #f76707; font-weight: 600; padding: 2px 6px; background: rgba(247,103,7,0.1); border-radius: 3px; font-size: 11px;" title="${escapeHtml(file.error || '未匹配到任何断行文案')}">⚠️ 未匹配到文案</span>`;
         } else if (statusVal === 'excluded_duplicate') {
@@ -11894,7 +12027,13 @@ async function clearAutoEditFileCache(index) {
         file.outputIndex = null;
         file.error = null;
         renderAutoEditFiles();
-        showToast('已清除该片段的转录缓存，下次运行将重新识别', 'success');
+        showToast('缓存已清除，正在重新分析；其他片段会继续使用有效缓存', 'info');
+        const batchTask = autoEditActiveBatchIndex >= 0 ? autoEditBatchTasks[autoEditActiveBatchIndex] : null;
+        await startAutoEditByScript(false, {
+            analysisOnly: true,
+            outputDirOverride: batchTask ? window.electronAPI.pathJoin(batchTask.folder, '_auto_edit') : undefined,
+            requestSettingsOverride: batchTask?.settings,
+        });
     } catch (e) {
         showToast(`清除缓存失败: ${escapeHtml(e.message)}`, 'error');
     }
@@ -12906,7 +13045,9 @@ async function startAutoEditByScript(isRetry = false, options = {}) {
         return;
     }
 
-    const outputDir = document.getElementById('media-output-path')?.value || '';
+    const outputDir = options.outputDirOverride ?? document.getElementById('media-output-path')?.value ?? '';
+    const requestSettings = options.requestSettingsOverride || getAutoEditRequestSettings();
+    const requestId = options.requestId || `autoedit-single-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const statusEl = document.getElementById('autoedit-status');
     const startBtn = document.getElementById('autoedit-start-btn');
     const progressSection = document.getElementById('autoedit-progress-section');
@@ -12941,6 +13082,7 @@ async function startAutoEditByScript(isRetry = false, options = {}) {
     }
     if (window.electronAPI?.onAutoEditProgress) {
         autoEditProgressUnsubscribe = window.electronAPI.onAutoEditProgress((progress = {}) => {
+            if (progress.request_id && progress.request_id !== requestId) return;
             const pct = Math.max(0, Math.min(100, Number(progress.percent) || 0));
             if (progressBar) progressBar.style.width = `${pct}%`;
             const msg = progress.message || '正在处理...';
@@ -12981,6 +13123,7 @@ async function startAutoEditByScript(isRetry = false, options = {}) {
                 clips: autoEditFiles.map(f => f.path),
                 files: autoEditFiles.map(f => f.path),
                 mode: 'auto_edit',
+                request_id: requestId,
                 ignore_mismatch: autoEditIgnoreMismatch || (options.reviewSegments?.length > 0),
                 force_mismatch: (options.analysisOnly || options.reviewSegments?.length > 0) ? false : (document.getElementById('autoedit-force-mismatch')?.checked || false),
                 analysis_only: options.analysisOnly === true,
@@ -12993,30 +13136,7 @@ async function startAutoEditByScript(isRetry = false, options = {}) {
                 }, {}),
                 script_text: scriptText,
                 output_dir: outputDir,
-                language: document.getElementById('autoedit-language')?.value || 'auto',
-                match_mode: matchMode,
-                workflow_mode: document.getElementById('autoedit-workflow-mode')?.value || 'cut_first',
-                transition_type: document.getElementById('autoedit-transition-type')?.value || 'none',
-                transition_duration: parseFloat(document.getElementById('autoedit-transition-duration')?.value || '0.35'),
-                lead_pad: parseFloat(document.getElementById('autoedit-lead-pad')?.value || '0.04'),
-                tail_pad: parseFloat(document.getElementById('autoedit-tail-pad')?.value || '0.08'),
-                min_score: parseFloat(document.getElementById('autoedit-min-score')?.value || '0.52'),
-                burn_subtitles: document.getElementById('autoedit-burn-subtitles')?.checked || false,
-                export_mp3: document.getElementById('autoedit-export-mp3')?.checked !== false,
-                voice_changer_enabled: document.getElementById('autoedit-voicechanger-enabled')?.checked || false,
-                voice_changer_voice_id: document.getElementById('autoedit-voicechanger-voice')?.value || '',
-                voice_changer_replace_audio: document.getElementById('autoedit-voicechanger-replace')?.checked !== false,
-                voice_changer_remove_noise: document.getElementById('autoedit-voicechanger-noise')?.checked || false,
-                voice_changer_model_id: 'eleven_multilingual_sts_v2',
-                voice_changer_stability: parseFloat(document.getElementById('autoedit-voicechanger-stability')?.value || '0.5'),
-                voice_changer_similarity: parseFloat(document.getElementById('autoedit-voicechanger-similarity')?.value || '0.75'),
-                manual_audio_path: document.getElementById('autoedit-manual-audio-path')?.value || '',
-                manual_audio_replace: Boolean(document.getElementById('autoedit-manual-audio-path')?.value?.trim()),
-                force_transcribe: document.getElementById('autoedit-force-transcribe')?.checked || false,
-                target_width: document.getElementById('autoedit-output-mode')?.value === 'custom' ? parseInt(document.getElementById('autoedit-target-width')?.value || '1080', 10) : undefined,
-                target_height: document.getElementById('autoedit-output-mode')?.value === 'custom' ? parseInt(document.getElementById('autoedit-target-height')?.value || '1920', 10) : undefined,
-                fps: document.getElementById('autoedit-output-mode')?.value === 'custom' ? parseFloat(document.getElementById('autoedit-target-fps')?.value || '0') || undefined : undefined,
-                fit_mode: document.getElementById('autoedit-fit-mode')?.value || 'cover',
+                ...requestSettings,
                 manual_subtitle_map: autoEditFiles.reduce((map, f) => {
                     if (f.manualSubtitlePath) {
                         map[f.path] = f.manualSubtitlePath;
@@ -13072,7 +13192,7 @@ async function startAutoEditByScript(isRetry = false, options = {}) {
         resultSection.classList.remove('hidden');
         const sendBtn = document.getElementById('autoedit-send-reels-btn');
         if (sendBtn) sendBtn.style.display = '';
-        if (document.getElementById('autoedit-send-reels')?.checked) {
+        if (!data.analysis_only && document.getElementById('autoedit-send-reels')?.checked) {
             try {
                 await sendAutoEditResultToReels(data, { silent: true });
             } catch (sendError) {
@@ -13080,6 +13200,14 @@ async function startAutoEditByScript(isRetry = false, options = {}) {
             }
         }
         autoEditIgnoreMismatch = false;
+        if (autoEditActiveBatchIndex >= 0 && autoEditBatchTasks[autoEditActiveBatchIndex]) {
+            const task = autoEditBatchTasks[autoEditActiveBatchIndex];
+            task.result = data;
+            const warnings = (data.segments || []).filter(segment => segment.status === 'warning').length;
+            task.status = data.analysis_only && warnings ? 'warning' : 'ready';
+            task.message = data.analysis_only ? (warnings ? `${warnings} 项待审核` : '重新分析通过') : '导出完成';
+            if (!data.analysis_only) autoEditActiveBatchIndex = -1;
+        }
         // Close any open mismatch dialogs on success
         const mismatchOverlay = document.getElementById('ae-mismatch-dialog-overlay');
         if (mismatchOverlay) mismatchOverlay.remove();
@@ -13306,7 +13434,7 @@ function renderAutoEditResult(data) {
                         <div><div style="font-size:11px;color:var(--text-muted);display:flex;gap:6px;align-items:center;flex-wrap:wrap;">#${seg.source_index} · ${escapeHtml((seg.source || '').split(/[/\\]/).pop())} ${matchRiskBadge || `<span>匹配 ${matchPercent}%</span>`}${duplicateText ? ` · <strong class="ae-live-duplicate-badge" style="color:#ff6b6b;">⚠ 重复组 ${duplicateGroup}</strong>` : ''}${seg.ambiguity ? ` · ⚠️ ${escapeHtml(seg.ambiguity)}` : ''} · 双击放大编辑</div><textarea class="input ae-review-script" rows="2" ondblclick="openAutoEditLargeScriptEditor(this)" oninput="handleAutoEditScriptChanged(this)" style="width:100%;resize:vertical;">${escapeHtml(seg.script || '')}</textarea><div class="ae-missing-words-status"></div></div>
                         <label style="font-size:11px;">入点<div><button class="btn btn-secondary" onclick="nudgeAutoEditTime(this,'.ae-review-start',-.1)" style="padding:1px 4px;">−</button><input type="number" class="input ae-review-start" value="${Number(seg.start || 0).toFixed(3)}" min="0" step="0.01" style="width:72px;"><button class="btn btn-secondary" onclick="nudgeAutoEditTime(this,'.ae-review-start',.1)" style="padding:1px 4px;">+</button></div></label>
                         <label style="font-size:11px;">出点<div><button class="btn btn-secondary" onclick="nudgeAutoEditTime(this,'.ae-review-end',-.1)" style="padding:1px 4px;">−</button><input type="number" class="input ae-review-end" value="${Number(seg.end || 0).toFixed(3)}" min="0" step="0.01" style="width:72px;"><button class="btn btn-secondary" onclick="nudgeAutoEditTime(this,'.ae-review-end',.1)" style="padding:1px 4px;">+</button></div></label>
-                        <div style="display:flex;flex-direction:column;gap:5px;"><button class="btn btn-secondary" onclick="window.playVideoClip('${seg.source.replace(/\\/g, '\\\\')}', Number(this.closest('.autoedit-review-row').querySelector('.ae-review-start').value), Number(this.closest('.autoedit-review-row').querySelector('.ae-review-end').value), this.closest('.autoedit-review-row').querySelector('.ae-review-script').value, '${encodeURIComponent(JSON.stringify(seg.word_timeline || []))}')" style="font-size:11px;padding:4px 8px;">▶ 预览</button><button class="btn btn-secondary" onclick="toggleAutoEditReviewDetails(this)" style="font-size:11px;padding:3px 8px;">${detailsOpen ? '收起详情' : '展开详情'}</button></div>
+                        <div style="display:flex;flex-direction:column;gap:5px;"><button class="btn btn-primary" title="按照当前入点和出点播放裁切后的内容" onclick="window.playVideoClip('${seg.source.replace(/\\/g, '\\\\')}', Number(this.closest('.autoedit-review-row').querySelector('.ae-review-start').value), Number(this.closest('.autoedit-review-row').querySelector('.ae-review-end').value), this.closest('.autoedit-review-row').querySelector('.ae-review-script').value, '${encodeURIComponent(JSON.stringify(seg.word_timeline || []))}')" style="font-size:11px;padding:4px 8px;">▶ 剪后预览</button><button class="btn btn-secondary" title="播放未裁切的完整原始视频" onclick="window.playVideoClip('${seg.source.replace(/\\/g, '\\\\')}',0,0)" style="font-size:11px;padding:3px 8px;">原片预览</button><button class="btn btn-secondary" onclick="toggleAutoEditReviewDetails(this)" style="font-size:11px;padding:3px 8px;">${detailsOpen ? '收起详情' : '展开详情'}</button></div>
                         <div class="ae-review-details" style="grid-column:3 / -1;display:${detailsOpen ? 'grid' : 'none'};grid-template-columns:1fr 1fr;gap:10px;padding:10px;border-radius:7px;background:rgba(0,0,0,.18);cursor:default;">
                             <div><div style="font-size:11px;color:#60a5fa;font-weight:700;margin-bottom:5px;">实际识别文字</div><div style="white-space:pre-wrap;word-break:break-word;line-height:1.55;min-height:54px;padding:8px;background:#111225;border-radius:5px;color:#d7defa;">${escapeHtml(seg.recognized_text || '(没有识别到有效语音)')}</div></div>
                             <div><div style="font-size:11px;color:#a5b4fc;font-weight:700;margin-bottom:5px;">目标文案</div><div style="white-space:pre-wrap;word-break:break-word;line-height:1.55;min-height:54px;padding:8px;background:#111225;border-radius:5px;color:#fff;">${escapeHtml(seg.script || '(尚未匹配文案)')}</div></div>
@@ -13648,7 +13776,12 @@ async function retranscribeAutoEditReviewClip(filePath) {
     try {
         const result = await window.electronAPI.apiCall('media/clear-clip-cache', { file_path: filePath });
         if (!result?.success) throw new Error(result?.error || '清除转录缓存失败');
-        await startAutoEditByScript(false, { analysisOnly: true });
+        const batchTask = autoEditActiveBatchIndex >= 0 ? autoEditBatchTasks[autoEditActiveBatchIndex] : null;
+        await startAutoEditByScript(false, {
+            analysisOnly: true,
+            outputDirOverride: batchTask ? window.electronAPI.pathJoin(batchTask.folder, '_auto_edit') : undefined,
+            requestSettingsOverride: batchTask?.settings,
+        });
     } catch (error) {
         showToast(`重新转录失败: ${escapeHtml(error.message)}`, 'error');
     }
@@ -13662,7 +13795,11 @@ function recalculateAutoEditCutFromScript(button, encodedTimeline) {
     if (!timeline.length) return showToast('当前分析结果没有逐词时间轴，请重新执行快速分析', 'error');
 
     const targetText = row.querySelector('.ae-review-script')?.value || '';
-    const normalize = value => String(value || '').toLowerCase().normalize('NFKC').replace(/[^\p{L}\p{N}]/gu, '');
+    const numberWords = {zero:'0',one:'1',two:'2',three:'3',four:'4',five:'5',six:'6',seven:'7',eight:'8',nine:'9',ten:'10'};
+    const normalize = value => {
+        const token=String(value || '').toLowerCase().normalize('NFKC').replace(/[^\p{L}\p{N}]/gu, '');
+        return numberWords[token] || token;
+    };
     const hasCJK = /[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/.test(targetText);
     const targetTokens = hasCJK
         ? Array.from(targetText).map(normalize).filter(Boolean)
@@ -13670,28 +13807,34 @@ function recalculateAutoEditCutFromScript(button, encodedTimeline) {
     const sourceTokens = timeline.map(item => normalize(item.word));
     if (!targetTokens.length) return showToast('目标文案为空，无法重算切点', 'error');
 
-    let best = null;
-    for (let start = 0; start < sourceTokens.length; start++) {
-        let targetIndex = 0;
-        const matched = [];
-        for (let sourceIndex = start; sourceIndex < sourceTokens.length && targetIndex < targetTokens.length; sourceIndex++) {
-            if (sourceTokens[sourceIndex] === targetTokens[targetIndex]) {
-                matched.push(sourceIndex);
-                targetIndex++;
+    const editDistance = (a, b) => {
+        const prev=Array.from({length:b.length+1},(_,i)=>i);
+        for(let i=1;i<=a.length;i++){
+            let diagonal=prev[0]; prev[0]=i;
+            for(let j=1;j<=b.length;j++){
+                const old=prev[j];
+                prev[j]=Math.min(prev[j]+1,prev[j-1]+1,diagonal+(a[i-1]===b[j-1]?0:1));
+                diagonal=old;
             }
         }
-        if (targetIndex !== targetTokens.length) continue;
-        const span = matched.at(-1) - matched[0] + 1;
-        const gaps = span - matched.length;
-        if (!best || gaps < best.gaps || (gaps === best.gaps && span < best.span)) best = { matched, gaps, span };
+        return prev[b.length];
+    };
+    const targetJoined=targetTokens.join('');
+    const variation=Math.max(2,Math.ceil(targetTokens.length*.35));
+    let best=null;
+    for(let start=0;start<sourceTokens.length;start++){
+        const minEnd=Math.min(sourceTokens.length-1,start+Math.max(1,targetTokens.length-variation)-1);
+        const maxEnd=Math.min(sourceTokens.length-1,start+targetTokens.length+variation-1);
+        for(let end=minEnd;end<=maxEnd;end++){
+            const candidate=sourceTokens.slice(start,end+1).join('');
+            const score=1-editDistance(targetJoined,candidate)/Math.max(1,targetJoined.length,candidate.length);
+            if(!best||score>best.score||(score===best.score&&(end-start)<(best.end-best.start)))best={start,end,score};
+        }
     }
-    if (!best) return showToast('修改后的文案无法在实际识别文字中连续定位，请检查文字或重新转录', 'error');
-    if (best.gaps > 0) {
-        return showToast(`检测到删除了中间 ${best.gaps} 个词，会形成不连续剪辑。请拆成两个片段或手动调整切点`, 'error', 7000);
-    }
+    if (!best || best.score < 0.62) return showToast('修改文案与实际识别文字差异过大，无法安全重算切点；请检查文字或重新转录', 'error', 7000);
 
-    const first = timeline[best.matched[0]];
-    const last = timeline[best.matched.at(-1)];
+    const first = timeline[best.start];
+    const last = timeline[best.end];
     const leadPad = Math.max(0, parseFloat(document.getElementById('autoedit-lead-pad')?.value || '0.04'));
     const tailPad = Math.max(0, parseFloat(document.getElementById('autoedit-tail-pad')?.value || '0.08'));
     const startInput = row.querySelector('.ae-review-start');
@@ -13699,7 +13842,7 @@ function recalculateAutoEditCutFromScript(button, encodedTimeline) {
     startInput.value = Math.max(0, Number(first.start) - leadPad).toFixed(3);
     endInput.value = Math.max(Number(first.start), Number(last.end) + tailPad).toFixed(3);
     row.dataset.modified = 'true';
-    showToast(`切点已更新为 ${startInput.value}s - ${endInput.value}s`, 'success');
+    showToast(`切点已更新为 ${startInput.value}s - ${endInput.value}s（定位相似度 ${Math.round(best.score*100)}%）`, best.score < .8 ? 'info' : 'success');
 }
 
 let autoEditReviewDragIndex = -1;
@@ -13764,7 +13907,17 @@ async function exportReviewedAutoEdit() {
         const file = autoEditFiles.find(item => item.path === review.source);
         if (file) file.speed = Number.isFinite(review.speed) && review.speed > 0 ? review.speed : 1;
     });
-    await startAutoEditByScript(false, { reviewSegments });
+    const batchTask = autoEditActiveBatchIndex >= 0 ? autoEditBatchTasks[autoEditActiveBatchIndex] : null;
+    if (batchTask) {
+        batchTask.reviewSegments = reviewSegments.map(item => ({ ...item }));
+        batchTask.status = 'warning';
+        batchTask.message = '已审核，等待导出';
+    }
+    await startAutoEditByScript(false, {
+        reviewSegments,
+        outputDirOverride: batchTask ? window.electronAPI.pathJoin(batchTask.folder, '_auto_edit') : undefined,
+        requestSettingsOverride: { ...(batchTask?.settings || getAutoEditRequestSettings()), force_transcribe: false },
+    });
 }
 
 async function renameAutoEditOriginalClips() {
@@ -13952,24 +14105,83 @@ window.playVideoClip = function(filePath, startVal = 0, endVal = 0, scriptText =
         : `file://${filePath}`;
     const videoEl = document.createElement('video');
     videoEl.src = videoUrl;
-    videoEl.controls = true;
-    videoEl.autoplay = true;
+    const hasCutRange = endNum > startNum;
+    videoEl.controls = !hasCutRange;
+    videoEl.autoplay = !hasCutRange;
     videoEl.style.cssText = 'width:100%;max-height:450px;border-radius:8px;outline:none;background:#000;border:1px solid rgba(255,255,255,0.05);';
-    
-    // Set crop boundaries
-    if (startNum > 0) {
+    const videoWrap = document.createElement('div');
+    videoWrap.style.cssText = 'display:flex;flex-direction:column;gap:8px;min-width:0;';
+    videoWrap.appendChild(videoEl);
+
+    if (hasCutRange) {
+        const clipDuration = Math.max(.01, endNum - startNum);
+        const formatTime = seconds => {
+            const safe = Math.max(0, Number(seconds) || 0);
+            const minutes = Math.floor(safe / 60);
+            const secs = Math.floor(safe % 60);
+            const tenths = Math.floor((safe % 1) * 10);
+            return `${minutes}:${String(secs).padStart(2, '0')}.${tenths}`;
+        };
+        const rangeHint = document.createElement('div');
+        rangeHint.style.cssText = 'display:flex;justify-content:space-between;gap:12px;padding:7px 10px;border-radius:7px;background:rgba(99,102,241,.12);border:1px solid rgba(129,140,248,.25);font-size:12px;color:#c7d2fe;';
+        rangeHint.innerHTML = `<strong>剪后片段 ${formatTime(clipDuration)}</strong><span>原片 ${formatTime(startNum)} → ${formatTime(endNum)}，到出点自动停止</span>`;
+
+        const controls = document.createElement('div');
+        controls.style.cssText = 'display:grid;grid-template-columns:auto auto 1fr auto auto;gap:10px;align-items:center;padding:8px 10px;border-radius:8px;background:#0b0b16;border:1px solid rgba(255,255,255,.08);';
+        const playButton = document.createElement('button');
+        playButton.className = 'btn btn-primary';
+        playButton.textContent = '▶';
+        playButton.title = '播放剪后片段';
+        playButton.style.cssText = 'padding:4px 10px;min-width:38px;';
+        const timeLabel = document.createElement('span');
+        timeLabel.textContent = `0:00.0 / ${formatTime(clipDuration)}`;
+        timeLabel.style.cssText = 'font-variant-numeric:tabular-nums;font-size:13px;color:#fff;white-space:nowrap;';
+        const seek = document.createElement('input');
+        seek.type = 'range'; seek.min = '0'; seek.max = String(clipDuration); seek.step = '0.01'; seek.value = '0';
+        seek.title = '剪后片段进度';
+        seek.style.cssText = 'width:100%;accent-color:#818cf8;';
+        const muteButton = document.createElement('button');
+        muteButton.className = 'btn btn-secondary'; muteButton.textContent = '🔊'; muteButton.title = '静音/恢复声音';
+        muteButton.style.cssText = 'padding:3px 8px;';
+        const fullscreenButton = document.createElement('button');
+        fullscreenButton.className = 'btn btn-secondary'; fullscreenButton.textContent = '⛶'; fullscreenButton.title = '全屏';
+        fullscreenButton.style.cssText = 'padding:3px 8px;';
+        controls.append(playButton, timeLabel, seek, muteButton, fullscreenButton);
+        videoWrap.append(rangeHint, controls);
+
+        let resetting = false;
+        const resetToStart = () => {
+            resetting = true;
+            videoEl.pause();
+            videoEl.currentTime = startNum;
+            seek.value = '0';
+            timeLabel.textContent = `0:00.0 / ${formatTime(clipDuration)}`;
+            playButton.textContent = '▶';
+            setTimeout(() => { resetting = false; }, 0);
+        };
         videoEl.addEventListener('loadedmetadata', () => {
             videoEl.currentTime = startNum;
-        });
-    }
-    
-    if (endNum > startNum) {
+            videoEl.addEventListener('seeked', () => videoEl.play().catch(() => {}), { once: true });
+        }, { once: true });
+        videoEl.addEventListener('play', () => { playButton.textContent = '❚❚'; });
+        videoEl.addEventListener('pause', () => { if (!resetting) playButton.textContent = '▶'; });
         videoEl.addEventListener('timeupdate', () => {
-            if (videoEl.currentTime >= endNum) {
-                videoEl.pause();
-                videoEl.currentTime = startNum;
-            }
+            if (videoEl.currentTime >= endNum - .015) return resetToStart();
+            const relative = Math.max(0, Math.min(clipDuration, videoEl.currentTime - startNum));
+            seek.value = String(relative);
+            timeLabel.textContent = `${formatTime(relative)} / ${formatTime(clipDuration)}`;
         });
+        playButton.onclick = () => {
+            if (videoEl.paused) {
+                if (videoEl.currentTime < startNum || videoEl.currentTime >= endNum - .015) videoEl.currentTime = startNum;
+                videoEl.play().catch(() => {});
+            } else videoEl.pause();
+        };
+        seek.oninput = () => { videoEl.currentTime = startNum + Number(seek.value || 0); };
+        muteButton.onclick = () => { videoEl.muted = !videoEl.muted; muteButton.textContent = videoEl.muted ? '🔇' : '🔊'; };
+        fullscreenButton.onclick = () => videoEl.requestFullscreen?.();
+    } else if (startNum > 0) {
+        videoEl.addEventListener('loadedmetadata', () => { videoEl.currentTime = startNum; }, { once: true });
     }
     
     videoEl.onerror = (e) => {
@@ -14007,7 +14219,7 @@ window.playVideoClip = function(filePath, startVal = 0, endVal = 0, scriptText =
             scriptContent.textContent = scriptText;
         }
         scriptPanel.append(scriptTitle, scriptContent);
-        previewBody.append(videoEl, scriptPanel);
+        previewBody.append(videoWrap, scriptPanel);
         container.appendChild(previewBody);
 
         if (wordTimeline.length) {
@@ -14028,7 +14240,7 @@ window.playVideoClip = function(filePath, startVal = 0, endVal = 0, scriptText =
             });
         }
     } else {
-        container.appendChild(videoEl);
+        container.appendChild(videoWrap);
     }
     overlay.appendChild(container);
     

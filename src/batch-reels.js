@@ -8941,14 +8941,11 @@ async function reelsStartExport() {
             return false;
         }
 
-        // ── 多素材模式：只要能确定输出时长即可直出 ──
+        // ── 多素材模式：背景素材本身即可确定输出时长 ──
+        // 导出引擎会读取每段视频的真实时长并求和，再扣除转场重叠；
+        // 图片素材按默认展示时长计算，因此无需字幕、配音或覆层也能直出。
         if (t.bgMode === 'multi') {
-            const hasDur = hasVoice || hasSub || (t.customDuration && t.customDuration > 0) || (customDuration && customDuration > 0);
-            if (hasDur || hasOverlay || hasAnyOverlay) {
-                return true;
-            }
-            invalidTasks.push(`${idx + 1}. ${(t.fileName || t.baseName || '未命名任务')} 无法确定输出时长，请设置输出时长或添加配音/字幕`);
-            return false;
+            return true;
         }
 
         // 有字幕、有文字覆层、有任意覆层 => 直接通过

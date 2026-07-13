@@ -323,7 +323,10 @@ function registerAPIHandlers() {
         try {
             const result = await routeAPI(endpoint, data || {}, (progress) => {
                 try {
-                    event.sender.send(endpoint === 'subtitle/generate' ? 'subtitle-progress' : 'auto-edit-progress', progress);
+                    event.sender.send(endpoint === 'subtitle/generate' ? 'subtitle-progress' : 'auto-edit-progress', {
+                        ...progress,
+                        request_id: data?.request_id || null,
+                    });
                 } catch (_) { }
             });
             return { success: true, data: result };
