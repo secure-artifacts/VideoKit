@@ -3193,7 +3193,7 @@ function _normalizeWatermarkPath(pathValue) {
         return `file:///${drive}/${rest}`;
     }
     if (pathValue.startsWith('/')) {
-        return `file://${pathValue.split('/').map(p => p === '' ? '' : encodeURIComponent(p)).join('/')}`;
+        return 'file://' + pathValue.split('/').map(p => p === '' ? '' : encodeURIComponent(p)).join('/');
     }
     return pathValue;
 }
@@ -4020,7 +4020,7 @@ function _toPlayablePath(filePath, srcUrl = null) {
         const u = window.electronAPI.toFileUrl(filePath);
         if (u) return u;
     }
-    return filePath.startsWith('/') ? `file://${filePath}` : filePath;
+    return _normalizeWatermarkPath(filePath);
 }
 
 /**
@@ -5935,19 +5935,31 @@ async function reelsCreateTaskFromAutoEditResult(autoEditResult = {}, opts = {})
             }, []);
     }
 
-    _reelsState.tasks.push(task);
-    _reelsState.selectedIdx = _reelsState.tasks.length - 1;
-
+    // 先记住接收前的状态。后续任何页面初始化/渲染错误都要回滚，
+    // 避免批量接收失败后留下半条任务，重试时又不断重复。
+    const previousTaskCount = _reelsState.tasks.length;
+    const previousSelectedIdx = _reelsState.selectedIdx;
     const workMode = document.getElementById('reels-work-mode');
-    if (workMode) {
-        workMode.value = 'voiced_bg';
-        if (typeof reelsOnWorkModeChange === 'function') reelsOnWorkModeChange();
-    }
+    const previousWorkMode = workMode?.value;
+    try {
+        _reelsState.tasks.push(task);
+        _reelsState.selectedIdx = _reelsState.tasks.length - 1;
 
-    if (typeof _renderBatchTable === 'function') _renderBatchTable();
-    if (typeof _renderTaskList === 'function') _renderTaskList();
-    if (typeof reelsSelectTask === 'function') reelsSelectTask(_reelsState.selectedIdx);
-    else if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
+        if (workMode) {
+            workMode.value = 'voiced_bg';
+            if (typeof reelsOnWorkModeChange === 'function') reelsOnWorkModeChange();
+        }
+
+        if (typeof _renderBatchTable === 'function') _renderBatchTable();
+        if (typeof _renderTaskList === 'function') _renderTaskList();
+        if (typeof reelsSelectTask === 'function') reelsSelectTask(_reelsState.selectedIdx);
+        else if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
+    } catch (error) {
+        _reelsState.tasks.splice(previousTaskCount);
+        _reelsState.selectedIdx = previousSelectedIdx;
+        if (workMode && previousWorkMode) workMode.value = previousWorkMode;
+        throw error;
+    }
 
     return task;
 }
@@ -6784,8 +6796,11 @@ function _renderTaskList() {
         }
         const statusText = statusParts.join(' ');
         // Shorten filename for compact display
-        const baseName = task.fileName.replace(/\.[^.]+$/, '');
+        const baseName = String(task.fileName || '').replace(/\.[^.]+$/, '');
         const shortName = baseName.length > 18 ? baseName.substring(0, 16) + '…' : baseName;
+        const escapeTaskText = (value) => String(value || '')
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
         // 覆层内容预览
         let ovPreview = '';
@@ -6836,7 +6851,7 @@ function _renderTaskList() {
         return `
             <div class="reels-task-item ${selected ? 'reels-task-selected' : ''}"
                  onclick="reelsSelectTask(${i})"
-                 title="${task.fileName}"
+                 title="${escapeTaskText(task.fileName)}"
                  style="display:flex; align-items:center; gap:4px; padding:5px 6px; margin-bottom:2px;
                         border-radius:5px; cursor:pointer; transition:background .12s, opacity .15s;
                         background: ${selected ? 'rgba(0,212,255,0.15)' : 'transparent'};
@@ -6847,7 +6862,7 @@ function _renderTaskList() {
                     style="accent-color:var(--accent-color,#7b8bef);transform:scale(1.25);margin:0 6px 0 4px;flex-shrink:0;cursor:pointer;"
                     onclick="event.stopPropagation(); reelsToggleExportSelect(${i}, this.checked)"
                     title="勾选以包含在批量导出中">
-                <span style="font-size:12px; font-weight:${selected ? '600' : '400'}; color:${selected ? '#fff' : 'var(--text-primary)'}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:60px; max-width:120px;">${shortName}</span>
+                <span style="font-size:12px; font-weight:${selected ? '600' : '400'}; color:${selected ? '#fff' : 'var(--text-primary)'}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:60px; max-width:120px;">${escapeTaskText(shortName)}</span>
                 ${alphaIcon}
                 ${ovPreview}
                 <span style="font-size:10px; white-space:nowrap; opacity:0.8; margin-left:auto;">${statusText}</span>

@@ -4,6 +4,13 @@
  */
 const fs = require('fs');
 const path = require('path');
+const { pathToFileURL } = require('url');
+
+function mediaFileUrl(filePath) {
+    if (!filePath) return '';
+    if (/^file:\/\//i.test(filePath)) return filePath;
+    return pathToFileURL(filePath).href;
+}
 
 // ==================== SRT 解析 ====================
 
@@ -331,7 +338,7 @@ function segmentsToFcpxml(videoPath, segments, videoDuration, fps, resolution, s
     }
 
     const projectName = path.basename(savePath, path.extname(savePath));
-    const videoSrc = videoPath ? ('file://' + videoPath) : '';
+    const videoSrc = mediaFileUrl(videoPath);
     // 多视频模式：每个 segment 可以有自己的 videoPath 和 videoDuration
     const isMultiVideo = segments.some(s => s.videoPath);
 
@@ -405,7 +412,7 @@ function segmentsToFcpxml(videoPath, segments, videoDuration, fps, resolution, s
     for (let i = 0; i < segments.length; i++) {
         const seg = segments[i];
         const clipName = seg._fcpxmlName;
-        const assetSrc = seg.videoPath ? ('file://' + seg.videoPath) : videoSrc;
+        const assetSrc = seg.videoPath ? mediaFileUrl(seg.videoPath) : videoSrc;
         const assetDurStr = (seg.videoPath && seg.videoDuration) ? secToFrac(seg.videoDuration) : totalDurStr;
         xml += `\t\t<asset name="${xmlEscape(clipName)}" src="${xmlEscape(assetSrc)}" start="0/${Math.round(fps)}s" duration="${assetDurStr}" hasVideo="1" hasAudio="1" format="r0" id="r${i + 1}"/>\n`;
     }
@@ -416,12 +423,12 @@ function segmentsToFcpxml(videoPath, segments, videoDuration, fps, resolution, s
             // 时间切片模式：每个切片一个 PNG asset
             for (let si = 0; si < seg.overlayPngSlices.length; si++) {
                 const slice = seg.overlayPngSlices[si];
-                const pngSrc = 'file://' + slice.path;
+                const pngSrc = mediaFileUrl(slice.path);
                 const assetId = 200 + i * 10 + si;
                 xml += `\t\t<asset name="overlay_${i + 1}_${slice.label || si}" src="${xmlEscape(pngSrc)}" start="0/${Math.round(fps)}s" duration="0/${Math.round(fps)}s" hasVideo="1" hasAudio="0" format="r0" id="r${assetId}"/>\n`;
             }
         } else if (seg.overlayPngPath) {
-            const pngSrc = 'file://' + seg.overlayPngPath;
+            const pngSrc = mediaFileUrl(seg.overlayPngPath);
             xml += `\t\t<asset name="overlay_${i + 1}" src="${xmlEscape(pngSrc)}" start="0/${Math.round(fps)}s" duration="0/${Math.round(fps)}s" hasVideo="1" hasAudio="0" format="r0" id="r${200 + i * 10}"/>\n`;
         }
     }
@@ -429,7 +436,7 @@ function segmentsToFcpxml(videoPath, segments, videoDuration, fps, resolution, s
     for (let i = 0; i < segments.length; i++) {
         const seg = segments[i];
         if (seg.bgPath) {
-            const bgSrc = 'file://' + seg.bgPath;
+            const bgSrc = mediaFileUrl(seg.bgPath);
             const bgDurStr = seg.bgDuration > 0 ? secToFrac(seg.bgDuration) : secToFrac(10);
             xml += `\t\t<asset name="bg_${i + 1}" src="${xmlEscape(bgSrc)}" start="0/${Math.round(fps)}s" duration="${bgDurStr}" hasVideo="1" hasAudio="1" format="r0" id="r${2000 + i}"/>\n`;
         }

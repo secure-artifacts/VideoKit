@@ -1885,7 +1885,7 @@ function normalizeFilePath(pathValue) {
         return `file:///${drive}/${rest}`;
     }
     if (pathValue.startsWith('/')) {
-        return `file://${pathValue.split('/').map(p => p === '' ? '' : encodeURIComponent(p)).join('/')}`;
+        return 'file://' + pathValue.split('/').map(p => p === '' ? '' : encodeURIComponent(p)).join('/');
     }
     return pathValue;
 }
@@ -4069,7 +4069,7 @@ function showConvertedFilesDownload(files, filesInfo) {
         const durationStr = duration ? ` (${formatDuration(duration)})` : '';
 
         const link = document.createElement('a');
-        link.href = `file://${filePath}`;
+        link.href = normalizeFilePath(filePath);
         link.textContent = `📥 ${displayName}${durationStr}`;
         link.style.cssText = 'color: var(--accent); text-decoration: none; font-size: 13px;';
         link.download = displayName;
@@ -4955,7 +4955,7 @@ function mtbRenderResults(files, detail = null) {
             <strong>已生成 ${files.length} 个文件</strong>
             ${files.map(p => {
                 const name = String(p).split(/[\\/]/).pop();
-                return `<a href="file://${mtbEsc(p)}" title="${mtbEsc(p)}">打开 ${mtbEsc(name)}</a>`;
+                return `<a href="${mtbEsc(normalizeFilePath(p))}" title="${mtbEsc(p)}">打开 ${mtbEsc(name)}</a>`;
             }).join('')}
             ${segmentHtml}
         </div>
@@ -6037,7 +6037,7 @@ async function generateTTS() {
 
             // 加载生成的音频
             currentAudioPath_elevenlabs = result.file_path;
-            audioPlayer.src = `file://${result.file_path}`;
+            audioPlayer.src = normalizeFilePath(result.file_path);
             document.getElementById('btn-play').disabled = false;
             document.getElementById('seek-slider').disabled = false;
 
@@ -6556,7 +6556,7 @@ async function generateTTSBatch() {
         for (const r of successResults) {
             const filename = r.file_path.split('/').pop();
             const link = document.createElement('a');
-            link.href = `file://${r.file_path}`;
+            link.href = normalizeFilePath(r.file_path);
             link.download = filename;
             link.click();
             await new Promise(resolve => setTimeout(resolve, 500));
@@ -6641,7 +6641,7 @@ async function retrySingleBatch(row) {
             if (r.file_path) {
                 const filename = r.file_path.split('/').pop();
                 const link = document.createElement('a');
-                link.href = `file://${r.file_path}`;
+                link.href = normalizeFilePath(r.file_path);
                 link.download = filename;
                 link.click();
             }
@@ -6716,7 +6716,7 @@ async function generateSFX() {
 
             // 加载生成的音频
             currentAudioPath_elevenlabs = result.file_path;
-            audioPlayer.src = `file://${result.file_path}`;
+            audioPlayer.src = normalizeFilePath(result.file_path);
             document.getElementById('btn-play').disabled = false;
             document.getElementById('seek-slider').disabled = false;
 
@@ -8907,7 +8907,7 @@ function renderSceneFramesPreview(allResults) {
             // 使用 file:// 协议展示本地图片
             const imgSrc = (window.electronAPI && typeof window.electronAPI.toFileUrl === 'function')
                 ? window.electronAPI.toFileUrl(frame.output)
-                : `file://${frame.output}`;
+                : normalizeFilePath(frame.output);
             const sceneLabel = frame.scene ? `S${frame.scene}` : '';
             const frameLabel = frame.frame ? `f${frame.frame}` : `#${frame.index}`;
             const previewIndex = mediaFramePreviewItems.scene.length;
@@ -9214,7 +9214,7 @@ function _skfMediaUrl(filePath) {
         const fileUrl = window.electronAPI.toFileUrl(filePath);
         if (fileUrl) return fileUrl;
     }
-    return `file://${filePath}`;
+    return normalizeFilePath(filePath);
 }
 
 function _skfResolveDuration(data = {}, scenes = []) {
@@ -9358,7 +9358,7 @@ async function _startGridOnlyMode() {
     const video = document.getElementById('skf-video');
     section.classList.remove('hidden');
 
-    const videoSrc = window.electronAPI ? window.electronAPI.toFileUrl(file.path) : `file://${file.path}`;
+    const videoSrc = normalizeFilePath(file.path);
     if (video.getAttribute('data-path') !== file.path) {
         video.setAttribute('data-path', file.path);
         video.src = videoSrc;
@@ -10017,7 +10017,7 @@ function renderSmartKfPreview(allResults) {
         okFrames.forEach(frame => {
             const imgSrc = (window.electronAPI && typeof window.electronAPI.toFileUrl === 'function')
                 ? window.electronAPI.toFileUrl(frame.output)
-                : `file://${frame.output}`;
+                : normalizeFilePath(frame.output);
             const borderColor = SKF_TYPE_COLORS[frame.type] || '#667eea';
             const typeLabel = SKF_TYPE_LABELS[frame.type] || frame.type;
             html += `<div style="position:relative;background:var(--bg-tertiary);border-radius:8px;overflow:hidden;border:2px solid ${borderColor}33;cursor:pointer;"
@@ -10081,7 +10081,7 @@ async function openTrimModal(filePath, fileName) {
 
     // 加载视频
     const video = document.getElementById('trim-video-player');
-    const videoUrl = `file://${filePath}`;
+    const videoUrl = normalizeFilePath(filePath);
     video.src = videoUrl;
     video.currentTime = 0;
 
@@ -11656,7 +11656,7 @@ function parseAutoEditBatchPaste() {
 }
 function applyAutoEditBatchScripts(cells, options = {}) {
     autoEditBatchScriptCells = Array.isArray(cells) ? cells.slice() : [];
-    autoEditBatchTasks.forEach((task, i) => { task.script = cells[i] || ''; });
+    autoEditBatchTasks.forEach((task, i) => setAutoEditBatchTaskScript(task, cells[i] || ''));
     renderAutoEditBatchTasks();
     if (!options.silent) showToast(`已自动识别 ${cells.length} 个文案单元格`, !autoEditBatchTasks.length || cells.length === autoEditBatchTasks.length ? 'success' : 'info');
 }
@@ -11687,8 +11687,22 @@ function clearAutoEditBatchTasks() {
 }
 function updateAutoEditBatchScript(index, value) {
     if (!autoEditBatchTasks[index]) return;
-    autoEditBatchTasks[index].script = value;
+    setAutoEditBatchTaskScript(autoEditBatchTasks[index], value);
     autoEditBatchScriptCells[index] = value;
+}
+
+function setAutoEditBatchTaskScript(task, value) {
+    const nextScript = String(value || '');
+    if (task.script === nextScript) return;
+    task.script = nextScript;
+    // 分析结果与当时的文案一一绑定。文案改动后禁止继续使用旧时间线。
+    if (task.result || task.reviewSegments) {
+        task.result = null;
+        task.reviewSegments = null;
+        task.reelsTransferError = '';
+        task.status = task.clips?.length ? 'waiting' : 'error';
+        task.message = task.clips?.length ? '文案已修改，请重新分析' : '没有视频';
+    }
 }
 
 function renderAutoEditBatchTasks() {
@@ -11715,12 +11729,15 @@ function renderAutoEditBatchTasks() {
     root.innerHTML = autoEditBatchTasks.map((task, i) => {
         const lines = task.script.split(/\r?\n/).filter(x => x.trim()).length;
         const first = task.clips[0]?.split(/[/\\]/).pop() || '没有视频';
-        const pathArg = (task.clips[0] || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
         return `<div style="border:1px solid var(--border-color);border-radius:8px;padding:10px;background:var(--bg-tertiary);display:grid;grid-template-columns:128px 1fr;gap:10px;">
-          <div>${task.thumbnail ? `<img src="${task.thumbnail}" onclick="window.playVideoClip('${pathArg}',0,0)" style="width:128px;height:82px;object-fit:cover;border-radius:6px;cursor:pointer;">` : '<div style="width:128px;height:82px;background:#111;border-radius:6px;display:grid;place-items:center;color:#777;">无缩略图</div>'}<div title="${escapeHtml(first)}" style="font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(first)}</div></div>
-          <div><div style="display:flex;justify-content:space-between;"><strong>#${i+1} ${escapeHtml(task.name)}</strong><span style="color:${colors[task.status] || '#8b95c0'}">${escapeHtml(task.message)}</span></div><div class="hint">${task.clips.length} 个视频 · ${lines} 行文案</div><textarea class="input" rows="3" onchange="updateAutoEditBatchScript(${i},this.value)" ${autoEditBatchRunning?'disabled':''} style="width:100%;margin-top:6px;resize:vertical;">${escapeHtml(task.script)}</textarea>${task.result?.analysis_only ? `<button class="btn btn-secondary" onclick="openAutoEditBatchReview(${i})" ${autoEditBatchRunning?'disabled':''} style="margin-top:6px;">审核时间线</button><button class="btn btn-primary" onclick="exportAutoEditBatchTask(${i})" ${autoEditBatchRunning||task.status==='analyzing'?'disabled':''} style="margin:6px 0 0 6px;">正式导出</button>` : ''}</div>
+          <div>${task.thumbnail ? `<img src="${task.thumbnail}" onclick="playAutoEditBatchSource(${i})" style="width:128px;height:82px;object-fit:cover;border-radius:6px;cursor:pointer;">` : '<div style="width:128px;height:82px;background:#111;border-radius:6px;display:grid;place-items:center;color:#777;">无缩略图</div>'}<div title="${escapeHtml(first)}" style="font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(first)}</div></div>
+          <div><div style="display:flex;justify-content:space-between;"><strong>#${i+1} ${escapeHtml(task.name)}</strong><span title="${escapeHtml(task.reelsTransferError || task.message)}" style="color:${colors[task.status] || '#8b95c0'}">${escapeHtml(task.message)}</span></div><div class="hint">${task.clips.length} 个视频 · ${lines} 行文案</div><textarea class="input" rows="3" onchange="updateAutoEditBatchScript(${i},this.value)" ${autoEditBatchRunning?'disabled':''} style="width:100%;margin-top:6px;resize:vertical;">${escapeHtml(task.script)}</textarea>${task.result?.analysis_only ? `<button class="btn btn-secondary" onclick="openAutoEditBatchReview(${i})" ${autoEditBatchRunning?'disabled':''} style="margin-top:6px;">审核时间线</button><button class="btn btn-primary" onclick="exportAutoEditBatchTask(${i})" ${autoEditBatchRunning||task.status==='analyzing'?'disabled':''} style="margin:6px 0 0 6px;">正式导出</button>` : ''}${task.result?.output_path && !task.result?.analysis_only ? `<button class="btn btn-secondary" onclick="showAutoEditBatchOutput(${i})" style="margin-top:6px;">📁 查看成片</button>${task.reelsTransferError ? `<button class="btn btn-secondary" onclick="retryAutoEditBatchTaskToReels(${i})" ${autoEditBatchRunning?'disabled':''} style="margin:6px 0 0 6px;">重送 Reels</button>` : ''}` : ''}</div>
         </div>`;
     }).join('');
+}
+function playAutoEditBatchSource(index) {
+    const source = autoEditBatchTasks[index]?.clips?.[0];
+    if (source) window.playVideoClip(source, 0, 0);
 }
 
 async function analyzeAutoEditBatchTask(task, settings = task.settings || getAutoEditRequestSettings()) {
@@ -11770,17 +11787,39 @@ async function exportAutoEditBatchTask(index, options = {}) {
         task.message=progress.message||'正在正式导出'; renderAutoEditBatchTasks();
     });
     try {
-        const reviewSegments=task.reviewSegments||(task.result.segments||[]).map(seg=>({source:seg.source,enabled:true,script:seg.script,start:Number(seg.start),end:Number(seg.end),speed:1}));
-        const response=await apiFetch(`${API_BASE}/media/convert`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({files:task.clips,clips:task.clips,mode:'auto_edit',request_id:requestId,analysis_only:false,review_segments:reviewSegments,ignore_mismatch:true,force_mismatch:false,script_text:task.script,output_dir:window.electronAPI.pathJoin(task.folder,'_auto_edit'),...(task.settings||getAutoEditRequestSettings()),force_transcribe:false})});
-        const data=await response.json(); if(!response.ok) throw new Error(data.error||'导出失败');
-        task.result=data; task.status='ready'; task.message='导出完成';
-        if(document.getElementById('autoedit-send-reels')?.checked) await sendAutoEditResultToReels(data,{silent:true});
-    } catch(e) { task.status='error'; task.message=e.message; }
-    finally {
+        let exportStage = '准备审核时间线';
+        let exportedData = null;
+        try {
+            const reviewSegments=task.reviewSegments||(task.result.segments||[]).map(seg=>({source:seg.source,enabled:true,script:seg.script,start:Number(seg.start),end:Number(seg.end),speed:1}));
+            exportStage = '调用自动剪辑导出接口';
+            const response=await apiFetch(`${API_BASE}/media/convert`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({files:task.clips,clips:task.clips,mode:'auto_edit',request_id:requestId,analysis_only:false,review_segments:reviewSegments,ignore_mismatch:true,force_mismatch:false,script_text:task.script,output_dir:window.electronAPI.pathJoin(task.folder,'_auto_edit'),...(task.settings||getAutoEditRequestSettings()),force_transcribe:false})});
+            exportStage = '读取导出结果';
+            const data=await response.json(); if(!response.ok) throw new Error(data.error||'导出失败');
+            exportedData = data;
+            task.result=data; task.status='ready'; task.message='导出完成';
+            task.reelsTransferError = '';
+        } catch (e) {
+            console.error(`[AutoEdit Batch Export] task=${task.name} stage=${exportStage}`, e);
+            task.status='error'; task.message=`${exportStage}: ${e.message}`;
+        }
+        // “导出视频”和“送入 Reels”是两个独立步骤。Reels 页面接收失败时，
+        // 不能把已经成功生成在磁盘上的视频误报为“导出失败”。
+        if (exportedData && document.getElementById('autoedit-send-reels')?.checked) {
+            try {
+                await sendAutoEditResultToReels(exportedData, { silent: true });
+                task.message = '导出完成 · 已送入 Reels';
+            } catch (e) {
+                console.error(`[AutoEdit Batch Export] task=${task.name} stage=送入批量 Reels`, e);
+                task.status = 'warning';
+                task.reelsTransferError = e.message || String(e);
+                task.message = `导出已完成 · Reels 接收失败`;
+            }
+        }
+    } finally {
         if(typeof unsubscribe==='function')unsubscribe();
         if(ownsLock)setAutoEditBatchRunning(false);
+        renderAutoEditBatchTasks();
     }
-    renderAutoEditBatchTasks();
 }
 async function startAutoEditBatchExport() {
     if(autoEditBatchRunning)return showToast('批量任务正在运行，请稍候','info');
@@ -11794,8 +11833,40 @@ async function startAutoEditBatchExport() {
         const worker=async()=>{while(cursor<ready.length) await exportAutoEditBatchTask(ready[cursor++].index,{managed:true});};
         await Promise.all(Array.from({length:Math.min(n,ready.length)},worker));
         const failed=ready.filter(x=>x.task.status==='error').length;
-        showToast(failed?`批量导出完成，${failed} 个失败`:'批量导出完成',failed?'error':'success');
+        const reelsFailed=ready.filter(x=>x.task.reelsTransferError).length;
+        const summary = failed
+            ? `批量导出完成，${failed} 个导出失败${reelsFailed ? `，${reelsFailed} 个 Reels 接收失败` : ''}`
+            : (reelsFailed ? `视频全部导出完成，${reelsFailed} 个未送入 Reels` : '批量导出完成');
+        showToast(summary,failed?'error':(reelsFailed?'info':'success'));
     } finally { setAutoEditBatchRunning(false); }
+}
+function showAutoEditBatchOutput(index) {
+    const outputPath = autoEditBatchTasks[index]?.result?.output_path;
+    if (outputPath && window.electronAPI?.showItemInFolder) window.electronAPI.showItemInFolder(outputPath);
+}
+async function retryAutoEditBatchTaskToReels(index) {
+    const task = autoEditBatchTasks[index];
+    if (!task?.result?.output_path) return showToast('该任务还没有可用成片', 'error');
+    if (autoEditBatchRunning) return showToast('批量任务正在运行，请稍候', 'info');
+    setAutoEditBatchRunning(true);
+    task.message = '正在重新送入 Reels';
+    renderAutoEditBatchTasks();
+    try {
+        await sendAutoEditResultToReels(task.result, { silent: true });
+        task.status = 'ready';
+        task.reelsTransferError = '';
+        task.message = '导出完成 · 已送入 Reels';
+        showToast('已重新送入批量 Reels', 'success');
+    } catch (error) {
+        task.status = 'warning';
+        task.reelsTransferError = error.message || String(error);
+        task.message = '导出已完成 · Reels 接收失败';
+        showToast(`Reels 接收失败：${escapeHtml(task.reelsTransferError)}`, 'error');
+    }
+    finally {
+        setAutoEditBatchRunning(false);
+        renderAutoEditBatchTasks();
+    }
 }
 function openAutoEditBatchReview(index) {
     const task=autoEditBatchTasks[index]; if(!task?.result)return;
@@ -11925,7 +11996,7 @@ function renderAutoEditFiles() {
         } else if (statusVal === 'failed') {
             statusHtml = `<span style="color: #ff6b6b; font-weight: 600; padding: 2px 6px; background: rgba(255,107,107,0.1); border-radius: 3px; font-size: 11px;" title="${escapeHtml(file.error || '转录失败')}">❌ 失败</span>`;
         } else if (statusVal === 'empty') {
-            statusHtml = `<span style="color:#f59f00;font-weight:600;padding:2px 6px;background:rgba(245,159,0,.1);border-radius:3px;font-size:11px;" title="${escapeHtml(file.error || '接口重试后仍未返回文字；若素材有声音，请点击右侧重新识别')}">⚠️ 未识别到文字</span>`;
+            statusHtml = `<span style="color:#f59f00;font-weight:600;padding:2px 6px;background:rgba(245,159,0,.1);border-radius:3px;font-size:11px;" title="${escapeHtml(file.error || '识别服务未返回文字结果，请点击右侧重新识别')}">⚠️ 未获得识别结果</span>`;
         } else if (statusVal === 'unmatched') {
             statusHtml = `<span style="color: #f76707; font-weight: 600; padding: 2px 6px; background: rgba(247,103,7,0.1); border-radius: 3px; font-size: 11px;" title="${escapeHtml(file.error || '未匹配到任何断行文案')}">⚠️ 未匹配到文案</span>`;
         } else if (statusVal === 'excluded_duplicate') {
@@ -13164,8 +13235,12 @@ async function startAutoEditByScript(isRetry = false, options = {}) {
                 file.outputIndex = matchedSeg.index;
                 file.matchScore = matchedSeg.match_score;
                 const isTextEmpty = !matchedSeg.recognized_text || matchedSeg.recognized_text.trim() === '' || matchedSeg.recognized_text.startsWith('(转录失败:');
-                if (isTextEmpty) {
+                if (matchedSeg.transcription_source === 'failed') {
+                    file.status = 'failed';
+                    file.error = String(matchedSeg.recognized_text || '识别服务失败').replace(/^\(转录失败:\s*|\)$/g, '');
+                } else if (isTextEmpty) {
                     file.status = 'empty';
+                    file.error = '识别服务未返回有效文字结果，请重新识别';
                 } else {
                     file.status = matchedSeg.match_score > 0 ? 'transcribed' : 'unmatched';
                 }
@@ -13420,7 +13495,7 @@ function renderAutoEditResult(data) {
                 
                 const isUnmatched = !seg.script_start_line || seg.script_start_line === '?';
                 const matchedTextHtml = isUnmatched
-                    ? '<span style="color: #ff9f43; font-weight: 500;">⚠️ 未匹配到文案 (片段无声或未识别出声音)</span>'
+                    ? '<span style="color: #ff9f43; font-weight: 500;">⚠️ 未匹配到文案或未获得识别结果</span>'
                     : `文案 ${seg.script_start_line}-${seg.script_end_line}: ${escapeHtml(String(seg.script || '').replace(/\s*\n\s*/g, ' / '))}`;
                 
                 const rowStyle = isUnmatched
@@ -13428,22 +13503,22 @@ function renderAutoEditResult(data) {
                     : 'display: grid; grid-template-columns: 70px 90px 70px 80px 60px 1fr 100px; gap: 8px; align-items: center; padding: 5px 8px; border-bottom: 1px solid var(--border-color); font-size: 12px;';
                 
                 if (isReview) return `
-                    <div class="autoedit-review-row ${duplicateText ? 'ae-duplicate-row' : ''} ${reviewWarning && !duplicateText ? 'ae-warning-row' : ''} ${isCriticalMatch ? 'ae-critical-match-row' : ''}" data-review-index="${reviewIndex}" data-source="${escapeHtml(encodeURIComponent(seg.source || ''))}" data-original-text-key="${escapeHtml(reviewTextKey(seg.script))}" data-original-script="${escapeHtml(encodeURIComponent(seg.script || ''))}" data-warning="${reviewWarning}" data-critical-match="${isCriticalMatch}" data-duplicate="${duplicateText}" data-unmatched="${reviewUnmatched}" draggable="true" ondragstart="autoEditReviewDragStart(event,${reviewIndex})" ondragover="event.preventDefault()" ondrop="autoEditReviewDrop(event,${reviewIndex})" style="display:grid;grid-template-columns:42px 38px 1fr 112px 112px 90px;gap:8px;align-items:center;padding:10px 8px;border-bottom:1px solid ${duplicateText ? '#ff6b6b' : 'var(--border-color)'};cursor:grab;">
+                    <div class="autoedit-review-row ${duplicateText ? 'ae-duplicate-row' : ''} ${reviewWarning && !duplicateText ? 'ae-warning-row' : ''} ${isCriticalMatch ? 'ae-critical-match-row' : ''}" data-review-index="${reviewIndex}" data-source="${escapeHtml(encodeURIComponent(seg.source || ''))}" data-word-timeline="${escapeHtml(encodeURIComponent(JSON.stringify(seg.word_timeline || [])))}" data-original-text-key="${escapeHtml(reviewTextKey(seg.script))}" data-original-script="${escapeHtml(encodeURIComponent(seg.script || ''))}" data-warning="${reviewWarning}" data-critical-match="${isCriticalMatch}" data-duplicate="${duplicateText}" data-unmatched="${reviewUnmatched}" draggable="true" ondragstart="autoEditReviewDragStart(event,${reviewIndex})" ondragover="event.preventDefault()" ondrop="autoEditReviewDrop(event,${reviewIndex})" style="display:grid;grid-template-columns:42px 38px 1fr 112px 112px 90px;gap:8px;align-items:center;padding:10px 8px;border-bottom:1px solid ${duplicateText ? '#ff6b6b' : 'var(--border-color)'};cursor:grab;">
                         <input type="checkbox" class="ae-review-enabled" checked title="是否导出" onchange="handleAutoEditReviewEnabled(this)">
                         <div style="display:flex;flex-direction:column;gap:2px;"><button class="btn btn-secondary" onclick="moveAutoEditReviewRow(${reviewIndex},-1)" style="padding:1px 5px;">↑</button><button class="btn btn-secondary" onclick="moveAutoEditReviewRow(${reviewIndex},1)" style="padding:1px 5px;">↓</button></div>
                         <div><div style="font-size:11px;color:var(--text-muted);display:flex;gap:6px;align-items:center;flex-wrap:wrap;">#${seg.source_index} · ${escapeHtml((seg.source || '').split(/[/\\]/).pop())} ${matchRiskBadge || `<span>匹配 ${matchPercent}%</span>`}${duplicateText ? ` · <strong class="ae-live-duplicate-badge" style="color:#ff6b6b;">⚠ 重复组 ${duplicateGroup}</strong>` : ''}${seg.ambiguity ? ` · ⚠️ ${escapeHtml(seg.ambiguity)}` : ''} · 双击放大编辑</div><textarea class="input ae-review-script" rows="2" ondblclick="openAutoEditLargeScriptEditor(this)" oninput="handleAutoEditScriptChanged(this)" style="width:100%;resize:vertical;">${escapeHtml(seg.script || '')}</textarea><div class="ae-missing-words-status"></div></div>
                         <label style="font-size:11px;">入点<div><button class="btn btn-secondary" onclick="nudgeAutoEditTime(this,'.ae-review-start',-.1)" style="padding:1px 4px;">−</button><input type="number" class="input ae-review-start" value="${Number(seg.start || 0).toFixed(3)}" min="0" step="0.01" style="width:72px;"><button class="btn btn-secondary" onclick="nudgeAutoEditTime(this,'.ae-review-start',.1)" style="padding:1px 4px;">+</button></div></label>
                         <label style="font-size:11px;">出点<div><button class="btn btn-secondary" onclick="nudgeAutoEditTime(this,'.ae-review-end',-.1)" style="padding:1px 4px;">−</button><input type="number" class="input ae-review-end" value="${Number(seg.end || 0).toFixed(3)}" min="0" step="0.01" style="width:72px;"><button class="btn btn-secondary" onclick="nudgeAutoEditTime(this,'.ae-review-end',.1)" style="padding:1px 4px;">+</button></div></label>
-                        <div style="display:flex;flex-direction:column;gap:5px;"><button class="btn btn-primary" title="按照当前入点和出点播放裁切后的内容" onclick="window.playVideoClip('${seg.source.replace(/\\/g, '\\\\')}', Number(this.closest('.autoedit-review-row').querySelector('.ae-review-start').value), Number(this.closest('.autoedit-review-row').querySelector('.ae-review-end').value), this.closest('.autoedit-review-row').querySelector('.ae-review-script').value, '${encodeURIComponent(JSON.stringify(seg.word_timeline || []))}')" style="font-size:11px;padding:4px 8px;">▶ 剪后预览</button><button class="btn btn-secondary" title="播放未裁切的完整原始视频" onclick="window.playVideoClip('${seg.source.replace(/\\/g, '\\\\')}',0,0)" style="font-size:11px;padding:3px 8px;">原片预览</button><button class="btn btn-secondary" onclick="toggleAutoEditReviewDetails(this)" style="font-size:11px;padding:3px 8px;">${detailsOpen ? '收起详情' : '展开详情'}</button></div>
+                        <div style="display:flex;flex-direction:column;gap:5px;"><button class="btn btn-primary" title="按照当前入点和出点播放裁切后的内容" onclick="playAutoEditReviewSource(this,true)" style="font-size:11px;padding:4px 8px;">▶ 剪后预览</button><button class="btn btn-secondary" title="播放未裁切的完整原始视频" onclick="playAutoEditReviewSource(this,false)" style="font-size:11px;padding:3px 8px;">原片预览</button><button class="btn btn-secondary" onclick="toggleAutoEditReviewDetails(this)" style="font-size:11px;padding:3px 8px;">${detailsOpen ? '收起详情' : '展开详情'}</button></div>
                         <div class="ae-review-details" style="grid-column:3 / -1;display:${detailsOpen ? 'grid' : 'none'};grid-template-columns:1fr 1fr;gap:10px;padding:10px;border-radius:7px;background:rgba(0,0,0,.18);cursor:default;">
                             <div><div style="font-size:11px;color:#60a5fa;font-weight:700;margin-bottom:5px;">实际识别文字</div><div style="white-space:pre-wrap;word-break:break-word;line-height:1.55;min-height:54px;padding:8px;background:#111225;border-radius:5px;color:#d7defa;">${escapeHtml(seg.recognized_text || '(没有识别到有效语音)')}</div></div>
                             <div><div style="font-size:11px;color:#a5b4fc;font-weight:700;margin-bottom:5px;">目标文案</div><div style="white-space:pre-wrap;word-break:break-word;line-height:1.55;min-height:54px;padding:8px;background:#111225;border-radius:5px;color:#fff;">${escapeHtml(seg.script || '(尚未匹配文案)')}</div></div>
                             <div style="grid-column:1 / -1;display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-top:1px solid rgba(255,255,255,.06);padding-top:8px;">
                                 <span class="hint">更多操作:</span>
                                 <label style="font-size:11px;">速度 <input class="input ae-review-speed" type="number" value="1" min="0.25" max="4" step="0.05" style="width:65px;"></label>
-                                <button class="btn btn-secondary" onclick="retranscribeAutoEditReviewClip('${seg.source.replace(/\\/g, '\\\\')}',${reviewIndex})" style="font-size:11px;padding:3px 8px;">重新转录此片段</button>
-                                <button class="btn btn-secondary" onclick="window.replaceAutoEditClip('${seg.source.replace(/\\/g, '\\\\')}',${seg.source_index || reviewIndex})" style="font-size:11px;padding:3px 8px;color:#fca5a5;border-color:rgba(239,68,68,.35);">替换当前片段</button>
-                                <button class="btn btn-primary" onclick="recalculateAutoEditCutFromScript(this,'${encodeURIComponent(JSON.stringify(seg.word_timeline || []))}')" style="font-size:11px;padding:3px 9px;">按文案重算切点</button>
+                                <button class="btn btn-secondary" onclick="retranscribeAutoEditReviewRow(this,${reviewIndex})" style="font-size:11px;padding:3px 8px;">重新转录此片段</button>
+                                <button class="btn btn-secondary" onclick="replaceAutoEditReviewRow(this,${seg.source_index || reviewIndex})" style="font-size:11px;padding:3px 8px;color:#fca5a5;border-color:rgba(239,68,68,.35);">替换当前片段</button>
+                                <button class="btn btn-primary" onclick="recalculateAutoEditReviewRow(this)" style="font-size:11px;padding:3px 9px;">按文案重算切点</button>
                             </div>
                         </div>
                     </div>`;
@@ -13455,7 +13530,7 @@ function renderAutoEditResult(data) {
                         <span>匹配 ${Math.round((seg.match_score || 0) * 100)}%</span>
                         ${srcTag}
                         <span title="${escapeHtml(seg.matched_text || '')}" style="word-break: break-all; line-height: 1.4;">${matchedTextHtml}</span>
-                        <button class="btn btn-secondary" onclick="window.playVideoClip('${seg.source.replace(/\\/g, '\\\\')}', ${seg.start || 0}, ${seg.end || 0})" style="font-size: 11px; padding: 2px 8px; white-space: nowrap; margin-left: auto;">▶️ 播放片段</button>
+                        <button class="btn btn-secondary" onclick="playAutoEditResultSegment(${reviewIndex})" style="font-size: 11px; padding: 2px 8px; white-space: nowrap; margin-left: auto;">▶️ 播放片段</button>
                     </div>
                 `;
             }).join('')}
@@ -13476,6 +13551,40 @@ function renderAutoEditResult(data) {
         ${segmentHtml}
     `;
     if (isReview) refreshAutoEditDuplicateMarks();
+}
+
+function getAutoEditReviewRowSource(button) {
+    const encoded = button?.closest('.autoedit-review-row')?.dataset?.source || '';
+    try { return decodeURIComponent(encoded); } catch (_) { return ''; }
+}
+function playAutoEditReviewSource(button, cutPreview) {
+    const row = button?.closest('.autoedit-review-row');
+    const source = getAutoEditReviewRowSource(button);
+    if (!source || !row) return;
+    if (!cutPreview) return window.playVideoClip(source, 0, 0);
+    window.playVideoClip(
+        source,
+        Number(row.querySelector('.ae-review-start')?.value),
+        Number(row.querySelector('.ae-review-end')?.value),
+        row.querySelector('.ae-review-script')?.value || '',
+        row.dataset.wordTimeline || ''
+    );
+}
+function retranscribeAutoEditReviewRow(button, reviewIndex) {
+    const source = getAutoEditReviewRowSource(button);
+    if (source) retranscribeAutoEditReviewClip(source, reviewIndex);
+}
+function replaceAutoEditReviewRow(button, sourceIndex) {
+    const source = getAutoEditReviewRowSource(button);
+    if (source) window.replaceAutoEditClip(source, sourceIndex);
+}
+function recalculateAutoEditReviewRow(button) {
+    const timeline = button?.closest('.autoedit-review-row')?.dataset?.wordTimeline || '';
+    recalculateAutoEditCutFromScript(button, timeline);
+}
+function playAutoEditResultSegment(index) {
+    const segment = autoEditLastResult?.segments?.[index];
+    if (segment?.source) window.playVideoClip(segment.source, Number(segment.start) || 0, Number(segment.end) || 0);
 }
 
 function toggleAutoEditReviewFullscreen() {
@@ -14102,7 +14211,7 @@ window.playVideoClip = function(filePath, startVal = 0, endVal = 0, scriptText =
     
     const videoUrl = (window.electronAPI && typeof window.electronAPI.toFileUrl === 'function')
         ? window.electronAPI.toFileUrl(filePath)
-        : `file://${filePath}`;
+        : normalizeFilePath(filePath);
     const videoEl = document.createElement('video');
     videoEl.src = videoUrl;
     const hasCutRange = endNum > startNum;
@@ -14720,12 +14829,14 @@ function openAutoEditOutputDir() {
 async function sendAutoEditResultToReels(result = null, options = {}) {
     const data = result || autoEditLastResult;
     if (!data?.output_path || !data?.srt_path) {
-        showToast('还没有可送入批量 Reels 的自动剪辑结果', 'error');
-        return;
+        const error = new Error('还没有可送入批量 Reels 的自动剪辑结果');
+        if (!options.silent) showToast(error.message, 'error');
+        throw error;
     }
     if (typeof window.reelsCreateTaskFromAutoEditResult !== 'function') {
-        showToast('批量 Reels 接收函数未加载，请先打开批量 Reels 页面后再试', 'error');
-        return;
+        const error = new Error('批量 Reels 接收功能未加载');
+        if (!options.silent) showToast('批量 Reels 接收功能未加载，请先打开批量 Reels 页面后再试', 'error');
+        throw error;
     }
 
     try {
@@ -14735,7 +14846,7 @@ async function sendAutoEditResultToReels(result = null, options = {}) {
             showToast(`已送入批量 Reels: ${task?.fileName || '自动剪辑任务'}`, 'success');
         }
     } catch (error) {
-        showToast(`送入批量 Reels 失败: ${escapeHtml(error.message)}`, 'error');
+        if (!options.silent) showToast(`送入批量 Reels 失败: ${escapeHtml(error.message)}`, 'error');
         throw error;
     }
 }

@@ -1,7 +1,7 @@
 const { contextBridge, ipcRenderer, webUtils, webFrame } = require('electron');
 const fs = require('fs');
 const path = require('path');
-const { pathToFileURL } = require('url');
+const { pathToFileURL, fileURLToPath } = require('url');
 
 function resolveAssetUrl(fileName) {
     if (!fileName) return '';
@@ -25,57 +25,34 @@ function resolveAssetUrl(fileName) {
 
 function toFileUrl(filePath) {
     if (!filePath || typeof filePath !== 'string') return '';
-    if (/^local-media:\/\//i.test(filePath)) return filePath;
-
-    let cleanPath = filePath;
-    if (/^file:\/\//i.test(cleanPath)) {
-        try {
-            cleanPath = decodeURIComponent(cleanPath.replace(/^file:\/\//i, ''));
-        } catch {
-            cleanPath = cleanPath.replace(/^file:\/\//i, '');
+    try {
+        let nativePath = filePath;
+        if (/^local-media:\/\//i.test(nativePath)) {
+            nativePath = fileURLToPath(nativePath.replace(/^local-media:/i, 'file:'));
+        } else if (/^file:\/\//i.test(nativePath)) {
+            nativePath = fileURLToPath(nativePath);
         }
+        // Node 自带的 URL 转换会正确处理 Windows 盘符、UNC、中文、空格和 #/%。
+        return pathToFileURL(nativePath).href.replace(/^file:/i, 'local-media:');
+    } catch (_) {
+        return filePath;
     }
-    // Normalize backslashes to forward slashes for Windows compatibility
-    cleanPath = cleanPath.replace(/\\/g, '/');
+}
 
-    if (process.platform === 'win32') {
-        // If it starts with "/" and a drive letter like "/C:", keep the slash so it becomes local-media:///C:...
-        // If it starts with "C:", prepend "/" so it also becomes local-media:///C:...
-        if (!cleanPath.startsWith('/') && /^[a-zA-Z]:/.test(cleanPath)) {
-            cleanPath = '/' + cleanPath;
-        }
-    } else {
-        // On macOS/Linux, ensure it starts with "/"
-        if (!cleanPath.startsWith('/')) {
-            cleanPath = '/' + cleanPath;
-        }
-    }
-    return `local-media://${cleanPath}`;
+function localMediaUrlToPath(value) {
+    if (!value || typeof value !== 'string') return value;
+    try {
+        if (/^local-media:\/\//i.test(value)) return fileURLToPath(value.replace(/^local-media:/i, 'file:'));
+        if (/^file:\/\//i.test(value)) return fileURLToPath(value);
+    } catch (_) { }
+    return value;
 }
 
 function fileExists(filePath) {
     if (!filePath || typeof filePath !== 'string') return false;
     let p = filePath.trim();
     if (!p || /^blob:|^data:|^https?:/i.test(p)) return true;
-    if (/^local-media:\/\//i.test(p)) {
-        try {
-            p = decodeURIComponent(p.replace(/^local-media:\/\//i, ''));
-        } catch {
-            p = p.replace(/^local-media:\/\//i, '');
-        }
-        if (process.platform === 'win32' && p.startsWith('/') && p.includes(':')) {
-            p = p.substring(1);
-        }
-    } else if (/^file:\/\//i.test(p)) {
-        try {
-            p = decodeURIComponent(p.replace(/^file:\/\//i, ''));
-        } catch {
-            p = p.replace(/^file:\/\//i, '');
-        }
-        if (process.platform === 'win32' && p.startsWith('/') && p.includes(':')) {
-            p = p.substring(1);
-        }
-    }
+    p = localMediaUrlToPath(p);
     try {
         const resolved = path.resolve(p);
         return fs.existsSync(resolved);
@@ -163,13 +140,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     reelsComposeWysiwyg: (action, data) => ipcRenderer.invoke('reels-compose-wysiwyg', action, data),
     getMediaDuration: (filePath) => {
         if (!filePath || typeof filePath !== 'string') return 0;
-        let cleanPath = filePath;
-        if (cleanPath.startsWith('local-media://')) {
-            cleanPath = cleanPath.replace(/^local-media:\/\//i, '');
-        }
-        if (process.platform === 'win32' && cleanPath.startsWith('/') && cleanPath.includes(':')) {
-            cleanPath = cleanPath.substring(1);
-        }
+        const cleanPath = localMediaUrlToPath(filePath);
         return ipcRenderer.invoke('get-media-duration', cleanPath);
     },
     saveRenderedAudio: (wavData) => ipcRenderer.invoke('save-rendered-audio', wavData),

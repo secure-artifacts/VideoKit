@@ -335,7 +335,8 @@ function registerAPIHandlers() {
             const safeMsg = (rawMsg.includes('AUTOEDIT_TEXT_MISMATCH') || rawMsg.includes('TEXT_MISMATCH'))
                 ? rawMsg
                 : rawMsg.replace(/[a-zA-Z0-9_-]{20,}/g, (m) => /^(AUTO_SOURCE_MATCH_NOT_FOUND|AUTO_SOURCE_MATCH_REQUIRED)$/.test(m) ? m : '***');
-            console.error(`[API Error] ${endpoint}: request failed`);
+            console.error(`[API Error] ${endpoint}: ${rawMsg}`);
+            if (error.stack) console.error(error.stack);
             return { success: false, error: safeMsg };
         }
     });

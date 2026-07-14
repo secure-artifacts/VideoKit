@@ -127,6 +127,27 @@ function outputDurationArgs(session) {
     return duration > 0 ? ['-t', duration.toFixed(6)] : [];
 }
 
+// Windows 上部分 FFmpeg/libx264 构建会在帧级多线程下触发
+// encoder/analyse.c 断言或 0xC0000005/0xC0000409 崩溃。只对 Windows
+// 使用稳定参数，其他平台保持原有并行速度。
+function stableJpegEncoderArgs(platform = process.platform) {
+    return [
+        '-c:v', 'mjpeg',
+        '-pix_fmt', 'yuvj420p',
+        ...(platform === 'win32' ? ['-threads', '1'] : []),
+        '-q:v', '2',
+    ];
+}
+
+function cpuH264EncoderArgs(qualityPreset, crf, platform = process.platform) {
+    return [
+        '-c:v', 'libx264',
+        ...(platform === 'win32' ? ['-threads', '1'] : []),
+        '-preset', qualityPreset,
+        '-crf', String(crf),
+    ];
+}
+
 // ═══════════════════════════════════════════════════════
 // 辅助: 递归搜索文件（限深度，跳过隐藏目录）
 // ═══════════════════════════════════════════════════════
@@ -622,7 +643,7 @@ async function prepareBg(opts) {
                     '-t', String(bgTrimDuration),
                     '-r', String(fps),
                     '-an',
-                    '-qscale:v', '2',
+                    ...stableJpegEncoderArgs(),
                     `${framesDir}/frame_%06d.jpg`,
                 );
             } else {
@@ -642,7 +663,7 @@ async function prepareBg(opts) {
                     '-t', String(duration),
                     '-r', String(fps),
                     '-an',
-                    '-qscale:v', '2',
+                    ...stableJpegEncoderArgs(),
                     `${framesDir}/frame_%06d.jpg`,
                 );
             }
@@ -782,7 +803,7 @@ async function prepareBg(opts) {
             '-y', '-i', backgroundPath,
             '-vf', scaleCropFilter,
             '-frames:v', '1',
-            '-qscale:v', '2',
+            ...stableJpegEncoderArgs(),
             `${framesDir}/frame_000001.jpg`,
         ];
         await runFFmpegSync(ffmpeg, args);
@@ -842,7 +863,7 @@ async function prepareBg(opts) {
                 '-t', String(bgTrimDuration),
                 '-r', String(fps),
                 '-an',
-                '-qscale:v', '2',
+                ...stableJpegEncoderArgs(),
                 `${framesDir}/frame_%06d.jpg`,
             );
 
@@ -885,7 +906,7 @@ async function extractSimpleLoopWithTrim(ffmpeg, backgroundPath, framesDir, scal
         '-vf', vf,
         '-r', String(fps),
         '-an',
-        '-qscale:v', '2',
+        ...stableJpegEncoderArgs(),
         `${framesDir}/frame_%06d.jpg`,
     );
     await runFFmpegSync(ffmpeg, args);
@@ -906,7 +927,7 @@ async function extractSimpleLoop(ffmpeg, backgroundPath, framesDir, scaleCropFil
         '-vf', vf,
         '-r', String(fps),
         '-an',
-        '-qscale:v', '2',
+        ...stableJpegEncoderArgs(),
         `${framesDir}/frame_%06d.jpg`,
     );
     await runFFmpegSync(ffmpeg, args);
@@ -1116,7 +1137,7 @@ async function startSession(opts) {
     const platform = process.platform;
     const qualityPreset = opts.qualityPreset || 'faster';
     const crf = opts.crf || 23;
-    const cpuFallbackArgs = ['-c:v', 'libx264', '-preset', qualityPreset, '-crf', String(crf)];
+    const cpuFallbackArgs = cpuH264EncoderArgs(qualityPreset, crf, platform);
     let gpuFailed = false;
 
     if (useGPU) {
@@ -2384,4 +2405,9 @@ async function renderChromiumAudioWav(opts) {
     }
 }
 
-module.exports = { handleWysiwygIPC, renderChromiumAudioWav, parallelExport };
+module.exports = {
+    handleWysiwygIPC,
+    renderChromiumAudioWav,
+    parallelExport,
+    _test: { stableJpegEncoderArgs, cpuH264EncoderArgs },
+};

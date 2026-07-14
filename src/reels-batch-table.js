@@ -84,6 +84,16 @@ function _rbtFileExists(filePath) {
     return true;
 }
 
+function _rbtMediaUrl(filePath) {
+    if (!filePath || typeof filePath !== 'string') return '';
+    if (/^(local-media:|file:|blob:|data:|https?:)/i.test(filePath)) return filePath;
+    if (window.electronAPI && typeof window.electronAPI.toFileUrl === 'function') {
+        const url = window.electronAPI.toFileUrl(filePath);
+        if (url) return url;
+    }
+    return filePath;
+}
+
 function _rbtMissingFileLabel(filePath) {
     return `<div style="display:flex;align-items:center;gap:6px;color:#ff9f43;">
                 <span style="width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;border-radius:4px;background:rgba(255,159,67,0.12);border:1px solid rgba(255,159,67,0.25);flex-shrink:0;">!</span>
@@ -1869,7 +1879,7 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates, textcards, s
             if (!_rbtFileExists(p)) {
                 return `<span title="${_escHtml(p)}" style="width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;border-radius:3px;border:1px solid rgba(255,159,67,0.35);color:#ff9f43;background:rgba(255,159,67,0.12);font-size:11px;">!</span>`;
             }
-            const url = window.electronAPI && window.electronAPI.toFileUrl ? window.electronAPI.toFileUrl(p) : `file://${p}`;
+            const url = _rbtMediaUrl(p);
             const isImg = /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(p);
             return isImg
                 ? `<img class="rbt-thumb-previewable" src="${_escHtml(url)}" style="width:24px;height:24px;object-fit:cover;border-radius:3px;border:1px solid #333;cursor:zoom-in;">`
@@ -1894,7 +1904,7 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates, textcards, s
             if (task.bgSrcUrl && !String(task.bgSrcUrl).startsWith('blob:')) {
                 urlObj = task.bgSrcUrl;
             } else if (bgPath.includes('/') || bgPath.includes('\\')) {
-                urlObj = (window.electronAPI && window.electronAPI.toFileUrl) ? window.electronAPI.toFileUrl(bgPath) : `file://${bgPath}`;
+                urlObj = _rbtMediaUrl(bgPath);
             }
             if (isImg) {
                 bgContent = `<div style="display:flex;align-items:center;gap:6px;">
@@ -1917,7 +1927,7 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates, textcards, s
     let hookContent = hookName || '<span class="rbt-placeholder">双击添加/设置</span>';
     if (task.hookFile) {
         const hIsImg = /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(task.hookFile);
-        const hUrlObj = window.electronAPI && window.electronAPI.toFileUrl ? window.electronAPI.toFileUrl(task.hookFile) : `file://${task.hookFile}`;
+        const hUrlObj = _rbtMediaUrl(task.hookFile);
         hookContent = `<div class="rbt-hook-set" style="display:flex;align-items:center;gap:4px;cursor:pointer;" title="双击重新配置\n${_escHtml(task.hookFile)}">
                             ${hIsImg ?
                 `<img class="rbt-thumb-previewable" src="${_escHtml(hUrlObj)}" style="width:28px;height:28px;object-fit:cover;border-radius:3px;flex-shrink:0;cursor:zoom-in;">` :
@@ -1938,7 +1948,7 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates, textcards, s
     let pipContent = pipName || '<span class="rbt-placeholder">拖拽/双击</span>';
     if (pipPath) {
         const isPipImg = /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(pipPath);
-        const pipUrlObj = window.electronAPI && window.electronAPI.toFileUrl ? window.electronAPI.toFileUrl(pipPath) : `file://${pipPath}`;
+        const pipUrlObj = _rbtMediaUrl(pipPath);
         if (isPipImg) {
             pipContent = `<div style="display:flex;align-items:center;gap:6px;">
                             <img class="rbt-thumb-previewable" src="${_escHtml(pipUrlObj)}" style="width:32px;height:32px;object-fit:cover;border-radius:4px;flex-shrink:0;cursor:zoom-in;">
@@ -1964,7 +1974,7 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates, textcards, s
     if (coverEnabled) {
         if (coverBgPath) {
             const cIsImg = /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(coverBgPath);
-            const cUrlObj = window.electronAPI && window.electronAPI.toFileUrl ? window.electronAPI.toFileUrl(coverBgPath) : `file://${coverBgPath}`;
+            const cUrlObj = _rbtMediaUrl(coverBgPath);
             coverContent = `<div class="rbt-cover-set" style="display:flex;align-items:center;gap:4px;cursor:pointer;" title="双击配置封面">
                                  ${cIsImg ?
                     `<img class="rbt-thumb-previewable" src="${_escHtml(cUrlObj)}" style="width:28px;height:28px;object-fit:cover;border-radius:3px;flex-shrink:0;">` :
@@ -2129,7 +2139,7 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates, textcards, s
             let cvContent = cvName || '<span class="rbt-placeholder">拖拽/双击</span>';
             if (cvPath) {
                 const isImg = /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(cvPath);
-                const cvUrl = window.electronAPI && window.electronAPI.toFileUrl ? window.electronAPI.toFileUrl(cvPath) : `file://${cvPath}`;
+                const cvUrl = _rbtMediaUrl(cvPath);
                 cvContent = `<div style="display:flex;align-items:center;gap:6px;">
                             ${isImg
                         ? `<img class="rbt-thumb-previewable" src="${_escHtml(cvUrl)}" style="width:32px;height:32px;object-fit:cover;border-radius:4px;flex-shrink:0;cursor:zoom-in;">`
@@ -2730,7 +2740,7 @@ function _bindBatchTableEvents() {
 
                 // 更新预览
                 const isImg = /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(filePath);
-                const url = window.electronAPI && window.electronAPI.toFileUrl ? window.electronAPI.toFileUrl(filePath) : `file://${filePath}`;
+                const url = _rbtMediaUrl(filePath);
                 const previewImg = container.querySelector('#rbt-cover-preview-img');
                 const hint = container.querySelector('#rbt-cover-preview-hint');
                 previewImg.style.display = 'block';
@@ -2881,7 +2891,7 @@ function _bindBatchTableEvents() {
                 const prevImg = container.querySelector('#rbt-cover-preview-img');
                 const hint = container.querySelector('#rbt-cover-preview-hint');
                 if (p.bgPath && prevImg && hint) {
-                    const url = window.electronAPI && window.electronAPI.toFileUrl ? window.electronAPI.toFileUrl(p.bgPath) : `file://${p.bgPath}`;
+                    const url = _rbtMediaUrl(p.bgPath);
                     prevImg.src = url;
                     prevImg.style.display = 'block';
                     hint.style.display = 'none';
@@ -5575,7 +5585,7 @@ function _bindBatchTableEvents() {
                     window._rbtGlobalAudio.pause();
                     window._rbtGlobalAudio.currentTime = 0;
                 } else {
-                    window._rbtGlobalAudio.src = 'file://' + src;
+                    window._rbtGlobalAudio.src = _rbtMediaUrl(src);
                     window._rbtGlobalAudio.play().catch(err => console.error('Audio play failed:', err));
                     playBtn.textContent = '⏸️';
                     window._rbtGlobalAudio.onended = () => { playBtn.textContent = '▶️'; };
@@ -7843,7 +7853,7 @@ function _showBgPoolDialog(taskIdx) {
         const activeCount = activeAll ? pool.length : activeSet.size;
         const thumbsHtml = pool.map((p, i) => {
             const name = p.replace(/\\/g, '/').split('/').pop();
-            const url = window.electronAPI && window.electronAPI.toFileUrl ? window.electronAPI.toFileUrl(p) : `file://${p}`;
+            const url = _rbtMediaUrl(p);
             const isImg = /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(p);
             const checked = activeAll || activeSet.has(p);
             return `<div class="bgpool-item" style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:#12122e;border:1px solid #2a2a4a;border-radius:6px;">
@@ -8172,7 +8182,7 @@ function _showBgmPoolDialog(taskIdx) {
     }
 
     const _togglePlayAudio = (btn, filePath) => {
-        const url = window.electronAPI && window.electronAPI.toFileUrl ? window.electronAPI.toFileUrl(filePath) : `file://${filePath}`;
+        const url = _rbtMediaUrl(filePath);
         if (window._activePreviewBgmAudio && window._activePreviewBgmAudio._path === filePath) {
             if (window._activePreviewBgmAudio.paused) {
                 window._activePreviewBgmAudio.play().catch(err => console.error(err));
@@ -11570,9 +11580,7 @@ function _updateHookPreview() {
     }
 
     previewContainer.style.display = 'block';
-    const fileUrl = (window.electronAPI && window.electronAPI.toFileUrl)
-        ? window.electronAPI.toFileUrl(filePath)
-        : 'file://' + filePath;
+    const fileUrl = _rbtMediaUrl(filePath);
     const ext = filePath.split('.').pop().toLowerCase();
 
     if (['mp4', 'webm', 'ogg', 'mov', 'mkv'].includes(ext)) {
@@ -11638,7 +11646,7 @@ function _openCoverModal(idx) {
             bgPathInput.value = targetTask.cover.bgPath;
             if (previewImg && hintText) {
                 const filePath = targetTask.cover.bgPath;
-                const url = window.electronAPI && window.electronAPI.toFileUrl ? window.electronAPI.toFileUrl(filePath) : `file://${filePath}`;
+                const url = _rbtMediaUrl(filePath);
                 previewImg.src = url;
                 previewImg.style.display = 'block';
                 hintText.style.display = 'none';
@@ -16666,7 +16674,7 @@ function _bindMediaSidebarEvents(container) {
         } else {
             poolEl.innerHTML = items.map((it) => {
                 const realIdx = allItems.indexOf(it);
-                const urlObj = window.electronAPI && window.electronAPI.toFileUrl ? window.electronAPI.toFileUrl(it.path) : `file://${it.path}`;
+                const urlObj = _rbtMediaUrl(it.path);
                 const thumbHtml = it.isImage
                     ? `<img class="rbt-thumb-previewable" src="${_escHtml(urlObj)}" style="width:20px;height:20px;object-fit:cover;border-radius:2px;">`
                     : it.isVideo

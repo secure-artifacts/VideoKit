@@ -54,10 +54,10 @@ function _blobToArrayBuffer(blob) {
 function _layeredLoadImage(src) {
     return new Promise((resolve, reject) => {
         let normSrc = src;
-        if (normSrc && typeof normSrc === 'string' && normSrc.startsWith('file://')) {
-            if (window.electronAPI && typeof window.electronAPI.toFileUrl === 'function') {
-                normSrc = window.electronAPI.toFileUrl(normSrc);
-            }
+        const isRemoteOrBrowserUrl = /^(local-media:|https?:|blob:|data:)/i.test(String(normSrc || ''));
+        if (normSrc && typeof normSrc === 'string' && !isRemoteOrBrowserUrl
+            && window.electronAPI && typeof window.electronAPI.toFileUrl === 'function') {
+            normSrc = window.electronAPI.toFileUrl(normSrc);
         }
         const img = new Image();
         img.onload = () => resolve(img);
@@ -505,7 +505,7 @@ async function reelsLayeredExport(params) {
                 if (frameIdxCv !== currentCvIdx) {
                     const cvFrameName = `frame_${String(frameIdxCv + 1).padStart(6, '0')}.png`;
                     try {
-                        currentCvImg = await _layeredLoadImage(`file://${cvFramesDir}/${cvFrameName}`);
+                        currentCvImg = await _layeredLoadImage(`${cvFramesDir}/${cvFrameName}`);
                         currentCvIdx = frameIdxCv;
                     } catch (e) { currentCvImg = null; }
                 }
@@ -517,11 +517,11 @@ async function reelsLayeredExport(params) {
                 if (bgFrameIdx !== currentBgIdx) {
                     const padRef = String(bgFrameIdx + 1).padStart(6, '0');
                     try {
-                        currentBgImg = await _layeredLoadImage(`file://${framesDir}/frame_${padRef}.jpg`);
+                        currentBgImg = await _layeredLoadImage(`${framesDir}/frame_${padRef}.jpg`);
                         currentBgIdx = bgFrameIdx;
                     } catch (e) {
                         try {
-                            currentBgImg = await _layeredLoadImage(`file://${framesDir}/frame_${padRef}.png`);
+                            currentBgImg = await _layeredLoadImage(`${framesDir}/frame_${padRef}.png`);
                             currentBgIdx = bgFrameIdx;
                         } catch (e2) {
                             if (!currentBgImg) {
@@ -552,7 +552,7 @@ async function reelsLayeredExport(params) {
                                 frameIdxOv = frameIdxOv % Math.max(1, ov._frameCount);
                             }
                             const ovFrameName = `frame_${String(frameIdxOv + 1).padStart(6, '0')}.png`;
-                            fPath = `file://${ov._framesDir}/${ovFrameName}`;
+                            fPath = `${ov._framesDir}/${ovFrameName}`;
                         }
 
                         if (fPath) {

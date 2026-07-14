@@ -31,7 +31,7 @@ test('auto edit retries an empty Gladia result immediately', async () => {
     }
 });
 
-test('auto edit never keeps an empty result after its retry', async () => {
+test('auto edit treats repeated empty API results as a service failure and never caches them', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'videokit-autoedit-'));
     const clip = path.join(dir, 'voice.mp4');
     fs.writeFileSync(clip, 'fake-media');
@@ -44,9 +44,11 @@ test('auto edit never keeps an empty result after its retry', async () => {
         return { wordTimeInfo: [], fullText: '' };
     };
     try {
-        const result = await autoEdit._test.transcribeClip(clip, 'auto', ['key'], dir, false);
+        await assert.rejects(
+            autoEdit._test.transcribeClip(clip, 'auto', ['key'], dir, false),
+            /识别服务连续两次返回空响应/
+        );
         assert.equal(calls, 2);
-        assert.equal(result.source, 'empty_after_retry');
         assert.equal(fs.readdirSync(dir).filter(name => /_autoedit\.(json|txt)$/.test(name)).length, 0);
     } finally {
         gladia.transcribeAudioFull = original;

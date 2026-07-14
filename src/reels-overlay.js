@@ -494,7 +494,15 @@ function _normalizeLocalMediaPath(p) {
     }
     // For shadow-renderer (loaded via file: protocol in BrowserWindow with webSecurity: false)
     if (window.location.protocol === 'file:') {
-        return `file://${clean}`;
+        try {
+            if (typeof require === 'function') {
+                const { pathToFileURL, fileURLToPath } = require('url');
+                const nativePath = /^file:\/\//i.test(p) ? fileURLToPath(p) : p;
+                return pathToFileURL(nativePath).href;
+            }
+        } catch (_) { }
+        const encodedPath = clean.split('/').map(part => /^[a-zA-Z]:$/.test(part) ? part : encodeURIComponent(part)).join('/');
+        return 'file://' + encodedPath;
     }
     return `local-media://${clean}`;
 }

@@ -367,7 +367,7 @@ class ReelsFontManager {
         try {
             const fontUrl = (window.electronAPI && window.electronAPI.toFileUrl)
                 ? window.electronAPI.toFileUrl(fontInfo.path)
-                : (fontInfo.path.startsWith('file://') ? fontInfo.path : `file://${fontInfo.path}`);
+                : fontInfo.path;
 
             const descriptors = {};
             if (fontInfo.weight) descriptors.weight = String(fontInfo.weight);

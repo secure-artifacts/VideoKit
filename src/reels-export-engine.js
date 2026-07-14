@@ -363,7 +363,9 @@ async function probeMediaDuration(filePath) {
         video.preload = 'metadata';
         video.onloadedmetadata = () => resolve(video.duration);
         video.onerror = () => resolve(0);
-        video.src = filePath.startsWith('/') ? `file://${filePath}` : filePath;
+        video.src = (window.electronAPI && typeof window.electronAPI.toFileUrl === 'function')
+            ? window.electronAPI.toFileUrl(filePath)
+            : filePath;
     });
 }
 

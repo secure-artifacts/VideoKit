@@ -265,9 +265,13 @@ function checkNativeModules() {
     });
 
     if (nativeFiles.length > 0) {
-        printWarn(`项目中检测到以下 ${nativeFiles.length} 个原生 C++ 模块 (.node)，打包时请务必确认针对 macOS(arm64/x64) 和 Windows 执行了 electron-rebuild：\n` + 
-            nativeFiles.slice(0, 5).map(f => `  - ${f}`).join('\n') + 
-            (nativeFiles.length > 5 ? `\n  - ...及其他 ${nativeFiles.length - 5} 个` : ''));
+        let pkg = {};
+        try { pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')); } catch (_) { }
+        if (pkg.build?.npmRebuild === true) {
+            printPass(`检测到 ${nativeFiles.length} 个原生模块，已强制开启 electron-builder 分平台重建`);
+        } else {
+            printError(`项目包含 ${nativeFiles.length} 个原生模块，但 package.json build.npmRebuild 未明确开启`);
+        }
     } else {
         printPass('项目中未发现外部二进制原生模块依赖 (.node)，打包环境较轻量安全');
     }

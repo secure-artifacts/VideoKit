@@ -716,8 +716,7 @@ async function transcribeClip(clipPath, language, gladiaKeys, cacheDir, force, m
         } catch (cacheErr) {
             console.warn(`[自动剪辑] 转录缓存损坏，将重新识别: ${txtPath}`, cacheErr.message);
         }
-        // 空结果可能来自接口偶发异常、上传失败或一次错误的静音判断。
-        // 不能永久复用，否则有声素材之后每次都会被误标为“识别为空/无声”。
+        // 空结果来自接口偶发异常、上传失败或响应解析问题，不能永久复用。
         if (cachedText && Array.isArray(cachedWords) && cachedWords.length > 0) {
             return {
                 wordTimeInfo: cachedWords,
@@ -744,7 +743,7 @@ async function transcribeClip(clipPath, language, gladiaKeys, cacheDir, force, m
         for (const emptyPath of [jsonPath, txtPath]) {
             try { if (fs.existsSync(emptyPath)) fs.unlinkSync(emptyPath); } catch (_) { }
         }
-        return { wordTimeInfo: [], fullText: '', source: 'empty_after_retry' };
+        throw new Error('语音识别服务连续两次返回空响应，请稍后重试。若频繁出现，请检查 Gladia 额度、限流状态或更换 API Key。');
     }
     return { ...result, source: 'gladia' };
 }
@@ -1167,8 +1166,8 @@ async function autoEditByScript(opts = {}) {
                     stage: 'transcribe',
                     clip_index: i,
                     clip_status: clipStatus,
-                    clip_error: clipWords.length > 0 ? null : '转录内容为空/无声',
-                    message: `片段 #${i + 1} 语音识别完成 (${clipWords.length > 0 ? '已转录' : '无声/为空'})`,
+                    clip_error: clipWords.length > 0 ? null : '未获得可用的逐词识别结果',
+                    message: `片段 #${i + 1} 语音识别完成 (${clipWords.length > 0 ? '已转录' : '未获得识别结果'})`,
                 });
 
                 try {
@@ -1262,9 +1261,7 @@ async function autoEditByScript(opts = {}) {
                 }
                 const isCache = transcription.source === 'cache';
                 const isTextEmpty = !transcription.fullText || transcription.fullText.trim() === '' || transcription.fullText.startsWith('(转录失败:');
-                const emptyMessage = transcription.source === 'empty_after_retry'
-                    ? '接口自动重试后仍未返回文字；确认素材有声音时请重新识别'
-                    : '未识别到有效文字；可能是静音或声音过小';
+                const emptyMessage = '识别服务未返回有效文字结果，请重新识别';
                 let clipStatus = 'transcribed';
                 if (isFailed) {
                     clipStatus = 'failed';
@@ -1284,7 +1281,7 @@ async function autoEditByScript(opts = {}) {
                     clip_index: i,
                     clip_status: clipStatus,
                     clip_error: isFailed ? errorMsg : (isTextEmpty ? emptyMessage : null),
-                    message: `已处理第 ${i + 1}/${clipCount} 个片段 (${isFailed ? '转录失败' : (isTextEmpty ? '转录为空/无声' : (isCache ? '使用缓存' : '新调用接口'))})`,
+                    message: `已处理第 ${i + 1}/${clipCount} 个片段 (${isFailed ? '转录失败' : (isTextEmpty ? '未获得识别结果' : (isCache ? '使用缓存' : '新调用接口'))})`,
                 });
                 const words = flattenWords(transcription.wordTimeInfo);
 
@@ -1636,18 +1633,30 @@ async function autoEditByScript(opts = {}) {
                 const isEmpty = !p.words || p.words.length === 0;
                 const isUnmatched = p.scriptStartLine === -1;
                 if (isEmpty || isUnmatched) {
+                    const transcriptionFailed = p.transcription?.source === 'failed';
+                    const failureText = String(p.transcription?.fullText || '').replace(/^\(转录失败:\s*|\)$/g, '');
                     emitProgress({
                         stage: 'transcribe',
                         clip_index: p.sourceIndex,
-                        clip_status: isEmpty ? 'empty' : 'unmatched',
-                        clip_error: isEmpty ? '转录内容为空/无声' : '未匹配到任何断行文案',
-                        message: `片段 #${p.sourceIndex + 1} ${isEmpty ? '转录为空/无声' : '未匹配到文案'}`,
+                        clip_status: transcriptionFailed ? 'failed' : (isEmpty ? 'empty' : 'unmatched'),
+                        clip_error: transcriptionFailed ? failureText : (isEmpty ? '识别服务未返回文字，请重试' : '未匹配到任何断行文案'),
+                        message: `片段 #${p.sourceIndex + 1} ${transcriptionFailed ? '识别失败' : (isEmpty ? '未获得识别文字' : '未匹配到文案')}`,
                     });
                 }
             }
 
-            const unmatchedNames = unmatchedPlans.map(p => path.basename(p.realClipPath || p.clipPath)).join(', ');
-            throw new Error(`检测到有 ${unmatchedPlans.length} 个视频片段未成功匹配或转录内容为空：\n👉 [ ${unmatchedNames} ]\n\n已为您自动暂停剪切合成流程并保留转录缓存。`);
+            const emptyPlans = unmatchedPlans.filter(p => !p.words || p.words.length === 0);
+            const textUnmatchedPlans = unmatchedPlans.filter(p => p.words && p.words.length > 0 && p.scriptStartLine === -1);
+            const hasReviewTimeline = Array.isArray(opts.reviewSegments || opts.review_segments) && (opts.reviewSegments || opts.review_segments).length > 0;
+            const allowReview = opts.analysisOnly === true || opts.analysis_only === true || hasReviewTimeline;
+            if (allowReview) {
+                console.warn(`[自动剪辑] ${emptyPlans.length} 个片段转录为空，${textUnmatchedPlans.length} 个片段未匹配文案；保留为审核警告，不阻断分析流程`);
+            } else {
+                const details = [];
+                if (emptyPlans.length) details.push(`未获得识别结果 ${emptyPlans.length} 个: [ ${emptyPlans.map(p => path.basename(p.realClipPath || p.clipPath)).join(', ')} ]`);
+                if (textUnmatchedPlans.length) details.push(`已有识别文字但未匹配文案 ${textUnmatchedPlans.length} 个: [ ${textUnmatchedPlans.map(p => path.basename(p.realClipPath || p.clipPath)).join(', ')} ]`);
+                throw new Error(`检测到 ${unmatchedPlans.length} 个片段需要处理：\n${details.join('\n')}\n\n请重新转录或先进入快速分析审核。`);
+            }
         }
 
         // === 文案匹配度检测 ===
@@ -1926,7 +1935,7 @@ async function autoEditByScript(opts = {}) {
                     reportContent += `- **视频路径**: \`${m.clipPath}\` [time:${m.start},${m.end}]\n`;
                     reportContent += `- **匹配度 (Similarity)**: \`${m.similarity}%\`\n`;
                     reportContent += `- **应读参考文案**:\n  \`\`\`text\n  ${m.scriptText.trim()}\n  \`\`\`\n`;
-                    reportContent += `- **视频实际识别**:\n  \`\`\`text\n  ${m.recognizedText.trim() || '(未识别到声音/静音)'}\n  \`\`\`\n`;
+                    reportContent += `- **视频实际识别**:\n  \`\`\`text\n  ${m.recognizedText.trim() || '(识别服务未返回文字结果)'}\n  \`\`\`\n`;
                     if (m.isMismatch) {
                         reportContent += `- **操作**: [action:replace-clip|path:${m.clipPath}|index:${m.sourceIndex}] [action:retranscribe-clip|path:${m.clipPath}|index:${m.sourceIndex}]\n`;
                     }

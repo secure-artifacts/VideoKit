@@ -2523,7 +2523,7 @@
             if (url) return url;
         }
         if (/^(file:|blob:|data:|https?:)/i.test(path)) return path;
-        return path.startsWith('/') ? `file://${path}` : path;
+        return path;
     }
 
     function isImagePath(path) {

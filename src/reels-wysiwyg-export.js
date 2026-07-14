@@ -28,10 +28,10 @@ function _canvasToRawRGBA(canvas) {
 function _loadImage(src) {
     return new Promise((resolve, reject) => {
         let normSrc = src;
-        if (normSrc && typeof normSrc === 'string' && normSrc.startsWith('file://')) {
-            if (window.electronAPI && typeof window.electronAPI.toFileUrl === 'function') {
-                normSrc = window.electronAPI.toFileUrl(normSrc);
-            }
+        const isRemoteOrBrowserUrl = /^(local-media:|https?:|blob:|data:)/i.test(String(normSrc || ''));
+        if (normSrc && typeof normSrc === 'string' && !isRemoteOrBrowserUrl
+            && window.electronAPI && typeof window.electronAPI.toFileUrl === 'function') {
+            normSrc = window.electronAPI.toFileUrl(normSrc);
         }
         const img = new Image();
         img.onload = () => resolve(img);
@@ -710,7 +710,7 @@ async function reelsWysiwygExport(params) {
     let cvIsImageSequence = false;
     if (contentVideoPath) {
         log(`阶段1.5: 预处理内容视频源 (${contentVideoPath})...`);
-        const cvPathRaw = contentVideoPath.startsWith('file://') ? decodeURIComponent(contentVideoPath.substring(7)) : contentVideoPath;
+        const cvPathRaw = _normalizeOverlayLocalPath(contentVideoPath);
 
         // 检测是否为图片序列文件夹
         let isDir = false;
@@ -806,8 +806,8 @@ async function reelsWysiwygExport(params) {
                 const batchPromises = [];
                 for (let fi = batchStart; fi < batchEnd; fi++) {
                     const padRef = String(fi + 1).padStart(6, '0');
-                    const p = _loadImage(`file://${framesDir}/frame_${padRef}.jpg`)
-                        .catch(() => _loadImage(`file://${framesDir}/frame_${padRef}.png`))
+                    const p = _loadImage(`${framesDir}/frame_${padRef}.jpg`)
+                        .catch(() => _loadImage(`${framesDir}/frame_${padRef}.png`))
                         .then(img => { _bgFrameCache[fi] = img; loadedCount++; })
                         .catch(() => { _bgFrameCache[fi] = null; });
                     batchPromises.push(p);
@@ -854,11 +854,11 @@ async function reelsWysiwygExport(params) {
                     if (cvIsImageSequence && window._cvSeqFileList && window._cvSeqFileList.length > 0) {
                         // 图片序列: 使用原始文件名
                         const seqFile = window._cvSeqFileList[frameIdxCv];
-                        framePath = `file://${cvFramesDir}/${seqFile}`;
+                        framePath = `${cvFramesDir}/${seqFile}`;
                     } else {
                         // FFmpeg 提取的帧: frame_000001.png 格式
                         const frameName = `frame_${String(frameIdxCv + 1).padStart(6, '0')}.png`;
-                        framePath = `file://${cvFramesDir}/${frameName}`;
+                        framePath = `${cvFramesDir}/${frameName}`;
                     }
                     try {
                         currentCvImg = await _loadImage(framePath);
@@ -880,11 +880,11 @@ async function reelsWysiwygExport(params) {
                     } else {
                         const padRef = String(bgFrameIdx + 1).padStart(6, '0');
                         try {
-                            currentBgImg = await _loadImage(`file://${framesDir}/frame_${padRef}.jpg`);
+                            currentBgImg = await _loadImage(`${framesDir}/frame_${padRef}.jpg`);
                             currentBgIdx = bgFrameIdx;
                         } catch (e) {
                             try {
-                                currentBgImg = await _loadImage(`file://${framesDir}/frame_${padRef}.png`);
+                                currentBgImg = await _loadImage(`${framesDir}/frame_${padRef}.png`);
                                 currentBgIdx = bgFrameIdx;
                             } catch (e2) {
                                 if (!currentBgImg) {
@@ -917,7 +917,7 @@ async function reelsWysiwygExport(params) {
                                 frameIdxOv = frameIdxOv % Math.max(1, ov._frameCount);
                             }
                             const frameName = `frame_${String(frameIdxOv + 1).padStart(6, '0')}.png`;
-                            fPath = `file://${ov._framesDir}/${frameName}`;
+                            fPath = `${ov._framesDir}/${frameName}`;
                         }
 
                         if (fPath) {

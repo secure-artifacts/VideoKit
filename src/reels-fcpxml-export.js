@@ -460,7 +460,11 @@ async function _fallbackFrontendExport(segments, outputDir, taskName, fps, tasks
             return window.electronAPI.toFileUrl(filePath);
         }
         if (filePath.startsWith('file://')) return filePath;
-        return 'file://' + filePath;
+        let normalized = String(filePath).replace(/\\/g, '/');
+        if (/^[a-zA-Z]:/.test(normalized)) normalized = '/' + normalized;
+        if (!normalized.startsWith('/')) normalized = '/' + normalized;
+        const encoded = normalized.split('/').map(part => /^[a-zA-Z]:$/.test(part) ? part : encodeURIComponent(part)).join('/');
+        return 'file://' + encoded;
     };
 
     // 默认列样式

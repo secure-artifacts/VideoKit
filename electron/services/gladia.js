@@ -434,6 +434,22 @@ async function pollResult(apiKey, resultUrl, maxAttempts = 60, interval = 3000) 
 function getJsonResult(transcribeResult, lastResult, fullTextList, startTime) {
     if (!transcribeResult) return false;
 
+    const synthesizeWords = (text, audioStart, audioEnd) => {
+        const cleanText = String(text || '').trim();
+        if (!cleanText) return [];
+        const tokens = /[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/.test(cleanText)
+            ? Array.from(cleanText).filter(char => char.trim())
+            : cleanText.split(/\s+/).filter(Boolean);
+        const safeEnd = audioEnd > audioStart ? audioEnd : audioStart + Math.max(0.4, tokens.length * 0.25);
+        const step = (safeEnd - audioStart) / Math.max(1, tokens.length);
+        return tokens.map((word, index) => ({
+            word,
+            start: audioStart + step * index,
+            end: audioStart + step * (index + 1),
+            score: 0,
+        }));
+    };
+
     // Try to find the list of utterances / segments in various possible fields
     let utterances = null;
 
@@ -450,10 +466,20 @@ function getJsonResult(transcribeResult, lastResult, fullTextList, startTime) {
     }
 
     if (Array.isArray(utterances)) {
-        // If it's an empty array, it means successful transcription but no speech (silence).
-        // This is a valid result, not an error!
         if (utterances.length === 0) {
-            console.log('转录结果为空（可能是无声段落/静音）');
+            const transcription = transcribeResult.result?.transcription || transcribeResult.transcription || {};
+            const fallbackText = transcription.full_transcript || transcription.fullTranscript || transcription.text || '';
+            if (String(fallbackText).trim()) {
+                const rawDuration = Number(transcribeResult.metadata?.audio_duration || transcribeResult.result?.metadata?.audio_duration || 0);
+                const audioStart = startTime;
+                const audioEnd = startTime + Math.max(0, rawDuration);
+                const words = synthesizeWords(fallbackText, audioStart, audioEnd);
+                fullTextList.push(...words.map(word => word.word));
+                lastResult.push({ text: String(fallbackText).trim(), audio_start: audioStart, audio_end: words.at(-1)?.end || audioEnd, words });
+                console.log('Gladia 未返回逐句时间轴，已使用完整转录文字生成词时间轴');
+                return true;
+            }
+            console.log('Gladia 返回空转录结构，按识别服务异常处理');
             return true;
         }
 
@@ -468,9 +494,10 @@ function getJsonResult(transcribeResult, lastResult, fullTextList, startTime) {
                 words: [],
             };
 
-            const words = item.words || [];
-            for (const wordInfo of words) {
+            const apiWords = item.words || [];
+            for (const wordInfo of apiWords) {
                 const word = (wordInfo.word || '').trim();
+                if (!word) continue;
                 fullTextList.push(word);
                 part.words.push({
                     word,
@@ -478,6 +505,11 @@ function getJsonResult(transcribeResult, lastResult, fullTextList, startTime) {
                     end: (wordInfo.end !== undefined ? wordInfo.end : wordInfo.time_end || 0) + startTime,
                     score: wordInfo.confidence !== undefined ? wordInfo.confidence : wordInfo.score || 0,
                 });
+            }
+            if (part.words.length === 0 && part.text.trim()) {
+                part.words = synthesizeWords(part.text, audioStart, audioEnd);
+                fullTextList.push(...part.words.map(word => word.word));
+                console.log('Gladia 仅返回句子文字，已生成均匀逐词时间轴');
             }
             lastResult.push(part);
         }
@@ -488,7 +520,7 @@ function getJsonResult(transcribeResult, lastResult, fullTextList, startTime) {
     const prediction = transcribeResult.prediction;
     if (Array.isArray(prediction)) {
         if (prediction.length === 0) {
-            console.log('转录结果 prediction 为空（可能是无声段落）');
+            console.log('Gladia prediction 为空，按识别服务异常处理');
             return true;
         }
 
@@ -503,9 +535,10 @@ function getJsonResult(transcribeResult, lastResult, fullTextList, startTime) {
                 words: [],
             };
 
-            const words = item.words || [];
-            for (const wordInfo of words) {
+            const apiWords = item.words || [];
+            for (const wordInfo of apiWords) {
                 const word = (wordInfo.word || '').trim();
+                if (!word) continue;
                 fullTextList.push(word);
                 part.words.push({
                     word,
@@ -513,6 +546,11 @@ function getJsonResult(transcribeResult, lastResult, fullTextList, startTime) {
                     end: (wordInfo.time_end || 0) + startTime,
                     score: wordInfo.confidence || 0,
                 });
+            }
+            if (part.words.length === 0 && part.text.trim()) {
+                part.words = synthesizeWords(part.text, audioStart, audioEnd);
+                fullTextList.push(...part.words.map(word => word.word));
+                console.log('Gladia v1 仅返回句子文字，已生成均匀逐词时间轴');
             }
             lastResult.push(part);
         }

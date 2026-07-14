@@ -390,7 +390,7 @@ function _bcFileUrl(filePath) {
         const url = window.electronAPI.toFileUrl(filePath);
         if (url) return url;
     }
-    return `file://${filePath}`;
+    return filePath;
 }
 
 function _bcMediaKind(filePath) {
