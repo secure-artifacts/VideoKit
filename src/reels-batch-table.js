@@ -2131,6 +2131,9 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates, textcards, s
                         <span class="rbt-bgm-vol-label" style="font-size:10px;color:#888;min-width:28px;text-align:right;">${task.bgmVolume != null ? task.bgmVolume + '%' : '全局(' + globalBgmVol + '%)'}</span>
                     </div>
                 </div>
+                <label style="display:flex;align-items:center;gap:5px;margin-top:3px;font-size:10px;color:#9ca3af;" title="从配乐的这个时间点开始播放，预览和正式导出都会生效">
+                    起点 <input type="number" class="rbt-bgm-start" data-idx="${idx}" min="0" step="0.1" value="${Math.max(0, parseFloat(task.bgmStart) || 0).toFixed(1)}" style="width:62px;height:22px;padding:1px 4px;font-size:11px;"> 秒
+                </label>
             </td>
             <td class="rbt-col-contentvideo rbt-grp-cv rbt-droppable" data-field="contentvideo">
                 ${(() => {
@@ -5151,6 +5154,16 @@ function _bindBatchTableEvents() {
         });
         // 音量滑块实时更新标签
         tbody.addEventListener('input', (e) => {
+            if (e.target.classList.contains('rbt-bgm-start')) {
+                const idx = parseInt(e.target.dataset.idx);
+                const task = window._reelsState && window._reelsState.tasks[idx];
+                if (task) {
+                    task.bgmStart = Math.max(0, parseFloat(e.target.value) || 0);
+                    if (idx === window._reelsState.selectedIdx && window.ReelsPreviewV2 && typeof window.ReelsPreviewV2.seek === 'function') {
+                        window.ReelsPreviewV2.seek(window._reelsState.timelineEditor?._playheadPos || 0);
+                    }
+                }
+            }
             if (e.target.classList.contains('rbt-bgm-vol')) {
                 const label = e.target.parentElement.querySelector('.rbt-bgm-vol-label');
                 if (label) label.textContent = e.target.value + '%';
@@ -5537,7 +5550,7 @@ function _bindBatchTableEvents() {
                         break;
                     case 'bg': task.bgPath = ''; task.videoPath = ''; task.bgSrcUrl = ''; task.bgMode = 'single'; task.bgClipPool = []; task.bgClipActivePool = []; task.bgClipOrder = 'random'; task.bgTransition = 'crossfade'; task.bgTransDur = 0.5; break;
                     case 'bgClipSettings': task.bgClipSettings = {}; break;
-                    case 'bgm': task.bgmPath = ''; task.bgmMode = 'single'; task.bgmClipPool = []; task.bgmClipActivePool = []; task.bgmClipOrder = 'random'; break;
+                    case 'bgm': task.bgmPath = ''; task.bgmStart = 0; task.bgmMode = 'single'; task.bgmClipPool = []; task.bgmClipActivePool = []; task.bgmClipOrder = 'random'; break;
                     case 'contentvideo': task.contentVideoPath = ''; task.contentVideoTrimStart = null; task.contentVideoTrimEnd = null; task.contentVideoScale = 100; task.contentVideoX = 'center'; task.contentVideoY = 'center'; task.contentVideoCrop = ''; task.contentVideoBlurBg = false; task.contentVideoDirectBg = false; break;
                     case 'tts_text': task.ttsText = ''; break;
                     case 'pip': task.pipPath = ''; break;
@@ -6600,6 +6613,10 @@ function _applyBatchTableChanges(stateOverride = null, options = {}) {
         const task = state.tasks[idx];
         if (!task) return;
         task.bgmVolume = parseInt(el.value) || 0;
+    });
+    container.querySelectorAll('.rbt-bgm-start').forEach(el => {
+        const task = state.tasks[parseInt(el.dataset.idx)];
+        if (task) task.bgmStart = Math.max(0, parseFloat(el.value) || 0);
     });
 
     // 背景视频音量
@@ -12519,12 +12536,6 @@ function _buildBatchAlignSourceTextCandidates(tasks, lbMaxChars) {
             addCandidate(rowIndex, 'overlay_title', '覆层标题', row.querySelector('.rbt-title-input')?.value || '', task);
             addCandidate(rowIndex, 'overlay_body', '覆层内容', row.querySelector('.rbt-body-input')?.value || '', task);
             addCandidate(rowIndex, 'scroll_body', '滚动字幕', row.querySelector('.rbt-scroll-body-input')?.value || '', task);
-            addCandidate(rowIndex, 'overlay_flipper_enabled', '启用翻转', row.querySelector('.rbt-flipper-enabled-input')?.value || '', task);
-            addCandidate(rowIndex, 'overlay_flipper_duration', '翻转间隔', row.querySelector('.rbt-flipper-duration-input')?.value || '', task);
-            addCandidate(rowIndex, 'overlay_flipper_lines', '翻转行数', row.querySelector('.rbt-flipper-lines-input')?.value || '', task);
-            addCandidate(rowIndex, 'overlay_flipper_effect', '翻转效果', row.querySelector('.rbt-flipper-effect-input')?.value || '', task);
-            addCandidate(rowIndex, 'overlay_flipper_loop', '翻转循环', row.querySelector('.rbt-flipper-loop-input')?.value || '', task);
-            addCandidate(rowIndex, 'overlay_flipper_transition_duration', '过渡时长', row.querySelector('.rbt-flipper-transition-duration-input')?.value || '', task);
         });
     }
 
@@ -12536,12 +12547,6 @@ function _buildBatchAlignSourceTextCandidates(tasks, lbMaxChars) {
         ['overlay_title', '覆层标题'],
         ['overlay_body', '覆层内容'],
         ['scroll_body', '滚动字幕'],
-        ['overlay_flipper_enabled', '启用翻转'],
-        ['overlay_flipper_duration', '翻转间隔'],
-        ['overlay_flipper_lines', '翻转行数'],
-        ['overlay_flipper_effect', '翻转效果'],
-        ['overlay_flipper_loop', '翻转循环'],
-        ['overlay_flipper_transition_duration', '过渡时长'],
     ];
 
     (tasks || []).forEach((task, rowIndex) => {
@@ -12557,12 +12562,6 @@ function _buildBatchAlignSourceTextCandidates(tasks, lbMaxChars) {
             if (field === 'overlay_title') rawText = _findBatchTextCardOverlay(task)?.title_text || '';
             if (field === 'overlay_body') rawText = _findBatchTextCardOverlay(task)?.body_text || '';
             if (field === 'scroll_body') rawText = _findBatchScrollOverlay(task)?.content || '';
-            if (field === 'overlay_flipper_enabled') rawText = _findBatchTextCardOverlay(task)?.flipper_enabled ? '启用' : '关闭';
-            if (field === 'overlay_flipper_duration') rawText = String(_findBatchTextCardOverlay(task)?.flipper_duration ?? '2.0');
-            if (field === 'overlay_flipper_lines') rawText = String(_findBatchTextCardOverlay(task)?.flipper_lines ?? '2');
-            if (field === 'overlay_flipper_effect') rawText = _findBatchTextCardOverlay(task)?.flipper_effect || 'none';
-            if (field === 'overlay_flipper_loop') rawText = _findBatchTextCardOverlay(task)?.flipper_loop ? '循环' : '不循环';
-            if (field === 'overlay_flipper_transition_duration') rawText = String(_findBatchTextCardOverlay(task)?.flipper_transition_duration ?? '0.3');
             addCandidate(rowIndex, field, label, rawText, task);
         });
     });

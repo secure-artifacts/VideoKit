@@ -490,7 +490,7 @@ async function requestTTS(apiKey, voiceId, text, modelId, stability, outputForma
     };
 
     async function doRequest(vid) {
-        return await request('POST', `/text-to-speech/${vid || voiceId}?output_format=${outputFormat}`, apiKey, payload, 60000);
+        return await request('POST', `/text-to-speech/${vid || voiceId}?output_format=${outputFormat}`, apiKey, payload, 300000);
     }
 
     let res = await doRequest();

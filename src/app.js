@@ -13435,6 +13435,13 @@ function renderAutoEditResult(data) {
         for (let line = start; line <= end; line++) scriptLineUsage.set(line, (scriptLineUsage.get(line) || 0) + 1);
     });
     const coveredScriptLines = originalScriptLines.filter((_, index) => scriptLineUsage.has(index + 1)).length;
+    const missingScriptBlocks = [];
+    for (let line = 1; line <= originalScriptLines.length; line++) {
+        if (scriptLineUsage.has(line)) continue;
+        const start = line;
+        while (line + 1 <= originalScriptLines.length && !scriptLineUsage.has(line + 1)) line++;
+        missingScriptBlocks.push({ start, end: line, text: originalScriptLines.slice(start - 1, line).join('\n') });
+    }
     const scriptCoverageHtml = isReview && originalScriptLines.length ? `
         <details open style="margin:10px 0;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-tertiary);padding:10px;">
             <summary style="cursor:pointer;font-weight:700;color:var(--text-secondary);">整体文案覆盖：${coveredScriptLines}/${originalScriptLines.length} 行（${Math.round(coveredScriptLines / originalScriptLines.length * 100)}%） <span id="ae-overall-duplicate-status" class="ae-overall-status"></span> <span id="ae-overall-missing-status" class="ae-overall-status"></span></summary>
@@ -13443,7 +13450,7 @@ function renderAutoEditResult(data) {
                     const usage = scriptLineUsage.get(index + 1) || 0;
                     const color = usage === 0 ? '#ff6b6b' : (usage > 1 ? '#ff9f43' : '#51cf66');
                     const label = usage === 0 ? '未对上' : (usage > 1 ? `重复占用 ×${usage}` : '已对上');
-                    return `<div style="display:grid;grid-template-columns:62px 90px 1fr;gap:7px;align-items:start;padding:5px 7px;border-radius:5px;background:${usage === 0 ? 'rgba(255,107,107,.08)' : (usage > 1 ? 'rgba(255,159,67,.08)' : 'rgba(81,207,102,.045)')};font-size:12px;"><span style="color:var(--text-muted);">第 ${index + 1} 行</span><strong style="color:${color};">${label}</strong><span style="white-space:pre-wrap;word-break:break-word;">${escapeHtml(line)}</span></div>`;
+                    return `<div class="ae-coverage-line" onclick="locateAutoEditScriptLine(${index + 1},this)" title="点击快速定位到审核时间线" style="display:grid;grid-template-columns:62px 90px 1fr 58px;gap:7px;align-items:start;padding:5px 7px;border-radius:5px;background:${usage === 0 ? 'rgba(255,107,107,.08)' : (usage > 1 ? 'rgba(255,159,67,.08)' : 'rgba(81,207,102,.045)')};font-size:12px;cursor:pointer;"><span style="color:var(--text-muted);">第 ${index + 1} 行</span><strong style="color:${color};">${label}</strong><span style="white-space:pre-wrap;word-break:break-word;">${escapeHtml(line)}</span><span style="color:#60a5fa;font-weight:700;white-space:nowrap;">🎯 定位</span></div>`;
                 }).join('')}
             </div>
         </details>` : '';
@@ -13461,6 +13468,19 @@ function renderAutoEditResult(data) {
             reviewDuplicateGroups.set(key, nextDuplicateGroup++);
         }
     });
+    const missingPlaceholderHtml = isReview ? missingScriptBlocks.map((block, index) => `
+        <div class="autoedit-missing-placeholder" data-warning="true" data-unmatched="true" data-script-start-line="${block.start}" data-script-end-line="${block.end}">
+            <div class="ae-missing-placeholder-icon">!</div>
+            <div>
+                <div class="ae-missing-placeholder-title">缺失占位 #${index + 1} · 文案第 ${block.start}${block.end > block.start ? `–${block.end}` : ''} 行：没有找到对应片段</div>
+                <div class="ae-missing-placeholder-text">${escapeHtml(block.text)}</div>
+                <div class="ae-missing-placeholder-help">这段内容可能实际已经读过，但因特殊符号、缩写或识别文字差异没有匹配成功。请重点核对上下片段的“目标文案”和“实际识别文字”，确认内容是否被错误分配。</div>
+                <div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:7px;">
+                    <button class="btn btn-secondary" onclick="locateAutoEditScriptLine(${Math.max(1, block.start - 1)})" style="padding:3px 9px;font-size:11px;">↑ 核对上一个片段</button>
+                    <button class="btn btn-secondary" onclick="locateAutoEditScriptLine(${Math.min(originalScriptLines.length, block.end + 1)})" style="padding:3px 9px;font-size:11px;">↓ 核对下一个片段</button>
+                </div>
+            </div>
+        </div>`).join('') : '';
     const segmentHtml = segments.length ? `
         <div style="margin-top: 12px;">
             <div style="font-weight: 600; margin-bottom: 8px; color: var(--text-secondary);">${isReview ? '② 审核时间线（可改顺序、字幕和入出点）' : '片段匹配明细'}</div>
@@ -13473,6 +13493,7 @@ function renderAutoEditResult(data) {
                 <button class="btn btn-secondary" onclick="toggleAllAutoEditDetails(true)" style="padding:3px 9px;font-size:11px;margin-left:auto;">展开异常</button>
                 <button class="btn btn-secondary" onclick="toggleAllAutoEditDetails(false)" style="padding:3px 9px;font-size:11px;">全部收起</button>
             </div>` : ''}
+            ${missingPlaceholderHtml}
             ${segments.map((seg, reviewIndex) => {
                 const duplicateText = (reviewTextCounts.get(reviewTextKey(seg.script)) || 0) > 1;
                 const duplicateGroup = reviewDuplicateGroups.get(reviewTextKey(seg.script));
@@ -13503,7 +13524,7 @@ function renderAutoEditResult(data) {
                     : 'display: grid; grid-template-columns: 70px 90px 70px 80px 60px 1fr 100px; gap: 8px; align-items: center; padding: 5px 8px; border-bottom: 1px solid var(--border-color); font-size: 12px;';
                 
                 if (isReview) return `
-                    <div class="autoedit-review-row ${duplicateText ? 'ae-duplicate-row' : ''} ${reviewWarning && !duplicateText ? 'ae-warning-row' : ''} ${isCriticalMatch ? 'ae-critical-match-row' : ''}" data-review-index="${reviewIndex}" data-source="${escapeHtml(encodeURIComponent(seg.source || ''))}" data-word-timeline="${escapeHtml(encodeURIComponent(JSON.stringify(seg.word_timeline || [])))}" data-original-text-key="${escapeHtml(reviewTextKey(seg.script))}" data-original-script="${escapeHtml(encodeURIComponent(seg.script || ''))}" data-warning="${reviewWarning}" data-critical-match="${isCriticalMatch}" data-duplicate="${duplicateText}" data-unmatched="${reviewUnmatched}" draggable="true" ondragstart="autoEditReviewDragStart(event,${reviewIndex})" ondragover="event.preventDefault()" ondrop="autoEditReviewDrop(event,${reviewIndex})" style="display:grid;grid-template-columns:42px 38px 1fr 112px 112px 90px;gap:8px;align-items:center;padding:10px 8px;border-bottom:1px solid ${duplicateText ? '#ff6b6b' : 'var(--border-color)'};cursor:grab;">
+                    <div class="autoedit-review-row ${duplicateText ? 'ae-duplicate-row' : ''} ${reviewWarning && !duplicateText ? 'ae-warning-row' : ''} ${isCriticalMatch ? 'ae-critical-match-row' : ''}" data-review-index="${reviewIndex}" data-script-start-line="${Number(seg.script_start_line) || 0}" data-script-end-line="${Number(seg.script_end_line || seg.script_start_line) || 0}" data-source="${escapeHtml(encodeURIComponent(seg.source || ''))}" data-word-timeline="${escapeHtml(encodeURIComponent(JSON.stringify(seg.word_timeline || [])))}" data-original-text-key="${escapeHtml(reviewTextKey(seg.script))}" data-original-script="${escapeHtml(encodeURIComponent(seg.script || ''))}" data-warning="${reviewWarning}" data-critical-match="${isCriticalMatch}" data-duplicate="${duplicateText}" data-unmatched="${reviewUnmatched}" draggable="true" ondragstart="autoEditReviewDragStart(event,${reviewIndex})" ondragover="event.preventDefault()" ondrop="autoEditReviewDrop(event,${reviewIndex})" style="display:grid;grid-template-columns:42px 38px 1fr 112px 112px 90px;gap:8px;align-items:center;padding:10px 8px;border-bottom:1px solid ${duplicateText ? '#ff6b6b' : 'var(--border-color)'};cursor:grab;">
                         <input type="checkbox" class="ae-review-enabled" checked title="是否导出" onchange="handleAutoEditReviewEnabled(this)">
                         <div style="display:flex;flex-direction:column;gap:2px;"><button class="btn btn-secondary" onclick="moveAutoEditReviewRow(${reviewIndex},-1)" style="padding:1px 5px;">↑</button><button class="btn btn-secondary" onclick="moveAutoEditReviewRow(${reviewIndex},1)" style="padding:1px 5px;">↓</button></div>
                         <div><div style="font-size:11px;color:var(--text-muted);display:flex;gap:6px;align-items:center;flex-wrap:wrap;">#${seg.source_index} · ${escapeHtml((seg.source || '').split(/[/\\]/).pop())} ${matchRiskBadge || `<span>匹配 ${matchPercent}%</span>`}${duplicateText ? ` · <strong class="ae-live-duplicate-badge" style="color:#ff6b6b;">⚠ 重复组 ${duplicateGroup}</strong>` : ''}${seg.ambiguity ? ` · ⚠️ ${escapeHtml(seg.ambiguity)}` : ''} · 双击放大编辑</div><textarea class="input ae-review-script" rows="2" ondblclick="openAutoEditLargeScriptEditor(this)" oninput="handleAutoEditScriptChanged(this)" style="width:100%;resize:vertical;">${escapeHtml(seg.script || '')}</textarea><div class="ae-missing-words-status"></div></div>
@@ -13594,6 +13615,50 @@ function toggleAutoEditReviewFullscreen() {
     const expanded = section.classList.toggle('autoedit-review-fullscreen');
     document.body.style.overflow = expanded ? 'hidden' : '';
     if (button) button.textContent = expanded ? '✕ 退出放大' : '⛶ 放大审核';
+}
+
+function locateAutoEditScriptLine(lineNumber, coverageLine) {
+    const rows = Array.from(document.querySelectorAll('.autoedit-review-row'));
+    const placeholders = Array.from(document.querySelectorAll('.autoedit-missing-placeholder'));
+    if (!rows.length && !placeholders.length) return;
+    const exactPlaceholders = placeholders.filter(row => {
+        const start = Number(row.dataset.scriptStartLine || 0);
+        const end = Number(row.dataset.scriptEndLine || start);
+        return start > 0 && start <= lineNumber && lineNumber <= end;
+    });
+    const exact = rows.filter(row => {
+        const start = Number(row.dataset.scriptStartLine || 0);
+        const end = Number(row.dataset.scriptEndLine || start);
+        return start > 0 && start <= lineNumber && lineNumber <= end;
+    });
+    let targets = exactPlaceholders.length ? exactPlaceholders : exact;
+    let usedNearest = false;
+    if (!targets.length) {
+        const candidates = rows.filter(row => Number(row.dataset.scriptStartLine || 0) > 0);
+        if (candidates.length) {
+            candidates.sort((a, b) => {
+                const distance = row => {
+                    const start = Number(row.dataset.scriptStartLine || 0);
+                    const end = Number(row.dataset.scriptEndLine || start);
+                    return lineNumber < start ? start - lineNumber : Math.max(0, lineNumber - end);
+                };
+                return distance(a) - distance(b);
+            });
+            targets = [candidates[0]];
+            usedNearest = true;
+        }
+    }
+    document.querySelectorAll('.ae-coverage-line').forEach(line => line.classList.remove('ae-coverage-line-active'));
+    coverageLine?.classList.add('ae-coverage-line-active');
+    [...rows, ...placeholders].forEach(row => row.classList.remove('ae-quick-locate-target'));
+    targets.forEach(row => row.classList.add('ae-quick-locate-target'));
+    targets[0]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (targets.length) {
+        showToast(usedNearest ? `第 ${lineNumber} 行未对上，已定位到最接近的片段` : `已定位第 ${lineNumber} 行对应的${targets.length > 1 ? ` ${targets.length} 个` : ''}片段`, usedNearest ? 'info' : 'success');
+        setTimeout(() => targets.forEach(row => row.classList.remove('ae-quick-locate-target')), 2200);
+    } else {
+        showToast(`第 ${lineNumber} 行没有可定位的片段`, 'info');
+    }
 }
 
 async function loadAutoEditProjectFile(file) {
@@ -13867,6 +13932,9 @@ function filterAutoEditReview(type) {
         const show = type === 'all' || row.dataset[type] === 'true';
         row.style.display = show ? 'grid' : 'none';
     });
+    document.querySelectorAll('.autoedit-missing-placeholder').forEach(row => {
+        row.style.display = (type === 'all' || type === 'warning' || type === 'unmatched') ? 'grid' : 'none';
+    });
 }
 
 function toggleAllAutoEditDetails(openProblems) {
@@ -13993,12 +14061,14 @@ async function exportReviewedAutoEdit() {
     const unmatchedCount = enabledRows.filter(row => row.dataset.unmatched === 'true').length;
     const warningCount = enabledRows.filter(row => row.dataset.warning === 'true' && row.dataset.duplicate !== 'true' && row.dataset.unmatched !== 'true').length;
     const unconfirmedMissingCount = enabledRows.filter(row => Number(row.dataset.missingCount || 0) > 0 && row.dataset.missingConfirmed !== 'true').length;
-    if (duplicateCount || unmatchedCount || warningCount || unconfirmedMissingCount) {
+    const missingPlaceholderCount = document.querySelectorAll('.autoedit-missing-placeholder').length;
+    if (duplicateCount || unmatchedCount || warningCount || unconfirmedMissingCount || missingPlaceholderCount) {
         const details = [
             duplicateCount ? `未处理重复片段: ${duplicateCount} 个` : '',
             unmatchedCount ? `未匹配/无识别文字: ${unmatchedCount} 个` : '',
             warningCount ? `低匹配警告: ${warningCount} 个` : '',
             unconfirmedMissingCount ? `手动删词尚未确认: ${unconfirmedMissingCount} 个片段` : '',
+            missingPlaceholderCount ? `没有找到对应片段的文案: ${missingPlaceholderCount} 处` : '',
             excludedCount ? `已排除片段: ${excludedCount} 个` : '',
         ].filter(Boolean).join('\n');
         const confirmed = confirm(`当前审核时间线仍有风险项：\n\n${details}\n\n这些问题可能导致重复内容、错误字幕或漏剪。确定仍然开始正式导出吗？`);

@@ -743,7 +743,7 @@ async function transcribeClip(clipPath, language, gladiaKeys, cacheDir, force, m
         for (const emptyPath of [jsonPath, txtPath]) {
             try { if (fs.existsSync(emptyPath)) fs.unlinkSync(emptyPath); } catch (_) { }
         }
-        throw new Error('语音识别服务连续两次返回空响应，请稍后重试。若频繁出现，请检查 Gladia 额度、限流状态或更换 API Key。');
+        throw new Error('GLADIA_EMPTY_RESULT：语音识别服务连续两次返回空响应。Gladia 请求已完成，但没有返回可用文字；这不是“额度不足”的确定证据，可能是音轨无声、语言识别失败、接口空响应或结果格式异常。请试听原片、检查语言设置后再单独重试。');
     }
     return { ...result, source: 'gladia' };
 }

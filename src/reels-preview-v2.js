@@ -872,7 +872,8 @@
             setMediaTime(state.bgVideo, isLoopEnabled() ? loopMediaTime(bgTime, bgDur, atTimelineEnd) : clamp(bgTime, 0, bgDur));
         }
         if (state.bgmAudio.src && bgmDur > 0) {
-            setMediaTime(state.bgmAudio, loopMediaTime(mainTime, bgmDur, atTimelineEnd));
+            const bgmStart = Math.max(0, numberOr(task && task.bgmStart, 0));
+            setMediaTime(state.bgmAudio, loopMediaTime(bgmStart + mainTime, bgmDur, atTimelineEnd));
         }
         if (state.contentVideo.src && contentDur > 0) {
             const trimStart = parseFloat((task || {}).contentVideoTrimStart) || 0;
@@ -916,7 +917,8 @@
             setMediaTime(state.bgVideo, target);
         }
         if (state.bgmAudio.src && bgmDur > 0) {
-            setMediaTime(state.bgmAudio, positiveModulo(mainTime, bgmDur));
+            const bgmStart = Math.max(0, numberOr(task && task.bgmStart, 0));
+            setMediaTime(state.bgmAudio, positiveModulo(bgmStart + mainTime, bgmDur));
         }
         if (!contentIsClock && state.contentVideo.src && contentDur > 0) {
             const trimStart = parseFloat((task || {}).contentVideoTrimStart) || 0;

@@ -62,16 +62,37 @@ function classifyGladiaError(message) {
             friendly: '403 Forbidden (无权限，可能账号受限)',
         };
     }
-    if (text.includes('LIMIT_EXCEEDED') ||
-        text.includes('429') ||
+    if (lower.includes('insufficient credit') || lower.includes('insufficient balance') ||
+        lower.includes('not enough credit') || lower.includes('credits exhausted') ||
+        lower.includes('usage quota') || lower.includes('monthly usage') ||
+        lower.includes('audio quota') || lower.includes('quota exceeded')) {
+        return {
+            type: 'quota',
+            friendly: `额度已用完或余额不足${text ? `：${text.slice(0, 260)}` : ''}`,
+        };
+    }
+    if (lower.includes('concurren') || lower.includes('simultaneous') ||
+        lower.includes('too many transcription') || lower.includes('max transcription') ||
+        lower.includes('already processing')) {
+        return {
+            type: 'concurrency',
+            friendly: `并发任务已达上限，请等待正在处理的任务完成后重试${text ? `：${text.slice(0, 260)}` : ''}`,
+        };
+    }
+    if (text.includes('LIMIT_EXCEEDED') || text.includes('429') ||
         lower.includes('rate limit') ||
         lower.includes('limit exceeded') ||
-        lower.includes('too many requests') ||
-        lower.includes('quota')) {
+        lower.includes('too many requests')) {
         return {
             type: 'rate_limit',
-            friendly: '请求频率超限/额度限制 (429 Rate limit)。免费试用账号通常会被每小时 transcription 请求数限制，即使月度音频额度未用完也会触发。',
+            friendly: `请求频率过高（429），请降低批量并发或稍后重试${text ? `：${text.slice(0, 260)}` : ''}`,
         };
+    }
+    if (/\b5\d\d\b/.test(text) || lower.includes('service unavailable') || lower.includes('bad gateway')) {
+        return { type: 'service', friendly: `Gladia 服务端暂时异常${text ? `：${text.slice(0, 260)}` : ''}` };
+    }
+    if (lower.includes('econn') || lower.includes('enotfound') || lower.includes('socket') || lower.includes('network')) {
+        return { type: 'network', friendly: `网络连接失败${text ? `：${text.slice(0, 260)}` : ''}` };
     }
     if (lower.includes('timeout') || text.includes('超时')) {
         return {
@@ -414,8 +435,8 @@ async function pollResult(apiKey, resultUrl, maxAttempts = 60, interval = 3000) 
         } else {
             const errText = res.body.toString();
             const lowerErr = errText.toLowerCase();
-            if (res.status === 429 || lowerErr.includes('limit exceeded') || lowerErr.includes('quota') || lowerErr.includes('rate limit')) {
-                throw new Error('LIMIT_EXCEEDED');
+            if (res.status === 429 || lowerErr.includes('limit exceeded') || lowerErr.includes('quota') || lowerErr.includes('rate limit') || lowerErr.includes('concurren')) {
+                throw new Error(`LIMIT_EXCEEDED: Gladia 轮询受限 (${res.status}) - ${parseGladiaErrorText(res.body).slice(0, 300)}`);
             }
             throw new Error(`Gladia 轮询错误: ${res.status} - ${errText.slice(0, 300)}`);
         }
@@ -636,8 +657,10 @@ async function transcribeAudioFull(mediaPath, apiKeys, language, jsonPath, txtPa
                     console.error(`Gladia 转录失败 (key ${keyAttempt + 1}, 重试 ${retry + 1}): ${e.message}`);
                     lastKeyError = e.message;
 
-                    if (e.message.startsWith('LIMIT_EXCEEDED')) {
-                        console.log('Gladia 达到限制，切换下一个 API key');
+                    const failureType = classifyGladiaError(e.message).type;
+
+                    if (['auth', 'quota', 'concurrency', 'rate_limit'].includes(failureType)) {
+                        console.log(`Gladia 当前 Key 不可继续 (${failureType})，切换下一个 API key`);
                         break; // 跳到下一个 key
                     }
 
@@ -661,14 +684,22 @@ async function transcribeAudioFull(mediaPath, apiKeys, language, jsonPath, txtPa
         if (!success) {
             const uniqueTypes = [...new Set(keyErrorTypes)];
             let summary = '转录失败';
-            if (uniqueTypes.length === 1 && uniqueTypes[0] === 'rate_limit') {
-                summary = 'Gladia 请求频率超限或额度限制，不是 Key 无效。请稍后重试、减少连续批量转录，或更换有额度的 Key。';
+            if (uniqueTypes.length === 1 && uniqueTypes[0] === 'quota') {
+                summary = 'Gladia 额度已用完或账户余额不足。请到 Gladia 后台查看本月 Usage/Billing。';
+            } else if (uniqueTypes.length === 1 && uniqueTypes[0] === 'concurrency') {
+                summary = 'Gladia 并发任务已达上限，但额度不一定用完。请等待其他任务完成，或降低批量并发数后重试。';
+            } else if (uniqueTypes.length === 1 && uniqueTypes[0] === 'rate_limit') {
+                summary = 'Gladia 请求频率过高（429），但不代表额度用完。请降低批量并发数或稍后重试。';
             } else if (uniqueTypes.length === 1 && uniqueTypes[0] === 'auth') {
                 summary = 'Gladia Key 鉴权失败，请检查 Key 是否正确、过期或账号权限受限。';
             } else if (uniqueTypes.length === 1 && uniqueTypes[0] === 'timeout') {
                 summary = 'Gladia 请求超时，可能是网络或接口响应过慢。请稍后重试。';
+            } else if (uniqueTypes.includes('quota')) {
+                summary = 'Gladia 转录失败，其中至少一个 Key 的额度或余额不足。';
+            } else if (uniqueTypes.includes('concurrency')) {
+                summary = 'Gladia 转录失败，其中至少一个账户达到并发上限。';
             } else if (uniqueTypes.includes('rate_limit')) {
-                summary = 'Gladia 转录失败，其中包含请求频率超限/额度限制。';
+                summary = 'Gladia 转录失败，其中包含请求频率限制（不等于额度不足）。';
             } else if (uniqueTypes.includes('auth')) {
                 summary = 'Gladia 转录失败，其中包含 Key 鉴权失败。';
             } else {
@@ -741,4 +772,5 @@ module.exports = {
     extractAudioFromVideo,
     splitAudioOnSilence,
     getJsonResult,
+    _test: { classifyGladiaError, parseGladiaErrorText },
 };

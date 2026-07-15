@@ -1093,7 +1093,7 @@ async function startSession(opts) {
         width = 1080, height = 1920, fps = 30,
         outputPath, voicePath, voiceVolume = 1.0,
         bgVolume = 0.1, backgroundPath, bgHasAudio = false,
-        bgmPath = '', bgmVolume = 0,
+        bgmPath = '', bgmVolume = 0, bgmStart = 0,
         contentVideoPath = '', contentVideoVolume = 1.0,
         bgScale = 100,
         bgX = 0,
@@ -1258,7 +1258,7 @@ async function startSession(opts) {
     const session = {
         id: sessionId, proc, tempVideo, outputPath,
         voicePath, voiceVolume, bgVolume, backgroundPath, bgHasAudio,
-        bgmPath, bgmVolume,
+        bgmPath, bgmVolume, bgmStart: Math.max(0, Number(bgmStart) || 0),
         contentVideoPath, contentVideoVolume,
         bgDurScale,
         audioDurScale,
@@ -1594,6 +1594,7 @@ async function mixAudio(session) {
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
     let { tempVideo, outputPath, voicePath, voiceVolume, bgVolume, backgroundPath, bgHasAudio, bgmPath, bgmVolume } = session;
+    const bgmStart = Math.max(0, Number(session.bgmStart) || 0);
 
     // ═══ Chromium Web Audio 离线渲染（隐藏窗口 — 与预览 100% 同引擎）═══
     let targetPathToRender = null;
@@ -1676,7 +1677,7 @@ async function mixAudio(session) {
             audioInputs.push({ path: backgroundPath, volume: bgVolumeVal, loop: true, durationScale: session.bgDurScale });
         }
         if (hasBgm) {
-            audioInputs.push({ path: bgmPath, volume: bgmVolume, loop: true });
+            audioInputs.push({ path: bgmPath, volume: bgmVolume, loop: true, startTime: bgmStart });
         }
         if (hasContentVideoAudio) {
             audioInputs.push({ path: cvPath, volume: cvVol, loop: true });
@@ -1690,6 +1691,7 @@ async function mixAudio(session) {
             args = ['-y', '-i', tempVideo];
             let nextIdx = 1;
             for (const ai of audioInputs) {
+                if (Number(ai.startTime) > 0) args.push('-ss', Number(ai.startTime).toFixed(3));
                 if (ai.loop) args.push('-stream_loop', '-1');
                 args.push('-i', ai.path);
                 nextIdx++;
@@ -1742,6 +1744,7 @@ async function mixAudio(session) {
         }
         const bgmInputIdx = hasBgm ? nextInputIdx : -1;
         if (bgmInputIdx >= 0) {
+            if (bgmStart > 0) args.push('-ss', bgmStart.toFixed(3));
             args.push('-stream_loop', '-1', '-i', bgmPath);
             nextInputIdx++;
         }
@@ -2238,6 +2241,7 @@ async function parallelExport(opts, mainWindow) {
         bgHasAudio: params.bgHasAudio !== false && !_isImageFile_node(params.backgroundPath),
         bgmPath: params.bgmPath || '',
         bgmVolume: params.bgmVolume ?? 0,
+        bgmStart: Math.max(0, Number(params.bgmStart) || 0),
         bgDurScale: params.bgDurScale || 100,
         audioDurScale: params.audioDurScale || 100,
         reverbEnabled: params.reverbEnabled || false,

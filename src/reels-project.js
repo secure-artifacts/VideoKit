@@ -20,7 +20,7 @@ const REELS_TASK_EXTRA_FIELDS = [
     'exportName', 'status', 'error',
     'bgScale', 'bgX', 'bgY', 'bgFlipH', 'bgFlipV', 'bgDurScale', 'audioDurScale',
     'bgMode', 'bgClipPool', 'bgTransition', 'bgTransDur', 'bgClipSettings', 'bgMinClipDur', 'bgMaxClipDur',
-    'bgmPath', 'bgmVolume', 'bgVideoVolume',
+    'bgmPath', 'bgmVolume', 'bgmStart', 'bgVideoVolume',
     'bgmMode', 'bgmClipPool', 'bgmClipActivePool', 'bgmClipOrder',
     'contentVideoPath', 'contentVideoTrimStart', 'contentVideoTrimEnd',
     'contentVideoScale', 'contentVideoX', 'contentVideoY', 'contentVideoVolume',

@@ -1031,6 +1031,7 @@ async function composeReel({
     bgVolume = DEFAULT_BG_VOLUME,
     bgmPath = '',
     bgmVolume = 0,
+    bgmStart = 0,
     forcePortrait = true,
     targetWidth = 1080,
     targetHeight = 1920,
@@ -1135,6 +1136,7 @@ async function composeReel({
     // BGM support
     const hasBgm = bgmPath && fs.existsSync(bgmPath) && parseFloat(bgmVolume) > 0.001;
     const bgmGain = hasBgm ? sanitizeVolumeGain(bgmVolume, 0) : 0;
+    const bgmSeek = Math.max(0, Number(bgmStart) || 0);
 
     let usingFadeLoop = false;
     if (fadeEnabled) {
@@ -1159,6 +1161,7 @@ async function composeReel({
             }
             const bgmInputIdx = hasBgm ? nextIdx : -1;
             if (hasBgm) {
+                if (bgmSeek > 0) args.push('-ss', bgmSeek.toFixed(3));
                 args.push('-stream_loop', '-1', '-i', bgmPath);
                 nextIdx++;
             }
@@ -1229,6 +1232,7 @@ async function composeReel({
         let bgmSimpleIdx = -1;
         if (hasBgm) {
             bgmSimpleIdx = 2;
+            if (bgmSeek > 0) args.push('-ss', bgmSeek.toFixed(3));
             args.push('-stream_loop', '-1', '-i', bgmPath);
         }
         const needAudioFilter = hasBgMixAudio || hasBgm || Math.abs(voiceGain - 1.0) > 0.001;

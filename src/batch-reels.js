@@ -4117,6 +4117,10 @@ function _getEffectiveBgmPath(task, taskIdx) {
 window._getEffectiveBgmClipPool = _getEffectiveBgmClipPool;
 window._getEffectiveBgmPath = _getEffectiveBgmPath;
 
+function _getTaskBgmStart(task) {
+    return Math.max(0, parseFloat(task && task.bgmStart) || 0);
+}
+
 
 function _getPreviewMultiClipPool(task) {
     if (!task || task.bgMode !== 'multi') return [];
@@ -7443,7 +7447,8 @@ function reelsTogglePlay() {
 
     // ── 同步播放 BGM (仅正片阶段) ──
     if (!inHookPhase && bgmAudio && bgmAudio.src && task && _getEffectiveBgmPath(task, _reelsState.selectedIdx)) {
-        bgmAudio.currentTime = _getPreviewCurrentTime() || 0;
+        const bgmTime = _getTaskBgmStart(task) + (_getPreviewCurrentTime() || 0);
+        bgmAudio.currentTime = bgmAudio.duration > 0 ? bgmTime % bgmAudio.duration : bgmTime;
         bgmAudio.play().catch(() => { });
     }
     _clearPreviewSeekLock();
@@ -7530,7 +7535,7 @@ function _syncHookPhaseTransition() {
         // 启动 BGM
         const bgmAudio = _reelsState._bgmAudioEl;
         if (bgmAudio && bgmAudio.src && task && _getEffectiveBgmPath(task, _reelsState.selectedIdx)) {
-            bgmAudio.currentTime = 0;
+            bgmAudio.currentTime = bgmAudio.duration > 0 ? _getTaskBgmStart(task) % bgmAudio.duration : _getTaskBgmStart(task);
             bgmAudio.play().catch(() => { });
         }
 
@@ -7880,7 +7885,7 @@ function _actualSeek(e) {
     // ── 同步 BGM seek ──
     const bgmAudio = _reelsState._bgmAudioEl;
     if (bgmAudio && bgmAudio.src && bgmAudio.duration > 0) {
-        const bgmTarget = contentTarget % bgmAudio.duration;
+        const bgmTarget = (_getTaskBgmStart(task) + contentTarget) % bgmAudio.duration;
         _queuePreviewMediaSeek(seekedMedia, bgmAudio, bgmTarget);
     }
     _refreshPreviewAfterSeek(target, duration, seekedMedia, seekToken, { deferFramePrime });
@@ -9422,6 +9427,7 @@ async function reelsStartExport() {
                     customDuration: task.customDuration || customDuration || 0,
                     bgmPath: _getEffectiveBgmPath(task, i) || '',
                     bgmVolume: _getEffectiveBgmVolumePercent(task, bgmVolume) / 100,
+                    bgmStart: Math.max(0, parseFloat(task.bgmStart) || 0),
                     bgScale: task.bgScale || 100,
                     bgX: task.bgX || 0,
                     bgY: task.bgY || 0,
@@ -9814,6 +9820,7 @@ async function reelsStartExport() {
                                 loopFade, loopFadeDur,
                                 bgmPath: _getEffectiveBgmPath(task, i) || '',
                                 bgmVolume: _getEffectiveBgmVolumePercent(task, bgmVolume) / 100,
+                                bgmStart: Math.max(0, parseFloat(task.bgmStart) || 0),
                                 bgDurScale: task.bgDurScale || 100,
                                 audioDurScale: effectiveAudioDurScale,
                                 reverbEnabled: _getReverbConfig().enabled,
@@ -9897,6 +9904,7 @@ async function reelsStartExport() {
                     customDuration: task.customDuration || customDuration || 0,
                     bgmPath: _getEffectiveBgmPath(task, i) || '',
                     bgmVolume: _getEffectiveBgmVolumePercent(task, bgmVolume) / 100,
+                    bgmStart: Math.max(0, parseFloat(task.bgmStart) || 0),
                     bgScale: task.bgScale || 100,
                     bgX: task.bgX || 0,
                     bgY: task.bgY || 0,
@@ -9961,6 +9969,7 @@ async function reelsStartExport() {
                     bg_volume: _getEffectiveBgVolumePercent(task, bgVolume) / 100,
                     bgm_path: _getEffectiveBgmPath(task, i) || '',
                     bgm_volume: _getEffectiveBgmVolumePercent(task, bgmVolume) / 100,
+                    bgm_start: Math.max(0, parseFloat(task.bgmStart) || 0),
                 });
             } else if (window.electronAPI && window.electronAPI.burnSubtitles) {
                 const aDurScale = task.audioDurScale || 100;
@@ -10802,6 +10811,24 @@ document.addEventListener('change', reelsMarkStyleDirty, true);
 
 // ─── 统一的文件选择器辅助函数 ───
 async function _pickSingleFile(title, extensions) {
+    // preload 对页面暴露的原生选择器是 selectFiles。优先使用它才能在
+    // Windows + contextIsolation 下拿到 C:\\... 形式的完整路径。浏览器
+    // <input type="file"> 的 File.path 在新版 Electron 中可能不再提供。
+    if (window.electronAPI && typeof window.electronAPI.selectFiles === 'function') {
+        try {
+            const filePaths = await window.electronAPI.selectFiles({
+                title: title,
+                multiple: false,
+                filters: [{ name: '媒体文件', extensions: extensions }]
+            });
+            if (Array.isArray(filePaths) && filePaths.length > 0) {
+                return filePaths[0];
+            }
+            return null;
+        } catch (e) {
+            console.error('electronAPI selectFiles error:', e);
+        }
+    }
     if (window.electronAPI && window.electronAPI.showOpenDialog) {
         try {
             const result = await window.electronAPI.showOpenDialog({

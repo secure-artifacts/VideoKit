@@ -229,6 +229,7 @@ function renderVWTasks() {
                 ${task.bgmPath ? `<button class="btn btn-secondary" style="padding:1px 6px;font-size:10px;" onclick="vwClearTaskBgm(${task.id})">清空</button>` : ''}
             </div>
             ${task.error ? `<div style="font-size: 10px; color: #ff6b6b; margin-top: 4px;">❌ ${escapeHtml(task.error)}</div>` : ''}
+            ${task.status === 'partial' ? `<button class="btn btn-primary" onclick="retryVWSubtitles(${task.id})" style="padding:3px 9px;font-size:11px;margin-top:6px;">🔄 只重新生成字幕</button><span style="font-size:10px;color:#51cf66;margin-left:7px;">配音MP3已保留，不会重新配音</span>` : ''}
             ${task.mp4Path ? `<div style="font-size: 10px; color: #51cf66; margin-top: 4px;">🎬 MP4: ${escapeHtml(task.mp4Path)}</div>` : ''}
             ${task.segments ? `<div style="font-size: 10px; color: #51cf66; margin-top: 4px;">✅ ${task.segments.length} 个片段</div>` : ''}
         </div>
@@ -243,6 +244,7 @@ function getStatusColor(status) {
         splitting: '#74c0fc',
         aligning: '#b197fc',
         done: '#51cf66',
+        partial: '#ff9f43',
         error: '#ff6b6b'
     };
     return colors[status] || colors.pending;
@@ -259,6 +261,7 @@ function getStatusText(status) {
         splitting: '智能拆分...',
         aligning: '对齐字幕...',
         done: '完成',
+        partial: '配音成功 · 字幕失败',
         error: '失败'
     };
     return texts[status] || '未知';
@@ -601,9 +604,11 @@ async function startVoiceoverWorkflow() {
                 task.srtPath = ttsData.srt_path || null;
                 task.subtitleTxtPath = ttsData.subtitle_txt_path || null;
                 task.outputFolder = ttsData.output_folder;
+                task.taskPrefix = ttsData.task_prefix;
                 task.mp4Path = ttsData.mp4_path || null;
                 task.segments = ttsData.segments;
-                task.status = 'done';
+                task.status = ttsData.partial_success ? 'partial' : 'done';
+                task.error = ttsData.subtitle_error ? `字幕生成失败：${ttsData.subtitle_error}` : null;
 
             } catch (err) {
                 task.status = 'error';
@@ -624,6 +629,46 @@ async function startVoiceoverWorkflow() {
         btn.textContent = '🚀 开始一键生成';
         document.getElementById('vw-progress').style.display = 'none';
     }
+}
+
+async function retryVWSubtitles(id) {
+    const task = vwTasks.find(item => item.id === id);
+    if (!task?.audioPath || !task?.outputFolder || !task?.taskPrefix) {
+        showToast('找不到已生成的配音文件或任务信息，无法只重试字幕', 'error');
+        return;
+    }
+    task.status = 'aligning';
+    task.error = null;
+    renderVWTasks();
+    try {
+        const gladiaKeys = String(document.getElementById('gladia-keys')?.value || '').split('\n').map(key => key.trim()).filter(Boolean);
+        const response = await apiFetch(`${API_BASE}/elevenlabs/retry-workflow-subtitles`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                audio_path: task.audioPath,
+                subtitle_text: task.subtitleText,
+                output_dir: task.outputFolder,
+                task_prefix: task.taskPrefix,
+                gladia_keys: gladiaKeys,
+                language: document.getElementById('vw-align-lang')?.value || '中文',
+                export_fcpxml: document.getElementById('vw-export-fcpxml')?.checked ?? true,
+                seamless_fcpxml: true,
+            }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || '字幕重试失败');
+        task.srtPath = data.srt_path;
+        task.subtitleTxtPath = data.subtitle_txt_path;
+        task.status = 'done';
+        task.error = null;
+        showToast('字幕已重新生成，原配音没有重新调用', 'success');
+    } catch (error) {
+        task.status = 'partial';
+        task.error = `字幕重试失败：${error.message}`;
+        showToast(task.error, 'error');
+    }
+    renderVWTasks();
 }
 
 // 页面加载时刷新音色

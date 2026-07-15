@@ -650,6 +650,9 @@ async function routeAPI(endpoint, data, progressSender = null) {
         case 'elevenlabs/tts-workflow':
             return await workflowService.ttsWorkflow(data);
 
+        case 'elevenlabs/retry-workflow-subtitles':
+            return await workflowService.retryWorkflowSubtitles(data);
+
         case 'elevenlabs/sfx': {
             const keys = elevenlabsService.loadKeys();
             if (!keys || keys.length === 0) throw new Error('未配置 API Key');
@@ -1619,7 +1622,11 @@ async function routeAPI(endpoint, data, progressSender = null) {
 
                 const dateStr = new Date().toISOString().replace(/[T:.]/g, '').slice(0, 15);
                 const outputDir = data.output_dir || path.join(os.homedir(), 'Desktop', `字幕输出_${dateStr}`);
-                fs.mkdirSync(outputDir, { recursive: true });
+                // Windows 上对已存在的盘符根目录（如 D:\\）调用 mkdir 会抛 EPERM。
+                // 输出到音频所在的盘根目录是合法场景，已存在时直接使用即可。
+                if (!fs.existsSync(outputDir)) {
+                    fs.mkdirSync(outputDir, { recursive: true });
+                }
 
                 const genMergeSrt = data.gen_merge_srt === true || data.gen_merge_srt === 'true';
                 const sourceUpOrder = data.source_up_order === true || data.source_up_order === 'true';
@@ -2172,7 +2179,9 @@ async function routeUpload(endpoint, fileBuffer, fileName, formData) {
                 // 输出目录
                 const dateStr = new Date().toISOString().replace(/[T:.]/g, '').slice(0, 15);
                 const outputDir = formData.output_dir || path.join(os.homedir(), 'Desktop', `字幕输出_${dateStr}`);
-                fs.mkdirSync(outputDir, { recursive: true });
+                if (!fs.existsSync(outputDir)) {
+                    fs.mkdirSync(outputDir, { recursive: true });
+                }
 
                 // 选项
                 const genMergeSrt = formData.gen_merge_srt === 'true' || formData.gen_merge_srt === true;

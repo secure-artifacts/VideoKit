@@ -351,6 +351,7 @@ async function reelsWysiwygExport(params) {
         customDuration = 0,  // 自定义输出时长（秒），0 = 自动
         bgmPath = '',        // 配乐文件路径
         bgmVolume = 0.3,     // 配乐音量 (0~1)
+        bgmStart = 0,        // 配乐素材起点（秒）
         contentVideoPath = null,
         contentVideoTrimStart = null,
         contentVideoTrimEnd = null,
@@ -766,6 +767,7 @@ async function reelsWysiwygExport(params) {
         bgHasAudio: isMultiClip ? (!!bgAudioPath) : ((voicePath && backgroundPath && voicePath === backgroundPath) ? false : !_isImageFile(backgroundPath)),
         bgmPath: bgmPath || '',
         bgmVolume: bgmVolume || 0,
+        bgmStart: Math.max(0, parseFloat(bgmStart) || 0),
         bgScale: bgScale || 100,
         bgX: bgX || 0,
         bgY: bgY || 0,

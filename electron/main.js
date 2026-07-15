@@ -563,6 +563,7 @@ app.whenReady().then(async () => {
             bgVolume: parseFloat(data.bg_volume ?? 0.0),
             bgmPath: data.bgm_path || '',
             bgmVolume: parseFloat(data.bgm_volume ?? 0),
+            bgmStart: Math.max(0, parseFloat(data.bgm_start ?? 0) || 0),
         });
         return { success: true, data: res };
     });
@@ -635,10 +636,12 @@ app.whenReady().then(async () => {
     });
 
     // IPC: 导出音频为 MP3（分层 PNG 序列导出用）
-    ipcMain.handle('export-audio-mp3', async (event, { inputPath, outputPath: mp3Path, volume }) => {
+    ipcMain.handle('export-audio-mp3', async (event, { inputPath, outputPath: mp3Path, volume, startTime = 0 }) => {
         const ffmpeg = ffmpegService.resolveCommand('ffmpeg');
         const { spawnSync } = require('child_process');
-        const args = ['-y', '-i', inputPath];
+        const args = ['-y'];
+        if (Number(startTime) > 0) args.push('-ss', Number(startTime).toFixed(3));
+        args.push('-i', inputPath);
         if (volume != null && volume !== 1.0) {
             args.push('-af', `volume=${volume}`);
         }

@@ -55,6 +55,53 @@ async function appendTailSilenceToMp3(filePath, seconds, tempDir, baseName) {
     return true;
 }
 
+async function generateWorkflowSubtitles({ sourcePath, subtitleText, outputDir, taskPrefix, gladiaKeys, language, exportFcpxml = true, seamlessFcpxml = true }) {
+    if (!sourcePath || !fs.existsSync(sourcePath)) throw new Error('已生成的配音文件不存在');
+    if (!subtitleText || !String(subtitleText).trim()) throw new Error('字幕文案为空');
+    let activeGladiaKeys = gladiaKeys;
+    if (!activeGladiaKeys || activeGladiaKeys.length === 0) {
+        const gladiaKeysData = settings.loadGladiaKeys();
+        activeGladiaKeys = gladiaKeysData.keys || [];
+    }
+    if (!activeGladiaKeys.length) throw new Error('未配置 Gladia API Key，请在设置中配置后再试');
+
+    const videoGroup = path.join(outputDir, '_视频文案');
+    const audioGroup = path.join(outputDir, '_音频字幕');
+    const metadataGroup = path.join(outputDir, '_metadata', taskPrefix);
+    fs.mkdirSync(videoGroup, { recursive: true });
+    fs.mkdirSync(audioGroup, { recursive: true });
+    fs.mkdirSync(metadataGroup, { recursive: true });
+
+    const subtitleTxtPath = path.join(videoGroup, `${taskPrefix}.txt`);
+    fs.writeFileSync(subtitleTxtPath, subtitleText, 'utf-8');
+    const fileName = path.parse(sourcePath).name;
+    const arrayPath = path.join(metadataGroup, `${fileName}_audio_text_withtime.json`);
+    const textPath = path.join(metadataGroup, `${fileName}_transcription.txt`);
+    const result = await gladia.transcribeAudio(sourcePath, activeGladiaKeys, language);
+    fs.writeFileSync(arrayPath, JSON.stringify(result.wordTimeInfo, null, 4), 'utf-8');
+    fs.writeFileSync(textPath, result.fullText, 'utf-8');
+
+    const subtitleUtils = require('./subtitleUtils');
+    const { audioSubtitleSearchDifferentStrong } = require('./subtitleAlignment');
+    let langCode = 'en';
+    for (const [code, info] of Object.entries(subtitleUtils.LANGUAGES || {})) {
+        if (info.name === language || info.code === language || info.language === language) { langCode = code; break; }
+    }
+    const sourceTextWithInfo = subtitleUtils.readTextWithGoogleDoc(subtitleTxtPath);
+    const targetSrtPath = path.join(audioGroup, `${taskPrefix}.srt`);
+    const targetFcpxmlPath = exportFcpxml ? path.join(audioGroup, `${taskPrefix}.fcpxml`) : null;
+    const alignResult = audioSubtitleSearchDifferentStrong(
+        langCode, audioGroup, taskPrefix, result.wordTimeInfo, result.fullText,
+        sourceTextWithInfo, {}, false, true, exportFcpxml, seamlessFcpxml,
+        targetSrtPath, targetFcpxmlPath
+    );
+    if (typeof alignResult === 'string' && !alignResult.startsWith('生成了字幕文件')) {
+        throw new Error(`字幕对齐失败: ${alignResult}`);
+    }
+    if (!fs.existsSync(targetSrtPath)) throw new Error('字幕对齐完成，但没有生成 SRT 文件');
+    return { srt_path: targetSrtPath, subtitle_txt_path: subtitleTxtPath, fcpxml_path: targetFcpxmlPath };
+}
+
 /**
  * 一键配音工作流
  */
@@ -129,12 +176,12 @@ async function ttsWorkflow(data) {
 
     // Step 1: 生成音频
     const stabilityVal = Math.max(0, Math.min(1, parseFloat(stability) > 1 ? parseFloat(stability) / 100 : parseFloat(stability)));
+    // 统一导出命名：同一任务使用同一 basename（.mp3/.txt/.srt）
     const { audio, usedKey } = await elevenlabs.requestTTSWithRotation(
         apiKeys, voice_id, text, model_id, stabilityVal, output_format, key_index
     );
     console.log(`[一键配音] 任务 ${task_index + 1} TTS 生成完成`);
 
-    // 统一导出命名：同一任务使用同一 basename（.mp3/.txt/.srt）
     const sourcePath = path.join(audioGroup, `${taskPrefix}.mp3`);
     fs.writeFileSync(sourcePath, audio);
 
@@ -205,75 +252,19 @@ async function ttsWorkflow(data) {
     // Step 3: 生成字幕
     let srtPath = null;
     let subtitleTxtPath = null;
+    let subtitleError = null;
     if (subtitle_text) {
         try {
-            let activeGladiaKeys = gladia_keys;
-            if (!activeGladiaKeys || activeGladiaKeys.length === 0) {
-                const gladiaKeysData = settings.loadGladiaKeys();
-                activeGladiaKeys = gladiaKeysData.keys || [];
-            }
-
-            if (!activeGladiaKeys || activeGladiaKeys.length === 0) {
-                throw new Error('未配置 Gladia API Key，请在设置中配置后再试');
-            }
-
-            // 保存断行字幕文本
-            subtitleTxtPath = path.join(videoGroup, `${taskPrefix}.txt`);
-            fs.writeFileSync(subtitleTxtPath, subtitle_text, 'utf-8');
-
-            // 转录
-            const fileName = path.parse(sourcePath).name;
-            const arrayPath = path.join(metadataGroup, `${fileName}_audio_text_withtime.json`);
-            const textPath = path.join(metadataGroup, `${fileName}_transcription.txt`);
-
-            const result = await gladia.transcribeAudio(sourcePath, activeGladiaKeys, language);
-
-            fs.writeFileSync(arrayPath, JSON.stringify(result.wordTimeInfo, null, 4), 'utf-8');
-            fs.writeFileSync(textPath, result.fullText, 'utf-8');
-
-            // 使用完整的 diff-match-patch 对齐算法生成 SRT
-            const subtitleUtils = require('./subtitleUtils');
-            const { audioSubtitleSearchDifferentStrong } = require('./subtitleAlignment');
-
-            // 映射语言简码 (例如 "中文" -> "zh", "english" -> "en")
-            let langCode = 'en';
-            if (subtitleUtils.LANGUAGES) {
-                for (const [code, info] of Object.entries(subtitleUtils.LANGUAGES)) {
-                    if (info.name === language || info.code === language || info.language === language) {
-                        langCode = code;
-                        break;
-                    }
-                }
-            }
-
-            const sourceTextWithInfo = subtitleUtils.readTextWithGoogleDoc(subtitleTxtPath);
-            const translateTextDict = {};
-            const targetSrtPath = path.join(audioGroup, `${taskPrefix}.srt`);
-            const targetFcpxmlPath = export_fcpxml ? path.join(audioGroup, `${taskPrefix}.fcpxml`) : null;
-
-            const alignResult = audioSubtitleSearchDifferentStrong(
-                langCode, audioGroup, taskPrefix,
-                result.wordTimeInfo, result.fullText,
-                sourceTextWithInfo, translateTextDict,
-                false, // genMergeSrt
-                true,  // sourceUpOrder
-                export_fcpxml,
-                seamless_fcpxml,
-                targetSrtPath,
-                targetFcpxmlPath
-            );
-
-            if (typeof alignResult === 'string' && !alignResult.startsWith('生成了字幕文件')) {
-                throw new Error(`字幕对齐失败: ${alignResult}`);
-            }
-
-            console.log(`[一键配音] 字幕对齐结果: ${alignResult}`);
-
-            if (fs.existsSync(targetSrtPath)) {
-                srtPath = targetSrtPath;
-            }
+            const subtitleResult = await generateWorkflowSubtitles({
+                sourcePath, subtitleText: subtitle_text, outputDir, taskPrefix,
+                gladiaKeys: gladia_keys, language, exportFcpxml: export_fcpxml,
+                seamlessFcpxml: seamless_fcpxml,
+            });
+            srtPath = subtitleResult.srt_path;
+            subtitleTxtPath = subtitleResult.subtitle_txt_path;
         } catch (e) {
             console.error('字幕生成失败:', e);
+            subtitleError = e.message || String(e);
         }
     }
 
@@ -294,7 +285,26 @@ async function ttsWorkflow(data) {
         mp4_path: mp4Path,
         segments,
         segment_count: segments.length,
+        used_key: usedKey,
+        partial_success: Boolean(subtitleError),
+        subtitle_error: subtitleError,
     };
+}
+
+async function retryWorkflowSubtitles(data) {
+    const outputDir = String(data.output_dir || '').trim();
+    const taskPrefix = String(data.task_prefix || '').trim();
+    if (!outputDir || !taskPrefix) throw new Error('缺少原任务输出信息，无法只重试字幕');
+    return await generateWorkflowSubtitles({
+        sourcePath: data.audio_path,
+        subtitleText: data.subtitle_text,
+        outputDir,
+        taskPrefix,
+        gladiaKeys: data.gladia_keys,
+        language: data.language || 'english',
+        exportFcpxml: data.export_fcpxml !== false,
+        seamlessFcpxml: data.seamless_fcpxml !== false,
+    });
 }
 
 /**
@@ -350,4 +360,5 @@ function generateSimpleSRT(wordTimeInfo, subtitleText, outputPath) {
 
 module.exports = {
     ttsWorkflow,
+    retryWorkflowSubtitles,
 };

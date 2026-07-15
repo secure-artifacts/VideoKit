@@ -206,6 +206,7 @@ async function reelsLayeredExport(params) {
         customDuration = 0,
         bgmPath = '',
         bgmVolume = 0.3,
+        bgmStart = 0,
         contentVideoPath = null,
         contentVideoTrimStart = null,
         contentVideoTrimEnd = null,
@@ -729,6 +730,7 @@ async function reelsLayeredExport(params) {
                 inputPath: bgmPath,
                 outputPath: `${layersDir}/bgm.mp3`,
                 volume: bgmVolume,
+                startTime: Math.max(0, parseFloat(bgmStart) || 0),
             });
             if (bgmResult.ok) {
                 log(`配乐导出完成: bgm.mp3`);
