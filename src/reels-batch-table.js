@@ -1209,7 +1209,7 @@ function _renderBatchTable() {
                             <th class="rbt-col-bgclipsettings rbt-grp-video"><div class="rbt-th-wrap"><span>背景池剪辑</span><button class="rbt-th-paste" data-paste-col="bgClipSettings" title="从剪贴板粘贴到该列">📋</button><button class="rbt-th-clear" data-clear-col="bgClipSettings" title="清空该列">清</button></div></th>
                             <th class="rbt-col-bgscale rbt-grp-video"><div class="rbt-th-wrap"><span>背景缩放</span><button class="rbt-th-clear" data-clear-col="bgScale" title="清空该列">清</button></div></th>
                             <th class="rbt-col-bgdurscale rbt-grp-video"><div class="rbt-th-wrap"><span>背景时长</span><button class="rbt-th-clear" data-clear-col="bgDurScale" title="清空该列">清</button></div></th>
-                            <th class="rbt-col-bgvol rbt-grp-video"><div class="rbt-th-wrap"><span>背景音量</span><button class="rbt-th-clear" data-clear-col="bgVideoVolume" title="重置为全局值">清</button></div></th>
+                            <th class="rbt-col-bgvol rbt-grp-video"><div class="rbt-th-wrap"><span>背景音量倍率</span><button class="rbt-th-clear" data-clear-col="bgVideoVolume" title="清除任务倍率，恢复为 100%">清</button></div></th>
                             <th class="rbt-col-bgm rbt-grp-video"><div class="rbt-th-wrap"><input type="checkbox" id="rbt-bgm-select-all" title="全选/取消全选配乐勾选框" style="margin:0;transform:scale(0.85);margin-right:3px;"><span>配乐</span><button class="rbt-th-folder" data-folder-col="bgm" title="选择文件夹批量分配">📁</button><button class="rbt-th-clear" data-clear-col="bgm" title="清空该列">清</button></div></th>
 
                             <!-- 🎬 内容视频 (Cyan) -->
@@ -2105,12 +2105,12 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates, textcards, s
             </td>
             <td class="rbt-col-bgvol rbt-grp-video">
                 <div class="rbt-clutter-free-scale">
-                    <div class="rbt-scale-display">🔉 ${task.bgVideoVolume != null ? task.bgVideoVolume : '—'}%</div>
+                    <div class="rbt-scale-display" title="最终音量 = 全局背景音量 × 任务倍率">🔉 ${task.bgVideoVolume != null ? task.bgVideoVolume : '100'}% → ${Math.round((globalBgVol * (task.bgVideoVolume != null ? task.bgVideoVolume : 100) / 100) * 10) / 10}%</div>
                     <div class="rbt-scale-controls" style="flex-direction:row; inset:0;">
                         <span style="font-size:10px;color:#888;white-space:nowrap;">🔉</span>
                         <input type="range" class="rbt-bgvol-slider" data-idx="${idx}" data-is-null="${task.bgVideoVolume == null ? 'true' : 'false'}" min="0" max="1000" value="${task.bgVideoVolume != null ? task.bgVideoVolume : globalBgVol}"
-                               style="flex:1; min-width:0; height:12px; accent-color:#4fc3f7;" title="背景视频音量（留空=跟随全局设置）">
-                        <span class="rbt-bgvol-label" style="font-size:10px;color:#888;min-width:28px;text-align:right;">${task.bgVideoVolume != null ? task.bgVideoVolume + '%' : '全局(' + globalBgVol + '%)'}</span>
+                               style="flex:1; min-width:0; height:12px; accent-color:#4fc3f7;" title="任务背景音量倍率；最终 = 全局 × 倍率">
+                        <span class="rbt-bgvol-label" style="font-size:10px;color:#888;min-width:56px;text-align:right;">${task.bgVideoVolume != null ? task.bgVideoVolume + '%倍率' : '100%默认'}</span>
                     </div>
                 </div>
             </td>
@@ -5192,6 +5192,7 @@ function _bindBatchTableEvents() {
                 const task = window._reelsState && window._reelsState.tasks[idx];
                 if (task) {
                     task.bgVideoVolume = parseInt(e.target.value) || 0;
+                    if (typeof _updateBgVolumeConsistencyHint === 'function') _updateBgVolumeConsistencyHint();
                     if (idx === window._reelsState.selectedIdx && typeof _applyPreviewAudioMix === 'function') {
                         _applyPreviewAudioMix();
                     }

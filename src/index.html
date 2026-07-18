@@ -2164,10 +2164,20 @@
                 <label>同时分析 <input id="autoedit-batch-concurrency" type="number" class="input input-small" value="2" min="1" max="4" style="width:55px;"> 套</label>
                 <span id="autoedit-batch-summary" class="hint">0 个任务</span>
               </div>
-              <textarea id="autoedit-batch-paste" class="input" rows="5" style="width:100%;margin-top:10px;resize:vertical;" placeholder="直接从 Google Sheets / Excel 复制单元格并粘贴到这里。系统会立即识别：一个单元格 = 一套文案；单元格内部换行会完整保留。" onpaste="handleAutoEditBatchPaste(event)" oninput="handleAutoEditBatchTextInput(this.value)"></textarea>
+              <div style="margin-top:10px;border:1px solid rgba(59,130,246,.45);border-radius:8px;padding:10px 12px;background:rgba(59,130,246,.08);">
+                <div style="font-weight:700;color:#bfdbfe;">📝 ① 批量粘贴每个任务的完整断行后文案</div>
+                <div class="hint" style="margin:6px 0 8px;">请粘贴已经按字幕需求断好行的文案。从 Google Sheets / Excel 直接复制：一个单元格 = 一个视频任务；单元格内的断行会完整保留。</div>
+                <textarea id="autoedit-batch-paste" class="input" rows="5" style="width:100%;resize:vertical;background:var(--bg-secondary);" placeholder="把每个任务的完整断行后文案粘贴到这里……" onpaste="handleAutoEditBatchPaste(event)" oninput="handleAutoEditBatchTextInput(this.value)"></textarea>
+              </div>
+              <div style="margin-top:10px;border:1px solid rgba(99,102,241,.45);border-radius:8px;padding:10px 12px;background:rgba(99,102,241,.08);">
+                <div style="display:flex;align-items:center;gap:7px;font-weight:700;color:#c7d2fe;">🏷️ ② 批量修改 Reels 导出文件名 <span class="hint" style="font-weight:400;">（可选，这里不是输入文案）</span></div>
+                <div class="hint" style="margin:6px 0 8px;">一行一个名称，按当前任务顺序一一对应。不填则使用文件夹名；排序后名称会跟着任务移动。</div>
+                <textarea id="autoedit-batch-output-names" class="input" rows="3" style="width:100%;resize:vertical;background:var(--bg-secondary);" placeholder="在这里粘贴导出名称，例如：&#10;01-产品介绍&#10;02-使用教程" onchange="applyAutoEditBatchOutputNames(this.value)"></textarea>
+              </div>
               <div style="display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap;">
                 <button id="autoedit-batch-analyze-btn" class="btn btn-primary" onclick="startAutoEditBatchAnalysis()">批量分析</button>
                 <button id="autoedit-batch-export-btn" class="btn btn-primary" onclick="startAutoEditBatchExport()">批量正式导出</button>
+                <button id="autoedit-batch-export-only-btn" class="btn btn-secondary" onclick="startAutoEditBatchExportOnly()">仅导出视频 + 字幕</button>
                 <span id="autoedit-batch-match-hint" class="hint">粘贴后自动识别；第 N 个单元格对应第 N 个文件夹。</span>
               </div>
               <div id="autoedit-batch-task-list" style="margin-top:12px;display:grid;grid-template-columns:repeat(auto-fill,minmax(390px,1fr));gap:10px;"></div>
@@ -4654,10 +4664,10 @@
 
                       <!-- 背景音量 -->
                       <div style="display:flex; flex-direction:column; gap:4px;">
-                        <label style="margin:0; font-size:12px; color:var(--text-secondary);">背景音量 (%):</label>
+                        <label style="margin:0; font-size:12px; color:var(--text-secondary);">背景音量倍率 (%):</label>
                         <div style="display:flex; gap:8px; align-items:center; min-width:0;">
-                          <input type="range" id="reels-bg-volume-range" min="0" max="100" value="100" style="flex:1; min-width:80px;" oninput="document.getElementById('reels-bg-volume-num').value=this.value; reelsSaveBgConfigUI();">
-                          <input type="number" id="reels-bg-volume-num" class="input input-small" value="100" min="0" max="100" style="width: 54px; height:22px; font-size:11px; padding:1px 3px;" oninput="document.getElementById('reels-bg-volume-range').value=this.value; reelsSaveBgConfigUI();">
+                          <input type="range" id="reels-bg-volume-range" min="0" max="1000" value="100" style="flex:1; min-width:80px;" oninput="document.getElementById('reels-bg-volume-num').value=this.value; reelsSaveBgConfigUI();">
+                          <input type="number" id="reels-bg-volume-num" class="input input-small" value="100" min="0" max="1000" style="width: 54px; height:22px; font-size:11px; padding:1px 3px;" oninput="document.getElementById('reels-bg-volume-range').value=this.value; reelsSaveBgConfigUI();">
                           <button class="btn btn-secondary" style="font-size:10px; padding:1px 3px; min-width:20px; height:20px; display:flex; align-items:center; justify-content:center; flex-shrink:0;" onclick="reelsResetParamUI('reels-bg-volume', 100)" title="恢复默认值">↺</button>
                         </div>
                       </div>
@@ -5157,6 +5167,7 @@
                   value="30" style="width:52px;font-size:11px;">
                 <span style="font-size:11px;color:var(--text-secondary);">%</span>
               </div>
+              <div id="reels-bg-volume-consistency-hint" style="display:none;margin:5px 0;padding:7px 10px;border-radius:6px;font-size:11px;line-height:1.45;"></div>
 
               <!-- ── 行3: 音频特效 ── -->
               <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:center; font-size:12px; padding:6px 0 5px; border-bottom:1px solid var(--border-color);">

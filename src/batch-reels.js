@@ -5268,6 +5268,38 @@ function _getEffectiveBgVolumePercent(task, globalBgVolume = _getGlobalBgVolumeP
     return Math.max(0, globalBgVolume);
 }
 
+function _updateBgVolumeConsistencyHint() {
+    const hint = document.getElementById('reels-bg-volume-consistency-hint');
+    if (!hint) return;
+    const tasks = Array.isArray(window._reelsState?.tasks) ? window._reelsState.tasks : [];
+    if (tasks.length === 0) {
+        hint.style.display = 'none';
+        return;
+    }
+    const globalVolume = _getGlobalBgVolumePercent();
+    const rows = tasks.map((task, index) => {
+        const multiplier = task?.bgVideoVolume != null && Number.isFinite(parseFloat(task.bgVideoVolume))
+            ? Math.max(0, parseFloat(task.bgVideoVolume)) : 100;
+        return { index: index + 1, multiplier, final: globalVolume * multiplier / 100 };
+    });
+    const uniqueFinals = new Set(rows.map(row => Math.round(row.final * 1000) / 1000));
+    const customRows = rows.filter(row => Math.abs(row.multiplier - 100) > 0.001);
+    hint.style.display = 'block';
+    const baseStyle = 'display:block;margin:5px 0;padding:7px 10px;border-radius:6px;font-size:11px;line-height:1.45;';
+    if (uniqueFinals.size > 1) {
+        const examples = rows.slice(0, 6).map(row => `#${row.index}: ${globalVolume}%×${row.multiplier}%=${Math.round(row.final * 10) / 10}%`).join('；');
+        hint.style.cssText = baseStyle + 'background:rgba(255,159,67,.12);border:1px solid rgba(255,159,67,.42);color:#ffd8a8;';
+        hint.innerHTML = `⚠️ <strong>各任务最终背景音量不一致</strong>。${examples}${rows.length > 6 ? '；…' : ''}<br>检查方法：打开批量表格的“背景音量倍率”列；如果本应一致，点击列头“清”，将任务倍率统一恢复为 100%。`;
+    } else if (customRows.length > 0) {
+        hint.style.cssText = baseStyle + 'background:rgba(81,207,102,.10);border:1px solid rgba(81,207,102,.32);color:#b2f2bb;';
+        hint.textContent = `✓ ${customRows.length} 个任务设置了自定义倍率，但当前最终背景音量一致为 ${Math.round(rows[0].final * 10) / 10}%。`;
+    } else {
+        hint.style.cssText = baseStyle + 'background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.24);color:#bfdbfe;';
+        hint.textContent = `✓ 所有任务均使用 100% 任务倍率，最终背景音量一致为 ${Math.round(globalVolume * 10) / 10}%。`;
+    }
+}
+window._updateBgVolumeConsistencyHint = _updateBgVolumeConsistencyHint;
+
 function _getEffectiveVoiceVolumePercent(task, globalVoiceVolume = _getGlobalVoiceVolumePercent()) {
     const raw = task && task.voiceVolume != null ? parseFloat(task.voiceVolume) : NaN;
     if (Number.isFinite(raw)) return Math.max(0, globalVoiceVolume) * Math.max(0, raw) / 100;
@@ -5384,6 +5416,7 @@ function _applyPreviewAudioMix() {
 
     // 外围表格和控件仍统一调用本函数；V2 开启时同步其独立媒体节点。
     window.ReelsPreviewV2?.syncAudio?.();
+    _updateBgVolumeConsistencyHint();
 }
 
 // ═══════════════════════════════════════════════════════

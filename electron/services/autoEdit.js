@@ -438,6 +438,87 @@ function computeAutoEditTransitionSec(prevDuration, currentDuration, transitionT
     return safe > 0.05 ? safe : 0;
 }
 
+function hasSentenceEndingPunctuation(text) {
+    return /[.!?。！？][\s"'”’)\]]*$/.test(String(text || ''));
+}
+
+/**
+ * Recover a very small script gap at the boundary of two otherwise matched clips.
+ * This is deliberately conservative: it only handles one or two words, requires
+ * those words to be found close to an existing cut, and uses punctuation only to
+ * decide which neighbouring clip gets first refusal.
+ */
+function recoverSmallBoundaryGaps(plans, scriptWords, leadPad, tailPad) {
+    const recoveries = [];
+    if (!Array.isArray(plans) || !Array.isArray(scriptWords)) return recoveries;
+
+    const tryAttach = (plan, gapStart, gapEnd, side) => {
+        if (!plan || !Array.isArray(plan.words) || plan.words.length === 0) return null;
+        const target = scriptWords.slice(gapStart, gapEnd + 1).map(w => w.raw).join(' ');
+        let sliceStart;
+        let sliceEnd;
+        if (side === 'previous') {
+            if (!Number.isInteger(plan.wordEndIdx) || plan.wordEndIdx < 0) return null;
+            sliceStart = plan.wordEndIdx + 1;
+            sliceEnd = Math.min(plan.words.length, sliceStart + 4);
+        } else {
+            if (!Number.isInteger(plan.wordStartIdx) || plan.wordStartIdx < 0) return null;
+            sliceStart = Math.max(0, plan.wordStartIdx - 4);
+            sliceEnd = plan.wordStartIdx;
+        }
+        const nearby = plan.words.slice(sliceStart, sliceEnd);
+        if (nearby.length === 0) return null;
+        const match = findBestWordWindow(nearby, target, 0.72);
+        if (!match) return null;
+        const globalStart = sliceStart + match.startIdx;
+        const globalEnd = sliceStart + match.endIdx;
+        if (side === 'previous' && globalStart !== plan.wordEndIdx + 1) return null;
+        if (side === 'next' && globalEnd !== plan.wordStartIdx - 1) return null;
+
+        if (side === 'previous') {
+            plan.wordEndIdx = globalEnd;
+            plan.scriptWordEnd = gapEnd;
+            plan.end = Math.min(plan.duration || Infinity, plan.words[globalEnd].end + tailPad);
+        } else {
+            plan.wordStartIdx = globalStart;
+            plan.scriptWordStart = gapStart;
+            plan.start = Math.max(0, plan.words[globalStart].start - leadPad);
+        }
+        const gapWords = scriptWords.slice(gapStart, gapEnd + 1);
+        for (let offset = 0; offset < gapWords.length; offset++) {
+            const clipIdx = Math.min(globalEnd, globalStart + offset);
+            plan.matchedWordsArray.push({ scriptWordIdx: gapWords[offset].wordIndex, clipWordIdx: clipIdx });
+        }
+        return { side, target, score: match.score };
+    };
+
+    const matched = plans.filter(plan => plan.scriptWordStart >= 0 && plan.scriptWordEnd >= 0)
+        .sort((a, b) => a.scriptWordStart - b.scriptWordStart);
+    for (let i = 0; i < matched.length - 1; i++) {
+        const previous = matched[i];
+        const next = matched[i + 1];
+        const gapStart = previous.scriptWordEnd + 1;
+        const gapEnd = next.scriptWordStart - 1;
+        const gapSize = gapEnd - gapStart + 1;
+        if (gapSize < 1 || gapSize > 2) continue;
+
+        const previousRaw = scriptWords[previous.scriptWordEnd]?.raw || '';
+        const gapRaw = scriptWords.slice(gapStart, gapEnd + 1).map(w => w.raw).join(' ');
+        const preferPrevious = !hasSentenceEndingPunctuation(previousRaw) || hasSentenceEndingPunctuation(gapRaw);
+        const order = preferPrevious
+            ? [[previous, 'previous'], [next, 'next']]
+            : [[next, 'next'], [previous, 'previous']];
+        for (const [plan, side] of order) {
+            const recovered = tryAttach(plan, gapStart, gapEnd, side);
+            if (recovered) {
+                recoveries.push({ gapStart, gapEnd, sourceIndex: plan.sourceIndex, ...recovered });
+                break;
+            }
+        }
+    }
+    return recoveries;
+}
+
 function srtAssPath(p) {
     return String(p).replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\'");
 }
@@ -1203,7 +1284,9 @@ async function autoEditByScript(opts = {}) {
                 }
             }
         } else {
-            const clipCount = useLinePerClip ? Math.min(clips.length, lines.length) : clips.length;
+            // Every supplied clip must enter analysis. In one-line-per-clip mode an
+            // extra clip is reported as unmatched instead of silently disappearing.
+            const clipCount = clips.length;
             emitProgress({
                 percent: 5,
                 stage: 'start',
@@ -1335,7 +1418,7 @@ async function autoEditByScript(opts = {}) {
 
                 if (words.length > 0) {
                     if (useLinePerClip) {
-                        const lineWindow = findBestWordWindow(words, lines[i], minScore);
+                        const lineWindow = i < lines.length ? findBestWordWindow(words, lines[i], minScore) : null;
                         if (lineWindow) {
                             const lineWords = filteredScriptWords.filter(w => w.lineIndex === i);
                             if (lineWords.length > 0) {
@@ -1512,6 +1595,7 @@ async function autoEditByScript(opts = {}) {
                 }
 
                 plans.push({
+                    planId: `clip-${i}`,
                     sourceIndex: i,
                     clipPath,
                     transcription,
@@ -1542,6 +1626,13 @@ async function autoEditByScript(opts = {}) {
                 if ((b.matchScore || 0) !== (a.matchScore || 0)) return (b.matchScore || 0) - (a.matchScore || 0);
                 return a.sourceIndex - b.sourceIndex;
             });
+        }
+
+        if (workflowMode !== 'concat_first') {
+            const recoveredGaps = recoverSmallBoundaryGaps(plans, scriptWords, leadPad, tailPad);
+            for (const recovery of recoveredGaps) {
+                console.log(`[自动剪辑] 已恢复边界漏词“${recovery.target}”，归到${recovery.side === 'previous' ? '上一段' : '下一段'} #${recovery.sourceIndex + 1}`);
+            }
         }
 
         // 2. 初始化所有计划的 scriptStartLine / scriptEndLine（防空隙填充逻辑报错或清除）
@@ -1976,6 +2067,7 @@ async function autoEditByScript(opts = {}) {
                 const hasDuplicateScript = splitScriptLines(plan.scriptText).some(line => (normalizedLineCounts.get(normalizeText(line)) || 0) > 1);
                 const isDuplicateClip = Number.isInteger(plan.duplicateOfSourceIndex) && plan.duplicateOfSourceIndex >= 0;
                 return {
+                    segment_id: plan.planId || `clip-${plan.sourceIndex}`,
                     index: index + 1,
                     source_index: plan.sourceIndex + 1,
                     source: plan.realClipPath || plan.clipPath,
@@ -2038,12 +2130,25 @@ async function autoEditByScript(opts = {}) {
         const reviewSegments = Array.isArray(opts.reviewSegments || opts.review_segments) ? (opts.reviewSegments || opts.review_segments) : [];
         const hasReviewedTimeline = reviewSegments.length > 0;
         if (reviewSegments.length > 0) {
-            const bySource = new Map(plans.map(plan => [plan.realClipPath || plan.clipPath, plan]));
+            const byId = new Map(plans.map(plan => [plan.planId || `clip-${plan.sourceIndex}`, plan]));
+            const bySource = new Map();
+            for (const plan of plans) {
+                const source = plan.realClipPath || plan.clipPath;
+                if (!bySource.has(source)) bySource.set(source, []);
+                bySource.get(source).push(plan);
+            }
+            const usedFallbackPlans = new Set();
             const reviewedPlans = [];
             for (const review of reviewSegments) {
                 if (review.enabled === false) continue;
-                const plan = bySource.get(review.source);
-                if (!plan) continue;
+                let plan = review.segment_id ? byId.get(review.segment_id) : null;
+                if (!plan) {
+                    plan = (bySource.get(review.source) || []).find(item => !usedFallbackPlans.has(item));
+                }
+                if (!plan) {
+                    throw new Error(`审核片段无法定位，已停止导出以避免静默丢片: ${review.source || review.segment_id || '未知片段'}`);
+                }
+                usedFallbackPlans.add(plan);
                 const start = Number(review.start);
                 const end = Number(review.end);
                 if (Number.isFinite(start) && Number.isFinite(end) && start >= 0 && end > start && end <= plan.duration + 0.01) {
@@ -2244,6 +2349,7 @@ async function autoEditByScript(opts = {}) {
             const pEndLine = plan.scriptWordEnd !== -1 ? scriptWords[plan.scriptWordEnd].lineIndex : -1;
 
             selected.push({
+                segment_id: plan.planId || `clip-${plan.sourceIndex}`,
                 index: i + 1,
                 source_index: plan.sourceIndex + 1,
                 source: plan.realClipPath || clipPath,
@@ -2526,5 +2632,5 @@ module.exports = {
     findBestWordWindow,
     findBestScriptWindowForClip,
     computeAutoEditTransitionSec,
-    _test: { scoreCandidate, scoreWordCandidate, transcribeClip },
+    _test: { scoreCandidate, scoreWordCandidate, transcribeClip, recoverSmallBoundaryGaps, hasSentenceEndingPunctuation },
 };
