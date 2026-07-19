@@ -27,6 +27,31 @@ function expandHomePath(p) {
 function resolveCommand(cmd) {
     if (cmd === 'ffmpeg' && process.env.FFMPEG_PATH) return process.env.FFMPEG_PATH;
     if (cmd === 'ffprobe' && process.env.FFPROBE_PATH) return process.env.FFPROBE_PATH;
+    if (cmd !== 'ffmpeg' && cmd !== 'ffprobe') return cmd;
+
+    // Do not rely solely on main.js having populated environment variables.
+    // Transcription can be invoked from a freshly loaded/cached service module,
+    // and packaged builds may not expose the bundled binary on the system PATH.
+    const exeName = process.platform === 'win32' ? `${cmd}.exe` : cmd;
+    const roots = [
+        path.join(__dirname, '..', '..', 'vendor'),
+        typeof process.resourcesPath === 'string' ? path.join(process.resourcesPath, 'vendor') : '',
+    ].filter(Boolean);
+    const relativeDirs = process.platform === 'win32'
+        ? [path.join('ffmpeg', 'bin'), path.join('windows', 'ffmpeg', 'bin'), 'ffmpeg']
+        : process.platform === 'darwin'
+            ? ['ffmpeg', path.join('darwin', 'ffmpeg')]
+            : ['ffmpeg', path.join('linux', 'ffmpeg'), path.join('linux', 'ffmpeg', 'bin')];
+    for (const root of roots) {
+        for (const relativeDir of relativeDirs) {
+            const candidate = path.join(root, relativeDir, exeName);
+            if (fs.existsSync(candidate)) {
+                if (cmd === 'ffmpeg') process.env.FFMPEG_PATH = candidate;
+                else process.env.FFPROBE_PATH = candidate;
+                return candidate;
+            }
+        }
+    }
     return cmd;
 }
 

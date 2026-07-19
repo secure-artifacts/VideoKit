@@ -7,6 +7,16 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 
+let _resolveCommand;
+try {
+    _resolveCommand = require('./ffmpeg').resolveCommand;
+} catch (_) { }
+function resolveCmd(cmd) {
+    if (_resolveCommand) return _resolveCommand(cmd);
+    if (cmd === 'ffmpeg' && process.env.FFMPEG_PATH) return process.env.FFMPEG_PATH;
+    return cmd;
+}
+
 // ==================== dHash 计算 ====================
 
 /**
@@ -17,7 +27,7 @@ function extractGrayPixels(filePath, hashSize = 8) {
     const w = hashSize + 1;
     const h = hashSize;
     return new Promise((resolve, reject) => {
-        const ffmpegCmd = process.env.FFMPEG_PATH || 'ffmpeg';
+        const ffmpegCmd = resolveCmd('ffmpeg');
         const proc = spawn(ffmpegCmd, [
             '-hide_banner', '-loglevel', 'error',
             '-i', filePath,
