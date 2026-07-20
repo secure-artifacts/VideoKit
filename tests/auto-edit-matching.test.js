@@ -20,6 +20,42 @@ test('distinctive keywords separate the correct candidate', () => {
     assert.ok(correct > wrong);
 });
 
+test('a repeated short line inside a unique block is not reported as an ambiguous match', () => {
+    const lines = [
+        "Aujourd'hui.",
+        'Texte sans rapport.',
+        'Quelques mots.',
+        "Aujourd'hui.",
+        'tu seras avec moi dans le paradis.',
+        "Aujourd'hui.",
+    ];
+    const block = "Quelques mots.\nAujourd'hui.\ntu seras avec moi dans le paradis.";
+    assert.deepEqual(autoEdit._test.findRepeatedScriptBlockStarts(lines, block), []);
+});
+
+test('only a complete repeated block is reported with each starting line', () => {
+    const lines = ['alpha', 'beta', 'milieu', 'alpha', 'beta'];
+    assert.deepEqual(autoEdit._test.findRepeatedScriptBlockStarts(lines, 'alpha\nbeta'), [1, 4]);
+});
+
+test('missing-block boundary recognizes a lightly inflected phrase already read by the previous clip', () => {
+    const words = ["d’étude", 'biblique', 'Clique', 'sur', 'le', 'lien'].map(raw => ({ raw }));
+    assert.equal(
+        autoEdit._test.findFuzzyBoundaryOverlap(words, "notre groupe d'études bibliques.", 'start'),
+        2
+    );
+});
+
+test('missing-block boundary does not consume unrelated following text', () => {
+    const words = ['Clique', 'sur', 'le', 'lien'].map(raw => ({ raw }));
+    assert.equal(autoEdit._test.findFuzzyBoundaryOverlap(words, 'notre groupe biblique', 'start'), 0);
+});
+
+test('boundary overlap keeps original indices when punctuation is a separate multilingual token', () => {
+    const words = ['你', '，', '好', '后面'].map(raw => ({ raw }));
+    assert.equal(autoEdit._test.findFuzzyBoundaryOverlap(words, '你好', 'start'), 3);
+});
+
 test('sentence ending punctuation is detected without treating a comma as an ending', () => {
     assert.equal(autoEdit._test.hasSentenceEndingPunctuation('finished.'), true);
     assert.equal(autoEdit._test.hasSentenceEndingPunctuation('完成了！'), true);

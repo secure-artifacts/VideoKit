@@ -298,7 +298,7 @@
                     <div class="rpv2-time" data-role="time">00:00/00:00</div>
                     <input class="rpv2-seek" data-role="seek" type="range" min="0" max="1000" value="0" step="1">
                     <label class="rpv2-check" title="循环播放"><input data-role="loop" type="checkbox" checked>循环</label>
-                    <label class="rpv2-check" title="仅在预览中显示/隐藏字幕，不改变导出设置"><input data-role="subs" type="checkbox" checked>字幕(预览)</label>
+                    <label class="rpv2-check" title="预览与导出字幕总开关：关闭后，导出的视频也不会带字幕"><input data-role="subs" type="checkbox" checked>字幕(关闭=导出不带)</label>
                     <label class="rpv2-check" title="仅在预览中显示/隐藏覆层，不改变导出设置"><input data-role="overlays" type="checkbox" checked>覆层(预览)</label>
                     <button class="rpv2-icon-btn" data-action="fit" title="适应窗口">适</button>
                     <button class="rpv2-icon-btn" data-action="zoom-out" title="缩小">−</button>
@@ -331,6 +331,16 @@
         root.querySelector('[data-action="zoom-out"]').addEventListener('click', () => zoomView(0.8));
         root.querySelector('[data-action="zoom-reset"]').addEventListener('click', resetZoomOneToOne);
         root.querySelector('[data-action="play"]').addEventListener('click', togglePlay);
+        const subtitleToggle = root.querySelector('[data-role="subs"]');
+        const exportSubtitleToggle = document.getElementById('reels-subtitle-toggle');
+        if (subtitleToggle && exportSubtitleToggle) subtitleToggle.checked = exportSubtitleToggle.checked;
+        subtitleToggle?.addEventListener('change', () => {
+            if (exportSubtitleToggle) exportSubtitleToggle.checked = subtitleToggle.checked;
+            if (typeof window.reelsOnSubtitleToggleChange === 'function') {
+                window.reelsOnSubtitleToggleChange(exportSubtitleToggle || subtitleToggle);
+            }
+            renderFrame(getCurrentTime());
+        });
         root.querySelector('[data-role="seek"]').addEventListener('input', onSeekInput);
         root.querySelector('[data-role="seek"]').addEventListener('pointerdown', () => { state.dragSeek = true; });
         root.querySelector('[data-role="seek"]').addEventListener('pointerup', () => { state.dragSeek = false; });

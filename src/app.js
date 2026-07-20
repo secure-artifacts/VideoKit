@@ -11781,11 +11781,66 @@ function setAutoEditBatchTaskScript(task, value) {
     }
 }
 
+function getAutoEditBatchMatchSummary(data) {
+    const segments = Array.isArray(data?.segments) ? data.segments : [];
+    const supplied = data?.match_summary || {};
+    const count = status => segments.filter(segment => segment?.status === status).length;
+    return {
+        total: Number.isFinite(Number(supplied.total)) ? Number(supplied.total) : segments.length,
+        ready: Number.isFinite(Number(supplied.ready)) ? Number(supplied.ready) : count('ready'),
+        warning: Number.isFinite(Number(supplied.warning)) ? Number(supplied.warning) : count('warning'),
+        error: Number.isFinite(Number(supplied.error)) ? Number(supplied.error) : count('error'),
+        missingBlocks: Number.isFinite(Number(supplied.missing_blocks))
+            ? Number(supplied.missing_blocks)
+            : (Array.isArray(data?.missing_blocks) ? data.missing_blocks.length : 0),
+    };
+}
+
+function renderAutoEditBatchMatchResult(task) {
+    if (!task?.result?.analysis_only) return '';
+    const segments = Array.isArray(task.result.segments) ? task.result.segments : [];
+    const summary = getAutoEditBatchMatchSummary(task.result);
+    const hasIssues = summary.error > 0 || summary.warning > 0 || summary.missingBlocks > 0;
+    const rows = segments.map((segment, index) => {
+        const status = segment?.status || 'warning';
+        const icon = status === 'ready' ? '✅' : (status === 'error' ? '❌' : '⚠️');
+        const color = status === 'ready' ? '#51cf66' : (status === 'error' ? '#ff6b6b' : '#ff9f43');
+        const fileName = String(segment?.source || '').split(/[/\\]/).pop() || `片段 #${index + 1}`;
+        const similarity = Number.isFinite(Number(segment?.similarity)) ? `${Number(segment.similarity)}%` : '未知';
+        const reason = segment?.issue_reason || segment?.ambiguity || (status === 'ready' ? '匹配通过' : '需人工审核');
+        return `<div style="padding:5px 0;border-bottom:1px solid rgba(255,255,255,.07);display:grid;grid-template-columns:minmax(110px,1fr) 72px minmax(150px,1.5fr);gap:8px;align-items:start;font-size:11px;">
+            <span title="${escapeHtml(segment?.source || fileName)}" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:${color};">${icon} #${segment?.source_index || index + 1} ${escapeHtml(fileName)}</span>
+            <span style="color:${color};">匹配度 ${escapeHtml(similarity)}</span>
+            <span title="${escapeHtml(reason)}" style="color:${status === 'ready' ? 'var(--text-secondary)' : color};">${escapeHtml(reason)}</span>
+        </div>`;
+    }).join('');
+    const missingRows = (task.result.missing_blocks || []).map((block, index) =>
+        `<div style="padding:4px 0;color:#ff6b6b;font-size:11px;">❌ 缺失文案 #${index + 1}（第 ${block.startLine != null ? block.startLine + 1 : '?'}-${block.endLine != null ? block.endLine + 1 : '?'} 行）：${escapeHtml(block.text || '')}</div>`
+    ).join('');
+    return `<details ${hasIssues ? 'open' : ''} style="margin-top:8px;border:1px solid ${hasIssues ? 'rgba(255,159,67,.45)' : 'rgba(81,207,102,.35)'};border-radius:7px;padding:7px;background:rgba(0,0,0,.14);">
+        <summary style="cursor:pointer;font-size:12px;color:${hasIssues ? '#ffd8a8' : '#b2f2bb'};">
+            匹配结果：${summary.ready}/${summary.total} 通过 · ${summary.warning} 警告 · ${summary.error} 失败${summary.missingBlocks ? ` · ${summary.missingBlocks} 段缺失文案` : ''}
+        </summary>
+        <div style="margin-top:6px;max-height:240px;overflow:auto;">${rows || '<div class="hint">未返回片段匹配明细</div>'}${missingRows}</div>
+    </details>`;
+}
+
 function renderAutoEditBatchTasks() {
     const root = document.getElementById('autoedit-batch-task-list'); if (!root) return;
     const summary = document.getElementById('autoedit-batch-summary');
     const scriptCount = autoEditBatchScriptCells.length || autoEditBatchTasks.filter(t => t.script).length;
-    if (summary) summary.textContent = `${autoEditBatchTasks.length} 个文件夹 · ${scriptCount} 个文案单元格 · ${autoEditBatchTasks.filter(t => t.script).length} 个已配对`;
+    if (summary) {
+        const analyzed = autoEditBatchTasks.filter(task => task.result?.analysis_only);
+        const totals = analyzed.reduce((acc, task) => {
+            const item = getAutoEditBatchMatchSummary(task.result);
+            acc.ready += item.ready; acc.warning += item.warning; acc.error += item.error; acc.missing += item.missingBlocks;
+            return acc;
+        }, { ready: 0, warning: 0, error: 0, missing: 0 });
+        const resultText = analyzed.length
+            ? ` · 已分析 ${analyzed.length}/${autoEditBatchTasks.length} 套：${totals.ready} 通过、${totals.warning} 警告、${totals.error} 失败${totals.missing ? `、${totals.missing} 段缺失文案` : ''}`
+            : '';
+        summary.textContent = `${autoEditBatchTasks.length} 个文件夹 · ${scriptCount} 个文案单元格 · ${autoEditBatchTasks.filter(t => t.script).length} 个已配对${resultText}`;
+    }
     const matchHint = document.getElementById('autoedit-batch-match-hint');
     if (matchHint) {
         matchHint.textContent = !autoEditBatchTasks.length
@@ -11805,9 +11860,10 @@ function renderAutoEditBatchTasks() {
     root.innerHTML = autoEditBatchTasks.map((task, i) => {
         const lines = task.script.split(/\r?\n/).filter(x => x.trim()).length;
         const first = task.clips[0]?.split(/[/\\]/).pop() || '没有视频';
+        const analysisResultHtml = renderAutoEditBatchMatchResult(task);
         return `<div class="autoedit-batch-task" ondragover="event.preventDefault()" ondrop="autoEditBatchDrop(event,${i})" style="border:1px solid var(--border-color);border-radius:8px;padding:10px;background:var(--bg-tertiary);display:grid;grid-template-columns:128px 1fr;gap:10px;">
           <div style="width:128px;align-self:start;">${task.thumbnail ? `<div style="width:128px;display:flex;justify-content:center;align-items:center;background:#111;border-radius:6px;overflow:hidden;"><img src="${task.thumbnail}" onclick="playAutoEditBatchSource(${i})" style="display:block;max-width:128px;width:auto;height:auto;max-height:180px;object-fit:contain;cursor:pointer;" title="按原始视频比例显示，点击预览"></div>` : '<div style="width:128px;height:82px;background:#111;border-radius:6px;display:grid;place-items:center;color:#777;">无缩略图</div>'}<div title="${escapeHtml(first)}" style="font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:4px;">${escapeHtml(first)}</div></div>
-          <div><div style="display:flex;justify-content:space-between;gap:8px;align-items:center;"><div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;"><label title="输入目标顺序编号后回车或点击空白处" style="display:inline-flex;align-items:center;gap:4px;padding:3px 6px;border:1px solid rgba(99,102,241,.5);border-radius:6px;background:rgba(99,102,241,.12);font-size:11px;color:#c7d2fe;">顺序 <input type="number" min="1" max="${autoEditBatchTasks.length}" value="${i+1}" onchange="setAutoEditBatchTaskOrder(${i},this.value)" onkeydown="if(event.key==='Enter'){this.blur()}" ${autoEditBatchRunning?'disabled':''} style="width:46px;background:#111225;color:#fff;border:1px solid rgba(255,255,255,.18);border-radius:4px;padding:2px 4px;text-align:center;"></label><span draggable="true" ondragstart="autoEditBatchDragStart(event,${i})" title="拖动排序" style="cursor:grab;font-size:18px;">☰</span><button class="btn btn-secondary" title="上移一位" onclick="nudgeAutoEditBatchTask(${i},-1)" ${autoEditBatchRunning||i===0?'disabled':''} style="padding:1px 5px;">↑</button><button class="btn btn-secondary" title="下移一位" onclick="nudgeAutoEditBatchTask(${i},1)" ${autoEditBatchRunning||i===autoEditBatchTasks.length-1?'disabled':''} style="padding:1px 5px;">↓</button><strong>${escapeHtml(task.name)}</strong></div><span title="${escapeHtml(task.reelsTransferError || task.message)}" style="color:${colors[task.status] || '#8b95c0'}">${escapeHtml(task.message)}</span></div><div class="hint">直接修改顺序编号可快速移动 · ${task.clips.length} 个视频 · ${lines} 行断行文案</div><label style="display:flex;align-items:center;gap:7px;margin-top:7px;font-size:11px;"><strong style="min-width:76px;color:#c7d2fe;">🏷️ 导出名称</strong><input class="input" value="${escapeHtml(task.outputName || task.name)}" placeholder="Reels 中的任务名和最终文件名" onchange="updateAutoEditBatchOutputName(${i},this.value)" ${autoEditBatchRunning?'disabled':''} style="flex:1;"></label><label style="display:block;margin-top:8px;"><strong style="display:block;font-size:11px;color:#bfdbfe;margin-bottom:4px;">📝 当前任务的完整断行后文案 <span class="hint" style="font-weight:400;">（用于字幕匹配和自动剪辑）</span></strong><textarea class="input" rows="3" placeholder="在这里输入或修改已经断好行的完整文案……" onchange="updateAutoEditBatchScript(${i},this.value)" ${autoEditBatchRunning?'disabled':''} style="width:100%;resize:vertical;background:var(--bg-secondary);">${escapeHtml(task.script)}</textarea></label>${task.result?.analysis_only ? `<button class="btn btn-secondary" onclick="openAutoEditBatchReview(${i})" ${autoEditBatchRunning?'disabled':''} style="margin-top:6px;">审核时间线</button><button class="btn btn-primary" onclick="exportAutoEditBatchTask(${i})" ${autoEditBatchRunning||task.status==='analyzing'?'disabled':''} style="margin:6px 0 0 6px;">正式导出</button><button class="btn btn-secondary" onclick="exportAutoEditBatchTask(${i},{skipReels:true})" ${autoEditBatchRunning||task.status==='analyzing'?'disabled':''} style="margin:6px 0 0 6px;">仅视频 + 字幕</button>` : ''}${task.result?.output_path && !task.result?.analysis_only ? `<button class="btn btn-secondary" onclick="showAutoEditBatchOutput(${i})" style="margin-top:6px;">📁 查看成片</button>${task.reelsTransferError ? `<button class="btn btn-secondary" onclick="retryAutoEditBatchTaskToReels(${i})" ${autoEditBatchRunning?'disabled':''} style="margin:6px 0 0 6px;">重送 Reels</button>` : ''}` : ''}</div>
+          <div><div style="display:flex;justify-content:space-between;gap:8px;align-items:center;"><div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;"><label title="输入目标顺序编号后回车或点击空白处" style="display:inline-flex;align-items:center;gap:4px;padding:3px 6px;border:1px solid rgba(99,102,241,.5);border-radius:6px;background:rgba(99,102,241,.12);font-size:11px;color:#c7d2fe;">顺序 <input type="number" min="1" max="${autoEditBatchTasks.length}" value="${i+1}" onchange="setAutoEditBatchTaskOrder(${i},this.value)" onkeydown="if(event.key==='Enter'){this.blur()}" ${autoEditBatchRunning?'disabled':''} style="width:46px;background:#111225;color:#fff;border:1px solid rgba(255,255,255,.18);border-radius:4px;padding:2px 4px;text-align:center;"></label><span draggable="true" ondragstart="autoEditBatchDragStart(event,${i})" title="拖动排序" style="cursor:grab;font-size:18px;">☰</span><button class="btn btn-secondary" title="上移一位" onclick="nudgeAutoEditBatchTask(${i},-1)" ${autoEditBatchRunning||i===0?'disabled':''} style="padding:1px 5px;">↑</button><button class="btn btn-secondary" title="下移一位" onclick="nudgeAutoEditBatchTask(${i},1)" ${autoEditBatchRunning||i===autoEditBatchTasks.length-1?'disabled':''} style="padding:1px 5px;">↓</button><strong>${escapeHtml(task.name)}</strong></div><span title="${escapeHtml(task.reelsTransferError || task.message)}" style="color:${colors[task.status] || '#8b95c0'}">${escapeHtml(task.message)}</span></div><div class="hint">直接修改顺序编号可快速移动 · ${task.clips.length} 个视频 · ${lines} 行断行文案</div><label style="display:flex;align-items:center;gap:7px;margin-top:7px;font-size:11px;"><strong style="min-width:76px;color:#c7d2fe;">🏷️ 导出名称</strong><input class="input" value="${escapeHtml(task.outputName || task.name)}" placeholder="Reels 中的任务名和最终文件名" onchange="updateAutoEditBatchOutputName(${i},this.value)" ${autoEditBatchRunning?'disabled':''} style="flex:1;"></label><label style="display:block;margin-top:8px;"><strong style="display:block;font-size:11px;color:#bfdbfe;margin-bottom:4px;">📝 当前任务的完整断行后文案 <span class="hint" style="font-weight:400;">（用于字幕匹配和自动剪辑）</span></strong><textarea class="input" rows="3" placeholder="在这里输入或修改已经断好行的完整文案……" onchange="updateAutoEditBatchScript(${i},this.value)" ${autoEditBatchRunning?'disabled':''} style="width:100%;resize:vertical;background:var(--bg-secondary);">${escapeHtml(task.script)}</textarea></label>${analysisResultHtml}${task.result?.analysis_only ? `<button class="btn btn-secondary" onclick="openAutoEditBatchReview(${i})" ${autoEditBatchRunning?'disabled':''} style="margin-top:6px;">审核时间线</button><button class="btn btn-primary" onclick="exportAutoEditBatchTask(${i})" ${autoEditBatchRunning||task.status==='analyzing'?'disabled':''} style="margin:6px 0 0 6px;">正式导出</button><button class="btn btn-secondary" onclick="exportAutoEditBatchTask(${i},{skipReels:true})" ${autoEditBatchRunning||task.status==='analyzing'?'disabled':''} style="margin:6px 0 0 6px;">仅视频 + 字幕</button>` : ''}${task.result?.output_path && !task.result?.analysis_only ? `<button class="btn btn-secondary" onclick="showAutoEditBatchOutput(${i})" style="margin-top:6px;">📁 查看成片</button>${task.reelsTransferError ? `<button class="btn btn-secondary" onclick="retryAutoEditBatchTaskToReels(${i})" ${autoEditBatchRunning?'disabled':''} style="margin:6px 0 0 6px;">重送 Reels</button>` : ''}` : ''}</div>
         </div>`;
     }).join('');
 }
@@ -11827,8 +11883,14 @@ async function analyzeAutoEditBatchTask(task, settings = task.settings || getAut
         task.settings={...settings};
         const response = await apiFetch(`${API_BASE}/media/convert`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ files:task.clips, clips:task.clips, mode:'auto_edit', request_id:requestId, analysis_only:true, script_text:task.script, output_dir:window.electronAPI.pathJoin(task.folder,'_auto_edit'), ...task.settings }) });
         const data = await response.json(); if (!response.ok) throw new Error(data.error || '分析失败');
-        task.result=data; const warnings=(data.segments||[]).filter(s=>s.status==='warning').length;
-        task.status=warnings?'warning':'ready'; task.message=warnings?`${warnings} 项待审核`:'分析通过';
+        task.result=data;
+        const match = getAutoEditBatchMatchSummary(data);
+        task.status = match.error > 0 ? 'error' : ((match.warning > 0 || match.missingBlocks > 0) ? 'warning' : 'ready');
+        task.message = match.error > 0
+            ? `${match.ready}/${match.total} 通过 · ${match.error} 失败`
+            : ((match.warning > 0 || match.missingBlocks > 0)
+                ? `${match.ready}/${match.total} 通过 · ${match.warning} 警告${match.missingBlocks ? ` · ${match.missingBlocks} 段缺失` : ''}`
+                : `${match.ready}/${match.total} 全部匹配通过`);
     } catch (e) { task.status='error'; task.message=e.message; }
     finally { if(typeof unsubscribe==='function')unsubscribe(); }
     renderAutoEditBatchTasks();
@@ -11845,8 +11907,16 @@ async function startAutoEditBatchAnalysis() {
     try {
         const worker=async()=>{ while(cursor<autoEditBatchTasks.length) await analyzeAutoEditBatchTask(autoEditBatchTasks[cursor++],settings); };
         await Promise.all(Array.from({length:Math.min(n,autoEditBatchTasks.length)},worker));
-        const failed=autoEditBatchTasks.filter(task=>task.status==='error').length;
-        showToast(failed?`批量分析完成，${failed} 个失败`:'批量分析完成',failed?'error':'success');
+        const taskErrors=autoEditBatchTasks.filter(task=>task.status==='error').length;
+        const taskWarnings=autoEditBatchTasks.filter(task=>task.status==='warning').length;
+        const totals=autoEditBatchTasks.reduce((acc,task)=>{
+            if (!task.result?.analysis_only) return acc;
+            const item=getAutoEditBatchMatchSummary(task.result);
+            acc.ready+=item.ready; acc.warning+=item.warning; acc.error+=item.error; acc.missing+=item.missingBlocks;
+            return acc;
+        },{ready:0,warning:0,error:0,missing:0});
+        const detail=`${totals.ready} 个片段通过，${totals.warning} 个警告，${totals.error} 个失败${totals.missing?`，${totals.missing} 段文案缺失`:''}`;
+        showToast(`批量分析完成：${detail}`,taskErrors?'error':(taskWarnings?'warning':'success'));
     } finally { setAutoEditBatchRunning(false); }
 }
 async function exportAutoEditBatchTask(index, options = {}) {
@@ -13498,6 +13568,95 @@ async function startAutoEditByScript(isRetry = false, options = {}) {
     }
 }
 
+function buildAutoEditTextDiffHtml(targetText, recognizedText) {
+    const segmentWords = value => {
+        const text = String(value || '').normalize('NFKC');
+        if (typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function') {
+            const segmenter = new Intl.Segmenter(undefined, { granularity: 'word' });
+            return { text, words: Array.from(segmenter.segment(text))
+                .filter(part => part.isWordLike || /[\p{L}\p{N}]/u.test(part.segment))
+                .map(part => ({ token: part.segment, start: part.index, end: part.index + part.segment.length })) };
+        }
+        // 旧 Chromium 兜底：中日韩按字，其他 Unicode 语言按词切分；完全忽略标点和符号。
+        const regex = /\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Hangul}|[\p{L}\p{M}]+|\p{N}+/gu;
+        return { text, words: Array.from(text.matchAll(regex)).map(match => ({ token: match[0], start: match.index, end: match.index + match[0].length })) };
+    };
+    const targetData = segmentWords(targetText);
+    const recognizedData = segmentWords(recognizedText);
+    const target = targetData.words;
+    const recognized = recognizedData.words;
+    // 单词内部的直/弯引号、连字符等符号差异不算漏读。
+    // 例如法语 aujourd'hui 与 aujourd’hui 应当视为同一个词。
+    const key = item => item.token
+        .toLocaleLowerCase()
+        .normalize('NFKC')
+        .replace(/[^\p{L}\p{N}]/gu, '');
+    const rows = target.length + 1;
+    const cols = recognized.length + 1;
+    const table = Array.from({ length: rows }, () => new Uint16Array(cols));
+    for (let i = target.length - 1; i >= 0; i--) {
+        for (let j = recognized.length - 1; j >= 0; j--) {
+            table[i][j] = key(target[i]) === key(recognized[j])
+                ? table[i + 1][j + 1] + 1
+                : Math.max(table[i + 1][j], table[i][j + 1]);
+        }
+    }
+    const targetStatus = new Array(target.length).fill('normal');
+    const recognizedStatus = new Array(recognized.length).fill('normal');
+    const targetKeys = target.map(key).filter(Boolean);
+    const recognizedKeys = recognized.map(key).filter(Boolean);
+    const sameSpokenContent = targetKeys.join('') === recognizedKeys.join('');
+    const spacingSignature = value => String(value || '')
+        .toLocaleLowerCase()
+        .normalize('NFKC')
+        .replace(/[^\p{L}\p{N}\s]/gu, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    // 这些文字体系不统一依赖空格划分单词，空格差异不能直接视为排版错误。
+    const hasFlexibleWordSpacingScript = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u
+        .test(`${targetText || ''}${recognizedText || ''}`);
+    const hasWordBoundaryDifference = sameSpokenContent
+        && !hasFlexibleWordSpacingScript
+        && spacingSignature(targetText) !== spacingSignature(recognizedText);
+    if (!sameSpokenContent) {
+        let i = 0, j = 0;
+        while (i < target.length || j < recognized.length) {
+            if (i < target.length && j < recognized.length && key(target[i]) === key(recognized[j])) {
+                i++; j++;
+            } else if (j < recognized.length && (i >= target.length || table[i][j + 1] >= table[i + 1][j])) {
+                recognizedStatus[j++] = 'extra';
+            } else if (i < target.length) {
+                targetStatus[i++] = 'missing';
+            }
+        }
+    }
+    const render = (data, statuses) => {
+        let html = '';
+        let cursor = 0;
+        data.words.forEach((word, index) => {
+            // 标点、空格、引号、Emoji 等原样显示，但不参与差异判定。
+            html += escapeHtml(data.text.slice(cursor, word.start));
+            const safeToken = escapeHtml(data.text.slice(word.start, word.end));
+            if (statuses[index] === 'missing') {
+                html += `<mark title="目标文案中有，但识别文字中没有" style="background:rgba(239,68,68,.32);color:#fecaca;text-decoration:line-through;text-decoration-thickness:2px;border-radius:3px;padding:1px 2px;">${safeToken}</mark>`;
+            } else if (statuses[index] === 'extra') {
+                html += `<mark title="视频实际识别出的多余或不同文字" style="background:rgba(34,197,94,.28);color:#bbf7d0;border-radius:3px;padding:1px 2px;">${safeToken}</mark>`;
+            } else {
+                html += safeToken;
+            }
+            cursor = word.end;
+        });
+        return html + escapeHtml(data.text.slice(cursor));
+    };
+    return {
+        targetHtml: render(targetData, targetStatus),
+        recognizedHtml: render(recognizedData, recognizedStatus),
+        boundaryWarning: hasWordBoundaryDifference
+            ? '朗读内容一致，但文案与识别结果的空格或断词位置不同，请检查文案排版。'
+            : '',
+    };
+}
+
 function renderAutoEditResult(data) {
     const root = document.getElementById('autoedit-result-list');
     if (!root) return;
@@ -13526,32 +13685,82 @@ function renderAutoEditResult(data) {
     const segments = data.segments || [];
     const isReview = data.analysis_only === true;
     const settings = data.output_settings || {};
+    const segmentSourceLabels = new Map(segments.map((segment, index) => {
+        const sourceIndex = Number(segment.source_index || segment.index) || index + 1;
+        const fileName = String(segment.source || '').split(/[/\\]/).pop() || '未知文件';
+        return [sourceIndex, `片段 #${sourceIndex} ${fileName}`];
+    }));
+    const segmentSourceParts = new Map(segments.map((segment, index) => {
+        const sourceIndex = Number(segment.source_index || segment.index) || index + 1;
+        const fileName = String(segment.source || '').split(/[/\\]/).pop() || '未知文件';
+        return [sourceIndex, { sourceIndex, fileName }];
+    }));
+    const formatSegmentSourceLabel = sourceIndex => segmentSourceLabels.get(Number(sourceIndex)) || `片段 #${sourceIndex || '?'}`;
+    const formatSegmentSourceLabelHtml = sourceIndex => {
+        const part = segmentSourceParts.get(Number(sourceIndex));
+        if (!part) return `片段 #${escapeHtml(sourceIndex || '?')}`;
+        return `<span>片段 #${part.sourceIndex}</span> <span style="color:#74c0fc;">${escapeHtml(part.fileName)}</span>`;
+    };
     const originalScriptLines = String(document.getElementById('autoedit-script')?.value || data.script_text || '')
         .split(/\r?\n/).map(line => line.trim()).filter(Boolean);
     const scriptLineUsage = new Map();
+    const scriptLineSources = new Map();
     segments.forEach(seg => {
         const start = Number(seg.script_start_line);
         const end = Number(seg.script_end_line || seg.script_start_line);
         if (!Number.isFinite(start) || start < 1) return;
-        for (let line = start; line <= end; line++) scriptLineUsage.set(line, (scriptLineUsage.get(line) || 0) + 1);
+        for (let line = start; line <= end; line++) {
+            scriptLineUsage.set(line, (scriptLineUsage.get(line) || 0) + 1);
+            if (!scriptLineSources.has(line)) scriptLineSources.set(line, []);
+            const sourceIndex = Number(seg.source_index || seg.index);
+            if (sourceIndex > 0 && !scriptLineSources.get(line).includes(sourceIndex)) scriptLineSources.get(line).push(sourceIndex);
+        }
     });
-    const coveredScriptLines = originalScriptLines.filter((_, index) => scriptLineUsage.has(index + 1)).length;
-    const missingScriptBlocks = [];
+    let coveredScriptLines = originalScriptLines.filter((_, index) => scriptLineUsage.has(index + 1)).length;
+    const calculatedMissingScriptBlocks = [];
     for (let line = 1; line <= originalScriptLines.length; line++) {
         if (scriptLineUsage.has(line)) continue;
         const start = line;
         while (line + 1 <= originalScriptLines.length && !scriptLineUsage.has(line + 1)) line++;
-        missingScriptBlocks.push({ start, end: line, text: originalScriptLines.slice(start - 1, line).join('\n') });
+        calculatedMissingScriptBlocks.push({ start, end: line, text: originalScriptLines.slice(start - 1, line).join('\n') });
     }
+    // 优先使用后端经过“识别全文二次核对”后的缺失结果，避免仅按行号覆盖率造成误报。
+    const missingScriptBlocks = Array.isArray(data.missing_blocks)
+        ? data.missing_blocks.map(block => ({
+            ...block,
+            start: Number(block.startLine) + 1,
+            end: Number(block.endLine) + 1,
+            text: block.text || '',
+            previousSourceIndex: Number(block.previous_source_index) || null,
+            nextSourceIndex: Number(block.next_source_index) || null,
+            positionHint: block.position_hint || '',
+        })).filter(block => block.start > 0 && block.end >= block.start)
+        : calculatedMissingScriptBlocks;
+    const authoritativeMissingLines = new Set();
+    missingScriptBlocks.forEach(block => {
+        for (let line = block.start; line <= block.end; line++) authoritativeMissingLines.add(line);
+    });
+    // 行号未被分配但后端已在识别全文中二次核对到的内容，不再计为缺失。
+    coveredScriptLines = originalScriptLines.filter((_, index) => scriptLineUsage.has(index + 1) || !authoritativeMissingLines.has(index + 1)).length;
     const scriptCoverageHtml = isReview && originalScriptLines.length ? `
         <details open style="margin:10px 0;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-tertiary);padding:10px;">
             <summary style="cursor:pointer;font-weight:700;color:var(--text-secondary);">整体文案覆盖：${coveredScriptLines}/${originalScriptLines.length} 行（${Math.round(coveredScriptLines / originalScriptLines.length * 100)}%） <span id="ae-overall-duplicate-status" class="ae-overall-status"></span> <span id="ae-overall-missing-status" class="ae-overall-status"></span></summary>
             <div style="display:grid;gap:4px;margin-top:9px;max-height:260px;overflow:auto;">
                 ${originalScriptLines.map((line, index) => {
                     const usage = scriptLineUsage.get(index + 1) || 0;
-                    const color = usage === 0 ? '#ff6b6b' : (usage > 1 ? '#ff9f43' : '#51cf66');
-                    const label = usage === 0 ? '未对上' : (usage > 1 ? `重复占用 ×${usage}` : '已对上');
-                    return `<div class="ae-coverage-line" onclick="locateAutoEditScriptLine(${index + 1},this)" title="点击快速定位到审核时间线" style="display:grid;grid-template-columns:62px 90px 1fr 58px;gap:7px;align-items:start;padding:5px 7px;border-radius:5px;background:${usage === 0 ? 'rgba(255,107,107,.08)' : (usage > 1 ? 'rgba(255,159,67,.08)' : 'rgba(81,207,102,.045)')};font-size:12px;cursor:pointer;"><span style="color:var(--text-muted);">第 ${index + 1} 行</span><strong style="color:${color};">${label}</strong><span style="white-space:pre-wrap;word-break:break-word;">${escapeHtml(line)}</span><span style="color:#60a5fa;font-weight:700;white-space:nowrap;">🎯 定位</span></div>`;
+                    const sourceIndices = scriptLineSources.get(index + 1) || [];
+                    const isConfirmedMissing = authoritativeMissingLines.has(index + 1);
+                    const verifiedInTranscript = usage === 0 && !isConfirmedMissing;
+                    const color = isConfirmedMissing ? '#ff6b6b' : (usage > 1 ? '#ff9f43' : '#51cf66');
+                    const labelHtml = isConfirmedMissing
+                        ? '确认缺失'
+                        : (verifiedInTranscript
+                            ? '全文核对已读到'
+                            : (usage > 1
+                                ? `${sourceIndices.map(formatSegmentSourceLabelHtml).join(' <span>与</span> ')} <span>重复</span>`
+                                : `${formatSegmentSourceLabelHtml(sourceIndices[0])} <span>已对上</span>`));
+                    const background = isConfirmedMissing ? 'rgba(255,107,107,.08)' : (usage > 1 ? 'rgba(255,159,67,.08)' : 'rgba(81,207,102,.045)');
+                    return `<div class="ae-coverage-line" onclick="locateAutoEditScriptLine(${index + 1},this)" title="点击快速定位到审核时间线" style="display:grid;grid-template-columns:62px minmax(120px,190px) 1fr 58px;gap:7px;align-items:start;padding:5px 7px;border-radius:5px;background:${background};font-size:12px;cursor:pointer;"><span style="color:var(--text-muted);">第 ${index + 1} 行</span><strong style="color:${color};">${labelHtml}</strong><span style="white-space:pre-wrap;word-break:break-word;">${escapeHtml(line)}</span><span style="color:#60a5fa;font-weight:700;white-space:nowrap;">🎯 定位</span></div>`;
                 }).join('')}
             </div>
         </details>` : '';
@@ -13562,20 +13771,32 @@ function renderAutoEditResult(data) {
         if (key) reviewTextCounts.set(key, (reviewTextCounts.get(key) || 0) + 1);
     });
     const reviewDuplicateGroups = new Map();
+    const reviewDuplicateMembers = new Map();
     let nextDuplicateGroup = 1;
     segments.forEach(seg => {
         const key = reviewTextKey(seg.script);
         if (key && (reviewTextCounts.get(key) || 0) > 1 && !reviewDuplicateGroups.has(key)) {
             reviewDuplicateGroups.set(key, nextDuplicateGroup++);
+            reviewDuplicateMembers.set(key, segments.filter(item => reviewTextKey(item.script) === key).map(item => Number(item.source_index || item.index)).filter(Boolean));
         }
     });
-    const missingPlaceholderHtml = isReview ? missingScriptBlocks.map((block, index) => `
-        <div class="autoedit-missing-placeholder" data-warning="true" data-unmatched="true" data-script-start-line="${block.start}" data-script-end-line="${block.end}" data-missing-text="${escapeHtml(encodeURIComponent(block.text))}">
+    const missingPlaceholderHtml = isReview ? missingScriptBlocks.map((block, index) => {
+        const previousSegment = segments.filter(seg => Number(seg.script_end_line || 0) < block.start && Number(seg.script_end_line || 0) > 0)
+            .sort((a, b) => Number(b.script_end_line || 0) - Number(a.script_end_line || 0))[0];
+        const nextSegment = segments.filter(seg => Number(seg.script_start_line || Infinity) > block.end)
+            .sort((a, b) => Number(a.script_start_line || Infinity) - Number(b.script_start_line || Infinity))[0];
+        const previousSourceIndex = block.previousSourceIndex || Number(previousSegment?.source_index) || null;
+        const nextSourceIndex = block.nextSourceIndex || Number(nextSegment?.source_index) || null;
+        const positionHint = previousSourceIndex && nextSourceIndex
+            ? `位于 ${formatSegmentSourceLabel(previousSourceIndex)} 与 ${formatSegmentSourceLabel(nextSourceIndex)} 之间`
+            : (previousSourceIndex ? `位于 ${formatSegmentSourceLabel(previousSourceIndex)} 之后` : (nextSourceIndex ? `位于 ${formatSegmentSourceLabel(nextSourceIndex)} 之前` : (block.positionHint || '位置待人工确认')));
+        return `
+        <div class="autoedit-missing-placeholder" data-warning="true" data-unmatched="true" data-script-start-line="${block.start}" data-script-end-line="${block.end}" data-previous-source-index="${previousSourceIndex || ''}" data-next-source-index="${nextSourceIndex || ''}" data-missing-text="${escapeHtml(encodeURIComponent(block.text))}">
             <div class="ae-missing-placeholder-icon">!</div>
             <div>
-                <div class="ae-missing-placeholder-title">缺失占位 #${index + 1} · 文案第 ${block.start}${block.end > block.start ? `–${block.end}` : ''} 行：没有找到对应片段</div>
+                <div class="ae-missing-placeholder-title">缺失占位 #${index + 1} · ${escapeHtml(positionHint)} · 文案第 ${block.start}${block.end > block.start ? `–${block.end}` : ''} 行</div>
                 <div class="ae-missing-placeholder-text">${escapeHtml(block.text)}</div>
-                <div class="ae-missing-placeholder-help">这段内容可能实际已经读过，但因特殊符号、缩写或识别文字差异没有匹配成功。请重点核对上下片段的“目标文案”和“实际识别文字”，确认内容是否被错误分配。</div>
+                <div class="ae-missing-placeholder-help">系统已用完整识别文字二次核对，仍未找到这段文案。请重点播放${previousSourceIndex ? formatSegmentSourceLabel(previousSourceIndex) : '上一个片段'}${nextSourceIndex ? ` 和 ${formatSegmentSourceLabel(nextSourceIndex)}` : '与下一个片段'}；如果实际已读，将文案归入对应片段即可消除缺失。</div>
                 <div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:7px;">
                     <button class="btn btn-primary" onclick="assignAutoEditMissingBlock(this,'previous')" style="padding:3px 9px;font-size:11px;">归到上一段</button>
                     <button class="btn btn-primary" onclick="assignAutoEditMissingBlock(this,'next')" style="padding:3px 9px;font-size:11px;">归到下一段</button>
@@ -13583,7 +13804,8 @@ function renderAutoEditResult(data) {
                     <button class="btn btn-secondary" onclick="locateAutoEditScriptLine(${Math.min(originalScriptLines.length, block.end + 1)})" style="padding:3px 9px;font-size:11px;">↓ 核对下一个片段</button>
                 </div>
             </div>
-        </div>`).join('') : '';
+        </div>`;
+    }).join('') : '';
     const segmentHtml = segments.length ? `
         <div style="margin-top: 12px;">
             <div style="font-weight: 600; margin-bottom: 8px; color: var(--text-secondary);">${isReview ? '② 审核时间线（可改顺序、字幕和入出点）' : '片段匹配明细'}</div>
@@ -13594,20 +13816,23 @@ function renderAutoEditResult(data) {
                 <button class="btn btn-secondary" onclick="filterAutoEditReview('duplicate')" style="padding:3px 9px;font-size:11px;">只看重复</button>
                 <button class="btn btn-secondary" onclick="filterAutoEditReview('unmatched')" style="padding:3px 9px;font-size:11px;">只看未匹配</button>
                 <button class="btn btn-secondary" onclick="toggleAllAutoEditDetails(true)" style="padding:3px 9px;font-size:11px;margin-left:auto;">展开异常</button>
+                <button class="btn btn-secondary" onclick="toggleAllAutoEditDetails('all')" style="padding:3px 9px;font-size:11px;">全部展开</button>
                 <button class="btn btn-secondary" onclick="toggleAllAutoEditDetails(false)" style="padding:3px 9px;font-size:11px;">全部收起</button>
             </div>` : ''}
             ${missingPlaceholderHtml}
             ${segments.map((seg, reviewIndex) => {
                 const duplicateText = (reviewTextCounts.get(reviewTextKey(seg.script)) || 0) > 1;
                 const duplicateGroup = reviewDuplicateGroups.get(reviewTextKey(seg.script));
-                const matchPercent = Math.round((seg.match_score || 0) * 100);
+                const duplicateMembers = reviewDuplicateMembers.get(reviewTextKey(seg.script)) || [];
+                const matchPercent = Number.isFinite(Number(seg.similarity)) ? Math.round(Number(seg.similarity)) : Math.round((seg.match_score || 0) * 100);
                 const isCriticalMatch = matchPercent < 50;
                 const isLowMatch = matchPercent >= 50 && matchPercent < 75;
-                const reviewWarning = seg.status === 'warning' || matchPercent < 75;
+                const reviewWarning = seg.status === 'warning' || seg.status === 'error' || matchPercent < 75;
                 const matchRiskBadge = isCriticalMatch
                     ? `<strong class="ae-match-risk-badge ae-match-risk-critical">⛔ 严重低匹配 ${matchPercent}% · 很可能匹配错误</strong>`
                     : (isLowMatch ? `<strong class="ae-match-risk-badge ae-match-risk-low">⚠ 低匹配 ${matchPercent}% · 请重点核对</strong>` : '');
                 const reviewUnmatched = !seg.script || !seg.recognized_text;
+                const textDiff = buildAutoEditTextDiffHtml(seg.script || '', seg.recognized_text || '');
                 const detailsOpen = duplicateText || reviewWarning || reviewUnmatched;
                 const srcTag = seg.transcription_source === 'cache'
                     ? '<span style="padding: 1px 4px; border-radius: 3px; font-size: 10px; background: rgba(81,207,102,0.15); color:#51cf66; font-weight:600; text-align:center;">缓存</span>'
@@ -13627,16 +13852,17 @@ function renderAutoEditResult(data) {
                     : 'display: grid; grid-template-columns: 70px 90px 70px 80px 60px 1fr 100px; gap: 8px; align-items: center; padding: 5px 8px; border-bottom: 1px solid var(--border-color); font-size: 12px;';
                 
                 if (isReview) return `
-                    <div class="autoedit-review-row ${duplicateText ? 'ae-duplicate-row' : ''} ${reviewWarning && !duplicateText ? 'ae-warning-row' : ''} ${isCriticalMatch ? 'ae-critical-match-row' : ''}" data-review-index="${reviewIndex}" data-script-start-line="${Number(seg.script_start_line) || 0}" data-script-end-line="${Number(seg.script_end_line || seg.script_start_line) || 0}" data-source="${escapeHtml(encodeURIComponent(seg.source || ''))}" data-word-timeline="${escapeHtml(encodeURIComponent(JSON.stringify(seg.word_timeline || [])))}" data-original-text-key="${escapeHtml(reviewTextKey(seg.script))}" data-original-script="${escapeHtml(encodeURIComponent(seg.script || ''))}" data-warning="${reviewWarning}" data-critical-match="${isCriticalMatch}" data-duplicate="${duplicateText}" data-unmatched="${reviewUnmatched}" draggable="true" ondragstart="autoEditReviewDragStart(event,${reviewIndex})" ondragover="event.preventDefault()" ondrop="autoEditReviewDrop(event,${reviewIndex})" style="display:grid;grid-template-columns:42px 38px 1fr 112px 112px 90px;gap:8px;align-items:center;padding:10px 8px;border-bottom:1px solid ${duplicateText ? '#ff6b6b' : 'var(--border-color)'};cursor:grab;">
+                    <div class="autoedit-review-row ${duplicateText ? 'ae-duplicate-row' : ''} ${reviewWarning && !duplicateText ? 'ae-warning-row' : ''} ${isCriticalMatch ? 'ae-critical-match-row' : ''}" data-review-index="${reviewIndex}" data-source-index="${Number(seg.source_index || seg.index) || reviewIndex + 1}" data-source-label="${escapeHtml(formatSegmentSourceLabel(seg.source_index))}" data-script-start-line="${Number(seg.script_start_line) || 0}" data-script-end-line="${Number(seg.script_end_line || seg.script_start_line) || 0}" data-source="${escapeHtml(encodeURIComponent(seg.source || ''))}" data-word-timeline="${escapeHtml(encodeURIComponent(JSON.stringify(seg.word_timeline || [])))}" data-original-text-key="${escapeHtml(reviewTextKey(seg.script))}" data-original-script="${escapeHtml(encodeURIComponent(seg.script || ''))}" data-warning="${reviewWarning}" data-critical-match="${isCriticalMatch}" data-duplicate="${duplicateText}" data-unmatched="${reviewUnmatched}" draggable="true" ondragstart="autoEditReviewDragStart(event,${reviewIndex})" ondragover="event.preventDefault()" ondrop="autoEditReviewDrop(event,${reviewIndex})" style="display:grid;grid-template-columns:42px 38px 1fr 112px 112px 90px;gap:8px;align-items:center;padding:10px 8px;border-bottom:1px solid ${duplicateText ? '#ff6b6b' : 'var(--border-color)'};cursor:grab;">
                         <input type="checkbox" class="ae-review-enabled" checked title="是否导出" onchange="handleAutoEditReviewEnabled(this)">
                         <div style="display:flex;flex-direction:column;gap:2px;"><button class="btn btn-secondary" onclick="moveAutoEditReviewRow(${reviewIndex},-1)" style="padding:1px 5px;">↑</button><button class="btn btn-secondary" onclick="moveAutoEditReviewRow(${reviewIndex},1)" style="padding:1px 5px;">↓</button></div>
-                        <div><div style="font-size:11px;color:var(--text-muted);display:flex;gap:6px;align-items:center;flex-wrap:wrap;">#${seg.source_index} · ${escapeHtml((seg.source || '').split(/[/\\]/).pop())} ${matchRiskBadge || `<span>匹配 ${matchPercent}%</span>`}${duplicateText ? ` · <strong class="ae-live-duplicate-badge" style="color:#ff6b6b;">⚠ 重复组 ${duplicateGroup}</strong>` : ''}${seg.ambiguity ? ` · ⚠️ ${escapeHtml(seg.ambiguity)}` : ''} · 双击放大编辑</div><textarea class="input ae-review-script" rows="2" ondblclick="openAutoEditLargeScriptEditor(this)" oninput="handleAutoEditScriptChanged(this)" style="width:100%;resize:vertical;">${escapeHtml(seg.script || '')}</textarea><div class="ae-missing-words-status"></div></div>
+                        <div><div style="font-size:11px;color:var(--text-muted);display:flex;gap:6px;align-items:center;flex-wrap:wrap;">${escapeHtml(formatSegmentSourceLabel(seg.source_index))} ${matchRiskBadge || `<span>匹配 ${matchPercent}%</span>`}${duplicateText ? ` · <strong class="ae-live-duplicate-badge" style="color:#ff6b6b;">⚠ ${escapeHtml(duplicateMembers.map(formatSegmentSourceLabel).join(' 与 '))} 重复</strong>` : ''}${seg.issue_reason ? ` · <strong style="color:#ff6b6b;">⚠ ${escapeHtml(seg.issue_reason)}</strong>` : (seg.ambiguity ? ` · ⚠️ ${escapeHtml(seg.ambiguity)}` : '')} · 双击放大编辑</div><textarea class="input ae-review-script" rows="2" ondblclick="openAutoEditLargeScriptEditor(this)" oninput="handleAutoEditScriptChanged(this)" style="width:100%;resize:vertical;">${escapeHtml(seg.script || '')}</textarea><div class="ae-missing-words-status"></div></div>
                         <label style="font-size:11px;">入点<div><button class="btn btn-secondary" onclick="nudgeAutoEditTime(this,'.ae-review-start',-.1)" style="padding:1px 4px;">−</button><input type="number" class="input ae-review-start" value="${Number(seg.start || 0).toFixed(3)}" min="0" step="0.01" style="width:72px;"><button class="btn btn-secondary" onclick="nudgeAutoEditTime(this,'.ae-review-start',.1)" style="padding:1px 4px;">+</button></div></label>
                         <label style="font-size:11px;">出点<div><button class="btn btn-secondary" onclick="nudgeAutoEditTime(this,'.ae-review-end',-.1)" style="padding:1px 4px;">−</button><input type="number" class="input ae-review-end" value="${Number(seg.end || 0).toFixed(3)}" min="0" step="0.01" style="width:72px;"><button class="btn btn-secondary" onclick="nudgeAutoEditTime(this,'.ae-review-end',.1)" style="padding:1px 4px;">+</button></div></label>
                         <div style="display:flex;flex-direction:column;gap:5px;"><button class="btn btn-primary" title="按照当前入点和出点播放裁切后的内容" onclick="playAutoEditReviewSource(this,true)" style="font-size:11px;padding:4px 8px;">▶ 剪后预览</button><button class="btn btn-secondary" title="播放未裁切的完整原始视频" onclick="playAutoEditReviewSource(this,false)" style="font-size:11px;padding:3px 8px;">原片预览</button><button class="btn btn-secondary" onclick="toggleAutoEditReviewDetails(this)" style="font-size:11px;padding:3px 8px;">${detailsOpen ? '收起详情' : '展开详情'}</button></div>
                         <div class="ae-review-details" style="grid-column:3 / -1;display:${detailsOpen ? 'grid' : 'none'};grid-template-columns:1fr 1fr;gap:10px;padding:10px;border-radius:7px;background:rgba(0,0,0,.18);cursor:default;">
-                            <div><div style="font-size:11px;color:#60a5fa;font-weight:700;margin-bottom:5px;">实际识别文字</div><div style="white-space:pre-wrap;word-break:break-word;line-height:1.55;min-height:54px;padding:8px;background:#111225;border-radius:5px;color:#d7defa;">${escapeHtml(seg.recognized_text || '(没有识别到有效语音)')}</div></div>
-                            <div><div style="font-size:11px;color:#a5b4fc;font-weight:700;margin-bottom:5px;">目标文案</div><div style="white-space:pre-wrap;word-break:break-word;line-height:1.55;min-height:54px;padding:8px;background:#111225;border-radius:5px;color:#fff;">${escapeHtml(seg.script || '(尚未匹配文案)')}</div></div>
+                            <div><div style="font-size:11px;color:#60a5fa;font-weight:700;margin-bottom:5px;">实际识别文字 <span style="color:#86efac;font-weight:500;">绿色=多读/不同</span></div><div style="white-space:pre-wrap;word-break:break-word;line-height:1.75;min-height:54px;padding:8px;background:#111225;border-radius:5px;color:#d7defa;">${textDiff.recognizedHtml || '(没有识别到有效语音)'}</div></div>
+                            <div><div style="font-size:11px;color:#a5b4fc;font-weight:700;margin-bottom:5px;">目标文案 <span style="color:#fca5a5;font-weight:500;">红色删除线=漏读</span></div><div style="white-space:pre-wrap;word-break:break-word;line-height:1.75;min-height:54px;padding:8px;background:#111225;border-radius:5px;color:#fff;">${textDiff.targetHtml || '(尚未匹配文案)'}</div></div>
+                            ${textDiff.boundaryWarning ? `<div style="grid-column:1 / -1;padding:7px 9px;border-radius:5px;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.3);color:#fcd34d;font-size:11px;">⚠️ ${escapeHtml(textDiff.boundaryWarning)}</div>` : ''}
                             <div style="grid-column:1 / -1;display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-top:1px solid rgba(255,255,255,.06);padding-top:8px;">
                                 <span class="hint">更多操作:</span>
                                 <label style="font-size:11px;">速度 <input class="input ae-review-speed" type="number" value="1" min="0.25" max="4" step="0.05" style="width:65px;"></label>
@@ -13661,9 +13887,26 @@ function renderAutoEditResult(data) {
         </div>
     ` : '';
 
+    const failedSegmentCount = segments.filter(segment => segment?.status === 'error').length;
+    const warningSegmentCount = segments.filter(segment => segment?.status === 'warning').length;
+    const duplicateSegmentCount = segments.filter(segment => (reviewTextCounts.get(reviewTextKey(segment?.script)) || 0) > 1).length;
+    const missingLineCount = authoritativeMissingLines.size;
+    const hasCriticalReviewProblems = failedSegmentCount > 0 || missingLineCount > 0;
+    const hasReviewWarnings = warningSegmentCount > 0 || duplicateSegmentCount > 0;
+    const reviewHeadline = hasCriticalReviewProblems
+        ? `❌ 分析完成，发现需要处理的问题`
+        : (hasReviewWarnings ? `⚠️ 分析完成，存在待审核项` : '✅ 第一步分析完成，全部匹配通过');
+    const reviewHeadlineColor = hasCriticalReviewProblems ? '#ff6b6b' : (hasReviewWarnings ? '#ff9f43' : 'var(--success)');
+    const reviewProblemSummary = isReview && (hasCriticalReviewProblems || hasReviewWarnings) ? `
+        <div style="margin:8px 0 10px;padding:10px 12px;border:2px solid ${hasCriticalReviewProblems ? 'rgba(239,68,68,.68)' : 'rgba(255,159,67,.58)'};border-radius:8px;background:${hasCriticalReviewProblems ? 'rgba(127,29,29,.22)' : 'rgba(120,70,15,.18)'};color:${reviewHeadlineColor};font-weight:650;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+            <span>${missingLineCount ? `缺失文案 ${missingLineCount} 行` : ''}${missingLineCount && failedSegmentCount ? ' · ' : ''}${failedSegmentCount ? `失败片段 ${failedSegmentCount} 个` : ''}${(missingLineCount || failedSegmentCount) && warningSegmentCount ? ' · ' : ''}${warningSegmentCount ? `警告片段 ${warningSegmentCount} 个` : ''}${duplicateSegmentCount ? ` · 重复片段 ${duplicateSegmentCount} 个` : ''}</span>
+            <button class="btn btn-secondary" onclick="locateFirstAutoEditProblem()" style="margin-left:auto;padding:4px 10px;font-size:11px;border-color:${reviewHeadlineColor};color:${reviewHeadlineColor};">🎯 定位第一个问题</button>
+        </div>` : '';
+
     root.innerHTML = `
-        <div style="margin-bottom:8px;color:var(--success);font-weight:600;">${isReview ? '✅ 第一步分析完成' : `✅ 已处理 ${data.used_clip_count || segments.length || 0} 组片段`}</div>
-        ${isReview ? `<div style="margin-bottom:10px;padding:8px 10px;border-radius:6px;background:rgba(99,102,241,.08);color:#a5b4fc;">输出将跟随第一个素材：${settings.width || '?'}×${settings.height || '?'}，${Number(settings.fps || 0).toFixed(3)} fps。黄色项目建议重点检查。</div>` : ''}
+        <div style="margin-bottom:8px;color:${isReview ? reviewHeadlineColor : 'var(--success)'};font-weight:700;font-size:${isReview ? '16px' : 'inherit'};">${isReview ? reviewHeadline : `✅ 已处理 ${data.used_clip_count || segments.length || 0} 组片段`}</div>
+        ${reviewProblemSummary}
+        ${isReview ? `<div style="margin-bottom:10px;padding:8px 10px;border-radius:6px;background:rgba(99,102,241,.08);color:#a5b4fc;">输出将跟随第一个素材：${settings.width || '?'}×${settings.height || '?'}，${Number(settings.fps || 0).toFixed(3)} fps。${hasCriticalReviewProblems ? '红色项目需优先处理，黄色项目需重点检查。' : '黄色项目建议重点检查。'}</div>` : ''}
         ${scriptCoverageHtml}
         ${fileHtml || '<p class="hint">没有返回输出文件。</p>'}
         <div style="margin-top: 10px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
@@ -13674,7 +13917,21 @@ function renderAutoEditResult(data) {
         </div>
         ${segmentHtml}
     `;
-    if (isReview) refreshAutoEditDuplicateMarks();
+    if (isReview) {
+        positionAutoEditMissingPlaceholders();
+        refreshAutoEditDuplicateMarks();
+    }
+}
+
+function positionAutoEditMissingPlaceholders() {
+    const rows = Array.from(document.querySelectorAll('.autoedit-review-row'));
+    const bySourceIndex = new Map(rows.map(row => [Number(row.dataset.sourceIndex), row]));
+    document.querySelectorAll('.autoedit-missing-placeholder').forEach(placeholder => {
+        const previous = bySourceIndex.get(Number(placeholder.dataset.previousSourceIndex));
+        const next = bySourceIndex.get(Number(placeholder.dataset.nextSourceIndex));
+        if (next?.parentNode) next.parentNode.insertBefore(placeholder, next);
+        else if (previous?.parentNode) previous.parentNode.insertBefore(placeholder, previous.nextSibling);
+    });
 }
 
 function getAutoEditReviewRowSource(button) {
@@ -13753,6 +14010,23 @@ function toggleAutoEditReviewFullscreen() {
     if (button) button.textContent = expanded ? '✕ 退出放大' : '⛶ 放大审核';
 }
 
+function locateFirstAutoEditProblem() {
+    const missing = document.querySelector('.autoedit-missing-placeholder:not([data-assigned="true"])');
+    if (missing) {
+        const line = Number(missing.dataset.scriptStartLine) || 1;
+        locateAutoEditScriptLine(line);
+        return;
+    }
+    const target = document.querySelector('.autoedit-review-row.ae-critical-match-row, .autoedit-review-row.ae-duplicate-row, .autoedit-review-row.ae-warning-row');
+    if (!target) return showToast('没有找到待处理问题', 'success');
+    document.querySelectorAll('.ae-quick-locate-target').forEach(row => row.classList.remove('ae-quick-locate-target'));
+    target.classList.add('ae-quick-locate-target');
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const sourceLabel = target.dataset.sourceLabel || `片段 #${target.dataset.sourceIndex || '?'}`;
+    showToast(`已定位问题：${sourceLabel}`, 'warning');
+    setTimeout(() => target.classList.remove('ae-quick-locate-target'), 4000);
+}
+
 function locateAutoEditScriptLine(lineNumber, coverageLine) {
     const rows = Array.from(document.querySelectorAll('.autoedit-review-row'));
     const placeholders = Array.from(document.querySelectorAll('.autoedit-missing-placeholder'));
@@ -13768,6 +14042,16 @@ function locateAutoEditScriptLine(lineNumber, coverageLine) {
         return start > 0 && start <= lineNumber && lineNumber <= end;
     });
     let targets = exactPlaceholders.length ? exactPlaceholders : exact;
+    if (exactPlaceholders.length) {
+        const bySourceIndex = new Map(rows.map(row => [Number(row.dataset.sourceIndex), row]));
+        for (const placeholder of exactPlaceholders) {
+            const previous = bySourceIndex.get(Number(placeholder.dataset.previousSourceIndex));
+            const next = bySourceIndex.get(Number(placeholder.dataset.nextSourceIndex));
+            if (previous) targets.push(previous);
+            if (next) targets.push(next);
+        }
+        targets = Array.from(new Set(targets));
+    }
     let usedNearest = false;
     if (!targets.length) {
         const candidates = rows.filter(row => Number(row.dataset.scriptStartLine || 0) > 0);
@@ -13790,8 +14074,14 @@ function locateAutoEditScriptLine(lineNumber, coverageLine) {
     targets.forEach(row => row.classList.add('ae-quick-locate-target'));
     targets[0]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     if (targets.length) {
-        showToast(usedNearest ? `第 ${lineNumber} 行未对上，已定位到最接近的片段` : `已定位第 ${lineNumber} 行对应的${targets.length > 1 ? ` ${targets.length} 个` : ''}片段`, usedNearest ? 'info' : 'success');
-        setTimeout(() => targets.forEach(row => row.classList.remove('ae-quick-locate-target')), 2200);
+        const missingTarget = exactPlaceholders[0];
+        const missingPosition = missingTarget
+            ? [missingTarget.dataset.previousSourceIndex ? `#${missingTarget.dataset.previousSourceIndex}` : '', missingTarget.dataset.nextSourceIndex ? `#${missingTarget.dataset.nextSourceIndex}` : ''].filter(Boolean).join(' 与 ')
+            : '';
+        showToast(missingTarget
+            ? `第 ${lineNumber} 行缺失，已定位到片段 ${missingPosition || '相邻位置'} 之间`
+            : (usedNearest ? `第 ${lineNumber} 行未对上，已定位到最接近的片段` : `已定位第 ${lineNumber} 行对应的${targets.length > 1 ? ` ${targets.length} 个` : ''}片段`), missingTarget || usedNearest ? 'info' : 'success');
+        setTimeout(() => targets.forEach(row => row.classList.remove('ae-quick-locate-target')), 4000);
     } else {
         showToast(`第 ${lineNumber} 行没有可定位的片段`, 'info');
     }
@@ -13911,10 +14201,11 @@ function refreshAutoEditDuplicateMarks() {
         if (key) counts.set(key, (counts.get(key) || 0) + 1);
     });
     const groups = new Map();
-    let groupNumber = 1;
     rows.forEach(row => {
         const key = row.dataset.allTextKey;
-        if (key && (allCounts.get(key) || 0) > 1 && !groups.has(key)) groups.set(key, groupNumber++);
+        if (key && (allCounts.get(key) || 0) > 1 && !groups.has(key)) {
+            groups.set(key, rows.filter(item => item.dataset.allTextKey === key).map(item => item.dataset.sourceLabel || `片段 #${item.dataset.sourceIndex}`));
+        }
     });
     rows.forEach(row => {
         const enabled = row.querySelector('.ae-review-enabled')?.checked !== false;
@@ -13931,10 +14222,10 @@ function refreshAutoEditDuplicateMarks() {
             badge = document.createElement('strong');
             badge.className = 'ae-live-duplicate-badge';
             badge.style.cssText = 'color:#c084fc;font-size:11px;margin-left:6px;';
-            badge.textContent = `⚠ 重复组 ${groups.get(allKey)}`;
+            badge.textContent = `⚠ ${(groups.get(allKey) || []).join(' 与 ')} 重复`;
             row.querySelector('.ae-review-script')?.before(badge);
         } else if (duplicate && badge) {
-            badge.textContent = `⚠ 重复组 ${groups.get(allKey)}`;
+            badge.textContent = `⚠ ${(groups.get(allKey) || []).join(' 与 ')} 重复`;
         } else if (!duplicate && badge) badge.remove();
         if (resolved && !resolvedBadge) {
             resolvedBadge = document.createElement('strong');
@@ -13942,7 +14233,7 @@ function refreshAutoEditDuplicateMarks() {
             resolvedBadge.style.cssText = 'color:#51cf66;font-size:11px;margin-left:6px;';
             row.querySelector('.ae-review-script')?.before(resolvedBadge);
         }
-        if (resolved && resolvedBadge) resolvedBadge.textContent = `✓ 重复组 ${groups.get(allKey)} 已排除`;
+        if (resolved && resolvedBadge) resolvedBadge.textContent = `✓ 重复片段已排除`;
         else if (!resolved && resolvedBadge) resolvedBadge.remove();
         updateAutoEditMissingWords(row);
     });
@@ -13971,8 +14262,12 @@ function refreshAutoEditDuplicateMarks() {
         const enabledRows = rows.filter(row => row.querySelector('.ae-review-enabled')?.checked !== false);
         const pending = enabledRows.filter(row => Number(row.dataset.missingCount || 0) > 0 && row.dataset.missingConfirmed !== 'true');
         const confirmed = enabledRows.filter(row => Number(row.dataset.missingCount || 0) > 0 && row.dataset.missingConfirmed === 'true');
+        const missingPlaceholders = Array.from(document.querySelectorAll('.autoedit-missing-placeholder:not([data-assigned="true"])'));
         missingStatus.className = 'ae-overall-status';
-        if (pending.length) {
+        if (missingPlaceholders.length) {
+            missingStatus.classList.add('ae-overall-status-pending');
+            missingStatus.textContent = `❌ 仍有 ${missingPlaceholders.length} 处缺失文案未处理`;
+        } else if (pending.length) {
             missingStatus.classList.add('ae-overall-status-pending');
             missingStatus.textContent = `⚠ ${pending.length} 段存在未确认删词`;
         } else if (confirmed.length) {
@@ -14073,12 +14368,12 @@ function filterAutoEditReview(type) {
     });
 }
 
-function toggleAllAutoEditDetails(openProblems) {
+function toggleAllAutoEditDetails(mode) {
     document.querySelectorAll('.autoedit-review-row').forEach(row => {
         const details = row.querySelector('.ae-review-details');
         const button = Array.from(row.querySelectorAll('button')).find(btn => /详情/.test(btn.textContent));
         if (!details) return;
-        const shouldOpen = openProblems && (row.dataset.warning === 'true' || row.dataset.duplicate === 'true' || row.dataset.unmatched === 'true');
+        const shouldOpen = mode === 'all' || (mode === true && (row.dataset.warning === 'true' || row.dataset.duplicate === 'true' || row.dataset.unmatched === 'true'));
         details.style.display = shouldOpen ? 'grid' : 'none';
         if (button) button.textContent = shouldOpen ? '收起详情' : '展开详情';
     });

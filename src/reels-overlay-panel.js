@@ -4756,9 +4756,11 @@ class ReelsOverlayPanel {
                 if (clone.type === 'scroll') delete clone.scroll_title;
                 if (clone.type === 'text' || clone.type === 'scroll') delete clone.content;
             }
-            // 预设始终存储全程标志，不保留固定时长
-            clone.start = 0;
-            clone.end = 9999;
+            // 保留用户设置的入点/出点；只在旧数据缺少字段时使用全程默认值。
+            const savedStart = Number(clone.start);
+            const savedEnd = Number(clone.end);
+            clone.start = Number.isFinite(savedStart) ? Math.max(0, savedStart) : 0;
+            clone.end = Number.isFinite(savedEnd) && savedEnd >= clone.start ? savedEnd : 9999;
             return clone;
         });
 
@@ -4902,9 +4904,11 @@ class ReelsOverlayPanel {
             const oldId = clone.id;
             clone.id = 'ov_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
             if (oldId) idMap[oldId] = clone.id;
-            // 强制全程：兼容旧预设中存储的固定时长
-            clone.start = 0;
-            clone.end = 9999;
+            // 新预设保留每层入点/出点；旧预设缺失字段时仍按全程显示。
+            const loadedStart = Number(clone.start);
+            const loadedEnd = Number(clone.end);
+            clone.start = Number.isFinite(loadedStart) ? Math.max(0, loadedStart) : 0;
+            clone.end = Number.isFinite(loadedEnd) && loadedEnd >= clone.start ? loadedEnd : 9999;
             // For non-fixed layers, preserve text from corresponding old overlay.
             // Prefer same index, then same type, then any remaining text layer.
             if (!clone.fixed_text) {
@@ -5295,8 +5299,10 @@ class ReelsOverlayPanel {
             const oldId = clone.id;
             clone.id = 'ov_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
             if (oldId) idMap[oldId] = clone.id;
-            clone.start = 0;
-            clone.end = 9999;
+            const loadedStart = Number(clone.start);
+            const loadedEnd = Number(clone.end);
+            clone.start = Number.isFinite(loadedStart) ? Math.max(0, loadedStart) : 0;
+            clone.end = Number.isFinite(loadedEnd) && loadedEnd >= clone.start ? loadedEnd : 9999;
             
             if (clone.fixed_text) {
                 // 固定文案永远原样保留

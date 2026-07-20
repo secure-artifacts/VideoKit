@@ -378,6 +378,7 @@ async function reelsWysiwygExport(params) {
         reverbMix = 30,
         stereoWidth = 100,
         audioFxTarget = 'all',
+        useMemoryDecoder = false,
         useGPU = false,
         onProgress,
         onLog,
@@ -794,36 +795,54 @@ async function reelsWysiwygExport(params) {
     const maskOpacity = style.global_mask_opacity ?? 0.5;
 
 
-    // ═══ 阶段 2.5: 背景帧内存预缓存（消除逐帧磁盘 I/O）═══
+    // ═══ 阶段 2.5: 有界背景帧缓存 ═══
+    // 禁止将整段视频的解码帧全部留在渲染进程中，避免长视频耗尽内存白屏。
     let _bgFrameCache = null;
-    if (framesDir && totalBgFrames > 0) {
-        log(`阶段2.5: 预加载 ${totalBgFrames} 帧到内存...`);
+    const frameCacheLimit = Math.max(10, Math.min(90, Math.round(fps * 2)));
+    const framePrefetchSize = Math.max(5, Math.min(30, Math.round(fps)));
+    if (useMemoryDecoder && framesDir && totalBgFrames > 0) {
+        _bgFrameCache = new Map();
+        log(`阶段2.5: 启用滑动帧缓存（最多 ${frameCacheLimit} 帧）`);
         progress(19);
-        try {
-            _bgFrameCache = new Array(totalBgFrames);
-            let loadedCount = 0;
-            const BATCH = 30;
-            for (let batchStart = 0; batchStart < totalBgFrames; batchStart += BATCH) {
-                const batchEnd = Math.min(batchStart + BATCH, totalBgFrames);
-                const batchPromises = [];
-                for (let fi = batchStart; fi < batchEnd; fi++) {
-                    const padRef = String(fi + 1).padStart(6, '0');
-                    const p = _loadImage(`${framesDir}/frame_${padRef}.jpg`)
-                        .catch(() => _loadImage(`${framesDir}/frame_${padRef}.png`))
-                        .then(img => { _bgFrameCache[fi] = img; loadedCount++; })
-                        .catch(() => { _bgFrameCache[fi] = null; });
-                    batchPromises.push(p);
-                }
-                await Promise.all(batchPromises);
-                if (isCancelled && isCancelled()) throw new Error('__CANCELLED__');
-            }
-            log(`✅ 预缓存完成: ${loadedCount}/${totalBgFrames} 帧已载入内存`);
-        } catch (e) {
-            if (e.message === '__CANCELLED__') throw e;
-            log(`⚠️ 预缓存失败（${e.message}），回退到逐帧磁盘加载`);
-            _bgFrameCache = null;
-        }
     }
+
+    const loadBgFrame = async (idx) => {
+        if (!framesDir || idx < 0 || idx >= totalBgFrames) return null;
+        if (_bgFrameCache && _bgFrameCache.has(idx)) return _bgFrameCache.get(idx);
+        const padRef = String(idx + 1).padStart(6, '0');
+        const img = await _loadImage(`${framesDir}/frame_${padRef}.jpg`)
+            .catch(() => _loadImage(`${framesDir}/frame_${padRef}.png`));
+        if (_bgFrameCache) _bgFrameCache.set(idx, img);
+        return img;
+    };
+
+    const prefetchBgFrames = async (startIdx) => {
+        if (!_bgFrameCache) return;
+        const end = Math.min(totalBgFrames, startIdx + framePrefetchSize);
+        const pending = [];
+        for (let idx = startIdx; idx < end; idx++) {
+            if (!_bgFrameCache.has(idx)) pending.push(loadBgFrame(idx).catch(() => null));
+        }
+        await Promise.all(pending);
+        const minKeep = Math.max(0, startIdx - 2);
+        const maxKeep = startIdx + frameCacheLimit;
+        for (const idx of _bgFrameCache.keys()) {
+            if (idx < minKeep || idx >= maxKeep) {
+                const oldImg = _bgFrameCache.get(idx);
+                if (oldImg) oldImg.src = '';
+                _bgFrameCache.delete(idx);
+            }
+        }
+    };
+
+    const clearBgFrameCache = () => {
+        if (!_bgFrameCache) return;
+        for (const img of _bgFrameCache.values()) {
+            if (img) img.src = '';
+        }
+        _bgFrameCache.clear();
+        _bgFrameCache = null;
+    };
 
     // ═══ 阶段 3: 逐帧渲染 ═══
     log('阶段3: 逐帧 Canvas 渲染...');
@@ -852,6 +871,7 @@ async function reelsWysiwygExport(params) {
                     frameIdxCv = Math.min(frameIdxCv, cvFrameCount - 1);
                 }
                 if (frameIdxCv !== currentCvIdx) {
+                    const previousCvImg = currentCvImg;
                     let framePath;
                     if (cvIsImageSequence && window._cvSeqFileList && window._cvSeqFileList.length > 0) {
                         // 图片序列: 使用原始文件名
@@ -865,7 +885,9 @@ async function reelsWysiwygExport(params) {
                     try {
                         currentCvImg = await _loadImage(framePath);
                         currentCvIdx = frameIdxCv;
+                        if (previousCvImg && previousCvImg !== currentCvImg) previousCvImg.src = '';
                     } catch (e) {
+                        if (previousCvImg) previousCvImg.src = '';
                         currentCvImg = null;
                     }
                 }
@@ -875,26 +897,23 @@ async function reelsWysiwygExport(params) {
             if (!contentVideoBlurBg && !contentVideoDirectBg && totalBgFrames > 0) {
                 const bgFrameIdx = Math.min(frameIdx, totalBgFrames - 1);
                 if (bgFrameIdx >= 0 && bgFrameIdx !== currentBgIdx) {
-                    if (_bgFrameCache && _bgFrameCache[bgFrameIdx]) {
-                        // 🚀 内存命中
-                        currentBgImg = _bgFrameCache[bgFrameIdx];
-                        currentBgIdx = bgFrameIdx;
-                    } else {
-                        const padRef = String(bgFrameIdx + 1).padStart(6, '0');
-                        try {
-                            currentBgImg = await _loadImage(`${framesDir}/frame_${padRef}.jpg`);
-                            currentBgIdx = bgFrameIdx;
-                        } catch (e) {
-                            try {
-                                currentBgImg = await _loadImage(`${framesDir}/frame_${padRef}.png`);
-                                currentBgIdx = bgFrameIdx;
-                            } catch (e2) {
-                                if (!currentBgImg) {
-                                    ctx.fillStyle = '#000000';
-                                    ctx.fillRect(0, 0, targetWidth, targetHeight);
-                                }
-                            }
+                    const previousBgImg = currentBgImg;
+                    try {
+                        if (_bgFrameCache && (bgFrameIdx === 0 || !_bgFrameCache.has(bgFrameIdx))) {
+                            await prefetchBgFrames(bgFrameIdx);
                         }
+                        currentBgImg = await loadBgFrame(bgFrameIdx);
+                        currentBgIdx = bgFrameIdx;
+                        if (!_bgFrameCache && previousBgImg && previousBgImg !== currentBgImg) previousBgImg.src = '';
+                        if (_bgFrameCache && bgFrameIdx > 0 && bgFrameIdx % framePrefetchSize === 0) {
+                            await prefetchBgFrames(bgFrameIdx + 1);
+                        }
+                    } catch (e) {
+                        if (!_bgFrameCache && previousBgImg) previousBgImg.src = '';
+                        currentBgImg = null;
+                        currentBgIdx = -1;
+                        ctx.fillStyle = '#000000';
+                        ctx.fillRect(0, 0, targetWidth, targetHeight);
                     }
                 }
             }
@@ -1076,8 +1095,19 @@ async function reelsWysiwygExport(params) {
         const result = await window.electronAPI.reelsComposeWysiwyg('finish', { sessionId });
         if (!result || result.error) throw new Error(result?.error || 'FFmpeg 编码完成失败');
 
-        // 释放预缓存内存
-        if (_bgFrameCache) { _bgFrameCache = null; }
+        // 释放解码图片和 Canvas 底层像素内存，避免下一个批量任务继续累积。
+        clearBgFrameCache();
+        if (currentBgImg) currentBgImg.src = '';
+        if (currentCvImg) currentCvImg.src = '';
+        currentBgImg = null;
+        currentCvImg = null;
+        for (const ov of taskOverlays || []) {
+            if (ov._currentFrameImage) ov._currentFrameImage.src = '';
+            delete ov._currentFrameImage;
+            delete ov._allOverlays;
+        }
+        if (canvas) { canvas.width = 1; canvas.height = 1; }
+        if (window._cvSeqFileList) delete window._cvSeqFileList;
 
         // 清理背景帧（磁盘临时文件）
         if (framesDir) {
@@ -1098,6 +1128,18 @@ async function reelsWysiwygExport(params) {
         return { output_path: result.output_path || outputPath };
 
     } catch (e) {
+        clearBgFrameCache();
+        if (currentBgImg) currentBgImg.src = '';
+        if (currentCvImg) currentCvImg.src = '';
+        currentBgImg = null;
+        currentCvImg = null;
+        for (const ov of taskOverlays || []) {
+            if (ov._currentFrameImage) ov._currentFrameImage.src = '';
+            delete ov._currentFrameImage;
+            delete ov._allOverlays;
+        }
+        if (canvas) { canvas.width = 1; canvas.height = 1; }
+        if (window._cvSeqFileList) delete window._cvSeqFileList;
         try { await window.electronAPI.reelsComposeWysiwyg('abort', { sessionId }); } catch (_) { }
         if (framesDir) {
             try { await window.electronAPI.reelsComposeWysiwyg('cleanup-bg', { framesDir }); } catch (_) { }

@@ -5039,9 +5039,9 @@
                         style="flex:1; height: 3px; cursor: pointer; accent-color: var(--accent-color);">
                       <label
                         style="display:flex;align-items:center;gap:3px;font-size:11px;color:var(--text-secondary);cursor:pointer;white-space:nowrap;margin-left:4px;"
-                        title="显示/隐藏字幕">
-                        <input type="checkbox" id="reels-subtitle-toggle" checked
-                          style="accent-color:var(--accent-color);"> 字幕
+                        title="预览与导出字幕总开关：关闭后，导出的视频也不会带字幕">
+                        <input type="checkbox" id="reels-subtitle-toggle" checked onchange="reelsOnSubtitleToggleChange(this)"
+                          style="accent-color:var(--accent-color);"> 字幕（关闭=导出不带）
                       </label>
                       <label
                         style="display:flex;align-items:center;gap:3px;font-size:11px;color:var(--text-secondary);cursor:pointer;white-space:nowrap;margin-left:2px;"

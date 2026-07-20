@@ -3094,6 +3094,16 @@ function reelsUpdatePreview() {
     }
 }
 
+function reelsOnSubtitleToggleChange(checkbox) {
+    reelsUpdatePreview();
+    if (checkbox && !checkbox.checked) {
+        const message = '已关闭字幕：预览不显示字幕，导出的视频也不会带字幕。';
+        if (typeof showToast === 'function') showToast(message, 'warning');
+        else alert(message);
+    }
+}
+window.reelsOnSubtitleToggleChange = reelsOnSubtitleToggleChange;
+
 function _drawSubtitlePreviewRange(ctx, style, canvasW, canvasH) {
     if (!ctx || !style) return;
     ctx.save();

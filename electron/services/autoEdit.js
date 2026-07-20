@@ -25,6 +25,74 @@ function splitScriptLines(scriptText) {
         .filter(Boolean);
 }
 
+function findRepeatedScriptBlockStarts(allLines, scriptText) {
+    const documentLines = (allLines || []).map(normalizeText).filter(Boolean);
+    const blockLines = splitScriptLines(scriptText).map(normalizeText).filter(Boolean);
+    if (blockLines.length === 0 || blockLines.length > documentLines.length) return [];
+
+    const starts = [];
+    for (let start = 0; start <= documentLines.length - blockLines.length; start++) {
+        if (blockLines.every((line, offset) => documentLines[start + offset] === line)) {
+            starts.push(start + 1);
+        }
+    }
+    return starts.length > 1 ? starts : [];
+}
+
+function normalizedEditSimilarity(left, right) {
+    const a = normalizeText(left);
+    const b = normalizeText(right);
+    if (!a || !b) return 0;
+    const prev = Array.from({ length: b.length + 1 }, (_, index) => index);
+    for (let i = 1; i <= a.length; i++) {
+        let diagonal = prev[0];
+        prev[0] = i;
+        for (let j = 1; j <= b.length; j++) {
+            const old = prev[j];
+            prev[j] = Math.min(prev[j] + 1, prev[j - 1] + 1, diagonal + (a[i - 1] === b[j - 1] ? 0 : 1));
+            diagonal = old;
+        }
+    }
+    return 1 - prev[b.length] / Math.max(a.length, b.length, 1);
+}
+
+function findFuzzyBoundaryOverlap(scriptWordObjects, recognizedText, side = 'start') {
+    const recognizedWords = String(recognizedText || '').split(/\s+/).map(normalizeText).filter(Boolean);
+    const scriptEntries = (scriptWordObjects || [])
+        .map((word, originalIndex) => ({ normalized: normalizeText(word.raw || word), originalIndex }))
+        .filter(entry => entry.normalized);
+    const scriptWords = scriptEntries.map(entry => entry.normalized);
+    if (!recognizedWords.length || !scriptEntries.length) return 0;
+    const maxScriptWords = Math.min(10, scriptEntries.length);
+    const maxRecognizedWords = Math.min(10, recognizedWords.length);
+    let best = { count: 0, score: 0 };
+    for (let scriptCount = 1; scriptCount <= maxScriptWords; scriptCount++) {
+        const scriptPart = side === 'start'
+            ? scriptWords.slice(0, scriptCount)
+            : scriptWords.slice(scriptWords.length - scriptCount);
+        for (let recognizedCount = 1; recognizedCount <= maxRecognizedWords; recognizedCount++) {
+            const recognizedPart = side === 'start'
+                ? recognizedWords.slice(recognizedWords.length - recognizedCount)
+                : recognizedWords.slice(0, recognizedCount);
+            const scriptJoined = scriptPart.join('');
+            const recognizedJoined = recognizedPart.join('');
+            const hasCompactScript = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u
+                .test(`${scriptJoined}${recognizedJoined}`);
+            if (Math.min(scriptJoined.length, recognizedJoined.length) < (hasCompactScript ? 2 : 5)) continue;
+            const lengthRatio = Math.min(scriptJoined.length, recognizedJoined.length) / Math.max(scriptJoined.length, recognizedJoined.length);
+            if (lengthRatio < 0.65) continue;
+            const score = normalizedEditSimilarity(scriptJoined, recognizedJoined);
+            if (score >= 0.82 && (scriptCount > best.count || (scriptCount === best.count && score > best.score))) {
+                best = { count: scriptCount, score };
+            }
+        }
+    }
+    if (!best.count) return 0;
+    return side === 'start'
+        ? scriptEntries[best.count - 1].originalIndex + 1
+        : scriptWordObjects.length - scriptEntries[scriptEntries.length - best.count].originalIndex;
+}
+
 async function buildManualTranscription(clipPath, fullText) {
     let duration = 60;
     try {
@@ -1934,6 +2002,140 @@ async function autoEditByScript(opts = {}) {
             console.log(`[自动剪辑] 检测到全局漏读/缺失的文案区块数量: ${missingBlocksInfo.length}`);
         }
 
+        // 二次核对：词级分配偶尔会留下“未覆盖”空洞，但实际识别全文中已经读到了该文案。
+        // 这种情况不应继续报为缺失。同时记录缺失块位于哪两个片段之间，供审核时间线精确插入占位行。
+        const refreshPlanScriptAndMatch = (plan) => {
+            if (!plan || plan.scriptWordStart < 0 || plan.scriptWordEnd < plan.scriptWordStart) return;
+            const sliced = scriptWords.slice(plan.scriptWordStart, plan.scriptWordEnd + 1);
+            const groupedLines = [];
+            let currentLine = null;
+            let currentWords = [];
+            for (const word of sliced) {
+                if (currentLine !== null && word.lineIndex !== currentLine) {
+                    groupedLines.push(joinWordsSmart(currentWords));
+                    currentWords = [];
+                }
+                currentLine = word.lineIndex;
+                currentWords.push(word.raw);
+            }
+            if (currentWords.length) groupedLines.push(joinWordsSmart(currentWords));
+            plan.scriptStartLine = sliced[0].lineIndex;
+            plan.scriptEndLine = sliced[sliced.length - 1].lineIndex;
+            plan.scriptText = groupedLines.join('\n');
+
+            const info = allClipsMatchInfo.find(item => item.sourceIndex === plan.sourceIndex);
+            if (!info) return;
+            const recognized = normalizeText(plan.transcription?.fullText || plan.matchedText || '');
+            const target = normalizeText(plan.scriptText);
+            const diffs = dmp.diff_main(recognized, target);
+            dmp.diff_cleanupSemantic(diffs);
+            const equalLength = diffs.reduce((total, [op, text]) => total + (op === 0 ? text.length : 0), 0);
+            const similarity = Math.round((Math.max(recognized.length, target.length) ? equalLength / Math.max(recognized.length, target.length) : 1) * 100);
+            info.scriptText = plan.scriptText;
+            info.scriptStartLine = plan.scriptStartLine;
+            info.scriptEndLine = plan.scriptEndLine;
+            info.scriptWordStart = plan.scriptWordStart;
+            info.scriptWordEnd = plan.scriptWordEnd;
+            info.similarity = similarity;
+            info.isMismatch = similarity < (workflowMode === 'concat_first' ? 80 : 85);
+        };
+        for (let i = missingBlocksInfo.length - 1; i >= 0; i--) {
+            const block = missingBlocksInfo[i];
+            const previous = plans
+                .filter(plan => Number.isInteger(plan.scriptWordEnd) && plan.scriptWordEnd >= 0 && plan.scriptWordEnd < block.startIdx)
+                .sort((a, b) => b.scriptWordEnd - a.scriptWordEnd)[0] || null;
+            const next = plans
+                .filter(plan => Number.isInteger(plan.scriptWordStart) && plan.scriptWordStart > block.endIdx)
+                .sort((a, b) => a.scriptWordStart - b.scriptWordStart)[0] || null;
+
+            // 相邻片段可能已经读到了缺失块边缘，只是存在单复数、词尾或轻微转录差异。
+            // 先收缩这些已读边缘，避免把整句都显示成“丢失”。
+            let remainingWords = scriptWords.slice(block.startIdx, block.endIdx + 1);
+            const prefixReadCount = previous
+                ? findFuzzyBoundaryOverlap(remainingWords, previous.transcription?.fullText || previous.matchedText || '', 'start')
+                : 0;
+            if (prefixReadCount > 0) {
+                previous.scriptWordEnd = block.startIdx + prefixReadCount - 1;
+                refreshPlanScriptAndMatch(previous);
+                block.startIdx += prefixReadCount;
+                remainingWords = remainingWords.slice(prefixReadCount);
+            }
+            const suffixReadCount = next && remainingWords.length
+                ? findFuzzyBoundaryOverlap(remainingWords, next.transcription?.fullText || next.matchedText || '', 'end')
+                : 0;
+            if (suffixReadCount > 0) {
+                next.scriptWordStart = block.endIdx - suffixReadCount + 1;
+                refreshPlanScriptAndMatch(next);
+                block.endIdx -= suffixReadCount;
+                remainingWords = remainingWords.slice(0, remainingWords.length - suffixReadCount);
+            }
+            if (remainingWords.length === 0) {
+                console.log(`[自动剪辑] 缺失块边界二次核对已读到，移除误报: ${block.text}`);
+                missingBlocksInfo.splice(i, 1);
+                continue;
+            }
+            block.text = joinWordsSmart(remainingWords.map(word => word.raw));
+            block.startLine = remainingWords[0].lineIndex;
+            block.endLine = remainingWords[remainingWords.length - 1].lineIndex;
+
+            block.previous_source_index = previous ? previous.sourceIndex + 1 : null;
+            block.next_source_index = next ? next.sourceIndex + 1 : null;
+            block.position_hint = previous && next
+                ? `位于片段 #${previous.sourceIndex + 1} 与片段 #${next.sourceIndex + 1} 之间`
+                : (previous ? `位于片段 #${previous.sourceIndex + 1} 之后` : (next ? `位于片段 #${next.sourceIndex + 1} 之前` : '未能确定相邻片段'));
+        }
+
+        // 完整性兜底：原文中的每个有效字词必须归属某个目标片段或缺失占位，禁止静默丢失。
+        const accountedWordIndices = new Set();
+        for (const plan of plans) {
+            if (Number.isInteger(plan.scriptWordStart) && Number.isInteger(plan.scriptWordEnd) && plan.scriptWordStart >= 0) {
+                for (let index = plan.scriptWordStart; index <= plan.scriptWordEnd; index++) accountedWordIndices.add(index);
+            }
+        }
+        for (const block of missingBlocksInfo) {
+            for (let index = block.startIdx; index <= block.endIdx; index++) accountedWordIndices.add(index);
+        }
+        let safetyGap = null;
+        const appendSafetyGap = () => {
+            if (!safetyGap) return;
+            const words = scriptWords.slice(safetyGap.start, safetyGap.end + 1);
+            if (words.some(word => normalizeText(word.raw))) {
+                missingBlocksInfo.push({
+                    startIdx: safetyGap.start,
+                    endIdx: safetyGap.end,
+                    text: joinWordsSmart(words.map(word => word.raw)),
+                    startLine: words[0].lineIndex,
+                    endLine: words[words.length - 1].lineIndex,
+                });
+                console.warn(`[自动剪辑] 完整性核对发现未归属文案，已恢复为缺失占位: ${joinWordsSmart(words.map(word => word.raw))}`);
+            }
+            safetyGap = null;
+        };
+        for (let index = 0; index < scriptWords.length; index++) {
+            if (!accountedWordIndices.has(index) && normalizeText(scriptWords[index].raw)) {
+                if (!safetyGap) safetyGap = { start: index, end: index };
+                else safetyGap.end = index;
+            } else {
+                appendSafetyGap();
+            }
+        }
+        appendSafetyGap();
+        missingBlocksInfo.sort((a, b) => a.startIdx - b.startIdx);
+        missingBlocksInfo.forEach((block, index) => {
+            block.index = index;
+            const previous = plans
+                .filter(plan => Number.isInteger(plan.scriptWordEnd) && plan.scriptWordEnd >= 0 && plan.scriptWordEnd < block.startIdx)
+                .sort((a, b) => b.scriptWordEnd - a.scriptWordEnd)[0] || null;
+            const next = plans
+                .filter(plan => Number.isInteger(plan.scriptWordStart) && plan.scriptWordStart > block.endIdx)
+                .sort((a, b) => a.scriptWordStart - b.scriptWordStart)[0] || null;
+            block.previous_source_index = previous ? previous.sourceIndex + 1 : null;
+            block.next_source_index = next ? next.sourceIndex + 1 : null;
+            block.position_hint = previous && next
+                ? `位于片段 #${previous.sourceIndex + 1} 与片段 #${next.sourceIndex + 1} 之间`
+                : (previous ? `位于片段 #${previous.sourceIndex + 1} 之后` : (next ? `位于片段 #${next.sourceIndex + 1} 之前` : '未能确定相邻片段'));
+        });
+
         // Always generate the matching/mismatch report to make it convenient to inspect results
         try {
             let reportContent = '';
@@ -2057,15 +2259,25 @@ async function autoEditByScript(opts = {}) {
 
         const forceMismatch = opts.forceMismatch === true || opts.force_mismatch === true;
         if (opts.analysisOnly === true || opts.analysis_only === true) {
-            const normalizedLineCounts = new Map();
-            for (const line of lines) {
-                const key = normalizeText(line);
-                if (key) normalizedLineCounts.set(key, (normalizedLineCounts.get(key) || 0) + 1);
-            }
             const analysisSegments = plans.map((plan, index) => {
                 const info = allClipsMatchInfo[index] || {};
-                const hasDuplicateScript = splitScriptLines(plan.scriptText).some(line => (normalizedLineCounts.get(normalizeText(line)) || 0) > 1);
+                const duplicateScriptLines = findRepeatedScriptBlockStarts(lines, plan.scriptText);
+                const hasDuplicateScript = duplicateScriptLines.length > 0;
                 const isDuplicateClip = Number.isInteger(plan.duplicateOfSourceIndex) && plan.duplicateOfSourceIndex >= 0;
+                const transcriptionFailed = plan.transcription?.source === 'failed';
+                const recognizedText = plan.transcription?.fullText || plan.matchedText || '';
+                const recognitionEmpty = normalizeText(recognizedText).length === 0;
+                const scriptUnmatched = plan.scriptStartLine === -1 || !plan.scriptText;
+                const issueReasons = [];
+                if (transcriptionFailed) issueReasons.push(String(plan.transcription?.error || recognizedText || '转录失败').replace(/^\(转录失败:\s*|\)$/g, ''));
+                else if (recognitionEmpty) issueReasons.push('识别服务未返回文字');
+                if (scriptUnmatched) issueReasons.push('未匹配到断行文案');
+                if (info.isMismatch) issueReasons.push(`文案相似度 ${info.similarity || 0}%，低于 85%`);
+                if (isDuplicateClip) issueReasons.push(`与原片段 #${plan.duplicateOfSourceIndex + 1} 朗读内容重复`);
+                else if (hasDuplicateScript) issueReasons.push(`当前片段对应的整段文案从第 ${duplicateScriptLines.join('、')} 行开始重复出现；片段 #${plan.sourceIndex + 1} 可能对应多个位置，请核对前后片段顺序（不是视频重复）`);
+                const segmentStatus = transcriptionFailed || recognitionEmpty
+                    ? 'error'
+                    : (scriptUnmatched || info.isMismatch || hasDuplicateScript || isDuplicateClip ? 'warning' : 'ready');
                 return {
                     segment_id: plan.planId || `clip-${plan.sourceIndex}`,
                     index: index + 1,
@@ -2074,14 +2286,16 @@ async function autoEditByScript(opts = {}) {
                     script_start_line: Number.isInteger(info.scriptStartLine) && info.scriptStartLine >= 0 ? info.scriptStartLine + 1 : null,
                     script_end_line: Number.isInteger(info.scriptEndLine) && info.scriptEndLine >= 0 ? info.scriptEndLine + 1 : null,
                     script: plan.scriptText || '',
-                    recognized_text: plan.transcription.fullText || plan.matchedText || '',
+                    recognized_text: recognizedText,
                     matched_text: plan.matchedText || '',
                     match_score: Math.round((plan.matchScore || 0) * 1000) / 1000,
                     similarity: info.similarity || 0,
-                    status: info.isMismatch || hasDuplicateScript || isDuplicateClip ? 'warning' : 'ready',
+                    status: segmentStatus,
+                    issue_reason: issueReasons.join('；'),
                     ambiguity: isDuplicateClip
                         ? `与原片段 #${plan.duplicateOfSourceIndex + 1} 朗读内容重复，已继承同一文案位置`
-                        : (hasDuplicateScript ? '文案中存在重复句，请结合前后顺序确认位置' : ''),
+                        : (hasDuplicateScript ? `整段文案从第 ${duplicateScriptLines.join('、')} 行开始重复；片段 #${plan.sourceIndex + 1} 的匹配位置有歧义（不是视频重复）` : ''),
+                    duplicate_script_lines: duplicateScriptLines,
                     duplicate_of_source_index: isDuplicateClip ? plan.duplicateOfSourceIndex + 1 : null,
                     start: plan.start,
                     end: plan.end,
@@ -2094,6 +2308,13 @@ async function autoEditByScript(opts = {}) {
                     })),
                 };
             });
+            const analysisSummary = {
+                total: analysisSegments.length,
+                ready: analysisSegments.filter(segment => segment.status === 'ready').length,
+                warning: analysisSegments.filter(segment => segment.status === 'warning').length,
+                error: analysisSegments.filter(segment => segment.status === 'error').length,
+                missing_blocks: missingBlocksInfo.length,
+            };
             const projectPath = path.join(outputDir, 'auto_edit_project.json');
             const projectData = {
                 version: 1,
@@ -2103,6 +2324,7 @@ async function autoEditByScript(opts = {}) {
                     output_settings: { width: targetWidth, height: targetHeight, fps, source: 'first_clip', fit_mode: fitMode },
                 missing_blocks: missingBlocksInfo,
                 segments: analysisSegments,
+                match_summary: analysisSummary,
             };
             fs.writeFileSync(projectPath, JSON.stringify(projectData, null, 2), 'utf-8');
             return {
@@ -2115,6 +2337,7 @@ async function autoEditByScript(opts = {}) {
                 output_settings: { width: targetWidth, height: targetHeight, fps, source: 'first_clip', fit_mode: fitMode },
                 missing_blocks: missingBlocksInfo,
                 segments: analysisSegments,
+                match_summary: analysisSummary,
             };
         }
         if ((hasMismatch || forceMismatch) && !ignoreMismatch) {
@@ -2632,5 +2855,5 @@ module.exports = {
     findBestWordWindow,
     findBestScriptWindowForClip,
     computeAutoEditTransitionSec,
-    _test: { scoreCandidate, scoreWordCandidate, transcribeClip, recoverSmallBoundaryGaps, hasSentenceEndingPunctuation },
+    _test: { scoreCandidate, scoreWordCandidate, transcribeClip, recoverSmallBoundaryGaps, hasSentenceEndingPunctuation, findRepeatedScriptBlockStarts, findFuzzyBoundaryOverlap },
 };
