@@ -2300,6 +2300,7 @@ async function autoEditByScript(opts = {}) {
                     start: plan.start,
                     end: plan.end,
                     duration: Math.round((plan.end - plan.start) * 1000) / 1000,
+                    source_duration: Math.round((plan.duration || plan.end) * 1000) / 1000,
                     transcription_source: plan.transcription.source,
                     word_timeline: (plan.words || []).map(word => ({
                         word: word.raw,

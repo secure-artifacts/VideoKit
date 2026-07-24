@@ -5294,6 +5294,51 @@ async function saveElevenLabsKey() {
     }
 }
 
+function renderWebTokenStatus(data = {}) {
+    const statusSpan = document.getElementById('web-login-status');
+    const detailSpan = document.getElementById('web-login-detail');
+    const state = data.state || (data.hasToken ? 'ready' : 'signed_out');
+    const styles = {
+        ready: ['rgba(0, 217, 165, 0.15)', '#00d9a5', '🟢'],
+        verifying: ['rgba(74, 158, 255, 0.15)', '#4a9eff', '🔄'],
+        captured: ['rgba(74, 158, 255, 0.15)', '#4a9eff', '🔄'],
+        opening: ['rgba(74, 158, 255, 0.15)', '#4a9eff', '🌐'],
+        waiting_login: ['rgba(255, 170, 51, 0.15)', '#ffaa33', '🟡'],
+        expired: ['rgba(255, 107, 107, 0.15)', '#ff6b6b', '🔴'],
+        error: ['rgba(255, 107, 107, 0.15)', '#ff6b6b', '🔴'],
+        signed_out: ['rgba(255, 107, 107, 0.15)', '#ff6b6b', '⚪'],
+        idle: ['rgba(255,255,255,0.1)', '#aaa', '⚪'],
+    };
+    const [background, color, icon] = styles[state] || styles.idle;
+    if (statusSpan) {
+        statusSpan.style.background = background;
+        statusSpan.style.color = color;
+        statusSpan.textContent = `${icon} ${data.message || '状态未知'}`;
+    }
+    if (detailSpan) {
+        if (data.valid && data.quota) {
+            const verified = data.lastVerifiedAt
+                ? new Date(data.lastVerifiedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                : '';
+            detailSpan.textContent = `已真实验证${verified ? ` · ${verified}` : ''}`;
+        } else {
+            detailSpan.textContent = state === 'expired' ? '重新登录后可继续使用社区人声' : '';
+        }
+    }
+}
+
+async function checkWebTokenStatus(force = false) {
+    try {
+        const res = await apiFetch(`${API_BASE}/elevenlabs/web-status${force ? '?force=true' : ''}`);
+        const data = await res.json();
+        renderWebTokenStatus(data);
+        return data;
+    } catch (e) {
+        renderWebTokenStatus({ state: 'error', message: '状态检查失败' });
+        return null;
+    }
+}
+
 function updateWebTokenUI() {
     const isWebMode = document.getElementById('mode-web')?.checked || false;
     
@@ -5303,38 +5348,9 @@ function updateWebTokenUI() {
     if (panelApiKey) panelApiKey.style.display = isWebMode ? 'none' : 'block';
     if (panelWeb) panelWeb.style.display = isWebMode ? 'block' : 'none';
     
-    const statusSpan = document.getElementById('web-login-status');
-    
-    if (statusSpan) {
-        if (!isWebMode) {
-            if (window._webTokenStatusTimer) clearInterval(window._webTokenStatusTimer);
-        } else {
-            statusSpan.style.background = 'rgba(255,255,255,0.1)';
-            statusSpan.style.color = '#aaa';
-            statusSpan.textContent = '检查中...';
-            
-            const checkStatus = async () => {
-                try {
-                    const res = await apiFetch(`${API_BASE}/elevenlabs/web-status`);
-                    const data = await res.json();
-                    if (data.hasToken) {
-                        statusSpan.style.background = 'rgba(0, 217, 165, 0.15)';
-                        statusSpan.style.color = '#00d9a5';
-                        statusSpan.textContent = '🟢 已登录就绪';
-                    } else {
-                        statusSpan.style.background = 'rgba(255, 107, 107, 0.15)';
-                        statusSpan.style.color = '#ff6b6b';
-                        statusSpan.textContent = '🔴 未登录 / 无凭证';
-                    }
-                } catch (e) {
-                    statusSpan.textContent = '状态未知';
-                }
-            };
-            
-            checkStatus();
-            if (window._webTokenStatusTimer) clearInterval(window._webTokenStatusTimer);
-            window._webTokenStatusTimer = setInterval(checkStatus, 3000);
-        }
+    if (isWebMode) {
+        renderWebTokenStatus({ state: 'verifying', message: '正在验证登录…' });
+        checkWebTokenStatus();
     }
 }
 
@@ -5345,9 +5361,11 @@ function toggleWebToken() {
 
 async function openElevenLabsWebLogin() {
     try {
+        renderWebTokenStatus({ state: 'opening', message: '正在打开登录页面…' });
         const res = await apiFetch(`${API_BASE}/elevenlabs/web-login`, { method: 'POST' });
         const json = await res.json();
-        showToast(json.message || '已打开登录页面', 'success');
+        renderWebTokenStatus(json);
+        showToast('请在弹窗中完成 ElevenLabs 登录', 'success');
     } catch (e) {
         showToast('打开失败: ' + e.message, 'error');
     }
@@ -5358,12 +5376,35 @@ async function clearElevenLabsWebLogin() {
     try {
         const res = await apiFetch(`${API_BASE}/elevenlabs/web-logout`, { method: 'POST' });
         const json = await res.json();
-        showToast(json.message || '凭证已清除', 'success');
-        updateWebTokenUI();
+        renderWebTokenStatus(json);
+        showToast(json.message || '已退出网页账号', 'success');
     } catch (e) {
         showToast('清除失败: ' + e.message, 'error');
     }
 }
+
+async function revalidateElevenLabsWebLogin() {
+    const status = await checkWebTokenStatus(true);
+    if (status?.valid) {
+        showToast(`✅ ${status.message}`, 'success');
+        if (typeof loadVoices === 'function') loadVoices();
+    } else if (status) {
+        showToast(status.message || '登录无效，请重新登录', 'error');
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    if (window.electronAPI?.onElevenLabsWebAuthStatus) {
+        window.electronAPI.onElevenLabsWebAuthStatus((status) => {
+            renderWebTokenStatus(status);
+            if (status.valid) {
+                showToast(`✅ ElevenLabs ${status.message}`, 'success');
+                if (typeof loadVoices === 'function') loadVoices();
+                if (typeof refreshVWVoices === 'function') refreshVWVoices();
+            }
+        });
+    }
+});
 
 async function saveManualWebToken() {
     const textarea = document.getElementById('elevenlabs-manual-token');
@@ -13852,7 +13893,7 @@ function renderAutoEditResult(data) {
                     : 'display: grid; grid-template-columns: 70px 90px 70px 80px 60px 1fr 100px; gap: 8px; align-items: center; padding: 5px 8px; border-bottom: 1px solid var(--border-color); font-size: 12px;';
                 
                 if (isReview) return `
-                    <div class="autoedit-review-row ${duplicateText ? 'ae-duplicate-row' : ''} ${reviewWarning && !duplicateText ? 'ae-warning-row' : ''} ${isCriticalMatch ? 'ae-critical-match-row' : ''}" data-review-index="${reviewIndex}" data-source-index="${Number(seg.source_index || seg.index) || reviewIndex + 1}" data-source-label="${escapeHtml(formatSegmentSourceLabel(seg.source_index))}" data-script-start-line="${Number(seg.script_start_line) || 0}" data-script-end-line="${Number(seg.script_end_line || seg.script_start_line) || 0}" data-source="${escapeHtml(encodeURIComponent(seg.source || ''))}" data-word-timeline="${escapeHtml(encodeURIComponent(JSON.stringify(seg.word_timeline || [])))}" data-original-text-key="${escapeHtml(reviewTextKey(seg.script))}" data-original-script="${escapeHtml(encodeURIComponent(seg.script || ''))}" data-warning="${reviewWarning}" data-critical-match="${isCriticalMatch}" data-duplicate="${duplicateText}" data-unmatched="${reviewUnmatched}" draggable="true" ondragstart="autoEditReviewDragStart(event,${reviewIndex})" ondragover="event.preventDefault()" ondrop="autoEditReviewDrop(event,${reviewIndex})" style="display:grid;grid-template-columns:42px 38px 1fr 112px 112px 90px;gap:8px;align-items:center;padding:10px 8px;border-bottom:1px solid ${duplicateText ? '#ff6b6b' : 'var(--border-color)'};cursor:grab;">
+                    <div class="autoedit-review-row ${duplicateText ? 'ae-duplicate-row' : ''} ${reviewWarning && !duplicateText ? 'ae-warning-row' : ''} ${isCriticalMatch ? 'ae-critical-match-row' : ''}" data-review-index="${reviewIndex}" data-source-index="${Number(seg.source_index || seg.index) || reviewIndex + 1}" data-source-label="${escapeHtml(formatSegmentSourceLabel(seg.source_index))}" data-script-start-line="${Number(seg.script_start_line) || 0}" data-script-end-line="${Number(seg.script_end_line || seg.script_start_line) || 0}" data-source-duration="${Number(seg.source_duration || 0)}" data-source="${escapeHtml(encodeURIComponent(seg.source || ''))}" data-word-timeline="${escapeHtml(encodeURIComponent(JSON.stringify(seg.word_timeline || [])))}" data-original-text-key="${escapeHtml(reviewTextKey(seg.script))}" data-original-script="${escapeHtml(encodeURIComponent(seg.script || ''))}" data-warning="${reviewWarning}" data-critical-match="${isCriticalMatch}" data-duplicate="${duplicateText}" data-unmatched="${reviewUnmatched}" draggable="true" ondragstart="autoEditReviewDragStart(event,${reviewIndex})" ondragover="event.preventDefault()" ondrop="autoEditReviewDrop(event,${reviewIndex})" style="display:grid;grid-template-columns:42px 38px 1fr 112px 112px 90px;gap:8px;align-items:center;padding:10px 8px;border-bottom:1px solid ${duplicateText ? '#ff6b6b' : 'var(--border-color)'};cursor:grab;">
                         <input type="checkbox" class="ae-review-enabled" checked title="是否导出" onchange="handleAutoEditReviewEnabled(this)">
                         <div style="display:flex;flex-direction:column;gap:2px;"><button class="btn btn-secondary" onclick="moveAutoEditReviewRow(${reviewIndex},-1)" style="padding:1px 5px;">↑</button><button class="btn btn-secondary" onclick="moveAutoEditReviewRow(${reviewIndex},1)" style="padding:1px 5px;">↓</button></div>
                         <div><div style="font-size:11px;color:var(--text-muted);display:flex;gap:6px;align-items:center;flex-wrap:wrap;">${escapeHtml(formatSegmentSourceLabel(seg.source_index))} ${matchRiskBadge || `<span>匹配 ${matchPercent}%</span>`}${duplicateText ? ` · <strong class="ae-live-duplicate-badge" style="color:#ff6b6b;">⚠ ${escapeHtml(duplicateMembers.map(formatSegmentSourceLabel).join(' 与 '))} 重复</strong>` : ''}${seg.issue_reason ? ` · <strong style="color:#ff6b6b;">⚠ ${escapeHtml(seg.issue_reason)}</strong>` : (seg.ambiguity ? ` · ⚠️ ${escapeHtml(seg.ambiguity)}` : '')} · 双击放大编辑</div><textarea class="input ae-review-script" rows="2" ondblclick="openAutoEditLargeScriptEditor(this)" oninput="handleAutoEditScriptChanged(this)" style="width:100%;resize:vertical;">${escapeHtml(seg.script || '')}</textarea><div class="ae-missing-words-status"></div></div>
@@ -13869,6 +13910,7 @@ function renderAutoEditResult(data) {
                                 <button class="btn btn-secondary" onclick="retranscribeAutoEditReviewRow(this,${reviewIndex})" style="font-size:11px;padding:3px 8px;">重新转录此片段</button>
                                 <button class="btn btn-secondary" onclick="replaceAutoEditReviewRow(this,${seg.source_index || reviewIndex})" style="font-size:11px;padding:3px 8px;color:#fca5a5;border-color:rgba(239,68,68,.35);">替换当前片段</button>
                                 <button class="btn btn-primary" onclick="recalculateAutoEditReviewRow(this)" style="font-size:11px;padding:3px 9px;">按文案重算切点</button>
+                                <button class="btn btn-secondary" onclick="openAutoEditMissedSpeechFix(this)" title="原片有声音但 AI 漏识别时使用" style="font-size:11px;padding:3px 9px;color:#fcd34d;border-color:rgba(245,158,11,.45);">🎙 处理 AI 漏识别</button>
                             </div>
                         </div>
                     </div>`;
@@ -13962,6 +14004,81 @@ function replaceAutoEditReviewRow(button, sourceIndex) {
 function recalculateAutoEditReviewRow(button) {
     const timeline = button?.closest('.autoedit-review-row')?.dataset?.wordTimeline || '';
     recalculateAutoEditCutFromScript(button, timeline);
+}
+
+async function openAutoEditMissedSpeechFix(button) {
+    const row = button?.closest('.autoedit-review-row');
+    if (!row) return;
+    const source = getAutoEditReviewRowSource(button);
+    const startInput = row.querySelector('.ae-review-start');
+    const endInput = row.querySelector('.ae-review-end');
+    if (!source || !startInput || !endInput) return;
+
+    let sourceDuration = Number(row.dataset.sourceDuration || 0);
+    if ((!Number.isFinite(sourceDuration) || sourceDuration <= 0) && window.electronAPI?.getMediaDuration) {
+        try { sourceDuration = Number(await window.electronAPI.getMediaDuration(source)) || 0; } catch (_) {}
+    }
+
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:100001;background:rgba(0,0,0,.78);display:flex;align-items:center;justify-content:center;padding:20px;';
+    const modal = document.createElement('div');
+    modal.style.cssText = 'width:620px;max-width:94vw;background:#15162b;border:1px solid rgba(255,255,255,.14);border-radius:12px;padding:18px;color:#edf2ff;box-shadow:0 24px 70px rgba(0,0,0,.55);';
+    modal.innerHTML = `
+        <div style="font-size:17px;font-weight:800;margin-bottom:8px;">🎙 处理 AI 漏识别的声音</div>
+        <div style="font-size:12px;line-height:1.7;color:#c7d2fe;padding:9px 11px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.28);border-radius:7px;margin-bottom:13px;">
+            适用于“原视频实际读了，但 AI 没识别到”的情况。这里不会重新生成声音，只调整裁切范围，避免漏识别的声音被剪掉。
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <button type="button" class="btn btn-secondary ae-missed-keep-full" style="height:auto;text-align:left;padding:13px;border-color:rgba(81,207,102,.45);">
+                <strong style="display:block;color:#86efac;margin-bottom:5px;">方式一：保留完整原片段（推荐）</strong>
+                <span style="font-size:11px;line-height:1.55;color:#b7c0df;">入点设为 0，出点设为原视频结尾。最稳妥，不会因为 AI 漏词再次裁掉声音。</span>
+            </button>
+            <button type="button" class="btn btn-secondary ae-missed-manual" style="height:auto;text-align:left;padding:13px;border-color:rgba(96,165,250,.45);">
+                <strong style="display:block;color:#93c5fd;margin-bottom:5px;">方式二：手动输入片段出点</strong>
+                <span style="font-size:11px;line-height:1.55;color:#b7c0df;">保留当前入点，由您填写声音实际结束的秒数。适合不想保留片尾空白。</span>
+            </button>
+        </div>
+        <div style="font-size:11px;color:#8b95c0;margin-top:11px;">当前范围：${Number(startInput.value || 0).toFixed(3)}s – ${Number(endInput.value || 0).toFixed(3)}s${sourceDuration > 0 ? ` · 原片时长 ${sourceDuration.toFixed(3)}s` : ''}</div>
+        <div style="display:flex;justify-content:flex-end;margin-top:13px;"><button type="button" class="btn btn-secondary ae-missed-cancel">取消</button></div>
+    `;
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    const close = () => overlay.remove();
+    modal.querySelector('.ae-missed-cancel').onclick = close;
+    overlay.onclick = event => { if (event.target === overlay) close(); };
+    modal.querySelector('.ae-missed-keep-full').onclick = async () => {
+        if (!sourceDuration && window.electronAPI?.getMediaDuration) {
+            try { sourceDuration = Number(await window.electronAPI.getMediaDuration(source)) || 0; } catch (_) {}
+        }
+        if (!sourceDuration) return showToast('无法读取原片时长，请改用手动输入出点', 'error');
+        startInput.value = '0.000';
+        endInput.value = sourceDuration.toFixed(3);
+        row.dataset.modified = 'true';
+        row.dataset.missedSpeechHandling = 'keep_full';
+        close();
+        showToast(`已保留完整原片段：0.000s – ${sourceDuration.toFixed(3)}s，请点击“剪后预览”确认`, 'success', 6000);
+    };
+    modal.querySelector('.ae-missed-manual').onclick = () => {
+        const raw = prompt(
+            `请输入声音实际结束的秒数${sourceDuration > 0 ? `（原片最长 ${sourceDuration.toFixed(3)} 秒）` : ''}：`,
+            Number(endInput.value || 0).toFixed(3)
+        );
+        if (raw === null) return;
+        const manualEnd = Number(raw);
+        const currentStart = Number(startInput.value || 0);
+        if (!Number.isFinite(manualEnd) || manualEnd <= currentStart) {
+            return showToast('出点必须是数字，并且大于当前入点', 'error');
+        }
+        if (sourceDuration > 0 && manualEnd > sourceDuration + .01) {
+            return showToast(`出点不能超过原片时长 ${sourceDuration.toFixed(3)} 秒`, 'error');
+        }
+        endInput.value = manualEnd.toFixed(3);
+        row.dataset.modified = 'true';
+        row.dataset.missedSpeechHandling = 'manual_end';
+        close();
+        showToast(`出点已改为 ${manualEnd.toFixed(3)}s，请点击“剪后预览”确认声音完整`, 'success', 6000);
+    };
 }
 function assignAutoEditMissingBlock(button, direction) {
     const placeholder = button?.closest('.autoedit-missing-placeholder');
@@ -16209,7 +16326,7 @@ function renderBatchCutSegments() {
         const subInputs = batchCutSubtitleCols.map((col, ci) => `
             <textarea class="input" style="font-size: 12px; padding: 3px 6px; resize: vertical; min-height: 28px; height: ${Math.max(28, ((seg.subtitles[ci] || '').split('\n').length) * 20)}px; line-height: 1.4; overflow-y: auto;"
                 placeholder="${escapeHtml(col.label)}（可选）"
-                onchange="batchCutUpdateSubtitle(${i}, ${ci}, this.value)">${escapeHtml(seg.subtitles[ci] || '')}</textarea>
+                dir="auto" onchange="batchCutUpdateSubtitle(${i}, ${ci}, this.value)">${escapeHtml(seg.subtitles[ci] || '')}</textarea>
         `).join('');
 
         // 多视频模式：显示缩略图 + 视频文件名 + 时长

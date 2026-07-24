@@ -9,6 +9,7 @@ const crypto = require('crypto');
 const https = require('https');
 const http = require('http');
 const { execFile, spawn } = require('child_process');
+const { formatMediaError } = require('./media-error');
 
 // Reuse centralised path resolution from ffmpeg.js so that
 // FFMPEG_PATH / FFPROBE_PATH env vars set by main.js are honoured.
@@ -157,7 +158,13 @@ async function extractAudioFromVideo(videoPath, outputDir, audioFormat = 'wav') 
 
     return new Promise((resolve, reject) => {
         execFile(ffmpegPath, args, { timeout: 300000 }, (err, stdout, stderr) => {
-            if (err) return reject(new Error(`FFmpeg 提取音频失败: ${stderr || err.message}`));
+            if (err) {
+                console.error(`[Gladia] FFmpeg 提取音频失败:\n${stderr || err.message}`);
+                return reject(new Error(formatMediaError(stderr || err.message, {
+                    action: '提取音频',
+                    code: err.code,
+                })));
+            }
             resolve(audioPath);
         });
     });
@@ -179,7 +186,10 @@ async function normalizeMediaForTranscription(mediaPath, outputDir) {
         execFile(resolveCmd('ffmpeg'), args, { timeout: 300000, maxBuffer: 4 * 1024 * 1024 }, (err, _stdout, stderr) => {
             if (err || !fs.existsSync(outputPath) || fs.statSync(outputPath).size < 44) {
                 const detail = String(stderr || err?.message || '').trim();
-                return reject(new Error(`无法读取音轨或转换音频：${detail || '文件可能没有音轨、已损坏或编码不受支持'}`));
+                console.error(`[Gladia] 标准化音频失败:\n${detail}`);
+                return reject(new Error(detail
+                    ? formatMediaError(detail, { action: '读取或转换音频', code: err?.code })
+                    : '读取或转换音频失败：素材中没有可用音轨，或文件已损坏'));
             }
             resolve(outputPath);
         });
@@ -313,8 +323,14 @@ async function splitAudioOnSilence(audioPath, outputDir, minMinutes = 5.0, maxMi
         args.push(segPath);
 
         await new Promise((resolve, reject) => {
-            execFile(ffmpegPath, args, { timeout: 120000 }, (err) => {
-                if (err) return reject(new Error(`FFmpeg 切分音频失败: ${err.message}`));
+            execFile(ffmpegPath, args, { timeout: 120000 }, (err, _stdout, stderr) => {
+                if (err) {
+                    console.error(`[Gladia] FFmpeg 切分音频失败:\n${stderr || err.message}`);
+                    return reject(new Error(formatMediaError(stderr || err.message, {
+                        action: '切分音频',
+                        code: err.code,
+                    })));
+                }
                 resolve();
             });
         });

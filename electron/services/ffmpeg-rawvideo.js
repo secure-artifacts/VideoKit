@@ -10,6 +10,7 @@
  */
 
 const { spawn, execFileSync } = require('child_process');
+const { formatMediaError, formatProcessStartError } = require('./media-error');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -53,7 +54,15 @@ function findFFprobe() {
 
 function isImageMedia(filePath) {
     const ext = (filePath || '').split('.').pop().toLowerCase();
-    return ['jpg', 'jpeg', 'png', 'webp', 'bmp', 'gif'].includes(ext);
+    // GIF 可能是动画，必须按动态媒体解码，不能只取第一帧。
+    return ['jpg', 'jpeg', 'png', 'webp', 'bmp'].includes(ext);
+}
+
+function expectedFrameCount(duration, fps) {
+    const seconds = Number(duration);
+    const rate = Number(fps);
+    if (!Number.isFinite(seconds) || seconds <= 0 || !Number.isFinite(rate) || rate <= 0) return 0;
+    return Math.max(1, Math.ceil(seconds * rate) - 2);
 }
 
 async function getMediaDuration(filePath) {
@@ -878,8 +887,23 @@ async function prepareBg(opts) {
         await extractSimpleLoop(ffmpeg, backgroundPath, framesDir, scaleCropFilter, fps, duration, ptsFactor, shouldLoop);
     }
 
-    // 统计实际帧数
-    const files = fs.readdirSync(framesDir).filter(f => f.endsWith('.jpg') || f.endsWith('.png'));
+    // 统计实际帧数。部分 VFR/时间戳异常视频会在首次非循环提取时提前结束，
+    // 如果直接让前端钳制到最后一帧，最终成片会表现为“视频背景变成静帧”。
+    let files = fs.readdirSync(framesDir).filter(f => f.endsWith('.jpg') || f.endsWith('.png'));
+    const expectedFrames = Math.max(1, Math.round(Number(duration || 0) * Number(fps || 0)));
+    const shortageTolerance = Math.max(2, Math.ceil(Number(fps || 30) * 0.15));
+    if (expectedFrames > 1 && files.length < expectedFrames - shortageTolerance) {
+        console.warn(`[WYSIWYG-BG] ⚠️ 背景帧不足 ${files.length}/${expectedFrames}，自动按循环模式重新提取`);
+        for (const file of files) {
+            try { fs.unlinkSync(path.join(framesDir, file)); } catch (_) { }
+        }
+        await extractSimpleLoop(ffmpeg, backgroundPath, framesDir, scaleCropFilter, fps, duration, ptsFactor, true);
+        files = fs.readdirSync(framesDir).filter(f => f.endsWith('.jpg') || f.endsWith('.png'));
+        console.log(`[WYSIWYG-BG] 循环重提取完成: ${files.length}/${expectedFrames} 帧`);
+    }
+    if (expectedFrames > 1 && files.length < expectedFrames - shortageTolerance) {
+        throw new Error(`背景视频帧提取不完整：${path.basename(backgroundPath)} 仅得到 ${files.length}/${expectedFrames} 帧。请检查视频是否损坏、时间戳异常或编码不受支持。`);
+    }
     console.log(`[WYSIWYG-BG] 帧提取完成: ${files.length} 帧`);
     return { framesDir, frameCount: files.length };
 }
@@ -941,9 +965,18 @@ function runFFmpegSync(ffmpeg, args) {
         proc.stderr.on('data', (d) => { err = (err + d.toString()).slice(-3000); });
         proc.on('close', (code) => {
             if (code === 0) resolve();
-            else reject(new Error(`FFmpeg 背景处理失败 (code=${code}): ${err.slice(-500)}`));
+            else {
+                console.error(`[WYSIWYG-BG] FFmpeg 处理失败 (code=${code}):\n${err}`);
+                reject(new Error(formatMediaError(err, {
+                    action: '背景或覆层处理',
+                    code,
+                })));
+            }
         });
-        proc.on('error', reject);
+        proc.on('error', (error) => {
+            console.error('[WYSIWYG-BG] FFmpeg 启动失败:', error);
+            reject(new Error(formatProcessStartError('FFmpeg', ffmpeg, error)));
+        });
     });
 }
 
@@ -964,6 +997,22 @@ async function prepareOverlay(opts) {
         throw new Error(`覆层视频不存在: ${overlayPath}`);
     }
 
+    duration = Number(duration);
+    fps = Number(fps);
+    if (!Number.isFinite(duration) || duration <= 0) throw new Error(`覆层目标时长无效: ${opts.duration}`);
+    if (!Number.isFinite(fps) || fps <= 0) throw new Error(`覆层帧率无效: ${opts.fps}`);
+
+    // 起止点必须在缓存检查前折算，否则可能误用以前只提取了一小段的残缺缓存。
+    if (trimStart != null && trimStart !== '' && trimEnd != null && trimEnd !== '') {
+        const start = Number(trimStart);
+        const end = Number(trimEnd);
+        if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+            throw new Error(`内容视频裁剪范围无效: ${trimStart} ～ ${trimEnd}`);
+        }
+        duration = Math.min(duration, end - start);
+    }
+    const requiredFrames = expectedFrameCount(duration, fps);
+
     const ffmpeg = findFFmpeg();
     const settings = require('./settings');
     const crypto = require('crypto');
@@ -983,9 +1032,13 @@ async function prepareOverlay(opts) {
     // [缓存击中逻辑]
     if (fs.existsSync(framesDir)) {
         const files = fs.readdirSync(framesDir).filter(f => f.endsWith('.png'));
-        if (files.length > 0) {
+        if (files.length >= requiredFrames) {
             console.log(`[WYSIWYG-OVERLAY] 覆层缓存命中: ${files.length} 帧 (${framesDir})`);
             return { framesDir, frameCount: files.length };
+        }
+        console.warn(`[WYSIWYG-OVERLAY] 缓存不完整，重新提取: ${files.length}/${requiredFrames} 帧`);
+        for (const file of files) {
+            try { fs.unlinkSync(path.join(framesDir, file)); } catch (_) { }
         }
     } else {
         fs.mkdirSync(framesDir, { recursive: true });
@@ -1001,7 +1054,7 @@ async function prepareOverlay(opts) {
         let actualTrimDur = parseFloat(duration);
         if (trimEnd != null && trimEnd !== '') {
             actualTrimDur = Math.max(0, parseFloat(trimEnd) - parseFloat(trimStart));
-            duration = Math.min(parseFloat(duration), actualTrimDur); // 此时 duration 依然决定了最多提取多少秒
+            duration = Math.min(parseFloat(duration), actualTrimDur);
         }
     } else {
         // 智能控流：只有当目标时长明显大于素材时长时才进行循环，避免1帧浮点舍入误差导致的末帧闪烁第一帧Bug
@@ -1030,6 +1083,12 @@ async function prepareOverlay(opts) {
     await runFFmpegSync(ffmpeg, args);
 
     const files = fs.readdirSync(framesDir).filter(f => f.endsWith('.png'));
+    if (files.length < requiredFrames) {
+        throw new Error(
+            `内容视频解码不完整：需要约 ${requiredFrames} 帧，实际只得到 ${files.length} 帧。` +
+            `请检查素材是否损坏、裁剪范围是否超出视频，或重新导入该素材。文件: ${overlayPath}`
+        );
+    }
     console.log(`[WYSIWYG-OVERLAY] 覆层提取完成: ${files.length} 帧 (${framesDir})`);
     return { framesDir, frameCount: files.length };
 }
@@ -1324,7 +1383,13 @@ async function writeFrame(sessionId, rawData) {
     if (session.encoderExited) {
         const detail = session.stderr.slice(-500);
         console.error(`[WYSIWYG] writeFrame: FFmpeg 已退出 (code=${session.encoderExitCode}), stderr: ${detail}`);
-        return { ok: false, error: `FFmpeg 编码器已退出 (code=${session.encoderExitCode})`, detail };
+        return {
+            ok: false,
+            error: formatMediaError(session.stderr, {
+                action: '视频编码',
+                code: session.encoderExitCode,
+            }),
+        };
     }
 
     try {
@@ -1362,7 +1427,13 @@ async function writeFrame(sessionId, rawData) {
         if (session.encoderExited) {
             const detail = session.stderr.slice(-500);
             console.error(`[WYSIWYG] FFmpeg 在写帧前退出! stderr: ${detail}`);
-            return { ok: false, error: `FFmpeg 编码器意外退出`, detail };
+            return {
+                ok: false,
+                error: formatMediaError(session.stderr, {
+                    action: '视频编码',
+                    code: session.encoderExitCode,
+                }),
+            };
         }
 
         const written = session.proc.stdin.write(buf);
@@ -1381,7 +1452,13 @@ async function writeFrame(sessionId, rawData) {
             if (session.encoderExited && session.encoderExitCode !== 0) {
                 const detail = session.stderr.slice(-500);
                 console.error(`[WYSIWYG] FFmpeg 在第 ${session.frameCount} 帧后退出! stderr: ${detail}`);
-                return { ok: false, error: `FFmpeg 在第 ${session.frameCount} 帧后崩溃退出`, detail };
+                return {
+                    ok: false,
+                    error: formatMediaError(session.stderr, {
+                        action: `视频编码（第 ${session.frameCount} 帧）`,
+                        code: session.encoderExitCode,
+                    }),
+                };
             }
         }
 
@@ -1391,7 +1468,12 @@ async function writeFrame(sessionId, rawData) {
         if (session.stderr) {
             console.error(`[WYSIWYG] FFmpeg stderr: ${session.stderr.slice(-500)}`);
         }
-        return { ok: false, error: `写帧异常: ${e.message}`, detail: session.stderr.slice(-500) };
+        return {
+            ok: false,
+            error: session.stderr
+                ? formatMediaError(session.stderr, { action: '写入视频帧', code: session.encoderExitCode })
+                : `写入视频帧失败：${e.message}`,
+        };
     }
 }
 
@@ -1418,8 +1500,13 @@ async function finishSession(sessionId) {
     }
 
     if (session.encoderExitCode !== 0) {
+        console.error(`[WYSIWYG] 编码失败 (code=${session.encoderExitCode}):\n${session.stderr}`);
+        const error = formatMediaError(session.stderr, {
+            action: '视频编码',
+            code: session.encoderExitCode,
+        });
         cleanup(session);
-        return { error: `编码失败 (code=${session.encoderExitCode}): ${session.stderr.slice(-300)}` };
+        return { error };
     }
 
     if (!fs.existsSync(session.tempVideo) || fs.statSync(session.tempVideo).size < 1024) {
@@ -1595,6 +1682,15 @@ async function mixAudio(session) {
 
     let { tempVideo, outputPath, voicePath, voiceVolume, bgVolume, backgroundPath, bgHasAudio, bgmPath, bgmVolume } = session;
     const bgmStart = Math.max(0, Number(session.bgmStart) || 0);
+
+    // Fail before launching FFmpeg (or the slower Web Audio effects renderer) so
+    // the UI can show the actual missing asset instead of a long stderr tail.
+    if (voicePath && !fs.existsSync(voicePath)) {
+        throw new Error(`配音文件不存在，请重新选择或生成配音：${voicePath}`);
+    }
+    if (bgmPath && bgmVolume > 0.001 && !fs.existsSync(bgmPath)) {
+        throw new Error(`背景音乐文件不存在，请重新选择：${bgmPath}`);
+    }
 
     // ═══ Chromium Web Audio 离线渲染（隐藏窗口 — 与预览 100% 同引擎）═══
     let targetPathToRender = null;
@@ -1905,10 +2001,18 @@ function _runMixFFmpeg(ffmpeg, args, session) {
                 console.log(`[WYSIWYG] 输出: ${session.outputPath} (${(fs.statSync(session.outputPath).size / 1024 / 1024).toFixed(1)}MB)`);
                 resolve();
             } else {
-                reject(new Error(`混合失败 (code=${code}): ${err.slice(-500)}`));
+                reject(new Error(formatMixFailure(err, code)));
             }
         });
         proc.on('error', reject);
+    });
+}
+
+function formatMixFailure(stderr, code) {
+    return formatMediaError(stderr, {
+        action: '音频混合',
+        code,
+        missingLabel: '音频文件',
     });
 }
 
@@ -1975,9 +2079,14 @@ async function finishVideoOnly(sessionId) {
     }
 
     if (session.encoderExitCode !== 0) {
-        const err = session.stderr.slice(-300);
+        console.error(`[WYSIWYG-VO] 编码失败 (code=${session.encoderExitCode}):\n${session.stderr}`);
         sessions.delete(sessionId);
-        return { error: `编码失败 (code=${session.encoderExitCode}): ${err}` };
+        return {
+            error: formatMediaError(session.stderr, {
+                action: '视频编码',
+                code: session.encoderExitCode,
+            }),
+        };
     }
 
     if (!fs.existsSync(session.tempVideo) || fs.statSync(session.tempVideo).size < 1024) {
@@ -2270,7 +2379,7 @@ async function parallelExport(opts, mainWindow) {
 
 function _isImageFile_node(filePath) {
     const ext = (filePath || '').split('.').pop().toLowerCase();
-    return ['jpg', 'jpeg', 'png', 'webp', 'bmp', 'gif'].includes(ext);
+    return ['jpg', 'jpeg', 'png', 'webp', 'bmp'].includes(ext);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -2413,5 +2522,5 @@ module.exports = {
     handleWysiwygIPC,
     renderChromiumAudioWav,
     parallelExport,
-    _test: { stableJpegEncoderArgs, cpuH264EncoderArgs },
+    _test: { stableJpegEncoderArgs, cpuH264EncoderArgs, formatMixFailure, formatMediaError, expectedFrameCount },
 };

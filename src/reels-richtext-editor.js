@@ -670,6 +670,13 @@ class ReelsRichTextEditor {
     _applyEditorPreviewStyle() {
         if (!this.editorEl) return;
         const s = this._effectiveBaseStyle();
+        const editorText = this.editorEl.innerText || this.initialText || '';
+        const textDirection = (typeof ReelsTextDirection !== 'undefined')
+            ? ReelsTextDirection.resolve(s.text_direction, editorText)
+            : 'ltr';
+        this.editorEl.dir = (s.text_direction || 'auto') === 'auto' ? 'auto' : textDirection;
+        this.editorEl.style.direction = textDirection;
+        this.editorEl.style.unicodeBidi = 'plaintext';
         this.editorEl.style.color = s.color_text || s.color || '#FFFFFF';
         this.editorEl.style.fontFamily = `"${s.font_family || 'system-ui'}", sans-serif`;
         const fs = Math.max(16, Math.min(42, ((parseFloat(s.fontsize) || 80) / 80) * 24));
@@ -702,7 +709,7 @@ class ReelsRichTextEditor {
         }
 
         const lsVal = parseFloat(s.letter_spacing);
-        if (Number.isFinite(lsVal)) {
+        if (Number.isFinite(lsVal) && textDirection !== 'rtl') {
             const scale = fs / (parseFloat(s.fontsize) || 80);
             this.editorEl.style.letterSpacing = `${lsVal * scale}px`;
         } else {
@@ -1100,6 +1107,7 @@ class ReelsRichTextEditor {
 
         this.editorEl.addEventListener('input', () => {
              this._syncText();
+             this._applyEditorPreviewStyle();
         });
 
         // 保存 & 关闭

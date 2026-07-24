@@ -43,6 +43,12 @@ class ReelsCanvasRenderer {
             ...(style || {}),
             ...(segment.style_override || segment.subtitle_style || {})
         };
+        const segmentText = segment.edited_text || segment.text || '';
+        const textDirection = (typeof ReelsTextDirection !== 'undefined')
+            ? ReelsTextDirection.resolve(s.text_direction, segmentText)
+            : 'ltr';
+        ctx.direction = textDirection;
+        ctx.textAlign = 'left';
 
         if (!_isSubCall && s.fullpage_typewriter) {
             this._renderFullpageTypewriter(s, currentTime, videoW, videoH);
@@ -59,7 +65,7 @@ class ReelsCanvasRenderer {
             return;
         }
 
-        const text = segment.edited_text || segment.text || '';
+        const text = segmentText;
         if (!text.trim()) return;
 
         const segStart = segment.start || 0;
@@ -189,7 +195,9 @@ class ReelsCanvasRenderer {
         const fontWeight = _resolveFontWeight(s.font_weight, s.bold !== false ? 700 : 400);
         const fontSize = s.fontsize || 74;
         const italic = s.italic || false;
-        const letterSpacing = s.letter_spacing || 0;
+        // Drawing Arabic-family scripts character-by-character breaks joining.
+        // Preserve shaped glyph runs in RTL mode and ignore manual letter spacing.
+        const letterSpacing = textDirection === 'rtl' ? 0 : (s.letter_spacing || 0);
         const wordSpacing = s.word_spacing || 0;
         const randomWordSpacingMax = Math.max(0, Number(s.random_word_spacing || 0));
         const randomLineSpacingMax = Math.max(0, Number(s.random_line_spacing || 0));
@@ -838,7 +846,7 @@ class ReelsCanvasRenderer {
             }
 
             const lineWords = line.split(/\s+/).filter(Boolean);
-            let currX = xStart;
+            let currX = textDirection === 'rtl' ? xStart + effectiveLineW : xStart;
 
             for (const wordStr of lineWords) {
                 const wordW = this._measureTextWithSpacing(ctx, wordStr, letterSpacing);
@@ -867,7 +875,9 @@ class ReelsCanvasRenderer {
                 }
 
                 const isWordActive = !s.only_show_active_word || (currentTime == null || (currentTime >= wordStart && currentTime <= wordEnd));
-                const drawX = s.only_show_active_word ? (cx - (wordW * lineScale) / 2) : currX;
+                const drawX = s.only_show_active_word
+                    ? (cx - (wordW * lineScale) / 2)
+                    : (textDirection === 'rtl' ? currX - wordW * lineScale : currX);
 
                 // Metronome visibility
                 let metroVisible = true;
@@ -1087,7 +1097,8 @@ class ReelsCanvasRenderer {
                     advanceScale *= finalRandScale;
                 }
                 const randomGapW = this._computeRandomWordSpacing(s, wordIdx, segStart, wordStart);
-                currX += (wordW + baseSpaceW + randomGapW) * advanceScale;
+                const advanceW = (wordW + baseSpaceW + randomGapW) * advanceScale;
+                currX += textDirection === 'rtl' ? -advanceW : advanceW;
             }
         }
 
@@ -1596,6 +1607,11 @@ class ReelsCanvasRenderer {
             ...(segment.style_override || segment.subtitle_style || {})
         };
         const text = segment.edited_text || segment.text || '';
+        const textDirection = (typeof ReelsTextDirection !== 'undefined')
+            ? ReelsTextDirection.resolve(s.text_direction, text)
+            : 'ltr';
+        ctx.direction = textDirection;
+        ctx.textAlign = 'left';
         
         // 1. 基础配置提取
         const fontFamily = s.font_family || 'Arial';
@@ -1609,7 +1625,7 @@ class ReelsCanvasRenderer {
             font_weight: fw,
             italic: !!s.italic
         };
-        const letterSpacing = s.letter_spacing || 0;
+        const letterSpacing = textDirection === 'rtl' ? 0 : (s.letter_spacing || 0);
         const wordSpacing = s.word_spacing || 0;
         const randomLineSpacingMax = Math.max(0, Number(s.random_line_spacing || 0));
 
@@ -1811,6 +1827,7 @@ class ReelsCanvasRenderer {
             if (advEnabled && advAlign === 'left') renderX = advX;
             else if (advEnabled && advAlign === 'right') renderX = advX + advW - line.w;
             else renderX = cx - line.w / 2;
+            if (textDirection === 'rtl') renderX += line.w;
 
             // 保持 baseline 统一，以这一行最大 ascent 为基线起点
             const baselineY = currY + line.maxAscent;
@@ -1818,20 +1835,23 @@ class ReelsCanvasRenderer {
             for (const tok of line.tokens) {
                 if (tok.text === ' ') {
                     ctx.font = _getFontStr(tok.style);
-                    renderX += ctx.measureText(' ').width + wordSpacing + this._computeRandomWordSpacing(s, Math.max(0, renderWordIdx - 1), segment.start || 0, segment.start || 0);
+                    const spaceAdvance = ctx.measureText(' ').width + wordSpacing + this._computeRandomWordSpacing(s, Math.max(0, renderWordIdx - 1), segment.start || 0, segment.start || 0);
+                    renderX += textDirection === 'rtl' ? -spaceAdvance : spaceAdvance;
                     continue;
                 }
 
                 ctx.font = _getFontStr(tok.style);
+                const tokenWidth = this._measureTextWithSpacing(ctx, tok.text, letterSpacing);
+                const tokenX = textDirection === 'rtl' ? renderX - tokenWidth : renderX;
                 
                 // --- 背景高亮（独立的单个文本块高亮处理，如果有设定的独立背景色） ---
                 if (tok.style.bg_color) {
                     ctx.save();
                     ctx.fillStyle = tok.style.bg_color;
                     ctx.globalAlpha = textAlpha * (tok.style.bg_opacity !== undefined ? tok.style.bg_opacity : 0.8);
-                    const bw = this._measureTextWithSpacing(ctx, tok.text, letterSpacing);
+                    const bw = tokenWidth;
                     const fs = tok.style.fontsize || baseStyleConfig.fontsize;
-                    ctx.fillRect(renderX - 2, baselineY - fs * 0.8 - 2, bw + 4, fs + 4);
+                    ctx.fillRect(tokenX - 2, baselineY - fs * 0.8 - 2, bw + 4, fs + 4);
                     ctx.restore();
                 }
 
@@ -1848,9 +1868,9 @@ class ReelsCanvasRenderer {
                     }
                     ctx.textBaseline = 'alphabetic';
                     if (letterSpacing > 0) {
-                        this._fillTextSpaced(ctx, tok.text, renderX + (shadowBlur > 0 ? 0 : shadowOffX), baselineY + (shadowBlur > 0 ? 0 : shadowOffY), letterSpacing);
+                        this._fillTextSpaced(ctx, tok.text, tokenX + (shadowBlur > 0 ? 0 : shadowOffX), baselineY + (shadowBlur > 0 ? 0 : shadowOffY), letterSpacing);
                     } else {
-                        ctx.fillText(tok.text, renderX + (shadowBlur > 0 ? 0 : shadowOffX), baselineY + (shadowBlur > 0 ? 0 : shadowOffY));
+                        ctx.fillText(tok.text, tokenX + (shadowBlur > 0 ? 0 : shadowOffX), baselineY + (shadowBlur > 0 ? 0 : shadowOffY));
                     }
                     ctx.restore();
                 }
@@ -1868,9 +1888,9 @@ class ReelsCanvasRenderer {
                     ctx.textBaseline = 'alphabetic';
                     
                     if (letterSpacing > 0) {
-                        this._strokeTextSpaced(ctx, tok.text, renderX, baselineY, letterSpacing);
+                        this._strokeTextSpaced(ctx, tok.text, tokenX, baselineY, letterSpacing);
                     } else {
-                        ctx.strokeText(tok.text, renderX, baselineY);
+                        ctx.strokeText(tok.text, tokenX, baselineY);
                     }
                     ctx.restore();
                 }
@@ -1880,12 +1900,12 @@ class ReelsCanvasRenderer {
                 ctx.fillStyle = tok.style.color || baseStyleConfig.color;
                 ctx.textBaseline = 'alphabetic';
                 if (letterSpacing > 0) {
-                    this._fillTextSpaced(ctx, tok.text, renderX, baselineY, letterSpacing);
+                    this._fillTextSpaced(ctx, tok.text, tokenX, baselineY, letterSpacing);
                 } else {
-                    ctx.fillText(tok.text, renderX, baselineY);
+                    ctx.fillText(tok.text, tokenX, baselineY);
                 }
                 
-                renderX += this._measureTextWithSpacing(ctx, tok.text, letterSpacing);
+                renderX += textDirection === 'rtl' ? -tokenWidth : tokenWidth;
                 renderWordIdx++;
                 ctx.restore();
             }
@@ -1901,6 +1921,12 @@ class ReelsCanvasRenderer {
         const ctx = this.ctx;
         const segments = this._contextSegments || [];
         if (segments.length === 0) return;
+        const directionSample = segments.map(seg => seg.edited_text || seg.text || '').join('\n');
+        const textDirection = (typeof ReelsTextDirection !== 'undefined')
+            ? ReelsTextDirection.resolve(s.text_direction, directionSample)
+            : 'ltr';
+        ctx.direction = textDirection;
+        ctx.textAlign = 'left';
         const firstSegStyle = segments[0] ? { ...(segments[0].style_override || segments[0].subtitle_style || {}) } : {};
 
         // 1. Gather all tokens with their target times
@@ -1915,7 +1941,7 @@ class ReelsCanvasRenderer {
             const segDur = Math.max(0.001, segEnd - segStart);
 
             const segTokens = [];
-            if (s.fullpage_typewriter_reveal_type === 'char') {
+            if (s.fullpage_typewriter_reveal_type === 'char' && textDirection !== 'rtl') {
                 // Character-by-character
                 for (let j = 0; j < text.length; j++) {
                     segTokens.push({
@@ -1927,12 +1953,21 @@ class ReelsCanvasRenderer {
             } else {
                 // Word-by-word
                 if (seg.words && seg.words.length > 0) {
-                    for (const w of seg.words) {
+                    for (let wi = 0; wi < seg.words.length; wi++) {
+                        const w = seg.words[wi];
                         segTokens.push({
                             text: w.word,
                             start: w.start,
                             end: w.end
                         });
+                        if (wi < seg.words.length - 1) {
+                            const nextWord = seg.words[wi + 1];
+                            segTokens.push({
+                                text: ' ',
+                                start: w.end,
+                                end: nextWord.start
+                            });
+                        }
                     }
                 } else {
                     const rawWords = text.split(/(\s+)/).filter(Boolean);
@@ -1973,7 +2008,7 @@ class ReelsCanvasRenderer {
         const fontWeight = _resolveFontWeight(s.font_weight, s.bold !== false ? 700 : 400);
         const fontSize = s.fontsize || 58;
         const italic = s.italic || false;
-        const letterSpacing = s.letter_spacing || 0;
+        const letterSpacing = textDirection === 'rtl' ? 0 : (s.letter_spacing || 0);
         const wordSpacing = s.word_spacing || 0;
         const fontStr = `${italic ? 'italic ' : ''}${fontWeight} ${fontSize}px "${fontFamily}", ${fallbackFamily}`;
         ctx.font = fontStr;
@@ -2276,7 +2311,7 @@ class ReelsCanvasRenderer {
                 else startX = cx - lineW / 2;
             }
 
-            let currX = startX;
+            let currX = textDirection === 'rtl' ? startX + lineW : startX;
             let y = advEnabled ? advY + padTop : cy - totalH / 2;
             for (let prevLi = 0; prevLi < li; prevLi++) {
                 y += getLineHeight(prevLi) + lineSpacing;
@@ -2286,6 +2321,7 @@ class ReelsCanvasRenderer {
 
             for (const tok of lineTokens) {
                 const tokW = this._measureTextWithSpacing(ctx, tok.text, letterSpacing);
+                const tokenX = textDirection === 'rtl' ? currX - tokW : currX;
 
                 let color, opacity;
                 let isHighlight = false;
@@ -2303,7 +2339,7 @@ class ReelsCanvasRenderer {
 
                 if (currentTime >= tok.start) {
                     // Cursor is at the end of the last revealed/typing token
-                    cursorX = currX + tokW;
+                    cursorX = textDirection === 'rtl' ? tokenX : tokenX + tokW;
                     cursorY = y;
                 }
 
@@ -2315,13 +2351,13 @@ class ReelsCanvasRenderer {
                         const shadowColors = shadowColor.split(',').map(c => c.trim());
                         currentShadowColor = isHighlight ? (shadowColors[1] || shadowColors[0]) : shadowColors[0];
                     }
-                    this._drawWord(ctx, tok.text, currX, y, color,
+                    this._drawWord(ctx, tok.text, tokenX, y, color,
                         useStroke && !s.stroke_expand_enabled, outlineColor, borderW, outlineAlpha,
                         shadowBlur, shadowOffX, shadowOffY, currentShadowColor, shadowAlpha, letterSpacing, s);
                     ctx.restore();
                 }
 
-                currX += tokW;
+                currX += textDirection === 'rtl' ? -tokW : tokW;
             }
         }
 
@@ -2461,12 +2497,18 @@ class ReelsCanvasRenderer {
     _renderScatterPop(s, segment, currentTime, videoW, videoH) {
         const ctx = this.ctx;
         const groups = this._getScatterGroups(s, segment, videoW, videoH);
+        const directionSample = segment.edited_text || segment.text || '';
+        const textDirection = (typeof ReelsTextDirection !== 'undefined')
+            ? ReelsTextDirection.resolve(s.text_direction, directionSample)
+            : 'ltr';
+        ctx.direction = textDirection;
+        ctx.textAlign = 'left';
 
         const fontFamily = s.font_family || 'Arial';
         const fallbackFamily = _resolveGenericFallback(fontFamily);
         const fontWeight = _resolveFontWeight(s.font_weight, s.bold !== false ? 700 : 400);
         const italic = s.italic || false;
-        const letterSpacing = s.letter_spacing || 0;
+        const letterSpacing = textDirection === 'rtl' ? 0 : (s.letter_spacing || 0);
         const wordSpacing = s.word_spacing || 0;
 
         const useStroke = s.use_stroke !== false;
@@ -2538,13 +2580,14 @@ class ReelsCanvasRenderer {
                 ctx.restore();
             }
 
-            let currX = -groupW / 2;
+            let currX = textDirection === 'rtl' ? groupW / 2 : -groupW / 2;
             const wordY = -(scaledFontSize * 1.2) / 2;
 
             for (let wi = 0; wi < group.words.length; wi++) {
                 const w = group.words[wi];
                 const wordStr = w.word;
                 const wordW = wordWidths[wi];
+                const wordX = textDirection === 'rtl' ? currX - wordW : currX;
 
                 let wordColor = s.color_text || '#FFFFFF';
                 let isHighlight = false;
@@ -2559,11 +2602,11 @@ class ReelsCanvasRenderer {
                     currentShadowColor = isHighlight ? (shadowColors[1] || shadowColors[0]) : shadowColors[0];
                 }
 
-                this._drawWord(ctx, wordStr, currX, wordY, wordColor,
+                this._drawWord(ctx, wordStr, wordX, wordY, wordColor,
                     useStroke && !s.stroke_expand_enabled, outlineColor, borderW * group.scale, outlineAlpha,
                     shadowBlur * group.scale, shadowOffX * group.scale, shadowOffY * group.scale, currentShadowColor, shadowAlpha, letterSpacing * group.scale, s);
 
-                currX += wordW + spaceW;
+                currX += textDirection === 'rtl' ? -(wordW + spaceW) : (wordW + spaceW);
             }
 
             ctx.restore();
@@ -2608,7 +2651,12 @@ class ReelsCanvasRenderer {
         const fallbackFamily = _resolveGenericFallback(fontFamily);
         const fontWeight = _resolveFontWeight(s.font_weight, s.bold !== false ? 700 : 400);
         const italic = s.italic || false;
-        const letterSpacing = s.letter_spacing || 0;
+        const textDirection = (typeof ReelsTextDirection !== 'undefined')
+            ? ReelsTextDirection.resolve(s.text_direction, segment.edited_text || segment.text || wordStr)
+            : 'ltr';
+        ctx.direction = textDirection;
+        ctx.textAlign = 'left';
+        const letterSpacing = textDirection === 'rtl' ? 0 : (s.letter_spacing || 0);
         const minScale = Number(s.scatter_min_scale ?? 0.95);
         const maxScale = Math.max(minScale, Number(s.scatter_max_scale ?? 1.35));
         const minRotate = Number(s.scatter_min_rotate ?? -6);
@@ -2835,8 +2883,16 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
     }
 
     const events = segments.map(seg => {
-        const rawText = (seg.text || '').replace(/\n/g, '\\N');
-        const segOverrideTags = buildSegmentOverrideTags(seg.style_override || seg.subtitle_style);
+        const sourceText = seg.text || '';
+        const rawText = sourceText.replace(/\n/g, '\\N');
+        const segmentStyle = seg.style_override || seg.subtitle_style || {};
+        let segOverrideTags = buildSegmentOverrideTags(segmentStyle);
+        const directionSetting = segmentStyle.text_direction || s.text_direction || 'auto';
+        const resolvedDirection = (typeof ReelsTextDirection !== 'undefined')
+            ? ReelsTextDirection.resolve(directionSetting, sourceText)
+            : 'ltr';
+        const directionMark = resolvedDirection === 'rtl' ? '\u200F' : '\u200E';
+        if (resolvedDirection === 'rtl') segOverrideTags += '\\fsp0';
 
         // ── 富文本 ASS 内联样式 ──
         if (seg.styled_ranges && seg.styled_ranges.length > 0 && typeof ReelsRichText !== 'undefined') {
@@ -2880,10 +2936,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
                     assText += segChunkText;
                 }
             }
-            return `Dialogue: 0,${toASSTime(seg.start)},${toASSTime(seg.end)},Default,,0,0,0,,${segOverrideTags ? `{${segOverrideTags}}` : ''}${assText}`;
+            return `Dialogue: 0,${toASSTime(seg.start)},${toASSTime(seg.end)},Default,,0,0,0,,${segOverrideTags ? `{${segOverrideTags}}` : ''}${directionMark}${assText}`;
         }
 
-        return `Dialogue: 0,${toASSTime(seg.start)},${toASSTime(seg.end)},Default,,0,0,0,,${segOverrideTags ? `{${segOverrideTags}}` : ''}${rawText}`;
+        return `Dialogue: 0,${toASSTime(seg.start)},${toASSTime(seg.end)},Default,,0,0,0,,${segOverrideTags ? `{${segOverrideTags}}` : ''}${directionMark}${rawText}`;
     });
 
     return header + '\n' + events.join('\n') + '\n';

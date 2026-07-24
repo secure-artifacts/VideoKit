@@ -18,3 +18,45 @@ test('non-Windows encoders retain normal FFmpeg threading', () => {
     assert.equal(rawVideo._test.cpuH264EncoderArgs('faster', 23, 'darwin').includes('-threads'), false);
     assert.equal(rawVideo._test.stableJpegEncoderArgs('linux').includes('-threads'), false);
 });
+
+test('overlay frame validation allows only normal encoder rounding', () => {
+    assert.equal(rawVideo._test.expectedFrameCount(8, 30), 238);
+    assert.equal(rawVideo._test.expectedFrameCount(0, 30), 0);
+    assert.equal(rawVideo._test.expectedFrameCount(8, 0), 0);
+});
+
+test('missing FFmpeg audio inputs are reported as a clear file error', () => {
+    const stderr = [
+        '[in#1] Error opening input: No such file or directory',
+        'Error opening input file /Users/test/voice.mp3.',
+        'Error opening input files: No such file or directory',
+    ].join('\n');
+    assert.equal(
+        rawVideo._test.formatMixFailure(stderr, 254),
+        '音频文件不存在或已被移动，请重新选择：/Users/test/voice.mp3'
+    );
+});
+
+test('FFmpeg failures are translated without exposing raw stderr', () => {
+    assert.equal(
+        rawVideo._test.formatMediaError('Error while opening encoder for output stream #0:0', {
+            action: '视频编码',
+            code: 1,
+        }),
+        '视频编码失败：视频编码器不可用，请切换为 CPU 编码后重试'
+    );
+    assert.equal(
+        rawVideo._test.formatMediaError('av_interleaved_write_frame(): No space left on device', {
+            action: '视频导出',
+            code: 1,
+        }),
+        '视频导出失败：磁盘空间不足，请清理空间或更换输出目录'
+    );
+    assert.equal(
+        rawVideo._test.formatMediaError('some internal ffmpeg diagnostic', {
+            action: '背景处理',
+            code: 234,
+        }),
+        '背景处理失败（错误码 234）。请检查素材格式和导出设置；详细日志已写入控制台'
+    );
+});

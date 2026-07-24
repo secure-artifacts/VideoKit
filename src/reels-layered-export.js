@@ -94,7 +94,7 @@ function _normalizeLocalPath(filePath) {
 
 function _isLayeredImageFile(filePath) {
     const ext = (filePath || '').split('.').pop().toLowerCase();
-    return ['jpg', 'jpeg', 'png', 'webp', 'bmp', 'gif'].includes(ext);
+    return ['jpg', 'jpeg', 'png', 'webp', 'bmp'].includes(ext);
 }
 
 function _parseCropString(cropStr) {
@@ -302,6 +302,17 @@ async function reelsLayeredExport(params) {
         ? (parseFloat(segments[segments.length - 1].end) || 0)
         : 0;
     const effectiveSubDuration = voicePath ? rawSubDuration * _audioDurFactor : rawSubDuration;
+    const requireMediaDuration = async (label, mediaPath) => {
+        const fileName = String(mediaPath || '').split(/[/\\]/).pop() || '未知文件';
+        if (window.electronAPI.getMediaDurationDetail) {
+            const detail = await window.electronAPI.getMediaDurationDetail(mediaPath);
+            if (detail?.ok && Number(detail.duration) > 0) return Number(detail.duration);
+            throw new Error(`${label}无法读取时长：${fileName}。原因：${detail?.reason || '未知读取错误'}。路径：${detail?.path || mediaPath || '(空)'}`);
+        }
+        const numeric = Number(await window.electronAPI.getMediaDuration(mediaPath));
+        if (Number.isFinite(numeric) && numeric > 0) return numeric;
+        throw new Error(`${label}无法读取时长：${fileName}。原因：媒体未返回有效时长。路径：${mediaPath || '(空)'}`);
+    };
     let duration = 0;
 
     if (customDuration > 0) {
@@ -309,7 +320,7 @@ async function reelsLayeredExport(params) {
         log(`自定义时长: ${duration}s`);
     } else {
         if (voicePath) {
-            let rawAudioDur = await window.electronAPI.getMediaDuration(voicePath);
+            let rawAudioDur = await requireMediaDuration('配音/音频', voicePath);
             if (rawAudioDur > 0 && _audioDurFactor !== 1.0) {
                 duration = rawAudioDur * _audioDurFactor;
             } else {
@@ -327,11 +338,9 @@ async function reelsLayeredExport(params) {
                         poolTotalDur += 5.0; // 图片默认 5 秒
                         poolClipCount++;
                     } else {
-                        const clipDur = await window.electronAPI.getMediaDuration(clipPath);
-                        if (clipDur > 0) {
-                            poolTotalDur += clipDur;
-                            poolClipCount++;
-                        }
+                        const clipDur = await requireMediaDuration('背景素材池视频', clipPath);
+                        poolTotalDur += clipDur;
+                        poolClipCount++;
                     }
                 }
                 const scaledPoolDur = poolTotalDur * _bgDurFactor;
@@ -340,14 +349,16 @@ async function reelsLayeredExport(params) {
                 duration = Math.max(0.5, scaledPoolDur - overlapTotal, effectiveSubDuration);
                 log(`多素材池有效时长: ${duration.toFixed(2)}s`);
             } else if (backgroundPath) {
-                let rawBgDur = await window.electronAPI.getMediaDuration(backgroundPath);
+                let rawBgDur = _isLayeredImageFile(backgroundPath)
+                    ? 5
+                    : await requireMediaDuration('背景视频', backgroundPath);
                 if (rawBgDur > 0 && _bgDurFactor !== 1.0) {
                     duration = Math.max(rawBgDur * _bgDurFactor, effectiveSubDuration);
                 } else {
                     duration = Math.max(rawBgDur, effectiveSubDuration);
                 }
             } else if (contentVideoPath) {
-                let rawCvDur = await window.electronAPI.getMediaDuration(contentVideoPath);
+                let rawCvDur = await requireMediaDuration('覆层视频', contentVideoPath);
                 if (rawCvDur > 0) {
                     const trimS = (contentVideoTrimStart != null) ? parseFloat(contentVideoTrimStart) : 0;
                     const trimE = (contentVideoTrimEnd != null) ? parseFloat(contentVideoTrimEnd) : 0;
@@ -465,6 +476,21 @@ async function reelsLayeredExport(params) {
         if (cvPrep && cvPrep.framesDir) {
             cvFramesDir = cvPrep.framesDir;
             cvFrameCount = cvPrep.frameCount;
+        }
+        if (contentVideoBlurBg || contentVideoDirectBg) {
+            let requiredDuration = Number(duration);
+            const trimStart = Number(contentVideoTrimStart);
+            const trimEnd = Number(contentVideoTrimEnd);
+            if (Number.isFinite(trimStart) && Number.isFinite(trimEnd) && trimEnd > trimStart) {
+                requiredDuration = Math.min(requiredDuration, trimEnd - trimStart);
+            }
+            const requiredFrames = Math.max(1, Math.ceil(requiredDuration * fps) - 2);
+            if (!cvFramesDir || cvFrameCount < requiredFrames) {
+                throw new Error(
+                    `内容背景帧数不足：需要约 ${requiredFrames} 帧，实际 ${cvFrameCount} 帧。` +
+                    `为避免导出静帧，已停止导出，请检查内容视频是否完整。`
+                );
+            }
         }
     }
     progress(20);

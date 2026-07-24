@@ -7,6 +7,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
+const { formatMediaError, formatProcessStartError } = require('./media-error');
 
 // 超时默认值
 const DEFAULT_TIMEOUT = 600000; // 10 分钟
@@ -76,11 +77,15 @@ function runCommand(cmd, args, options = {}) {
                 resolve({ stdout, stderr, code });
             } else {
                 console.error(`[FFmpeg] 退出码 ${code} [${cmd}]:\n${stderr}`);
-                reject(new Error(`${cmd} 退出码 ${code}: ${stderr.slice(0, 3000)}`));
+                reject(new Error(formatMediaError(stderr, {
+                    action: cmd === 'ffprobe' ? '读取媒体信息' : '媒体处理',
+                    code,
+                })));
             }
         });
         proc.on('error', (err) => {
-            reject(new Error(`${cmd} 启动失败 (${resolvedCmd}): ${err.message}`));
+            console.error(`[FFmpeg] ${cmd} 启动失败 (${resolvedCmd}):`, err);
+            reject(new Error(formatProcessStartError(cmd, resolvedCmd, err)));
         });
     });
 }
@@ -212,6 +217,65 @@ async function getDuration(filePath) {
 
     console.error(`[getDuration] 所有方法均失败, file=${filePath}`);
     return null;
+}
+
+/** 获取媒体时长及可直接展示给用户的失败原因。 */
+async function getDurationDetailed(filePath) {
+    if (!filePath || typeof filePath !== 'string') {
+        return { ok: false, duration: null, code: 'EMPTY_PATH', reason: '文件路径为空' };
+    }
+    let cleanPath = filePath.replace(/^local-media:\/\//i, '');
+    if (process.platform === 'win32' && cleanPath.startsWith('/') && /^[\/][A-Za-z]:/.test(cleanPath)) {
+        cleanPath = cleanPath.slice(1);
+    }
+    if (!fs.existsSync(cleanPath)) {
+        return { ok: false, duration: null, code: 'NOT_FOUND', reason: '文件不存在或路径已经失效', path: cleanPath };
+    }
+    let stat;
+    try { stat = fs.statSync(cleanPath); } catch (error) {
+        return { ok: false, duration: null, code: 'ACCESS_FAILED', reason: `无法读取文件：${error.message}`, path: cleanPath };
+    }
+    if (!stat.isFile()) {
+        return { ok: false, duration: null, code: 'NOT_FILE', reason: '路径不是媒体文件', path: cleanPath };
+    }
+    if (stat.size <= 0) {
+        return { ok: false, duration: null, code: 'EMPTY_FILE', reason: '文件大小为 0，可能尚未写入完成', path: cleanPath, size: stat.size };
+    }
+
+    const duration = await getDuration(cleanPath);
+    if (Number.isFinite(duration) && duration > 0) {
+        return { ok: true, duration, code: 'OK', reason: '', path: cleanPath, size: stat.size };
+    }
+
+    let diagnostic = '';
+    try {
+        const { stdout, stderr } = await runCommand('ffprobe', [
+            '-v', 'error',
+            '-show_entries', 'format=format_name,duration',
+            '-of', 'json',
+            cleanPath,
+        ], { timeout: PROBE_TIMEOUT });
+        diagnostic = `${stderr || ''} ${stdout || ''}`.trim();
+    } catch (error) {
+        diagnostic = String(error?.message || error || '');
+    }
+    const lower = diagnostic.toLowerCase();
+    let code = 'NO_DURATION';
+    let reason = '文件中没有可用的时长信息，可能是异常封装或时间戳缺失';
+    if (/moov atom not found|invalid data found|end of file|error reading header|could not find codec parameters/.test(lower)) {
+        code = 'DAMAGED_OR_INCOMPLETE';
+        reason = '文件可能未写入完成、已损坏，或 MP4 索引信息缺失';
+    } else if (/permission denied|operation not permitted|access is denied|being used by another process/.test(lower)) {
+        code = 'PERMISSION_DENIED';
+        reason = '文件无法访问，可能被其他程序占用或没有读取权限';
+    } else if (/timed?\s*out|timeout|signal.*term|退出码 null/.test(lower)) {
+        code = 'PROBE_TIMEOUT';
+        reason = '读取媒体信息超时，文件可能位于响应缓慢的外接盘、网络盘或同步目录';
+    } else if (/ffprobe.*(enoent|not found)|spawn.*enoent/.test(lower)) {
+        code = 'FFPROBE_UNAVAILABLE';
+        reason = 'FFprobe 无法启动，请检查软件内置的媒体组件';
+    }
+    return { ok: false, duration: null, code, reason, path: cleanPath, size: stat.size };
 }
 
 /** 获取帧率 */
@@ -2346,6 +2410,7 @@ module.exports = {
     resolveCommand,
     runCommand,
     getDuration,
+    getDurationDetailed,
     getFrameRate,
     getResolution,
     getWaveformBinary,
@@ -2374,4 +2439,5 @@ module.exports = {
     concatClipsWithTransitions,
     hasAudioTrack,
     escapeAssPathForFilter,
+    formatMediaError,
 };

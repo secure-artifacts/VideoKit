@@ -84,7 +84,7 @@
                   onclick="document.getElementById('source-file-input').click()">从文件加载</button>
               </div>
             </div>
-            <textarea id="source-text" class="textarea" placeholder="在此粘贴断行后的原文本..." rows="5"></textarea>
+            <textarea id="source-text" class="textarea" dir="auto" placeholder="在此粘贴断行后的原文本..." rows="5"></textarea>
           </div>
 
           <!-- STEP 3 -->
@@ -99,7 +99,7 @@
                   onclick="document.getElementById('translate-file-input').click()">从文件加载</button>
               </div>
             </div>
-            <textarea id="translate-text" class="textarea" placeholder="在此粘贴断行后的译文（不会自动生成）..." rows="5"></textarea>
+            <textarea id="translate-text" class="textarea" dir="auto" placeholder="在此粘贴断行后的译文（不会自动生成）..." rows="5"></textarea>
           </div>
 
           <!-- STEP 4 -->
@@ -2773,13 +2773,14 @@
               <div class="param-row">
                 <label>方式一:</label>
                 <div style="flex: 1; display: flex; align-items: center; gap: 12px;">
-                  <button class="btn btn-secondary btn-small" onclick="openElevenLabsWebLogin()" id="btn-web-login">🌐 App内弹窗登录</button>
+                  <button class="btn btn-secondary btn-small" onclick="openElevenLabsWebLogin()" id="btn-web-login">🌐 登录 / 重新登录</button>
+                  <button class="btn btn-secondary btn-small" onclick="revalidateElevenLabsWebLogin()">🔄 验证连接</button>
                   <button class="btn btn-secondary btn-small" onclick="clearElevenLabsWebLogin()" id="btn-web-logout" style="color: #ff6b6b;">🗑 清除凭证</button>
                   <span id="web-login-status" style="font-size: 11px; padding: 3px 8px; border-radius: 4px;"></span>
                 </div>
               </div>
               <p class="hint" style="margin-top: 4px; margin-bottom: 12px;">
-                在 App 内弹出登录窗口，自动拦截 Token。⚠️ Google 快捷登录可能被拦截，请改用<strong>方式二</strong>。
+                登录成功后会自动验证、关闭弹窗并加载社区人声。<span id="web-login-detail" style="color:#00d9a5;"></span>
               </p>
               <!-- 方式 2：用自己浏览器 + 手动粘贴 Token -->
               <div style="border-top: 1px solid rgba(255,255,255,0.1); padding-top: 12px;">
@@ -2913,7 +2914,7 @@
                 字符/行</span>
               <span style="font-size: 11px; color: var(--text-muted); margin-left: 8px;">留空则自动</span>
             </div>
-            <textarea id="subtitle-text" class="textarea"
+            <textarea id="subtitle-text" class="textarea" dir="auto"
               placeholder="在这里输入分好行的字幕文本（可选）...&#10;每行将成为一条字幕，时间自动匹配。&#10;&#10;点击「✨ 自动断行」可自动从上方文本识别句子。" rows="4"
               style="margin-top: 8px;"></textarea>
 
@@ -3628,6 +3629,17 @@
                           max="20" style="width: 52px;" oninput="document.getElementById('reels-letter-spacing-range').value=this.value; reelsUpdatePreview()">
                       </div>
 
+                      <label style="margin:0;">方向:</label>
+                      <div style="display:flex; gap:8px; align-items:center; min-width:0;">
+                        <select id="reels-text-direction" class="select" style="width: 150px;"
+                          onchange="reelsUpdatePreview()">
+                          <option value="auto" selected>自动（推荐）</option>
+                          <option value="ltr">从左向右</option>
+                          <option value="rtl">从右向左</option>
+                        </select>
+                        <span style="font-size:10px;color:var(--text-secondary);">阿拉伯语自动 RTL</span>
+                      </div>
+
                       <label style="margin:0;">字体系:</label>
                       <div style="display:flex; gap:8px; align-items:center; min-width:0; flex-wrap:wrap;">
                         <select id="reels-font-preset" class="select" style="flex:1; min-width:140px;" onchange="reelsApplyFontPresetQuick()">
@@ -3664,6 +3676,7 @@
                             onchange="reelsUpdatePreview()"><span>启用</span></label>
                         <input type="color" id="reels-stroke-color" value="#3E2723"
                           style="width: 36px; height: 28px; border: none; cursor: pointer;"
+                          oninput="reelsUpdatePreview()"
                           onchange="reelsUpdatePreview()">
                         <label style="margin:0;">宽度:</label>
                         <input type="range" id="reels-stroke-width-range" min="0" max="10" value="3" style="flex:1; min-width:80px;"
@@ -6296,6 +6309,7 @@ THE HOLY	This is no coincidence...</div>
     window.getFileNativePath = getFileNativePath;
   </script>
 
+  <script src="reels-text-direction.js"></script>
   <script src="reels-anim-engine.js"></script>
   <script src="reels-style-engine.js"></script>
   <script src="reels-presets-init.js"></script>

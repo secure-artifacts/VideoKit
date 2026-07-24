@@ -113,7 +113,7 @@ function _seekVideoNode(video, time) {
 
 function _isImageFile(filePath) {
     const ext = (filePath || '').split('.').pop().toLowerCase();
-    return ['jpg', 'jpeg', 'png', 'webp', 'bmp', 'gif'].includes(ext);
+    return ['jpg', 'jpeg', 'png', 'webp', 'bmp'].includes(ext);
 }
 
 // ═══ 动态加载渲染器脚本 ═══

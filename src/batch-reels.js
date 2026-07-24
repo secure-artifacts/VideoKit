@@ -2057,6 +2057,7 @@ function _readStyleFromUI() {
         bold: num('reels-font-weight', chk('reels-bold') ? 700 : 400) >= 600,
         italic: chk('reels-italic'),
         letter_spacing: num('reels-letter-spacing', 0),
+        text_direction: val('reels-text-direction') || 'auto',
 
         // Colors
         color_text: val('reels-color-text') || '#FFFFFF',
@@ -2439,6 +2440,7 @@ function _writeStyleToUI(style) {
     setChk('reels-bold', weight >= 600);
     setChk('reels-italic', style.italic);
     set('reels-letter-spacing', style.letter_spacing || 0);
+    set('reels-text-direction', style.text_direction || 'auto');
     reelsRefreshSubtitleWeightOptions();
     set('reels-color-text', style.color_text || '#FFFFFF');
     set('reels-color-high', style.color_high || '#FFD700');
@@ -4069,7 +4071,7 @@ function _normalizeLocalMediaPath(p) {
  */
 function _isImageFile(filePath) {
     const ext = (filePath || '').split('.').pop().toLowerCase();
-    return ['jpg', 'jpeg', 'png', 'webp', 'bmp', 'gif'].includes(ext);
+    return ['jpg', 'jpeg', 'png', 'webp', 'bmp'].includes(ext);
 }
 
 function _resolvePreviewBackgroundPath(task) {
@@ -9404,6 +9406,25 @@ async function reelsStartExport() {
             const doPng = exportFormat === 'png-layers' || exportFormat === 'mp4+png';
             const doMp4 = exportFormat === 'mp4' || exportFormat === 'mp4+png';
             const doFcpxml = exportFormat === 'fcpxml' || exportFormat === 'fcpxml-compound';
+
+            // Validate task audio before rendering hundreds of frames. Saved
+            // projects may still contain absolute paths to files that were
+            // moved or deleted after the project was created.
+            if (window.electronAPI && typeof window.electronAPI.checkFilesExist === 'function') {
+                const effectiveBgmPath = _getEffectiveBgmVolumePercent(task, bgmVolume) > 0
+                    ? (_getEffectiveBgmPath(task, i) || '')
+                    : '';
+                const pathsToCheck = [voiceSource, effectiveBgmPath].filter(Boolean);
+                if (pathsToCheck.length > 0) {
+                    const existsMap = await window.electronAPI.checkFilesExist(pathsToCheck);
+                    if (voiceSource && !existsMap[voiceSource]) {
+                        throw new Error(`配音文件不存在，请重新选择或生成配音：${voiceSource}`);
+                    }
+                    if (effectiveBgmPath && !existsMap[effectiveBgmPath]) {
+                        throw new Error(`背景音乐文件不存在，请重新选择：${effectiveBgmPath}`);
+                    }
+                }
+            }
             
             const subtitleToggle = document.getElementById('reels-subtitle-toggle');
             const showSubtitle = !subtitleToggle || subtitleToggle.checked;
@@ -9798,6 +9819,10 @@ async function reelsStartExport() {
                         }
                     }
                 } catch(_) {}
+                // 媒体探测失败可能返回 null/undefined，任务自定义时长也可能是字符串。
+                // 后续日志和并行判断都要求有限数字；无效值归零，由稳定导出路径自行探测/兜底。
+                estimatedDuration = Number(estimatedDuration);
+                if (!Number.isFinite(estimatedDuration) || estimatedDuration < 0) estimatedDuration = 0;
                 const estimatedFrames = Math.ceil((estimatedDuration || 0) * 30);
                 const hasVideoOverlays = Array.isArray(task.overlays) && task.overlays.some(ov => ov && ov.type === 'video' && !ov.disabled);
                 const hasContentVideo = !!task.contentVideoPath;

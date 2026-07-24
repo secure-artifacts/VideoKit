@@ -22,6 +22,7 @@ const DEFAULT_SUBTITLE_STYLE = {
     bold: true,
     italic: false,
     letter_spacing: 0,
+    text_direction: 'auto', // auto | ltr | rtl
     word_spacing: 0,
     random_word_spacing: 0,
     random_line_spacing: 0,

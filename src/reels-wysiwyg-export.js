@@ -401,6 +401,13 @@ async function reelsWysiwygExport(params) {
         throw new Error('需要 reelsComposeWysiwyg IPC 接口');
     }
 
+    if (voicePath && !(await _overlayLocalPathExists(voicePath))) {
+        throw new Error(`配音文件不存在，请重新选择或生成配音：${voicePath}`);
+    }
+    if (bgmPath && bgmVolume > 0.001 && !(await _overlayLocalPathExists(bgmPath))) {
+        throw new Error(`背景音乐文件不存在，请重新选择：${bgmPath}`);
+    }
+
     // 允许无字幕（纯覆层模式）
     if (!segments) segments = [];
 
@@ -456,6 +463,17 @@ async function reelsWysiwygExport(params) {
         ? (parseFloat(segments[segments.length - 1].end) || 0)
         : 0;
     const effectiveSubDuration = voicePath ? rawSubDuration * _audioDurFactor : rawSubDuration;
+    const requireMediaDuration = async (label, mediaPath) => {
+        const fileName = String(mediaPath || '').split(/[/\\]/).pop() || '未知文件';
+        if (window.electronAPI.getMediaDurationDetail) {
+            const detail = await window.electronAPI.getMediaDurationDetail(mediaPath);
+            if (detail?.ok && Number(detail.duration) > 0) return Number(detail.duration);
+            throw new Error(`${label}无法读取时长：${fileName}。原因：${detail?.reason || '未知读取错误'}。路径：${detail?.path || mediaPath || '(空)'}`);
+        }
+        const numeric = Number(await window.electronAPI.getMediaDuration(mediaPath));
+        if (Number.isFinite(numeric) && numeric > 0) return numeric;
+        throw new Error(`${label}无法读取时长：${fileName}。原因：媒体未返回有效时长。路径：${mediaPath || '(空)'}`);
+    };
 
     let maxFlipperDuration = 0;
     if (Array.isArray(taskOverlays)) {
@@ -483,7 +501,7 @@ async function reelsWysiwygExport(params) {
     } else {
         if (voicePath) {
             log('正在获取音频时长...');
-            let rawAudioDur = await window.electronAPI.getMediaDuration(voicePath);
+            let rawAudioDur = await requireMediaDuration('配音/音频', voicePath);
             if (rawAudioDur > 0 && _audioDurFactor !== 1.0) {
                 duration = rawAudioDur * _audioDurFactor;
                 log(`音频原始时长: ${rawAudioDur.toFixed(2)}s × ${audioDurScale}% = ${duration.toFixed(2)}s`);
@@ -511,7 +529,7 @@ async function reelsWysiwygExport(params) {
             // 情况2: 普通视频文件 → probe duration
             if (cvDur <= 0) {
                 log('正在获取覆层视频时长...');
-                let rawCvDur = await window.electronAPI.getMediaDuration(contentVideoPath);
+                let rawCvDur = await requireMediaDuration('覆层视频', contentVideoPath);
                 if (rawCvDur > 0) {
                     const trimStart = parseFloat(contentVideoTrimStart) || 0;
                     const trimEnd   = parseFloat(contentVideoTrimEnd) || 0;
@@ -540,11 +558,9 @@ async function reelsWysiwygExport(params) {
                         poolTotalDur += 5.0; // 图片默认 5 秒
                         poolClipCount++;
                     } else {
-                        const clipDur = await window.electronAPI.getMediaDuration(clipPath);
-                        if (clipDur > 0) {
-                            poolTotalDur += clipDur;
-                            poolClipCount++;
-                        }
+                        const clipDur = await requireMediaDuration('背景素材池视频', clipPath);
+                        poolTotalDur += clipDur;
+                        poolClipCount++;
                     }
                 }
                 const scaledPoolDur = poolTotalDur * _bgDurFactor;
@@ -554,7 +570,9 @@ async function reelsWysiwygExport(params) {
                 log(`多素材池有效时长: ${scaledPoolDur.toFixed(2)}s - 转场重叠 ${overlapTotal.toFixed(2)}s = ${duration.toFixed(2)}s`);
             } else if (backgroundPath) {
                 log('正在获取背景视频时长...');
-                let rawBgDur = await window.electronAPI.getMediaDuration(backgroundPath);
+                let rawBgDur = _isImageFile(backgroundPath)
+                    ? 5
+                    : await requireMediaDuration('背景视频', backgroundPath);
                 if (rawBgDur > 0 && _bgDurFactor !== 1.0) {
                     duration = Math.max(rawBgDur * _bgDurFactor, effectiveSubDuration);
                     log(`背景原始时长: ${rawBgDur.toFixed(2)}s × ${bgDurScale}% = ${duration.toFixed(2)}s`);
@@ -676,6 +694,17 @@ async function reelsWysiwygExport(params) {
         totalBgFrames = prepResult.frameCount;
         bgAudioPath = prepResult.bgAudioPath || null;
         log(`背景帧提取完成: ${totalBgFrames} 帧 → ${framesDir}`);
+        const hasVideoBackground = isMultiClip
+            ? bgClipPool.some(clipPath => !_isImageFile(clipPath))
+            : !!backgroundPath && !_isImageFile(backgroundPath);
+        const expectedBgFrames = Math.max(1, Math.round(duration * fps));
+        const bgFrameTolerance = Math.max(2, Math.ceil(fps * 0.15));
+        if (hasVideoBackground && totalBgFrames < expectedBgFrames - bgFrameTolerance) {
+            const bgName = isMultiClip
+                ? '背景素材池中的视频'
+                : (String(backgroundPath).split(/[/\\]/).pop() || backgroundPath);
+            throw new Error(`背景视频帧数不足：${bgName} 只提取到 ${totalBgFrames}/${expectedBgFrames} 帧。已停止导出，避免生成静帧视频；请检查素材编码或重新转码后再试。`);
+        }
         // ── 安全检查：如果是多素材模式但提取了 0 帧，说明 FFmpeg 拼接出了问题 ──
         if (totalBgFrames === 0 && isMultiClip) {
             throw new Error(`多素材拼接失败：FFmpeg 提取了 0 帧。素材池: ${bgClipPool.length} 个文件`);
@@ -746,6 +775,22 @@ async function reelsWysiwygExport(params) {
             if (cvPrep && cvPrep.framesDir) {
                 cvFramesDir = cvPrep.framesDir;
                 cvFrameCount = cvPrep.frameCount;
+            }
+        }
+
+        if (contentVideoBlurBg || contentVideoDirectBg) {
+            let requiredDuration = Number(duration);
+            const trimStart = Number(contentVideoTrimStart);
+            const trimEnd = Number(contentVideoTrimEnd);
+            if (Number.isFinite(trimStart) && Number.isFinite(trimEnd) && trimEnd > trimStart) {
+                requiredDuration = Math.min(requiredDuration, trimEnd - trimStart);
+            }
+            const requiredFrames = Math.max(1, Math.ceil(requiredDuration * fps) - 2);
+            if (!cvFramesDir || cvFrameCount < requiredFrames) {
+                throw new Error(
+                    `内容背景帧数不足：需要约 ${requiredFrames} 帧，实际 ${cvFrameCount} 帧。` +
+                    `为避免导出静帧，已停止导出，请检查内容视频或图片序列是否完整。`
+                );
             }
         }
     }
@@ -1073,8 +1118,7 @@ async function reelsWysiwygExport(params) {
             const frameOk = frameResult === true || (frameResult && frameResult.ok);
             if (!frameOk) {
                 const errMsg = (frameResult && frameResult.error) || '未知编码错误';
-                const errDetail = (frameResult && frameResult.detail) || '';
-                throw new Error(`FFmpeg 写入帧失败 (frame ${frameIdx}): ${errMsg}${errDetail ? '\n' + errDetail.slice(-200) : ''}`);
+                throw new Error(`第 ${frameIdx + 1} 帧写入失败：${errMsg}`);
             }
 
             // ── 进度 + UI yield ──
@@ -1162,7 +1206,7 @@ async function reelsWysiwygExport(params) {
 
 function _isImageFile(filePath) {
     const ext = (filePath || '').split('.').pop().toLowerCase();
-    return ['jpg', 'jpeg', 'png', 'webp', 'bmp', 'gif'].includes(ext);
+    return ['jpg', 'jpeg', 'png', 'webp', 'bmp'].includes(ext);
 }
 
 if (typeof window !== 'undefined') {

@@ -139,16 +139,49 @@ function getSettingsPath() {
     return path.join(getBackendDir(), 'elevenlabs_settings.json');
 }
 
+function decryptWebToken(data) {
+    if (!data || data.web_token || !data.web_token_encrypted) return data;
+    try {
+        const { safeStorage } = require('electron');
+        if (!safeStorage?.isEncryptionAvailable()) return data;
+        const decrypted = safeStorage.decryptString(Buffer.from(data.web_token_encrypted, 'base64'));
+        return { ...data, web_token: JSON.parse(decrypted) };
+    } catch (error) {
+        console.warn('[ElevenLabs] 网页凭证解密失败:', error.message);
+        return data;
+    }
+}
+
 function loadSettings() {
     const p = getSettingsPath();
     if (!fs.existsSync(p)) return {};
-    try { return JSON.parse(fs.readFileSync(p, 'utf-8')); } catch { return {}; }
+    try {
+        return decryptWebToken(JSON.parse(fs.readFileSync(p, 'utf-8')));
+    } catch {
+        return {};
+    }
 }
 
 function saveSettings(data) {
     const p = getSettingsPath();
     fs.mkdirSync(path.dirname(p), { recursive: true });
-    fs.writeFileSync(p, JSON.stringify(data, null, 2));
+    let persisted = { ...data };
+    if (persisted.web_token) {
+        try {
+            const { safeStorage } = require('electron');
+            if (safeStorage?.isEncryptionAvailable()) {
+                persisted.web_token_encrypted = safeStorage
+                    .encryptString(JSON.stringify(persisted.web_token))
+                    .toString('base64');
+                delete persisted.web_token;
+            }
+        } catch (error) {
+            console.warn('[ElevenLabs] 系统加密不可用，保留现有凭证存储方式:', error.message);
+        }
+    } else {
+        delete persisted.web_token_encrypted;
+    }
+    fs.writeFileSync(p, JSON.stringify(persisted, null, 2));
 }
 
 function normalizeKeysWithStatus(value) {

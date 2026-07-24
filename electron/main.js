@@ -534,7 +534,10 @@ app.whenReady().then(async () => {
                 try { fs.unlinkSync(assPath); } catch (e) { /* ignore */ }
                 if (err) {
                     log(`[Reels] FFmpeg error: ${stderr}`);
-                    reject(new Error(stderr || err.message));
+                    reject(new Error(ffmpegService.formatMediaError(stderr || err.message, {
+                        action: '字幕烧录',
+                        code: err.code,
+                    })));
                 } else {
                     log(`[Reels] Export done: ${outputPath}`);
                     resolve({ success: true, outputPath });
@@ -628,7 +631,15 @@ app.whenReady().then(async () => {
                 ], { timeout: 10000 });
                 try { fs.unlinkSync(tmpRaw); } catch (_) { }
                 if (result.status === 0) return { ok: true };
-                return { ok: false, error: result.stderr?.toString() || 'FFmpeg failed' };
+                const stderr = result.stderr?.toString() || '';
+                log(`[Layers] PNG 帧转换失败 (code=${result.status}): ${stderr}`);
+                return {
+                    ok: false,
+                    error: ffmpegService.formatMediaError(stderr, {
+                        action: 'PNG 帧转换',
+                        code: result.status,
+                    }),
+                };
             }
         } catch (e) {
             return { ok: false, error: e.message };
@@ -637,6 +648,9 @@ app.whenReady().then(async () => {
 
     // IPC: 导出音频为 MP3（分层 PNG 序列导出用）
     ipcMain.handle('export-audio-mp3', async (event, { inputPath, outputPath: mp3Path, volume, startTime = 0 }) => {
+        if (!inputPath || !fs.existsSync(inputPath)) {
+            return { ok: false, error: `音频文件不存在或已被移动，请重新选择：${inputPath || '未选择文件'}` };
+        }
         const ffmpeg = ffmpegService.resolveCommand('ffmpeg');
         const { spawnSync } = require('child_process');
         const args = ['-y'];
@@ -648,7 +662,16 @@ app.whenReady().then(async () => {
         args.push('-c:a', 'libmp3lame', '-b:a', '192k', mp3Path);
         const result = spawnSync(ffmpeg, args, { timeout: 120000 });
         if (result.status !== 0) {
-            return { ok: false, error: result.stderr?.toString() || 'FFmpeg MP3 export failed' };
+            const stderr = result.stderr?.toString() || result.error?.message || '';
+            log(`[Layers] MP3 导出失败 (code=${result.status}): ${stderr}`);
+            return {
+                ok: false,
+                error: ffmpegService.formatMediaError(stderr, {
+                    action: 'MP3 音频导出',
+                    code: result.status,
+                    missingLabel: '音频文件',
+                }),
+            };
         }
         log(`[Layers] 音频导出: ${mp3Path}`);
         return { ok: true, path: mp3Path };
@@ -669,6 +692,9 @@ app.whenReady().then(async () => {
     // IPC: 获取媒体时长
     ipcMain.handle('get-media-duration', async (event, filePath) => {
         return ffmpegService.getDuration(filePath);
+    });
+    ipcMain.handle('get-media-duration-detail', async (event, filePath) => {
+        return ffmpegService.getDurationDetailed(filePath);
     });
 
     // IPC: 读取音频文件为 WAV Buffer（供渲染进程的 Web Audio decodeAudioData 使用）

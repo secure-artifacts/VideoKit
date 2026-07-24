@@ -328,7 +328,7 @@ function registerAPIHandlers() {
                         request_id: data?.request_id || null,
                     });
                 } catch (_) { }
-            });
+            }, event.sender);
             return { success: true, data: result };
         } catch (error) {
             const rawMsg = String(error.message || 'Unknown error');
@@ -360,7 +360,7 @@ function registerAPIHandlers() {
 /**
  * API 路由分发
  */
-async function routeAPI(endpoint, data, progressSender = null) {
+async function routeAPI(endpoint, data, progressSender = null, sender = null) {
     // 去除前导斜杠
     const ep = endpoint.replace(/^\/?(api\/)?/, '');
 
@@ -487,18 +487,16 @@ async function routeAPI(endpoint, data, progressSender = null) {
 
         // ==================== ElevenLabs ====================
         case 'elevenlabs/web-login':
-            elevenlabsAuth.openElevenLabsAuthWindow();
-            return { message: '登录页面已打开' };
+            return elevenlabsAuth.openElevenLabsAuthWindow(sender);
 
         case 'elevenlabs/web-logout':
-            await elevenlabsAuth.clearElevenLabsSession();
-            return { message: '网页凭证已清除' };
+            return await elevenlabsAuth.clearElevenLabsSession(sender);
 
-        case 'elevenlabs/web-status': {
-            const data = elevenlabsService.loadSettings();
-            const hasToken = !!(data.web_token && (data.web_token.authorization || data.web_token.xiApiKey || data.web_token.cookie));
-            return { hasToken, tokenData: data.web_token };
-        }
+        case 'elevenlabs/web-status':
+            return await elevenlabsAuth.validateStoredSession({
+                force: !!data.force,
+                webContents: sender,
+            });
 
         case 'elevenlabs/web-token-manual': {
             // 手动粘贴 Token
@@ -521,12 +519,17 @@ async function routeAPI(endpoint, data, progressSender = null) {
 
             // 验证 Token 是否有效
             try {
-                const quota = await elevenlabsService.getQuota('__WEB_TOKEN__');
-                const remaining = (quota.limit || 0) - (quota.usage || 0);
-                return { success: true, message: `✅ Token 已保存并验证成功 (剩余额度: ${remaining.toLocaleString()})` };
+                const status = await elevenlabsAuth.validateStoredSession({
+                    force: true,
+                    webContents: sender,
+                });
+                return {
+                    success: status.valid,
+                    message: status.valid ? `✅ ${status.message}` : `⚠️ ${status.message}`,
+                    status,
+                };
             } catch (verifyErr) {
-                // Token 保存了但验证失败，提醒用户
-                return { success: true, message: `⚠️ Token 已保存，但验证失败: ${verifyErr.message}。请检查 Token 是否过期。` };
+                return { success: false, message: `Token 验证失败：${verifyErr.message}` };
             }
         }
 

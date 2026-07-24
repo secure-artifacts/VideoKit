@@ -143,6 +143,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
         const cleanPath = localMediaUrlToPath(filePath);
         return ipcRenderer.invoke('get-media-duration', cleanPath);
     },
+    getMediaDurationDetail: (filePath) => {
+        if (!filePath || typeof filePath !== 'string') {
+            return Promise.resolve({ ok: false, duration: null, code: 'EMPTY_PATH', reason: '文件路径为空' });
+        }
+        return ipcRenderer.invoke('get-media-duration-detail', localMediaUrlToPath(filePath));
+    },
     saveRenderedAudio: (wavData) => ipcRenderer.invoke('save-rendered-audio', wavData),
     readFileBuffer: (filePath) => ipcRenderer.invoke('read-file-buffer', filePath),
     // 分层 PNG 序列导出
@@ -188,6 +194,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // 替代 fetch(`${API_BASE}/endpoint`, ...) 的调用方式
     // 用法: const result = await window.electronAPI.apiCall('elevenlabs/voices', { key_index: 0 })
     apiCall: (endpoint, data) => ipcRenderer.invoke('api-call', endpoint, data),
+    onElevenLabsWebAuthStatus: (callback) => {
+        const handler = (_event, data) => callback(data);
+        ipcRenderer.on('elevenlabs-web-auth-status', handler);
+        return () => ipcRenderer.removeListener('elevenlabs-web-auth-status', handler);
+    },
 
     // 文件上传专用接口
     // 用法: const result = await window.electronAPI.apiUpload('upload', fileArrayBuffer, fileName, { extra: 'data' })

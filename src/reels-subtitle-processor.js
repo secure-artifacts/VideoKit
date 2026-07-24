@@ -928,13 +928,19 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
         const segStyle = seg.style_override || seg.subtitle_style || null;
         const segStyleTags = buildSegmentStyleTags(segStyle);
         const rawText = String(seg.text || '');
+        const effectiveDirectionSetting = (segStyle && segStyle.text_direction) || s.text_direction || 'auto';
+        const resolvedDirection = (typeof ReelsTextDirection !== 'undefined')
+            ? ReelsTextDirection.resolve(effectiveDirectionSetting, rawText)
+            : 'ltr';
+        const directionMark = resolvedDirection === 'rtl' ? '\u200F' : '\u200E';
+        const directionTags = resolvedDirection === 'rtl' ? '\\fsp0' : '';
         const wrappedLines = wrapTextByPixelWidth(rawText, wrapWidth, wrapFontOpts);
-        let text = (wrappedLines.length > 0 ? wrappedLines.join('\n') : rawText).replace(/\n/g, '\\N');
+        let text = directionMark + (wrappedLines.length > 0 ? wrappedLines.join('\n') : rawText).replace(/\n/g, '\\N');
 
         // 动画标签
         const posTag = buildPosTags(seg.start, seg.end, segStyle);
         const animTag = buildAnimTags(seg.start, seg.end);
-        const overrideOpen = `{${posTag}${animTag}${segStyleTags}}`;
+        const overrideOpen = `{${posTag}${animTag}${segStyleTags}${directionTags}}`;
 
         // ── 仅显示当前激活单词 (only_show_active_word) ──
         if (s.only_show_active_word && seg.words && seg.words.length > 0) {
@@ -943,15 +949,15 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
                 if (!wText.trim()) continue;
                 const wPosTag = buildPosTags(w.start, w.end, segStyle);
                 const wAnimTag = buildAnimTags(w.start, w.end);
-                const wOverrideOpen = `{${wPosTag}${wAnimTag}${segStyleTags}}`;
-                events.push(`Dialogue: 0,${toASSTime(w.start)},${toASSTime(w.end)},Default,,0,0,0,,${wOverrideOpen}${wText}`);
+                const wOverrideOpen = `{${wPosTag}${wAnimTag}${segStyleTags}${directionTags}}`;
+                events.push(`Dialogue: 0,${toASSTime(w.start)},${toASSTime(w.end)},Default,,0,0,0,,${wOverrideOpen}${directionMark}${wText}`);
 
                 // ── 多层描边扩展 Dialogue (底层先画) ──
                 if (seEnabled) {
                     const seLayers = parseInt(s.stroke_expand_layers) || 3;
                     for (let li = seLayers - 1; li >= 0; li--) {
                         const layerNum = -(10 + li);
-                        events.push(`Dialogue: ${layerNum},${toASSTime(w.start)},${toASSTime(w.end)},SE_Layer${li},,0,0,0,,{${wPosTag}${wAnimTag}}${wText}`);
+                        events.push(`Dialogue: ${layerNum},${toASSTime(w.start)},${toASSTime(w.end)},SE_Layer${li},,0,0,0,,{${wPosTag}${wAnimTag}${directionTags}}${directionMark}${wText}`);
                     }
                 }
             }
@@ -968,8 +974,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
                 parts.push(`{\\kf${kDur}\\1c${revealedColor}}${w.word}`);
             }
             // 初始颜色设为未显示色
-            const twOverride = `{${posTag}${animTag}\\1c${unrevealedColor}}`;
-            text = parts.join(' ');
+            const twOverride = `{${posTag}${animTag}\\1c${unrevealedColor}${directionTags}}`;
+            text = directionMark + parts.join(' ');
             events.push(`Dialogue: 0,${toASSTime(seg.start)},${toASSTime(seg.end)},Default,,0,0,0,,${twOverride}${text}`);
         }
         // ── 卡拉OK 逐词高亮 ──
@@ -981,7 +987,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
                 const kDur = Math.max(1, Math.round(wDur * 100));
                 parts.push(`{\\kf${kDur}\\1c${highColor}}${w.word}`);
             }
-            text = parts.join(' ');
+            text = directionMark + parts.join(' ');
             events.push(`Dialogue: 0,${toASSTime(seg.start)},${toASSTime(seg.end)},Default,,0,0,0,,${overrideOpen}${text}`);
         }
         // ── 普通文本 ──
@@ -995,10 +1001,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
             for (let li = seLayers - 1; li >= 0; li--) {
                 // 描边层在主文字下方 (layer -10 - li)
                 const layerNum = -(10 + li);
-                const seText = (wrappedLines.length > 0 ? wrappedLines.join('\n') : rawText).replace(/\n/g, '\\N');
+                const seText = directionMark + (wrappedLines.length > 0 ? wrappedLines.join('\n') : rawText).replace(/\n/g, '\\N');
                 const sePosTag = buildPosTags(seg.start, seg.end, segStyle);
                 const seAnimTag = buildAnimTags(seg.start, seg.end);
-                events.push(`Dialogue: ${layerNum},${toASSTime(seg.start)},${toASSTime(seg.end)},SE_Layer${li},,0,0,0,,{${sePosTag}${seAnimTag}}${seText}`);
+                events.push(`Dialogue: ${layerNum},${toASSTime(seg.start)},${toASSTime(seg.end)},SE_Layer${li},,0,0,0,,{${sePosTag}${seAnimTag}${directionTags}}${seText}`);
             }
         }
     }

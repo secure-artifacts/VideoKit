@@ -535,6 +535,11 @@ async function _fallbackFrontendExport(segments, outputDir, taskName, fps, tasks
             const isObj = subEntry && typeof subEntry === 'object';
             const text = isObj ? (subEntry.text || '').trim() : (subEntry || '').trim();
             if (!text) continue;
+            const directionSetting = isObj ? (subEntry.text_direction || 'auto') : 'auto';
+            const resolvedDirection = (typeof ReelsTextDirection !== 'undefined')
+                ? ReelsTextDirection.resolve(directionSetting, text)
+                : 'ltr';
+            const directedText = (resolvedDirection === 'rtl' ? '\u200F' : '\u200E') + text;
 
             const lane = totalLanes - ci;
             const styleId = `ts_${i}_${ci + 1}`;
@@ -570,7 +575,7 @@ async function _fallbackFrontendExport(segments, outputDir, taskName, fps, tasks
             xml += `\t\t\t\t\t\t\t<title name="${xmlEscape(text.slice(0, 40))}" lane="${lane}" offset="${titleOffsetStr}" ref="r100" duration="${titleDurationStr}" start="3600/1s">\n`;
             xml += `\t\t\t\t\t\t\t\t<param name="Position" key="9999/999166631/999166633/2/100/101" value="${posX} ${posY}"/>\n`;
             xml += `\t\t\t\t\t\t\t\t<text>\n`;
-            xml += `\t\t\t\t\t\t\t\t\t<text-style ref="${styleId}">${xmlEscape(text)}</text-style>\n`;
+            xml += `\t\t\t\t\t\t\t\t\t<text-style ref="${styleId}">${xmlEscape(directedText)}</text-style>\n`;
             xml += `\t\t\t\t\t\t\t\t</text>\n`;
             xml += `\t\t\t\t\t\t\t\t<text-style-def id="${styleId}">\n`;
             xml += `\t\t\t\t\t\t\t\t\t<text-style font="${xmlEscape(subFont)}" fontFace="SemiBold" fontSize="${subFontSize}" fontColor="${subFontColor}" bold="${subBold}" tracking="0" lineSpacing="0" alignment="center" verticalAlignment="top"/>\n`;
