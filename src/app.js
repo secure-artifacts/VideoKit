@@ -485,15 +485,24 @@ function initAutoEditLangPicker() {
 }
 
 function initVoiceoverWorkflowLangPicker() {
+    const storageKey = 'voiceover_workflow_align_language';
+    const migrationKey = 'voiceover_workflow_align_language_default_en_v1';
+    // 旧版本把中文误设为默认值。迁移一次旧默认，之后仍尊重用户的手动选择。
+    if (!localStorage.getItem(migrationKey)) {
+        if (!localStorage.getItem(storageKey) || localStorage.getItem(storageKey) === '中文') {
+            localStorage.setItem(storageKey, '英语');
+        }
+        localStorage.setItem(migrationKey, '1');
+    }
     initSearchableLangPicker({
         btnId: 'vw-align-lang-picker-btn',
         dropdownId: 'vw-align-lang-dropdown',
         searchId: 'vw-align-lang-search',
         listId: 'vw-align-lang-list',
         hiddenInputId: 'vw-align-lang',
-        storageKey: 'voiceover_workflow_align_language',
-        defaultText: '中文',
-        defaultValue: '中文',
+        storageKey,
+        defaultText: '英语',
+        defaultValue: '英语',
         hasAuto: false
     });
 }
@@ -11977,7 +11986,7 @@ async function exportAutoEditBatchTask(index, options = {}) {
         let exportStage = '准备审核时间线';
         let exportedData = null;
         try {
-            const reviewSegments=task.reviewSegments||(task.result.segments||[]).map(seg=>({segment_id:seg.segment_id,source:seg.source,enabled:true,script:seg.script,start:Number(seg.start),end:Number(seg.end),speed:1}));
+            const reviewSegments=task.reviewSegments||(task.result.segments||[]).map(seg=>({segment_id:seg.segment_id,source:seg.source,enabled:true,script:seg.script,start:Number(seg.start),end:Number(seg.end),speed:Number(seg.speed)||1}));
             exportStage = '调用自动剪辑导出接口';
             const outputName = sanitizeAutoEditBatchOutputName(task.outputName, task.name || `task_${index + 1}`);
             const outputDir = window.electronAPI.pathJoin(task.folder, '_auto_edit');
@@ -12084,7 +12093,17 @@ function openAutoEditBatchReview(index) {
     const task=autoEditBatchTasks[index]; if(!task?.result)return;
     autoEditFiles=task.clips.map(path=>({path,name:path.split(/[/\\]/).pop(),status:'transcribed'}));
     document.getElementById('autoedit-script').value=task.script; updateAutoEditScriptCount(); renderAutoEditFiles();
-    autoEditActiveBatchIndex=index; autoEditLastResult=task.result; autoEditOutputDir=task.result.output_dir||window.electronAPI.pathJoin(task.folder,'_auto_edit'); setAutoEditMode('single',true); renderAutoEditResult(task.result); document.getElementById('autoedit-result-section')?.classList.remove('hidden');
+    const savedReviews = Array.isArray(task.reviewSegments) ? task.reviewSegments : [];
+    const originals = Array.isArray(task.result.segments) ? task.result.segments : [];
+    const originalById = new Map(originals.map(segment => [segment.segment_id, segment]));
+    const reviewResult = savedReviews.length ? {
+        ...task.result,
+        segments: savedReviews.map(review => ({
+            ...(originalById.get(review.segment_id) || originals.find(segment => segment.source === review.source) || {}),
+            ...review,
+        })),
+    } : task.result;
+    autoEditActiveBatchIndex=index; autoEditLastResult=reviewResult; autoEditOutputDir=task.result.output_dir||window.electronAPI.pathJoin(task.folder,'_auto_edit'); setAutoEditMode('single',true); renderAutoEditResult(reviewResult); document.getElementById('autoedit-result-section')?.classList.remove('hidden');
 }
 
 let autoEditFiles = [];
@@ -13894,7 +13913,7 @@ function renderAutoEditResult(data) {
                 
                 if (isReview) return `
                     <div class="autoedit-review-row ${duplicateText ? 'ae-duplicate-row' : ''} ${reviewWarning && !duplicateText ? 'ae-warning-row' : ''} ${isCriticalMatch ? 'ae-critical-match-row' : ''}" data-review-index="${reviewIndex}" data-source-index="${Number(seg.source_index || seg.index) || reviewIndex + 1}" data-source-label="${escapeHtml(formatSegmentSourceLabel(seg.source_index))}" data-script-start-line="${Number(seg.script_start_line) || 0}" data-script-end-line="${Number(seg.script_end_line || seg.script_start_line) || 0}" data-source-duration="${Number(seg.source_duration || 0)}" data-source="${escapeHtml(encodeURIComponent(seg.source || ''))}" data-word-timeline="${escapeHtml(encodeURIComponent(JSON.stringify(seg.word_timeline || [])))}" data-original-text-key="${escapeHtml(reviewTextKey(seg.script))}" data-original-script="${escapeHtml(encodeURIComponent(seg.script || ''))}" data-warning="${reviewWarning}" data-critical-match="${isCriticalMatch}" data-duplicate="${duplicateText}" data-unmatched="${reviewUnmatched}" draggable="true" ondragstart="autoEditReviewDragStart(event,${reviewIndex})" ondragover="event.preventDefault()" ondrop="autoEditReviewDrop(event,${reviewIndex})" style="display:grid;grid-template-columns:42px 38px 1fr 112px 112px 90px;gap:8px;align-items:center;padding:10px 8px;border-bottom:1px solid ${duplicateText ? '#ff6b6b' : 'var(--border-color)'};cursor:grab;">
-                        <input type="checkbox" class="ae-review-enabled" checked title="是否导出" onchange="handleAutoEditReviewEnabled(this)">
+                        <input type="checkbox" class="ae-review-enabled" ${seg.enabled === false ? '' : 'checked'} title="是否导出" onchange="handleAutoEditReviewEnabled(this)">
                         <div style="display:flex;flex-direction:column;gap:2px;"><button class="btn btn-secondary" onclick="moveAutoEditReviewRow(${reviewIndex},-1)" style="padding:1px 5px;">↑</button><button class="btn btn-secondary" onclick="moveAutoEditReviewRow(${reviewIndex},1)" style="padding:1px 5px;">↓</button></div>
                         <div><div style="font-size:11px;color:var(--text-muted);display:flex;gap:6px;align-items:center;flex-wrap:wrap;">${escapeHtml(formatSegmentSourceLabel(seg.source_index))} ${matchRiskBadge || `<span>匹配 ${matchPercent}%</span>`}${duplicateText ? ` · <strong class="ae-live-duplicate-badge" style="color:#ff6b6b;">⚠ ${escapeHtml(duplicateMembers.map(formatSegmentSourceLabel).join(' 与 '))} 重复</strong>` : ''}${seg.issue_reason ? ` · <strong style="color:#ff6b6b;">⚠ ${escapeHtml(seg.issue_reason)}</strong>` : (seg.ambiguity ? ` · ⚠️ ${escapeHtml(seg.ambiguity)}` : '')} · 双击放大编辑</div><textarea class="input ae-review-script" rows="2" ondblclick="openAutoEditLargeScriptEditor(this)" oninput="handleAutoEditScriptChanged(this)" style="width:100%;resize:vertical;">${escapeHtml(seg.script || '')}</textarea><div class="ae-missing-words-status"></div></div>
                         <label style="font-size:11px;">入点<div><button class="btn btn-secondary" onclick="nudgeAutoEditTime(this,'.ae-review-start',-.1)" style="padding:1px 4px;">−</button><input type="number" class="input ae-review-start" value="${Number(seg.start || 0).toFixed(3)}" min="0" step="0.01" style="width:72px;"><button class="btn btn-secondary" onclick="nudgeAutoEditTime(this,'.ae-review-start',.1)" style="padding:1px 4px;">+</button></div></label>
@@ -13906,7 +13925,7 @@ function renderAutoEditResult(data) {
                             ${textDiff.boundaryWarning ? `<div style="grid-column:1 / -1;padding:7px 9px;border-radius:5px;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.3);color:#fcd34d;font-size:11px;">⚠️ ${escapeHtml(textDiff.boundaryWarning)}</div>` : ''}
                             <div style="grid-column:1 / -1;display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-top:1px solid rgba(255,255,255,.06);padding-top:8px;">
                                 <span class="hint">更多操作:</span>
-                                <label style="font-size:11px;">速度 <input class="input ae-review-speed" type="number" value="1" min="0.25" max="4" step="0.05" style="width:65px;"></label>
+                                <label style="font-size:11px;">速度 <input class="input ae-review-speed" type="number" value="${Math.max(0.25, Math.min(4, Number(seg.speed) || 1))}" min="0.25" max="4" step="0.05" onchange="handleAutoEditReviewSpeedChanged(this)" style="width:65px;"></label>
                                 <button class="btn btn-secondary" onclick="retranscribeAutoEditReviewRow(this,${reviewIndex})" style="font-size:11px;padding:3px 8px;">重新转录此片段</button>
                                 <button class="btn btn-secondary" onclick="replaceAutoEditReviewRow(this,${seg.source_index || reviewIndex})" style="font-size:11px;padding:3px 8px;color:#fca5a5;border-color:rgba(239,68,68,.35);">替换当前片段</button>
                                 <button class="btn btn-primary" onclick="recalculateAutoEditReviewRow(this)" style="font-size:11px;padding:3px 9px;">按文案重算切点</button>
@@ -13990,8 +14009,17 @@ function playAutoEditReviewSource(button, cutPreview) {
         Number(row.querySelector('.ae-review-start')?.value),
         Number(row.querySelector('.ae-review-end')?.value),
         row.querySelector('.ae-review-script')?.value || '',
-        row.dataset.wordTimeline || ''
+        row.dataset.wordTimeline || '',
+        Number(row.querySelector('.ae-review-speed')?.value) || 1
     );
+}
+function handleAutoEditReviewSpeedChanged(input) {
+    const row = input?.closest('.autoedit-review-row');
+    const index = Number(row?.dataset.reviewIndex);
+    const speed = Number(input?.value);
+    const safeSpeed = Number.isFinite(speed) && speed >= 0.25 && speed <= 4 ? speed : 1;
+    input.value = String(safeSpeed);
+    if (autoEditLastResult?.segments?.[index]) autoEditLastResult.segments[index].speed = safeSpeed;
 }
 function retranscribeAutoEditReviewRow(button, reviewIndex) {
     const source = getAutoEditReviewRowSource(button);
@@ -14787,11 +14815,13 @@ async function viewAutoEditReport() {
     _showReportDialog(reportText, reportPath);
 }
 
-window.playVideoClip = function(filePath, startVal = 0, endVal = 0, scriptText = '', encodedWordTimeline = '') {
+window.playVideoClip = function(filePath, startVal = 0, endVal = 0, scriptText = '', encodedWordTimeline = '', speedVal = 1) {
     if (!filePath) return;
     
     const startNum = parseFloat(startVal) || 0;
     const endNum = parseFloat(endVal) || 0;
+    const requestedSpeed = Number(speedVal);
+    const playbackSpeed = Number.isFinite(requestedSpeed) && requestedSpeed >= 0.25 && requestedSpeed <= 4 ? requestedSpeed : 1;
     let wordTimeline = [];
     try { wordTimeline = encodedWordTimeline ? JSON.parse(decodeURIComponent(encodedWordTimeline)) : []; } catch (_) {}
     
@@ -14833,6 +14863,7 @@ window.playVideoClip = function(filePath, startVal = 0, endVal = 0, scriptText =
         : normalizeFilePath(filePath);
     const videoEl = document.createElement('video');
     videoEl.src = videoUrl;
+    videoEl.playbackRate = playbackSpeed;
     const hasCutRange = endNum > startNum;
     videoEl.controls = !hasCutRange;
     videoEl.autoplay = !hasCutRange;
@@ -14842,7 +14873,8 @@ window.playVideoClip = function(filePath, startVal = 0, endVal = 0, scriptText =
     videoWrap.appendChild(videoEl);
 
     if (hasCutRange) {
-        const clipDuration = Math.max(.01, endNum - startNum);
+        const sourceClipDuration = Math.max(.01, endNum - startNum);
+        const clipDuration = sourceClipDuration / playbackSpeed;
         const formatTime = seconds => {
             const safe = Math.max(0, Number(seconds) || 0);
             const minutes = Math.floor(safe / 60);
@@ -14852,7 +14884,7 @@ window.playVideoClip = function(filePath, startVal = 0, endVal = 0, scriptText =
         };
         const rangeHint = document.createElement('div');
         rangeHint.style.cssText = 'display:flex;justify-content:space-between;gap:12px;padding:7px 10px;border-radius:7px;background:rgba(99,102,241,.12);border:1px solid rgba(129,140,248,.25);font-size:12px;color:#c7d2fe;';
-        rangeHint.innerHTML = `<strong>剪后片段 ${formatTime(clipDuration)}</strong><span>原片 ${formatTime(startNum)} → ${formatTime(endNum)}，到出点自动停止</span>`;
+        rangeHint.innerHTML = `<strong>剪后片段 ${formatTime(clipDuration)} · ${playbackSpeed}×</strong><span>原片 ${formatTime(startNum)} → ${formatTime(endNum)}，到出点自动停止</span>`;
 
         const controls = document.createElement('div');
         controls.style.cssText = 'display:grid;grid-template-columns:auto auto 1fr auto auto;gap:10px;align-items:center;padding:8px 10px;border-radius:8px;background:#0b0b16;border:1px solid rgba(255,255,255,.08);';
@@ -14895,7 +14927,7 @@ window.playVideoClip = function(filePath, startVal = 0, endVal = 0, scriptText =
         videoEl.addEventListener('pause', () => { if (!resetting) playButton.textContent = '▶'; });
         videoEl.addEventListener('timeupdate', () => {
             if (videoEl.currentTime >= endNum - .015) return resetToStart();
-            const relative = Math.max(0, Math.min(clipDuration, videoEl.currentTime - startNum));
+            const relative = Math.max(0, Math.min(clipDuration, (videoEl.currentTime - startNum) / playbackSpeed));
             seek.value = String(relative);
             timeLabel.textContent = `${formatTime(relative)} / ${formatTime(clipDuration)}`;
         });
@@ -14905,7 +14937,7 @@ window.playVideoClip = function(filePath, startVal = 0, endVal = 0, scriptText =
                 videoEl.play().catch(() => {});
             } else videoEl.pause();
         };
-        seek.oninput = () => { videoEl.currentTime = startNum + Number(seek.value || 0); };
+        seek.oninput = () => { videoEl.currentTime = startNum + Number(seek.value || 0) * playbackSpeed; };
         muteButton.onclick = () => { videoEl.muted = !videoEl.muted; muteButton.textContent = videoEl.muted ? '🔇' : '🔊'; };
         fullscreenButton.onclick = () => videoEl.requestFullscreen?.();
     } else if (startNum > 0) {

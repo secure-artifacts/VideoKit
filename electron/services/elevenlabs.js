@@ -360,6 +360,19 @@ function classifyError(errInfo) {
         `${errInfo.message || ''} ${errInfo.detailCode || ''}`
     );
 
+    // --- 并发槽已满 → 临时错误，绝不能因为返回文案里带 subscription/plan 而停用 Key ---
+    // ElevenLabs 的 concurrent_limit_exceeded 文案通常包含
+    // "Your current subscription is associated with a maximum of N concurrent requests"。
+    // 因此必须放在“权限/订阅问题”之前匹配。
+    if (merged.includes('concurrent_limit_exceeded') ||
+        merged.includes('maximum of') && merged.includes('concurrent request') ||
+        merged.includes('too many concurrent')) {
+        return {
+            category: 'concurrency', retryable: true, autoDisable: false,
+            userMessage: '⏳ 当前 Key 的并发槽已满：不会停用该 Key，请等待正在执行的请求结束后重试'
+        };
+    }
+
     // --- 额度/余量相关 → 自动停用 + 轮换下一个 Key ---
     if (merged.includes('quota_exceeded') || merged.includes('exceeded your character limit') ||
         merged.includes('character_limit_exceeded') || merged.includes('insufficient characters') ||
@@ -477,7 +490,7 @@ function formatRotationFailures(failures, total) {
     if (attempts.length === 0) return `所有 Key 均尝试失败 (共 ${total} 个)，但没有获得可用错误详情。`;
 
     const labels = {
-        auth: '鉴权失败', quota: '额度不足', permission: '权限/订阅不足',
+        auth: '鉴权失败', quota: '额度不足', permission: '权限/订阅不足', concurrency: '并发槽已满',
         rate_limit: '频率限制', ip_blocked: 'IP 受限', timeout: '超时',
         server_error: '服务端错误', unknown: '未知错误',
     };

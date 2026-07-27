@@ -510,6 +510,59 @@ function hasSentenceEndingPunctuation(text) {
     return /[.!?。！？][\s"'”’)\]]*$/.test(String(text || ''));
 }
 
+function normalizeAutoEditSpeed(value) {
+    const speed = Number(value);
+    return Number.isFinite(speed) && speed >= 0.25 && speed <= 4 ? speed : 1;
+}
+
+function extendPlanAtBoundary(plan, targetText, side, leadPad, tailPad) {
+    if (!plan || !Array.isArray(plan.words) || plan.words.length === 0 || !normalizeText(targetText)) return null;
+    let sliceStart;
+    let sliceEnd;
+    if (side === 'previous') {
+        if (!Number.isInteger(plan.wordEndIdx) || plan.wordEndIdx < 0) return null;
+        sliceStart = plan.wordEndIdx + 1;
+        sliceEnd = Math.min(plan.words.length, sliceStart + 4);
+    } else {
+        if (!Number.isInteger(plan.wordStartIdx) || plan.wordStartIdx < 0) return null;
+        sliceStart = Math.max(0, plan.wordStartIdx - 4);
+        sliceEnd = plan.wordStartIdx;
+    }
+    const nearby = plan.words.slice(sliceStart, sliceEnd);
+    if (nearby.length === 0) return null;
+
+    let match = findBestWordWindow(nearby, targetText, 0.72);
+    if (!match) {
+        const targetNorm = normalizeText(targetText);
+        let best = null;
+        for (let startIdx = 0; startIdx < nearby.length; startIdx++) {
+            for (let endIdx = startIdx; endIdx < nearby.length; endIdx++) {
+                const candidateNorm = nearby.slice(startIdx, endIdx + 1).map(word => word.norm).join('');
+                const lengthRatio = Math.min(candidateNorm.length, targetNorm.length) / Math.max(candidateNorm.length, targetNorm.length, 1);
+                if (lengthRatio < 0.65) continue;
+                const score = normalizedEditSimilarity(candidateNorm, targetNorm);
+                if (score >= 0.82 && (!best || score > best.score)) best = { startIdx, endIdx, score };
+            }
+        }
+        match = best;
+    }
+    if (!match) return null;
+
+    const globalStart = sliceStart + match.startIdx;
+    const globalEnd = sliceStart + match.endIdx;
+    if (side === 'previous' && globalStart !== plan.wordEndIdx + 1) return null;
+    if (side === 'next' && globalEnd !== plan.wordStartIdx - 1) return null;
+
+    if (side === 'previous') {
+        plan.wordEndIdx = globalEnd;
+        plan.end = Math.min(plan.duration || Infinity, plan.words[globalEnd].end + tailPad);
+    } else {
+        plan.wordStartIdx = globalStart;
+        plan.start = Math.max(0, plan.words[globalStart].start - leadPad);
+    }
+    return { globalStart, globalEnd, score: match.score };
+}
+
 /**
  * Recover a very small script gap at the boundary of two otherwise matched clips.
  * This is deliberately conservative: it only handles one or two words, requires
@@ -523,41 +576,21 @@ function recoverSmallBoundaryGaps(plans, scriptWords, leadPad, tailPad) {
     const tryAttach = (plan, gapStart, gapEnd, side) => {
         if (!plan || !Array.isArray(plan.words) || plan.words.length === 0) return null;
         const target = scriptWords.slice(gapStart, gapEnd + 1).map(w => w.raw).join(' ');
-        let sliceStart;
-        let sliceEnd;
-        if (side === 'previous') {
-            if (!Number.isInteger(plan.wordEndIdx) || plan.wordEndIdx < 0) return null;
-            sliceStart = plan.wordEndIdx + 1;
-            sliceEnd = Math.min(plan.words.length, sliceStart + 4);
-        } else {
-            if (!Number.isInteger(plan.wordStartIdx) || plan.wordStartIdx < 0) return null;
-            sliceStart = Math.max(0, plan.wordStartIdx - 4);
-            sliceEnd = plan.wordStartIdx;
-        }
-        const nearby = plan.words.slice(sliceStart, sliceEnd);
-        if (nearby.length === 0) return null;
-        const match = findBestWordWindow(nearby, target, 0.72);
-        if (!match) return null;
-        const globalStart = sliceStart + match.startIdx;
-        const globalEnd = sliceStart + match.endIdx;
-        if (side === 'previous' && globalStart !== plan.wordEndIdx + 1) return null;
-        if (side === 'next' && globalEnd !== plan.wordStartIdx - 1) return null;
+        const extension = extendPlanAtBoundary(plan, target, side, leadPad, tailPad);
+        if (!extension) return null;
+        const { globalStart, globalEnd } = extension;
 
         if (side === 'previous') {
-            plan.wordEndIdx = globalEnd;
             plan.scriptWordEnd = gapEnd;
-            plan.end = Math.min(plan.duration || Infinity, plan.words[globalEnd].end + tailPad);
         } else {
-            plan.wordStartIdx = globalStart;
             plan.scriptWordStart = gapStart;
-            plan.start = Math.max(0, plan.words[globalStart].start - leadPad);
         }
         const gapWords = scriptWords.slice(gapStart, gapEnd + 1);
         for (let offset = 0; offset < gapWords.length; offset++) {
             const clipIdx = Math.min(globalEnd, globalStart + offset);
             plan.matchedWordsArray.push({ scriptWordIdx: gapWords[offset].wordIndex, clipWordIdx: clipIdx });
         }
-        return { side, target, score: match.score };
+        return { side, target, score: extension.score };
     };
 
     const matched = plans.filter(plan => plan.scriptWordStart >= 0 && plan.scriptWordEnd >= 0)
@@ -2051,23 +2084,35 @@ async function autoEditByScript(opts = {}) {
             // 相邻片段可能已经读到了缺失块边缘，只是存在单复数、词尾或轻微转录差异。
             // 先收缩这些已读边缘，避免把整句都显示成“丢失”。
             let remainingWords = scriptWords.slice(block.startIdx, block.endIdx + 1);
-            const prefixReadCount = previous
+            let prefixReadCount = previous
                 ? findFuzzyBoundaryOverlap(remainingWords, previous.transcription?.fullText || previous.matchedText || '', 'start')
                 : 0;
             if (prefixReadCount > 0) {
-                previous.scriptWordEnd = block.startIdx + prefixReadCount - 1;
-                refreshPlanScriptAndMatch(previous);
-                block.startIdx += prefixReadCount;
-                remainingWords = remainingWords.slice(prefixReadCount);
+                const prefixText = joinWordsSmart(remainingWords.slice(0, prefixReadCount).map(word => word.raw));
+                const extension = extendPlanAtBoundary(previous, prefixText, 'previous', leadPad, tailPad);
+                if (extension) {
+                    previous.scriptWordEnd = block.startIdx + prefixReadCount - 1;
+                    refreshPlanScriptAndMatch(previous);
+                    block.startIdx += prefixReadCount;
+                    remainingWords = remainingWords.slice(prefixReadCount);
+                } else {
+                    prefixReadCount = 0;
+                }
             }
-            const suffixReadCount = next && remainingWords.length
+            let suffixReadCount = next && remainingWords.length
                 ? findFuzzyBoundaryOverlap(remainingWords, next.transcription?.fullText || next.matchedText || '', 'end')
                 : 0;
             if (suffixReadCount > 0) {
-                next.scriptWordStart = block.endIdx - suffixReadCount + 1;
-                refreshPlanScriptAndMatch(next);
-                block.endIdx -= suffixReadCount;
-                remainingWords = remainingWords.slice(0, remainingWords.length - suffixReadCount);
+                const suffixText = joinWordsSmart(remainingWords.slice(remainingWords.length - suffixReadCount).map(word => word.raw));
+                const extension = extendPlanAtBoundary(next, suffixText, 'next', leadPad, tailPad);
+                if (extension) {
+                    next.scriptWordStart = block.endIdx - suffixReadCount + 1;
+                    refreshPlanScriptAndMatch(next);
+                    block.endIdx -= suffixReadCount;
+                    remainingWords = remainingWords.slice(0, remainingWords.length - suffixReadCount);
+                } else {
+                    suffixReadCount = 0;
+                }
             }
             if (remainingWords.length === 0) {
                 console.log(`[自动剪辑] 缺失块边界二次核对已读到，移除误报: ${block.text}`);
@@ -2300,6 +2345,7 @@ async function autoEditByScript(opts = {}) {
                     start: plan.start,
                     end: plan.end,
                     duration: Math.round((plan.end - plan.start) * 1000) / 1000,
+                    speed: normalizeAutoEditSpeed(plan.speed),
                     source_duration: Math.round((plan.duration || plan.end) * 1000) / 1000,
                     transcription_source: plan.transcription.source,
                     word_timeline: (plan.words || []).map(word => ({
@@ -2379,6 +2425,7 @@ async function autoEditByScript(opts = {}) {
                     plan.start = start;
                     plan.end = end;
                 }
+                plan.speed = normalizeAutoEditSpeed(review.speed);
                 if (typeof review.script === 'string' && review.script.trim()) plan.scriptText = review.script.trim();
                 reviewedPlans.push(plan);
             }
@@ -2410,7 +2457,9 @@ async function autoEditByScript(opts = {}) {
 
             const clipSpeeds = opts.clipSpeeds || opts.clip_speeds || {};
             const targetClipPath = plan.realClipPath || clipPath;
-            const speed = parseFloat(clipSpeeds[targetClipPath]) || 1.0;
+            const speed = hasReviewedTimeline
+                ? normalizeAutoEditSpeed(plan.speed)
+                : normalizeAutoEditSpeed(clipSpeeds[targetClipPath]);
             const vPts = (1.0 / speed).toFixed(5);
 
             let atempoFilter = '';
@@ -2856,5 +2905,5 @@ module.exports = {
     findBestWordWindow,
     findBestScriptWindowForClip,
     computeAutoEditTransitionSec,
-    _test: { scoreCandidate, scoreWordCandidate, transcribeClip, recoverSmallBoundaryGaps, hasSentenceEndingPunctuation, findRepeatedScriptBlockStarts, findFuzzyBoundaryOverlap },
+    _test: { scoreCandidate, scoreWordCandidate, transcribeClip, recoverSmallBoundaryGaps, hasSentenceEndingPunctuation, findRepeatedScriptBlockStarts, findFuzzyBoundaryOverlap, normalizeAutoEditSpeed },
 };

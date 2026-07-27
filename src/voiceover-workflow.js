@@ -2,6 +2,72 @@
 
 // 任务数据
 let vwTasks = [];
+let vwRetryAllRunning = false;
+let vwWorkflowRunning = false;
+let vwWorkflowPauseRequested = false;
+let vwWorkflowBatchOutputDir = '';
+const VW_RESUME_STORAGE_KEY = 'videokit_voiceover_resume_v1';
+
+function saveVWResumeState() {
+    try {
+        localStorage.setItem(VW_RESUME_STORAGE_KEY, JSON.stringify({
+            version: 1,
+            savedAt: Date.now(),
+            batchOutputDir: vwWorkflowBatchOutputDir || window._vwLastOutputFolder || '',
+            tasks: vwTasks
+        }));
+    } catch (error) {
+        console.warn('[一键配音] 保存续跑状态失败:', error);
+    }
+}
+
+function restoreVWResumeState() {
+    try {
+        const saved = JSON.parse(localStorage.getItem(VW_RESUME_STORAGE_KEY) || 'null');
+        if (!saved || !Array.isArray(saved.tasks) || saved.tasks.length === 0) return false;
+        vwTasks = saved.tasks.map((task, index) => ({
+            ...task,
+            id: Number.isInteger(task.id) ? task.id : index,
+            // 应用被关闭时仍处于 generating 的请求无法确认结果，恢复为失败以便续跑。
+            status: task.status === 'generating' ? 'error' : (task.status || 'pending'),
+            error: task.status === 'generating'
+                ? '上次运行被中断，等待继续'
+                : (task.error || null)
+        }));
+        vwWorkflowBatchOutputDir = String(saved.batchOutputDir || '');
+        window._vwLastOutputFolder = vwWorkflowBatchOutputDir;
+        return true;
+    } catch (error) {
+        console.warn('[一键配音] 恢复续跑状态失败:', error);
+        return false;
+    }
+}
+
+function playVWCompletionSound() {
+    try {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContextClass) return;
+        const ctx = new AudioContextClass();
+        const now = ctx.currentTime;
+        [659.25, 783.99, 987.77].forEach((frequency, index) => {
+            const oscillator = ctx.createOscillator();
+            const gain = ctx.createGain();
+            const start = now + index * 0.13;
+            oscillator.type = 'sine';
+            oscillator.frequency.value = frequency;
+            gain.gain.setValueAtTime(0.0001, start);
+            gain.gain.exponentialRampToValueAtTime(0.16, start + 0.015);
+            gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.22);
+            oscillator.connect(gain);
+            gain.connect(ctx.destination);
+            oscillator.start(start);
+            oscillator.stop(start + 0.23);
+        });
+        setTimeout(() => ctx.close().catch(() => {}), 900);
+    } catch (error) {
+        console.warn('[一键配音] 播放完成提示音失败:', error);
+    }
+}
 
 // 刷新音色列表
 async function refreshVWVoices() {
@@ -172,6 +238,9 @@ async function vwPasteFromClipboard() {
             mp4Path: null,
             segments: null
         }));
+        // 新粘贴的数据属于新批次；只有同一批任务暂停后继续时才复用输出目录。
+        vwWorkflowBatchOutputDir = '';
+        window._vwLastOutputFolder = '';
 
         renderVWTasks();
         updateVWTaskCount();
@@ -235,6 +304,17 @@ function renderVWTasks() {
         </div>
     `).join('');
     updateSelectAllState();
+    const retryAllBtn = document.getElementById('vw-retry-all-subtitles-btn');
+    if (retryAllBtn) {
+        const retryableCount = vwTasks.filter(task =>
+            task.status === 'partial' && task.audioPath && task.outputFolder && task.taskPrefix
+        ).length;
+        retryAllBtn.disabled = vwRetryAllRunning || retryableCount === 0;
+        retryAllBtn.textContent = vwRetryAllRunning
+            ? '⏳ 正在重试失败字幕...'
+            : `🔄 重试所有失败字幕${retryableCount ? ` (${retryableCount})` : ''}`;
+    }
+    saveVWResumeState();
 }
 
 function getStatusColor(status) {
@@ -525,9 +605,70 @@ function updateVWProgress(current, total, text) {
 }
 
 // 开始工作流
-async function startVoiceoverWorkflow() {
+function pauseVoiceoverWorkflow() {
+    if (!vwWorkflowRunning) return;
+    vwWorkflowPauseRequested = true;
+    const pauseBtn = document.getElementById('vw-pause-btn');
+    if (pauseBtn) {
+        pauseBtn.disabled = true;
+        pauseBtn.textContent = '⏳ 正在安全暂停...';
+    }
+    const textEl = document.getElementById('vw-progress-text');
+    if (textEl) textEl.textContent = '正在安全暂停：已发出的任务完成后停止领取新任务';
+    showToast('正在安全暂停，当前已发出的任务不会被强行中断', 'warning');
+}
+
+async function restartAllVoiceoverWorkflow() {
+    if (vwWorkflowRunning) {
+        showToast('请先暂停并等待当前任务停止', 'warning');
+        return;
+    }
+    if (!vwTasks.length) {
+        showToast('请先添加任务', 'warning');
+        return;
+    }
+    if (!confirm('确定全部重新生成吗？已经成功的配音、字幕和 MP4 也会重新调用并生成到新的批次文件夹。')) return;
+    vwTasks.forEach(task => {
+        task.status = 'pending';
+        task.error = null;
+        task.audioPath = null;
+        task.srtPath = null;
+        task.subtitleTxtPath = null;
+        task.mp4Path = null;
+        task.segments = null;
+        task.outputFolder = null;
+        task.taskPrefix = null;
+    });
+    vwWorkflowBatchOutputDir = '';
+    window._vwLastOutputFolder = '';
+    renderVWTasks();
+    await startVoiceoverWorkflow(true);
+}
+
+async function startVoiceoverWorkflow(forceAll = false) {
+    if (vwWorkflowRunning) {
+        showToast('任务正在执行中', 'warning');
+        return;
+    }
     if (vwTasks.length === 0) {
         showToast('请先添加任务', 'warning');
+        return;
+    }
+
+    const runnableIndices = [];
+    vwTasks.forEach((task, index) => {
+        if (forceAll || task.status === 'pending' || task.status === 'error' || task.status === 'generating') {
+            runnableIndices.push(index);
+        }
+    });
+    if (runnableIndices.length === 0) {
+        const partialCount = vwTasks.filter(task => task.status === 'partial').length;
+        showToast(
+            partialCount
+                ? `没有未生成任务；另有 ${partialCount} 条仅字幕失败，请使用“重试所有失败字幕”`
+                : '所有任务均已完成，无需重复生成',
+            partialCount ? 'warning' : 'success'
+        );
         return;
     }
 
@@ -538,6 +679,10 @@ async function startVoiceoverWorkflow() {
     const tailSilence = Number.isFinite(rawTailSilence) && rawTailSilence > 0
         ? Math.max(0.1, Math.min(5, rawTailSilence))
         : 0;
+    const rawConcurrency = parseInt(document.getElementById('vw-concurrency')?.value || '5', 10);
+    const requestedConcurrency = Math.max(1, Math.min(20, Number.isFinite(rawConcurrency) ? rawConcurrency : 5));
+    const gladiaKeys = String(document.getElementById('gladia-keys')?.value || '')
+        .split('\n').map(key => key.trim()).filter(Boolean);
     const outputDirInput = document.getElementById('vw-output-dir');
     const outputDir = outputDirInput.value.trim();
 
@@ -546,31 +691,66 @@ async function startVoiceoverWorkflow() {
         return;
     }
 
-    const batchOutputDir = await vwCreateBatchOutputDir(outputDir);
+    let availableKeyCount = 1;
+    try {
+        const keyCountResponse = await apiFetch(`${API_BASE}/elevenlabs/key-count`);
+        const keyCountData = await keyCountResponse.json();
+        availableKeyCount = Math.max(1, parseInt(keyCountData.count, 10) || 1);
+    } catch (error) {
+        console.warn('[一键配音] 无法读取 Key 数量，并发数按 1 处理:', error);
+    }
+    const availableGladiaKeyCount = Math.max(1, gladiaKeys.length);
+    const concurrency = Math.min(requestedConcurrency, availableKeyCount, availableGladiaKeyCount);
+    if (concurrency < requestedConcurrency) {
+        showToast(
+            `可用 Key：ElevenLabs ${availableKeyCount} 个、Gladia ${gladiaKeys.length} 个；并发数已从 ${requestedConcurrency} 降为 ${concurrency}`,
+            'warning'
+        );
+    }
+
+    const isResume = !forceAll && !!vwWorkflowBatchOutputDir;
+    const batchOutputDir = isResume
+        ? vwWorkflowBatchOutputDir
+        : await vwCreateBatchOutputDir(outputDir);
+    vwWorkflowBatchOutputDir = batchOutputDir;
     window._vwLastOutputFolder = batchOutputDir;
 
     const btn = document.getElementById('vw-start-btn');
+    const pauseBtn = document.getElementById('vw-pause-btn');
+    const restartAllBtn = document.getElementById('vw-restart-all-btn');
+    vwWorkflowRunning = true;
+    vwWorkflowPauseRequested = false;
     btn.disabled = true;
     btn.textContent = '⏳ 处理中...';
+    if (pauseBtn) {
+        pauseBtn.disabled = false;
+        pauseBtn.textContent = '⏸ 暂停';
+    }
+    if (restartAllBtn) restartAllBtn.disabled = true;
 
-    const total = vwTasks.length * 3;  // 每个任务 3 步
+    const total = runnableIndices.length * 3;  // 每个任务 3 步
     let current = 0;
 
     try {
-        for (let i = 0; i < vwTasks.length; i++) {
+        let nextTaskIndex = 0;
+        let completedTasks = 0;
+        const workerCount = Math.min(concurrency, runnableIndices.length);
+
+        async function processTask(i, workerIndex) {
             const task = vwTasks[i];
             const voiceId = task.voiceId || defaultVoice;
 
-            // Step 1: 生成音频
             task.status = 'generating';
             renderVWTasks();
-            updateVWProgress(current, total, `[${i + 1}/${vwTasks.length}] 生成音频...`);
+            updateVWProgress(current, total, `并发 ${workerCount} · Worker ${workerIndex + 1} 正在处理 #${i + 1}`);
 
             try {
                 const exportFcpxml = document.getElementById('vw-export-fcpxml')?.checked ?? true;
-                const gladiaKeysText = document.getElementById('gladia-keys')?.value || '';
-                const gladiaKeys = gladiaKeysText.split('\n').map(k => k.trim()).filter(Boolean);
-                const alignLang = document.getElementById('vw-align-lang')?.value || '中文';
+                // 每个 worker 从不同 Key 开始；首选 Key 不可用时，后端会按此顺序轮询其余 Key。
+                const workerGladiaKeys = gladiaKeys.length > 0
+                    ? gladiaKeys.map((_, offset) => gladiaKeys[(workerIndex + offset) % gladiaKeys.length])
+                    : [];
+                const alignLang = document.getElementById('vw-align-lang')?.value || '英语';
                 const ttsResponse = await apiFetch(`${API_BASE}/elevenlabs/tts-workflow`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -579,6 +759,7 @@ async function startVoiceoverWorkflow() {
                         voice_id: voiceId,
                         model_id: modelId,
                         task_index: i,
+                        key_index: workerIndex,
                         // 兜底互斥：导出黑屏MP4时，强制不拆分
                         need_split: task.exportMp4 ? false : task.split,
                         max_duration: maxDuration,
@@ -589,7 +770,8 @@ async function startVoiceoverWorkflow() {
                         export_fcpxml: exportFcpxml,  // 导出达芬奇字幕
                         seamless_fcpxml: true,  // 默认无缝字幕
                         output_dir: batchOutputDir,
-                        gladia_keys: gladiaKeys,
+                        // 每个 worker 使用不同的首选 Gladia Key，并在失败时自动轮换备用 Key。
+                        gladia_keys: workerGladiaKeys,
                         language: alignLang
                     })
                 });
@@ -616,18 +798,52 @@ async function startVoiceoverWorkflow() {
             }
 
             current += 3;
+            completedTasks++;
             renderVWTasks();
+            updateVWProgress(
+                current,
+                total,
+                `本次已完成 ${completedTasks}/${runnableIndices.length} · ${workerCount} 个 worker 并发`
+            );
         }
 
+        async function runWorker(workerIndex) {
+            while (true) {
+                if (vwWorkflowPauseRequested) return;
+                const queueIndex = nextTaskIndex++;
+                if (queueIndex >= runnableIndices.length) return;
+                const taskIndex = runnableIndices[queueIndex];
+                await processTask(taskIndex, workerIndex);
+            }
+        }
+
+        await Promise.all(Array.from({ length: workerCount }, (_, workerIndex) => runWorker(workerIndex)));
+
         const successCount = vwTasks.filter(t => t.status === 'done').length;
-        showToast(`完成！成功 ${successCount}/${vwTasks.length} 条，输出: ${batchOutputDir}`, successCount === vwTasks.length ? 'success' : 'warning');
+        const remainingCount = vwTasks.filter(t => t.status === 'pending' || t.status === 'error' || t.status === 'generating').length;
+        if (vwWorkflowPauseRequested && remainingCount > 0) {
+            showToast(`已暂停；还有 ${remainingCount} 条未完成，点击“继续未完成”即可续跑`, 'warning');
+        } else {
+            showToast(`完成！成功 ${successCount}/${vwTasks.length} 条，输出: ${batchOutputDir}`, successCount === vwTasks.length ? 'success' : 'warning');
+            playVWCompletionSound();
+        }
 
     } catch (error) {
         showToast('工作流执行失败: ' + error.message, 'error');
     } finally {
+        vwWorkflowRunning = false;
         btn.disabled = false;
-        btn.textContent = '🚀 开始一键生成';
-        document.getElementById('vw-progress').style.display = 'none';
+        const remainingCount = vwTasks.filter(t => t.status === 'pending' || t.status === 'error' || t.status === 'generating').length;
+        btn.textContent = remainingCount > 0 ? `▶️ 继续未完成 (${remainingCount})` : '✅ 已全部生成';
+        if (pauseBtn) {
+            pauseBtn.disabled = true;
+            pauseBtn.textContent = '⏸ 暂停';
+        }
+        if (restartAllBtn) restartAllBtn.disabled = false;
+        if (!vwWorkflowPauseRequested || remainingCount === 0) {
+            document.getElementById('vw-progress').style.display = 'none';
+        }
+        vwWorkflowPauseRequested = false;
     }
 }
 
@@ -642,27 +858,9 @@ async function retryVWSubtitles(id) {
     renderVWTasks();
     try {
         const gladiaKeys = String(document.getElementById('gladia-keys')?.value || '').split('\n').map(key => key.trim()).filter(Boolean);
-        const response = await apiFetch(`${API_BASE}/elevenlabs/retry-workflow-subtitles`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                audio_path: task.audioPath,
-                subtitle_text: task.subtitleText,
-                output_dir: task.outputFolder,
-                task_prefix: task.taskPrefix,
-                gladia_keys: gladiaKeys,
-                language: document.getElementById('vw-align-lang')?.value || '中文',
-                export_fcpxml: document.getElementById('vw-export-fcpxml')?.checked ?? true,
-                seamless_fcpxml: true,
-            }),
-        });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error || '字幕重试失败');
-        task.srtPath = data.srt_path;
-        task.subtitleTxtPath = data.subtitle_txt_path;
-        task.status = 'done';
-        task.error = null;
+        await retryVWSubtitleTask(task, gladiaKeys);
         showToast('字幕已重新生成，原配音没有重新调用', 'success');
+        playVWCompletionSound();
     } catch (error) {
         task.status = 'partial';
         task.error = `字幕重试失败：${error.message}`;
@@ -671,8 +869,120 @@ async function retryVWSubtitles(id) {
     renderVWTasks();
 }
 
+async function retryVWSubtitleTask(task, gladiaKeys) {
+    const response = await apiFetch(`${API_BASE}/elevenlabs/retry-workflow-subtitles`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                audio_path: task.audioPath,
+                subtitle_text: task.subtitleText,
+                output_dir: task.outputFolder,
+                task_prefix: task.taskPrefix,
+                gladia_keys: gladiaKeys,
+                language: document.getElementById('vw-align-lang')?.value || '英语',
+                export_fcpxml: document.getElementById('vw-export-fcpxml')?.checked ?? true,
+                seamless_fcpxml: true,
+            }),
+        });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || '字幕重试失败');
+    task.srtPath = data.srt_path;
+    task.subtitleTxtPath = data.subtitle_txt_path;
+    task.status = 'done';
+    task.error = null;
+    return data;
+}
+
+async function retryAllVWSubtitles() {
+    if (vwRetryAllRunning) return;
+    const retryTasks = vwTasks.filter(task =>
+        task.status === 'partial' && task.audioPath && task.outputFolder && task.taskPrefix
+    );
+    if (retryTasks.length === 0) {
+        showToast('没有可重试的字幕失败任务', 'info');
+        return;
+    }
+
+    const allGladiaKeys = String(document.getElementById('gladia-keys')?.value || '')
+        .split('\n').map(key => key.trim()).filter(Boolean);
+    if (allGladiaKeys.length === 0) {
+        showToast('未配置 Gladia API Key，无法批量重试字幕', 'error');
+        return;
+    }
+
+    const requestedConcurrency = Math.max(
+        1,
+        Math.min(20, parseInt(document.getElementById('vw-concurrency')?.value || '5', 10) || 5)
+    );
+    const workerCount = Math.min(requestedConcurrency, allGladiaKeys.length, retryTasks.length);
+    let nextIndex = 0;
+    let completed = 0;
+    let succeeded = 0;
+    vwRetryAllRunning = true;
+    renderVWTasks();
+    updateVWProgress(0, retryTasks.length, `准备重试 ${retryTasks.length} 条失败字幕`);
+
+    async function runRetryWorker(workerIndex) {
+        const workerKeys = allGladiaKeys.map(
+            (_, offset) => allGladiaKeys[(workerIndex + offset) % allGladiaKeys.length]
+        );
+        while (true) {
+            const index = nextIndex++;
+            if (index >= retryTasks.length) return;
+            const task = retryTasks[index];
+            task.status = 'aligning';
+            task.error = null;
+            renderVWTasks();
+            try {
+                await retryVWSubtitleTask(task, workerKeys);
+                succeeded++;
+            } catch (error) {
+                task.status = 'partial';
+                task.error = `字幕重试失败：${error.message}`;
+            }
+            completed++;
+            renderVWTasks();
+            updateVWProgress(
+                completed,
+                retryTasks.length,
+                `字幕重试 ${completed}/${retryTasks.length} · 成功 ${succeeded} · 并发 ${workerCount}`
+            );
+        }
+    }
+
+    try {
+        await Promise.all(Array.from({ length: workerCount }, (_, index) => runRetryWorker(index)));
+        const failed = retryTasks.length - succeeded;
+        showToast(
+            `字幕批量重试完成：成功 ${succeeded}，失败 ${failed}；原配音没有重新调用`,
+            failed === 0 ? 'success' : 'warning',
+            6000
+        );
+        playVWCompletionSound();
+    } finally {
+        vwRetryAllRunning = false;
+        renderVWTasks();
+        document.getElementById('vw-progress').style.display = 'none';
+    }
+}
+
 // 页面加载时刷新音色
 document.addEventListener('DOMContentLoaded', () => {
+    if (restoreVWResumeState()) {
+        renderVWTasks();
+        updateVWTaskCount();
+        const startBtn = document.getElementById('vw-start-btn');
+        const remainingCount = vwTasks.filter(task =>
+            task.status === 'pending' || task.status === 'error' || task.status === 'generating'
+        ).length;
+        if (startBtn) {
+            startBtn.disabled = false;
+            startBtn.textContent = remainingCount > 0
+                ? `▶️ 继续未完成 (${remainingCount})`
+                : '✅ 已全部生成';
+        }
+        showToast(`已恢复上次一键配音任务：${vwTasks.length} 条，未完成 ${remainingCount} 条`, 'info');
+    }
     setTimeout(refreshVWVoices, 1000);
 });
 

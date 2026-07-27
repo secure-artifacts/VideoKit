@@ -48,6 +48,7 @@ const _reelsState = {
     // Content Video Image Sequence Cache
     cvSequence: { path: '', files: [], loadedImages: {} },
     previewMultiBg: { taskId: '', clipIndex: -1, path: '', image: null },
+    folderQueueCollapsed: {},
 };
 window._reelsState = _reelsState;
 
@@ -1961,8 +1962,12 @@ function _cloneSubtitleStyle(style) {
 }
 
 function _isStyleApplyAllEnabled() {
-    const el = document.getElementById('reels-style-apply-all');
-    return el ? el.checked !== false : true;
+    return _getSubtitleStyleScope() === 'all';
+}
+
+function _getSubtitleStyleScope() {
+    const el = document.getElementById('reels-style-scope');
+    return el ? (el.value || 'folder') : 'folder';
 }
 
 function _getNamedSubtitlePresetStyle(name) {
@@ -1993,12 +1998,22 @@ function _resolveSubtitleStyleForTask(task) {
 function _persistSubtitleStyleByScope(style) {
     const safeStyle = _cloneSubtitleStyle(style || _readStyleFromUI());
     if (!safeStyle) return;
-    if (_isStyleApplyAllEnabled()) {
+    const scope = _getSubtitleStyleScope();
+    if (scope === 'all') {
         _reelsState.globalSubtitleStyle = safeStyle;
         return;
     }
     const task = _getSelectedTask();
-    if (task) task.subtitleStyle = safeStyle;
+    if (!task) return;
+    if (scope === 'folder' && task._folderQueueId) {
+        for (const queueTask of _reelsState.tasks) {
+            if (queueTask._folderQueueId === task._folderQueueId) {
+                queueTask.subtitleStyle = _cloneSubtitleStyle(safeStyle);
+            }
+        }
+        return;
+    }
+    task.subtitleStyle = safeStyle;
 }
 
 function reelsOnStyleApplyScopeChange() {
@@ -6539,6 +6554,162 @@ function _onFolderFilesSelected(e) {
     e.target.value = '';
 }
 
+function _scanDroppedReelsTaskFolder(dirPath, maxDepth = 3) {
+    const api = window.electronAPI;
+    if (!api?.fsReaddir || !api?.pathJoin) return [];
+    const files = [];
+
+    const walk = (currentDir, depth) => {
+        if (depth > maxDepth) return;
+        for (const entry of api.fsReaddir(currentDir) || []) {
+            if (!entry?.name || entry.name.startsWith('.') || entry.name === 'Thumbs.db' || entry.name === 'desktop.ini') continue;
+            const fullPath = api.pathJoin(currentDir, entry.name);
+            if (entry.isDirectory) walk(fullPath, depth + 1);
+            else if (entry.isFile) files.push(fullPath);
+        }
+    };
+    walk(dirPath, 0);
+    return files.sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' }));
+}
+
+function _importDroppedReelsTaskFolders(dirPaths) {
+    const api = window.electronAPI;
+    if (!api?.readFileText) return { imported: 0, skipped: (dirPaths || []).length };
+    let imported = 0;
+    let importedFolders = 0;
+    let skipped = 0;
+    let unmatched = 0;
+    let replaced = 0;
+    let firstImportedIndex = -1;
+
+    for (const dirPath of dirPaths || []) {
+        const paths = _scanDroppedReelsTaskFolder(dirPath);
+        const videos = paths.filter(p => REELS_BACKGROUND_EXTS.has(_fileExt(p)));
+        const audios = paths.filter(p => REELS_AUDIO_EXTS.has(_fileExt(p)));
+        const srts = paths.filter(p => _fileExt(p) === 'srt');
+        const txts = paths.filter(p => _fileExt(p) === 'txt');
+        if (videos.length === 0) {
+            skipped++;
+            continue;
+        }
+
+        const folderName = api.pathBasename?.(dirPath) || String(dirPath).split(/[\\/]/).pop() || `任务${_reelsState.tasks.length + 1}`;
+        const queueId = `folder:${dirPath}`;
+        const byMatchKey = list => {
+            const map = new Map();
+            for (const filePath of list) {
+                const key = _buildAudioSubtitleMatchKey(api.pathBasename?.(filePath) || filePath);
+                if (!map.has(key)) map.set(key, []);
+                map.get(key).push(filePath);
+            }
+            return map;
+        };
+        const audioMap = byMatchKey(audios);
+        const srtMap = byMatchKey(srts);
+        const txtMap = byMatchKey(txts);
+        const pairs = [];
+        for (const [matchKey, audioGroup] of audioMap.entries()) {
+            const srtGroup = srtMap.get(matchKey) || [];
+            const pairCount = Math.min(audioGroup.length, srtGroup.length);
+            for (let i = 0; i < pairCount; i++) {
+                pairs.push({
+                    matchKey,
+                    audioPath: audioGroup[i],
+                    srtPath: srtGroup[i],
+                    txtPath: (txtMap.get(matchKey) || [])[i] || (txtMap.get(matchKey) || [])[0] || null,
+                });
+            }
+            unmatched += Math.max(0, audioGroup.length - pairCount);
+        }
+        for (const [matchKey, srtGroup] of srtMap.entries()) {
+            unmatched += Math.max(0, srtGroup.length - (audioMap.get(matchKey) || []).length);
+        }
+        if (pairs.length === 0) {
+            skipped++;
+            continue;
+        }
+
+        // 重新拖入同一文件夹时，清除旧版错误导入产生的背景-only/合并任务，
+        // 再按当前 MP3+SRT 配套规则完整重建该文件夹队列。
+        const normalizedDir = String(dirPath).replace(/[\\/]+$/, '');
+        const isTaskFromDir = task => {
+            if (task._sourceFolder === dirPath || task._folderQueueId === queueId) return true;
+            const pathsToCheck = [
+                task.audioPath, task.srtPath, task.txtPath, task.bgPath, task.videoPath,
+                ...(Array.isArray(task.bgClipPool) ? task.bgClipPool : []),
+            ].filter(Boolean);
+            return pathsToCheck.some(filePath => {
+                const value = String(filePath);
+                return value === normalizedDir || value.startsWith(normalizedDir + '/') || value.startsWith(normalizedDir + '\\');
+            });
+        };
+        const oldLength = _reelsState.tasks.length;
+        _reelsState.tasks = _reelsState.tasks.filter(task => !isTaskFromDir(task));
+        replaced += oldLength - _reelsState.tasks.length;
+
+        importedFolders++;
+
+        const assignMode = _getBgAssignMode();
+        for (let pairIndex = 0; pairIndex < pairs.length; pairIndex++) {
+            const { matchKey, audioPath, srtPath, txtPath } = pairs[pairIndex];
+            const videoPath = assignMode === 'single'
+                ? videos[0]
+                : videos[pairIndex % videos.length];
+            const audioName = api.pathBasename?.(audioPath) || String(audioPath).split(/[\\/]/).pop();
+            const srcUrl = api.toFileUrl?.(videoPath) || null;
+            const task = {
+                id: 'task_' + Math.random().toString(36).slice(2, 11) + '_' + Date.now() + '_' + imported,
+                baseName: _normalizeBaseName(audioName),
+                fileName: audioName.replace(/\.[^.]+$/, '.mp4'),
+                exportName: _normalizeBaseName(audioName),
+                matchKey,
+                _sourceFolder: dirPath,
+                _folderQueueId: queueId,
+                _folderQueueName: folderName,
+                bgPath: videoPath,
+                bgSrcUrl: srcUrl,
+                videoPath,
+                srcUrl,
+                bgMode: 'single',
+                bgClipPool: [],
+                bgClipActivePool: [],
+                audioPath,
+                srtPath,
+                txtPath,
+                txtContent: txtPath ? (api.readFileText(txtPath) || '') : '',
+                segments: [],
+                aligned: false,
+            };
+
+            if (srtPath) {
+                const srtContent = api.readFileText(srtPath) || '';
+                const rawSegs = parseSRT(srtContent).map(seg => ({ ...seg, _timeUnit: 'sec' }));
+                task.segments = window.ReelsSubtitleProcessor
+                    ? ReelsSubtitleProcessor.srtToSegmentsWithWords(rawSegs)
+                    : rawSegs;
+                task.aligned = task.segments.length > 0;
+            }
+
+            if (firstImportedIndex < 0) firstImportedIndex = _reelsState.tasks.length;
+            _reelsState.tasks.push(task);
+            imported++;
+        }
+    }
+
+    if (imported > 0) {
+        _renderTaskList();
+        reelsSelectTask(firstImportedIndex);
+        if (typeof _batchAutoSave === 'function') _batchAutoSave();
+    }
+    return { imported, importedFolders, skipped, unmatched, replaced };
+}
+
+function reelsToggleFolderQueue(queueId) {
+    if (!queueId) return;
+    _reelsState.folderQueueCollapsed[queueId] = !_reelsState.folderQueueCollapsed[queueId];
+    _renderTaskList();
+}
+
 function _onTaskListDrop(e) {
     e.preventDefault();
     e.stopPropagation();
@@ -6546,8 +6717,34 @@ function _onTaskListDrop(e) {
     e.currentTarget.style.backgroundColor = '';
     e.currentTarget.style.boxShadow = '';
     const files = Array.from(e.dataTransfer.files || []);
-    _queueMixedFiles(files);
-    reelsAutoMatchFiles();
+    const fileEntries = files.map(file => ({
+        file,
+        path: (typeof getFileNativePath === 'function') ? getFileNativePath(file) : (file.path || file.name),
+    })).filter(item => item.path);
+    const dirs = fileEntries.filter(item => window.electronAPI?.isDirectory?.(item.path)).map(item => item.path);
+    const regularFiles = fileEntries.filter(item => !window.electronAPI?.isDirectory?.(item.path)).map(item => item.file);
+
+    if (dirs.length > 0) {
+        const result = _importDroppedReelsTaskFolders(dirs);
+        if (typeof showToast === 'function') {
+            if (result.imported > 0) {
+                showToast(
+                    `📁 已建立 ${result.importedFolders} 个文件夹队列，共 ${result.imported} 个独立任务`
+                    + `${result.replaced ? `；已替换 ${result.replaced} 个旧任务` : ''}`
+                    + `${result.unmatched ? `；跳过 ${result.unmatched} 个未配套的 MP3/SRT` : ''}`
+                    + `${result.skipped ? `；跳过 ${result.skipped} 个无完整配套内容的文件夹` : ''}`,
+                    'success',
+                    7000
+                );
+            } else {
+                showToast('未导入任务：每个文件夹至少需要包含一个视频文件', 'warning', 6000);
+            }
+        }
+    }
+    if (regularFiles.length > 0) {
+        _queueMixedFiles(regularFiles);
+        reelsAutoMatchFiles();
+    }
 }
 
 function _getMatchMode() {
@@ -6804,6 +7001,7 @@ function _renderTaskList() {
         return;
     }
 
+    let lastFolderQueueId = null;
     container.innerHTML = tasks.map((task, i) => {
         const selected = i === _reelsState.selectedIdx;
         const hasBg = !!(task.bgPath || task.videoPath);
@@ -6897,7 +7095,26 @@ function _renderTaskList() {
         // 未选中导出时降低整行不透明度
         const rowOpacity = exportChecked ? '1' : '0.45';
 
-        return `
+        let folderHeader = '';
+        const queueId = task._folderQueueId || '';
+        const queueCollapsed = queueId ? !!_reelsState.folderQueueCollapsed[queueId] : false;
+        if (queueId && queueId !== lastFolderQueueId) {
+            const queueName = escapeTaskText(task._folderQueueName || '文件夹队列');
+            const queueCount = tasks.filter(item => item._folderQueueId === queueId).length;
+            const encodedQueueId = encodeURIComponent(queueId);
+            folderHeader = `
+                <div class="reels-folder-queue-header" onclick="reelsToggleFolderQueue(decodeURIComponent('${encodedQueueId}'))"
+                    style="display:flex;align-items:center;gap:6px;padding:7px 6px;margin:5px 0 3px;
+                           border-radius:6px;background:rgba(76,158,255,0.12);border:1px solid rgba(76,158,255,0.25);
+                           color:#9ccaff;cursor:pointer;font-size:11px;font-weight:600;">
+                    <span>${queueCollapsed ? '▶' : '▼'}</span>
+                    <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${queueName}">📁 ${queueName}</span>
+                    <span style="margin-left:auto;color:#789;font-weight:400;">${queueCount} 个任务</span>
+                </div>`;
+        }
+        lastFolderQueueId = queueId || null;
+
+        return `${folderHeader}
             <div class="reels-task-item ${selected ? 'reels-task-selected' : ''}"
                  onclick="reelsSelectTask(${i})"
                  title="${escapeTaskText(task.fileName)}"
@@ -6906,6 +7123,7 @@ function _renderTaskList() {
                         background: ${selected ? 'rgba(0,212,255,0.15)' : 'transparent'};
                         border-left: 3px solid ${selected ? '#4c9eff' : 'transparent'};
                         opacity: ${rowOpacity};
+                        ${queueCollapsed ? 'display:none;' : ''}
                         ${selected ? 'box-shadow: inset 0 0 0 1px rgba(0,212,255,0.3);' : ''}">
                 <input type="checkbox" class="reels-export-cb" data-task-idx="${i}" ${exportChecked ? 'checked' : ''}
                     style="accent-color:var(--accent-color,#7b8bef);transform:scale(1.25);margin:0 6px 0 4px;flex-shrink:0;cursor:pointer;"
@@ -8303,6 +8521,43 @@ async function reelsSavePreset() {
     }
 }
 
+function reelsSaveFolderQueuePresets() {
+    if (!window.ReelsStyleEngine) {
+        alert('字幕模板引擎未加载');
+        return;
+    }
+    _persistSubtitleStyleByScope(_readStyleFromUI());
+    const queues = new Map();
+    for (const task of _reelsState.tasks) {
+        if (!task?._folderQueueId) continue;
+        if (!queues.has(task._folderQueueId)) queues.set(task._folderQueueId, []);
+        queues.get(task._folderQueueId).push(task);
+    }
+    if (queues.size === 0) {
+        alert('当前没有文件夹队列');
+        return;
+    }
+
+    let saved = 0;
+    let failed = 0;
+    for (const queueTasks of queues.values()) {
+        const firstTask = queueTasks[0];
+        const queueName = String(firstTask._folderQueueName || '文件夹队列').trim();
+        const presetName = `队列_${queueName}`;
+        const style = _cloneSubtitleStyle(firstTask.subtitleStyle)
+            || _cloneSubtitleStyle(_reelsState.globalSubtitleStyle)
+            || _readStyleFromUI();
+        if (ReelsStyleEngine.saveNamedSubtitlePreset(presetName, style)) saved++;
+        else failed++;
+    }
+    _reelsRefreshPresetList();
+    showToast(
+        `已保存 ${saved} 个队列字幕模板${failed ? `，${failed} 个保存失败` : ''}`,
+        failed ? 'warning' : 'success',
+        5000
+    );
+}
+
 function reelsLoadPreset(silent = false) {
     const select = document.getElementById('reels-preset-select');
     if (!select) return;
@@ -9304,11 +9559,17 @@ async function reelsStartExport() {
             // ── 多模板矩阵：调整输出路径 ──
             let jobOutputDir = outputDirTrimmed;
             let jobBaseName = baseName;
+            if (task._folderQueueId) {
+                const safeQueueName = String(task._folderQueueName || '文件夹队列')
+                    .replace(/[<>:"/\\|?*]+/g, '_')
+                    .trim() || '文件夹队列';
+                jobOutputDir = `${outputDirTrimmed}${outputJoinSep}${safeQueueName}`;
+            }
             if (job.presetName) {
                 const safePresetName = job.presetName.replace(/[<>:"/\\|?*]+/g, '_');
                 if (job.naming === 'folder') {
                     // 按模板分目录
-                    jobOutputDir = `${outputDirTrimmed}${outputJoinSep}${safePresetName}`;
+                    jobOutputDir = `${jobOutputDir}${outputJoinSep}${safePresetName}`;
                 } else {
                     // 平铺命名
                     jobBaseName = `${baseName}_${safePresetName}`;
@@ -9431,13 +9692,13 @@ async function reelsStartExport() {
 
             // ── 封面静帧单独输出 ──
             if (task.cover && task.cover.enabled !== false && task.cover.exportSeparate !== false) {
-                 await _exportSaveCoverPng(task, outputDirTrimmed, baseName);
+                 await _exportSaveCoverPng(task, jobOutputDir, jobBaseName);
             }
 
             // ── 封面视频拼接输出 ──
             let coverMp4Path = null;
             if (task.cover && task.cover.enabled !== false && doMp4 && parseFloat(task.cover.duration || 0) > 0) {
-                 coverMp4Path = await _exportCoverVideo(task, taskStyle, outputDirTrimmed, baseName);
+                 coverMp4Path = await _exportCoverVideo(task, taskStyle, jobOutputDir, jobBaseName);
             }
 
             // ═══ PNG 分层序列导出 ═══
@@ -9478,8 +9739,8 @@ async function reelsStartExport() {
                     contentVideoBlur: task.contentVideoBlur != null ? task.contentVideoBlur : 40,
                     contentVideoBrightness: task.contentVideoBrightness != null ? task.contentVideoBrightness : 60,
                     voicePath: voiceSource || null,
-                    outputDir: outputDirTrimmed,
-                    taskName: baseName,
+                    outputDir: jobOutputDir,
+                    taskName: jobBaseName,
                     targetWidth: tw,
                     targetHeight: th,
                     fps: 30,
@@ -9517,7 +9778,7 @@ async function reelsStartExport() {
                     canceled = true;
                     break;
                 }
-                finalOutputPath = layeredResult?.layersDir || outputDirTrimmed;
+                finalOutputPath = layeredResult?.layersDir || jobOutputDir;
             }
 
             // ═══ FCPXML 导出收集 ═══
@@ -9655,10 +9916,10 @@ async function reelsStartExport() {
                                 for (let b = 0; b < binaryStr.length; b++) pngBytes[b] = binaryStr.charCodeAt(b);
 
                                 const sliceLabel = slice.label || String.fromCharCode(65 + sliceIdx);
-                                const pngFileName = `${baseName}_overlay_${sliceLabel}.png`;
-                                const pngPath = `${outputDirTrimmed}/${pngFileName}`;
+                                const pngFileName = `${jobBaseName}_overlay_${sliceLabel}.png`;
+                                const pngPath = `${jobOutputDir}/${pngFileName}`;
                                 if (window.electronAPI && window.electronAPI.ensureDirectory) {
-                                    await window.electronAPI.ensureDirectory(outputDirTrimmed);
+                                    await window.electronAPI.ensureDirectory(jobOutputDir);
                                 }
                                 if (window.electronAPI && window.electronAPI.savePngFrame) {
                                     const saveResult = await window.electronAPI.savePngFrame({
@@ -9704,10 +9965,10 @@ async function reelsStartExport() {
                         const pngBytes = new Uint8Array(binaryStr.length);
                         for (let b = 0; b < binaryStr.length; b++) pngBytes[b] = binaryStr.charCodeAt(b);
 
-                        const pngFileName = `${baseName}_overlay.png`;
-                        const pngPath = `${outputDirTrimmed}/${pngFileName}`;
+                        const pngFileName = `${jobBaseName}_overlay.png`;
+                        const pngPath = `${jobOutputDir}/${pngFileName}`;
                         if (window.electronAPI && window.electronAPI.ensureDirectory) {
-                            await window.electronAPI.ensureDirectory(outputDirTrimmed);
+                            await window.electronAPI.ensureDirectory(jobOutputDir);
                         }
                         if (window.electronAPI && window.electronAPI.savePngFrame) {
                             const saveResult = await window.electronAPI.savePngFrame({
@@ -10295,8 +10556,12 @@ function reelsExportSRT() {
  */
 function _cloneProjectDataForSave(value) {
     const seen = new WeakSet();
+    const persistedPrivateFields = new Set([
+        '_subtitlePreset', '_overlayPresetName',
+        '_sourceFolder', '_folderQueueId', '_folderQueueName',
+    ]);
     return JSON.parse(JSON.stringify(value, (key, val) => {
-        if (key && key.startsWith('_') && key !== '_subtitlePreset' && key !== '_overlayPresetName') return undefined;
+        if (key && key.startsWith('_') && !persistedPrivateFields.has(key)) return undefined;
         if (typeof val === 'object' && val !== null) {
             if (seen.has(val)) return undefined;
             seen.add(val);
@@ -10335,6 +10600,8 @@ function collectCurrentProjectState() {
         stereoWidth: parseFloat((document.getElementById('reels-stereo-width') || {}).value || '100') || 100,
         audioFxTarget: (document.getElementById('reels-audio-fx-target') || {}).value || 'all',
         subtitleStyleApplyAll: _isStyleApplyAllEnabled(),
+        subtitleStyleScopeVersion: 2,
+        subtitleStyleScope: _getSubtitleStyleScope(),
     };
     return {
         tasks: _cloneProjectDataForSave(_reelsState.tasks),
@@ -10440,7 +10707,10 @@ function applyRestoredProject(result) {
         if (opts.reverbMix !== undefined) setVal('reels-reverb-mix', String(opts.reverbMix));
         if (opts.stereoWidth !== undefined) setVal('reels-stereo-width', String(opts.stereoWidth));
         if (opts.audioFxTarget !== undefined) setVal('reels-audio-fx-target', opts.audioFxTarget);
-        setCheck('reels-style-apply-all', opts.subtitleStyleApplyAll !== false);
+        const restoredStyleScope = opts.subtitleStyleScopeVersion === 2
+            ? (opts.subtitleStyleScope || (opts.subtitleStyleApplyAll === true ? 'all' : 'folder'))
+            : 'folder';
+        setVal('reels-style-scope', restoredStyleScope);
 
 
         
@@ -10554,6 +10824,8 @@ function reelsSaveProject() {
         stereoWidth: parseFloat((document.getElementById('reels-stereo-width') || {}).value || '100') || 100,
         audioFxTarget: (document.getElementById('reels-audio-fx-target') || {}).value || 'all',
         subtitleStyleApplyAll: _isStyleApplyAllEnabled(),
+        subtitleStyleScopeVersion: 2,
+        subtitleStyleScope: _getSubtitleStyleScope(),
         targetWidth: _reelsState.targetWidth || 1080,
         targetHeight: _reelsState.targetHeight || 1920,
     };
@@ -10784,7 +11056,7 @@ function reelsMarkStyleDirty(e) {
     ) return;
     
     // Ignore non-style inputs
-    if (el.id === 'reels-style-apply-all' || el.id === 'reels-preset-select' || 
+    if (el.id === 'reels-style-scope' || el.id === 'reels-preset-select' ||
         el.id === 'reels-subtitle-toggle' || el.id === 'reels-show-subtitle-range') return;
 
     // User actively modified a style parameter, breaking the preset link

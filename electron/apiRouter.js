@@ -593,6 +593,11 @@ async function routeAPI(endpoint, data, progressSender = null, sender = null) {
         case 'elevenlabs/all-quotas':
             return await elevenlabsService.getAllQuotas();
 
+        case 'elevenlabs/key-count': {
+            const keys = elevenlabsService.loadKeys();
+            return { count: Array.isArray(keys) ? keys.length : 0 };
+        }
+
         case 'elevenlabs/tts': {
             const keys = elevenlabsService.loadKeys();
             if (!keys || keys.length === 0) throw new Error('未配置 API Key');

@@ -4207,6 +4207,17 @@ function _bindBatchTableEvents() {
         const paths = files.map(f => (typeof getFileNativePath === 'function') ? getFileNativePath(f) : (f.path || f.name)).filter(Boolean);
         const dirs = paths.filter(p => _isDirectoryPath(p));
         if (dirs.length > 0) {
+            if (dirs.length > 1) {
+                const result = _importFoldersAsIndependentQueues(dirs);
+                if (typeof showToast === 'function') {
+                    if (result.queueCount > 0) {
+                        showToast(`📚 已建立 ${result.queueCount} 个独立文件夹队列，共 ${result.taskCount} 条任务`, 'success', 6000);
+                    } else {
+                        showToast('未识别到完整素材组；每个文件夹需包含音频和视频', 'warning', 6000);
+                    }
+                }
+                return;
+            }
             let total = 0;
             for (const dir of dirs) {
                 total += _importMaterialGroupFolders(dir, { mode: 'append', silent: true }) || 0;
@@ -11500,6 +11511,41 @@ function _importMaterialGroupFolders(rootDir, options = {}) {
     return groups.length;
 }
 
+function _importFoldersAsIndependentQueues(dirs) {
+    const validDirs = [...new Set((dirs || []).filter(Boolean))];
+    if (validDirs.length === 0) return { queueCount: 0, taskCount: 0 };
+
+    _syncTasksToActiveTab();
+    let queueCount = 0;
+    let taskCount = 0;
+
+    for (const dir of validDirs) {
+        const scan = _scanMaterialGroupFolders(dir);
+        if (!scan.groups.length) continue;
+
+        const baseName = _getPathBaseName(dir) || `文件夹${queueCount + 1}`;
+        const existingNames = new Set(_batchTableState.tabs.map(tab => tab.name));
+        let tabName = baseName;
+        let suffix = 2;
+        while (existingNames.has(tabName)) tabName = `${baseName} (${suffix++})`;
+
+        _addTab(tabName);
+        const tab = _getActiveTab();
+        tab.materialDir = dir;
+        const imported = _importMaterialGroupFolders(dir, { mode: 'replace', silent: true }) || 0;
+        if (imported > 0) {
+            _syncTasksToActiveTab();
+            queueCount++;
+            taskCount += imported;
+        }
+    }
+
+    _skipNextApply = true;
+    _renderBatchTable();
+    if (typeof _batchAutoSave === 'function') _batchAutoSave();
+    return { queueCount, taskCount };
+}
+
 async function _selectAndImportMaterialGroupFolders(options = {}) {
     if (!window.require && !(window.electronAPI && window.electronAPI.selectDirectory)) {
         alert('素材组导入需要在桌面应用中使用');
@@ -16859,7 +16905,8 @@ function _bindMediaSidebarEvents(container) {
     });
 
     // Drag & Drop on the pool area
-    const poolArea = sidebar.querySelector('#rbt-ms-pool');
+    // 整个左侧素材栏都作为外部文件/文件夹拖放区，避免只有中间文件列表小区域能接收。
+    const poolArea = sidebar;
     if (poolArea) {
         // Event delegation for drag events and remove clicks
         poolArea.addEventListener('click', (e) => {
@@ -16910,6 +16957,19 @@ function _bindMediaSidebarEvents(container) {
                 }).filter(Boolean);
                 const dirs = paths.filter(p => _isDirectoryPath(p));
                 if (dirs.length > 0) {
+                    if (dirs.length > 1) {
+                        const result = _importFoldersAsIndependentQueues(dirs);
+                        const filePaths = paths.filter(p => !_isDirectoryPath(p));
+                        if (filePaths.length > 0) _addFilesByPath(filePaths);
+                        if (typeof showToast === 'function') {
+                            if (result.queueCount > 0) {
+                                showToast(`📚 已建立 ${result.queueCount} 个独立文件夹队列，共 ${result.taskCount} 条任务`, 'success', 6000);
+                            } else if (filePaths.length === 0) {
+                                showToast('未识别到完整素材组；每个文件夹需包含音频和视频', 'warning', 6000);
+                            }
+                        }
+                        return;
+                    }
                     let total = 0;
                     for (const dir of dirs) {
                         total += _importMaterialGroupFolders(dir, { mode: 'append', silent: true }) || 0;

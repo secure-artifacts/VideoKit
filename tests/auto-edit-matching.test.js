@@ -62,6 +62,15 @@ test('sentence ending punctuation is detected without treating a comma as an end
     assert.equal(autoEdit._test.hasSentenceEndingPunctuation('keep going,'), false);
 });
 
+test('review speed accepts the UI range and safely falls back outside it', () => {
+    assert.equal(autoEdit._test.normalizeAutoEditSpeed(1.5), 1.5);
+    assert.equal(autoEdit._test.normalizeAutoEditSpeed('0.25'), 0.25);
+    assert.equal(autoEdit._test.normalizeAutoEditSpeed(4), 4);
+    assert.equal(autoEdit._test.normalizeAutoEditSpeed(0), 1);
+    assert.equal(autoEdit._test.normalizeAutoEditSpeed(4.1), 1);
+    assert.equal(autoEdit._test.normalizeAutoEditSpeed('bad'), 1);
+});
+
 test('a one-word boundary gap is conservatively recovered into the previous clip', () => {
     const scriptWords = ['this', 'is', 'important.', 'next'].map((raw, wordIndex) => ({
         raw,
@@ -101,6 +110,46 @@ test('a one-word boundary gap is conservatively recovered into the previous clip
     assert.equal(previous.scriptWordEnd, 2);
     assert.equal(previous.wordEndIdx, 2);
     assert.equal(previous.end, 1.28);
+});
+
+test('an inflected French boundary is recovered and extends the actual cut', () => {
+    const scriptWords = ['rejoindre', "d'étude", 'biblique.', 'cliquez'].map((raw, wordIndex) => ({
+        raw,
+        norm: autoEdit.normalizeText(raw),
+        wordIndex,
+        lineIndex: 0,
+    }));
+    const previous = {
+        sourceIndex: 0,
+        scriptWordStart: 0,
+        scriptWordEnd: 0,
+        wordStartIdx: 0,
+        wordEndIdx: 0,
+        duration: 4,
+        end: 0.7,
+        matchedWordsArray: [],
+        words: [
+            { raw: 'rejoindre', norm: 'rejoindre', start: 0.1, end: 0.6 },
+            { raw: "d'études", norm: 'détudes', start: 0.65, end: 1.0 },
+            { raw: 'bibliques', norm: 'bibliques', start: 1.02, end: 1.5 },
+        ],
+    };
+    const next = {
+        sourceIndex: 1,
+        scriptWordStart: 3,
+        scriptWordEnd: 3,
+        wordStartIdx: 0,
+        wordEndIdx: 0,
+        duration: 2,
+        start: 0.1,
+        matchedWordsArray: [],
+        words: [{ raw: 'cliquez', norm: 'cliquez', start: 0.1, end: 0.5 }],
+    };
+    const recovered = autoEdit._test.recoverSmallBoundaryGaps([previous, next], scriptWords, 0.04, 0.08);
+    assert.equal(recovered.length, 1);
+    assert.equal(previous.scriptWordEnd, 2);
+    assert.equal(previous.wordEndIdx, 2);
+    assert.equal(previous.end, 1.58);
 });
 
 test('boundary recovery does not absorb a gap that is not present beside the cut', () => {

@@ -3028,9 +3028,9 @@
                 <label>对齐语种:</label>
                 <div style="position:relative;display:inline-block;" id="vw-align-lang-picker-wrap">
                   <button id="vw-align-lang-picker-btn" class="select" style="min-width:130px;text-align:left;cursor:pointer;display:flex;justify-content:space-between;align-items:center;">
-                    <span>中文</span><span style="font-size:10px;opacity:0.6;">▾</span>
+                    <span>英语</span><span style="font-size:10px;opacity:0.6;">▾</span>
                   </button>
-                  <input type="hidden" id="vw-align-lang" value="中文">
+                  <input type="hidden" id="vw-align-lang" value="英语">
                   <div id="vw-align-lang-dropdown" style="display:none;position:absolute;top:100%;left:0;z-index:9999;background:var(--bg-secondary);border:1px solid var(--border-color, #333);border-radius:8px;width:260px;max-height:360px;box-shadow:0 8px 24px rgba(0,0,0,0.5);overflow:hidden;margin-top:4px;">
                     <input id="vw-align-lang-search" type="text" placeholder="🔍 搜索语言 (中文/English/代码)..." style="width:100%;box-sizing:border-box;padding:8px 12px;border:none;border-bottom:1px solid var(--border-color);background:var(--bg-input);color:var(--text-primary);font-size:13px;outline:none;">
                     <div id="vw-align-lang-list" style="max-height:300px;overflow-y:auto;"></div>
@@ -3048,6 +3048,12 @@
                 <input type="number" id="vw-tail-silence" class="input" value="0" min="0" max="5" step="0.1"
                   style="width: 80px;" title="生成的 MP3 末尾追加静音；0 表示不添加，启用时范围 0.1-5 秒">
                 <span style="color: var(--text-muted);">秒</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <label>并发任务:</label>
+                <input type="number" id="vw-concurrency" class="input" value="5" min="1" max="20" step="1"
+                  style="width: 70px;" title="同时执行的任务数；每个 worker 优先使用对应序号的 ElevenLabs Key">
+                <span style="color: var(--text-muted);">个</span>
               </div>
             </div>
 
@@ -3112,6 +3118,21 @@
             <div class="param-row">
               <button class="btn btn-primary" id="vw-start-btn" onclick="startVoiceoverWorkflow()" disabled>
                 🚀 开始生成配音字幕
+              </button>
+              <button class="btn btn-secondary" id="vw-pause-btn"
+                onclick="pauseVoiceoverWorkflow()" disabled
+                title="安全暂停：当前已经发出的并发请求完成后，不再领取新任务">
+                ⏸ 暂停
+              </button>
+              <button class="btn btn-secondary" id="vw-restart-all-btn"
+                onclick="restartAllVoiceoverWorkflow()"
+                title="明确重新生成全部任务，包括已经成功的项目">
+                🔁 全部重新生成
+              </button>
+              <button class="btn btn-secondary" id="vw-retry-all-subtitles-btn"
+                onclick="retryAllVWSubtitles()" disabled
+                title="只重试已有配音但字幕生成失败的任务，不会重新调用配音">
+                🔄 重试所有失败字幕
               </button>
               <div id="vw-progress" style="flex: 1; margin-left: 16px; display: none;">
                 <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px;">
@@ -3564,14 +3585,17 @@
                     </div>
                     <div class="param-row" style="flex-wrap: wrap; gap: 8px; margin-top: 6px;">
                       <label style="width: 94px;">样式作用域:</label>
-                      <label class="checkbox-label" style="margin:0;">
-                        <input type="checkbox" id="reels-style-apply-all" checked onchange="reelsOnStyleApplyScopeChange()">
-                        <span>应用到全部任务</span>
-                      </label>
-                      <span style="font-size:11px;color:var(--text-secondary);">作用于动画预设、全样式预设和手动调参（关闭后仅当前任务）</span>
+                      <select id="reels-style-scope" class="select" style="font-size:11px;min-width:150px;"
+                        onchange="reelsOnStyleApplyScopeChange()">
+                        <option value="task">仅当前任务</option>
+                        <option value="folder" selected>当前文件夹队列</option>
+                        <option value="all">全部任务</option>
+                      </select>
+                      <span style="font-size:11px;color:var(--text-secondary);">默认：同一文件夹队列内样式一致，不同队列互不影响</span>
                     </div>
                     <div class="param-row" style="margin-top: 6px; gap: 6px; align-items: center; flex-wrap: wrap;">
                       <button class="btn btn-secondary" style="font-size: 11px; padding: 3px 10px; flex:0 0 auto;" onclick="reelsSavePreset()">保存</button>
+                      <button class="btn btn-secondary" style="font-size: 11px; padding: 3px 10px; flex:0 0 auto;" onclick="reelsSaveFolderQueuePresets()" title="将每个文件夹队列的字幕样式分别保存到模板库">保存队列模板</button>
                       <button class="btn btn-secondary" style="font-size: 11px; padding: 3px 10px; flex:0 0 auto;" onclick="reelsSetDefaultPreset()">默认</button>
                       <button class="btn btn-secondary" style="font-size: 11px; padding: 3px 10px; flex:0 0 auto;" onclick="reelsDeletePreset()">删除</button>
                       <button class="btn btn-secondary" style="font-size: 11px; padding: 3px 10px; flex:0 0 auto;" onclick="reelsExportPresets()">导出</button>
