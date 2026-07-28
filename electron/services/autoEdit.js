@@ -2421,9 +2421,14 @@ async function autoEditByScript(opts = {}) {
                 usedFallbackPlans.add(plan);
                 const start = Number(review.start);
                 const end = Number(review.end);
-                if (Number.isFinite(start) && Number.isFinite(end) && start >= 0 && end > start && end <= plan.duration + 0.01) {
-                    plan.start = start;
-                    plan.end = end;
+                if (Number.isFinite(start) && Number.isFinite(end) && start >= 0 && end > start) {
+                    const safeStart = Math.min(start, Math.max(0, plan.duration - 0.001));
+                    const safeEnd = Math.min(end, plan.duration);
+                    if (safeEnd <= safeStart) {
+                        throw new Error(`审核片段切点超出原片时长，已停止导出: ${review.source || review.segment_id || '未知片段'}`);
+                    }
+                    plan.start = safeStart;
+                    plan.end = safeEnd;
                 }
                 plan.speed = normalizeAutoEditSpeed(review.speed);
                 if (typeof review.script === 'string' && review.script.trim()) plan.scriptText = review.script.trim();

@@ -3072,8 +3072,21 @@
             <div class="param-row" style="margin-bottom: 8px;">
               <button class="btn btn-secondary" onclick="vwPasteFromClipboard()">📋 从表格粘贴</button>
               <button class="btn btn-secondary" onclick="vwClearAll()">🧹 清空</button>
-              <span style="margin-left: auto; font-size: 12px; color: var(--text-muted);" title="可以在 Google Sheets 或 Excel 中直接框选复制多行表格数据">
-                📋 表格格式: [第1列] TTS配音文案 | [第2列] AI翻译/字幕原文 | [第3列] 音色ID(可选) | [第4列] 配乐路径(可选)
+              <label style="margin-left:12px;font-size:12px;">分文件夹:</label>
+              <select id="vw-folder-mode" class="select" style="width:150px;font-size:12px;"
+                onchange="vwUpdateFolderModeUI()">
+                <option value="column" selected>按额外一列名称</option>
+                <option value="count">按固定条数</option>
+                <option value="none">不分文件夹</option>
+              </select>
+              <span id="vw-folder-count-wrap" style="display:none;align-items:center;gap:5px;font-size:12px;">
+                每 <input type="number" id="vw-folder-count" class="input" value="6" min="1" max="999"
+                  style="width:62px;height:28px;"> 条一个文件夹
+              </span>
+            </div>
+            <div class="param-row" style="margin-bottom:8px;">
+              <span style="font-size: 12px; color: var(--text-muted);" title="可以在 Google Sheets 或 Excel 中直接框选复制多行表格数据">
+                📋 列格式: 1 配音文案｜2 字幕原文｜3 音色ID(可选)｜4 配乐路径(可选)｜5 文件夹名(可选)；没有配乐时第4列也可直接填文件夹名
               </span>
             </div>
 
@@ -3084,13 +3097,19 @@
                 <span>全选行</span>
               </label>
               <label style="display: flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer;">
-                <input type="checkbox" id="vw-select-all-split" checked onchange="vwToggleAllSplit()"
+                <input type="checkbox" id="vw-select-all-split" onchange="vwToggleAllSplit()"
                   style="cursor: pointer;">
                 <span>全选拆分</span>
               </label>
               <label style="display: flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer;">
                 <input type="checkbox" id="vw-select-all-mp4" onchange="vwToggleAllMp4()" style="cursor: pointer;">
                 <span>全选黑屏MP4</span>
+              </label>
+              <label style="display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;color:#74c0fc;"
+                title="只生成完整 MP3 和 SRT；不生成 TXT、不拆分、不生成 MP4、不导出 FCPXML">
+                <input type="checkbox" id="vw-audio-subtitle-only" checked onchange="vwToggleAudioSubtitleOnly()"
+                  style="cursor:pointer;">
+                <span>🎧 仅音频+字幕</span>
               </label>
               <label style="display: flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer;"
                 title="生成 FCPXML 时间线文件，可导入 DaVinci Resolve 和 Final Cut Pro">
@@ -5157,12 +5176,29 @@
               <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; font-size:12px; padding:5px 0 4px; border-bottom:1px solid var(--border-color);">
                 <span style="font-size:10px; color:var(--text-muted); min-width:32px;">🎬</span>
                 <label>画质:</label>
-                <select id="reels-quality" class="select" style="width:160px;font-size:11px;">
+                <select id="reels-quality" class="select" style="width:160px;font-size:11px;"
+                  onchange="reelsUpdateCustomBitrateUI()">
                   <option value="high">极致无损 (最高质量)</option>
                   <option value="medium">高画质 (口播常用)</option>
                   <option value="low" selected>普通均衡 (Reels推荐)</option>
                   <option value="ultrafast">极速导出 (预览用)</option>
+                  <option value="custom">自定义码率</option>
                 </select>
+                <span id="reels-quality-bitrate-label"
+                  style="font-size:10px;color:var(--text-secondary);white-space:nowrap;"
+                  title="当前档位的视频目标码率 / 最大码率">目标 1.5 / 最大 2.5 Mbps</span>
+                <span id="reels-custom-bitrate-settings" style="display:none;align-items:center;gap:4px;">
+                  <label title="视频平均目标码率">目标:</label>
+                  <input type="number" id="reels-custom-bitrate" class="input input-small"
+                    min="1" max="30" step="0.5" value="5" style="width:52px;font-size:11px;"
+                    oninput="reelsUpdateCustomBitrateUI()">
+                  <span>Mbps</span>
+                  <label title="复杂画面允许达到的最高视频码率">最大:</label>
+                  <input type="number" id="reels-custom-max-bitrate" class="input input-small"
+                    min="1" max="50" step="0.5" value="7" style="width:52px;font-size:11px;"
+                    oninput="reelsUpdateCustomBitrateUI()">
+                  <span>Mbps</span>
+                </span>
                 <span style="width:1px;height:16px;background:var(--border-color);margin:0 2px;display:inline-block;"></span>
                 <label>后缀:</label>
                 <input type="text" id="reels-suffix" class="input input-small" value="_subtitled"

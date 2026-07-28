@@ -148,13 +148,92 @@ function stableJpegEncoderArgs(platform = process.platform) {
     ];
 }
 
-function cpuH264EncoderArgs(qualityPreset, crf, platform = process.platform) {
+function h264RateControlArgs(crf = 23, targetBitrateMbps = null, maxBitrateMbps = null) {
+    const requestedTarget = Number(targetBitrateMbps);
+    const requestedMax = Number(maxBitrateMbps);
+    if (Number.isFinite(requestedTarget) && requestedTarget > 0) {
+        const target = Math.max(1, Math.min(30, requestedTarget));
+        const maxrate = Number.isFinite(requestedMax) && requestedMax > 0
+            ? Math.max(target, Math.min(50, requestedMax))
+            : Math.min(50, target * 1.4);
+        return [
+            '-b:v', `${target}M`,
+            '-maxrate', `${maxrate}M`,
+            '-bufsize', `${target * 2}M`,
+        ];
+    }
+
+    const numericCrf = Number.isFinite(Number(crf)) ? Number(crf) : 23;
+    let bitrate = '1.5M';
+    let maxrate = '2.5M';
+    let bufsize = '3M';
+
+    if (numericCrf <= 15) {
+        bitrate = '12M';
+        maxrate = '16M';
+        bufsize = '24M';
+    } else if (numericCrf <= 18) {
+        bitrate = '8M';
+        maxrate = '11M';
+        bufsize = '16M';
+    } else if (numericCrf >= 26) {
+        bitrate = '2500k';
+        maxrate = '3500k';
+        bufsize = '5M';
+    }
+
+    return ['-b:v', bitrate, '-maxrate', maxrate, '-bufsize', bufsize];
+}
+
+function cpuH264EncoderArgs(
+    qualityPreset,
+    crf,
+    platform = process.platform,
+    targetBitrateMbps = null,
+    maxBitrateMbps = null
+) {
     return [
         '-c:v', 'libx264',
         ...(platform === 'win32' ? ['-threads', '1'] : []),
         '-preset', qualityPreset,
-        '-crf', String(crf),
+        ...h264RateControlArgs(crf, targetBitrateMbps, maxBitrateMbps),
     ];
+}
+
+function gpuH264EncoderCandidates(
+    platform,
+    crf = 23,
+    targetBitrateMbps = null,
+    maxBitrateMbps = null
+) {
+    const rateArgs = h264RateControlArgs(crf, targetBitrateMbps, maxBitrateMbps);
+    if (platform === 'darwin') {
+        return [{
+            codec: 'h264_videotoolbox',
+            label: 'VideoToolbox',
+            args: ['-c:v', 'h264_videotoolbox', ...rateArgs],
+        }];
+    }
+    if (platform === 'win32') {
+        return [
+            {
+                codec: 'h264_nvenc',
+                label: 'NVENC',
+                args: ['-c:v', 'h264_nvenc', '-preset', 'p5', '-rc', 'vbr', ...rateArgs],
+            },
+            {
+                codec: 'h264_amf',
+                label: 'AMF',
+                args: ['-c:v', 'h264_amf', '-quality', 'balanced', '-rc', 'vbr_peak', ...rateArgs],
+            },
+            {
+                codec: 'h264_qsv',
+                label: 'QSV',
+                args: ['-c:v', 'h264_qsv', '-preset', 'medium', ...rateArgs],
+            },
+        ];
+    }
+    return [];
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1104,8 +1183,11 @@ let _cachedGPUProbeResults = {};
  * 如果 GPU 编码器初始化失败（驱动/硬件不支持），快速返回 false
  */
 function _probeGPUEncoder(ffmpegPath, vcodec, encoderArgs, width, height, fps) {
-    if (_cachedGPUProbeResults[vcodec] !== undefined) {
-        return _cachedGPUProbeResults[vcodec];
+    // 同一个编码器可能支持基础参数，却不支持某种码率控制模式。
+    // 缓存必须包含完整参数，避免 UI 的轻量探测掩盖正式导出参数不兼容。
+    const probeKey = `${vcodec}\u0000${encoderArgs.join('\u0000')}`;
+    if (_cachedGPUProbeResults[probeKey] !== undefined) {
+        return _cachedGPUProbeResults[probeKey];
     }
     try {
         const settings = require('./settings');
@@ -1133,12 +1215,12 @@ function _probeGPUEncoder(ffmpegPath, vcodec, encoderArgs, width, height, fps) {
 
         if (testProc.status === 0) {
             console.log(`[WYSIWYG] GPU 编码器 ${vcodec} 可用 ✓`);
-            _cachedGPUProbeResults[vcodec] = true;
+            _cachedGPUProbeResults[probeKey] = true;
             return true;
         } else {
             const stderr = (testProc.stderr || '').toString().slice(-500);
             console.warn(`[WYSIWYG] GPU 编码器 ${vcodec} 不可用 (code=${testProc.status}): ${stderr}`);
-            _cachedGPUProbeResults[vcodec] = false;
+            _cachedGPUProbeResults[probeKey] = false;
             return false;
         }
     } catch (e) {
@@ -1196,37 +1278,35 @@ async function startSession(opts) {
     const platform = process.platform;
     const qualityPreset = opts.qualityPreset || 'faster';
     const crf = opts.crf || 23;
-    const cpuFallbackArgs = cpuH264EncoderArgs(qualityPreset, crf, platform);
+    const targetBitrateMbps = opts.targetBitrateMbps;
+    const maxBitrateMbps = opts.maxBitrateMbps;
+    const cpuFallbackArgs = cpuH264EncoderArgs(
+        qualityPreset,
+        crf,
+        platform,
+        targetBitrateMbps,
+        maxBitrateMbps
+    );
     let gpuFailed = false;
 
     if (useGPU) {
-        if (platform === 'darwin') {
-            const gpuArgs = ['-c:v', 'h264_videotoolbox', '-b:v', '12M'];
-            if (_probeGPUEncoder(ffmpeg, 'h264_videotoolbox', gpuArgs, width, height, fps)) {
-                encoderArgs = gpuArgs;
-                console.log(`[WYSIWYG] 使用 GPU 编码 (VideoToolbox, 12Mbps)`);
-            } else {
-                gpuFailed = true;
-            }
-        } else if (platform === 'win32') {
-            const nvencArgs = ['-c:v', 'h264_nvenc', '-preset', 'p5', '-cq', '15', '-b:v', '0'];
-            const amfArgs = ['-c:v', 'h264_amf'];
-            const qsvArgs = ['-c:v', 'h264_qsv'];
-            if (_probeGPUEncoder(ffmpeg, 'h264_nvenc', nvencArgs, width, height, fps)) {
-                encoderArgs = nvencArgs;
-                console.log(`[WYSIWYG] 使用 GPU 编码 (NVENC, NVIDIA)`);
-            } else if (_probeGPUEncoder(ffmpeg, 'h264_amf', amfArgs, width, height, fps)) {
-                encoderArgs = amfArgs;
-                console.log(`[WYSIWYG] 使用 GPU 编码 (AMF, AMD)`);
-            } else if (_probeGPUEncoder(ffmpeg, 'h264_qsv', qsvArgs, width, height, fps)) {
-                encoderArgs = qsvArgs;
-                console.log(`[WYSIWYG] 使用 GPU 编码 (QSV, Intel)`);
-            } else {
-                gpuFailed = true;
+        const gpuCandidates = gpuH264EncoderCandidates(
+            platform,
+            crf,
+            targetBitrateMbps,
+            maxBitrateMbps
+        );
+        for (const candidate of gpuCandidates) {
+            if (_probeGPUEncoder(ffmpeg, candidate.codec, candidate.args, width, height, fps)) {
+                encoderArgs = candidate.args;
+                const bitrate = h264RateControlArgs(crf, targetBitrateMbps, maxBitrateMbps)[1];
+                console.log(`[WYSIWYG] 使用 GPU 编码 (${candidate.label}, 目标码率 ${bitrate})`);
+                break;
             }
         }
 
-        if (gpuFailed || !encoderArgs) {
+        if (!encoderArgs) {
+            gpuFailed = true;
             console.log(`[WYSIWYG] ⚠️ GPU 编码器不可用，自动回退到 CPU (libx264) 编码`);
             encoderArgs = cpuFallbackArgs;
         }
@@ -2522,5 +2602,13 @@ module.exports = {
     handleWysiwygIPC,
     renderChromiumAudioWav,
     parallelExport,
-    _test: { stableJpegEncoderArgs, cpuH264EncoderArgs, formatMixFailure, formatMediaError, expectedFrameCount },
+    _test: {
+        stableJpegEncoderArgs,
+        h264RateControlArgs,
+        cpuH264EncoderArgs,
+        gpuH264EncoderCandidates,
+        formatMixFailure,
+        formatMediaError,
+        expectedFrameCount,
+    },
 };

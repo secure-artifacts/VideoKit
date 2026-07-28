@@ -69,6 +69,35 @@ function playVWCompletionSound() {
     }
 }
 
+function vwUpdateFolderModeUI() {
+    const mode = document.getElementById('vw-folder-mode')?.value || 'column';
+    const countWrap = document.getElementById('vw-folder-count-wrap');
+    if (countWrap) countWrap.style.display = mode === 'count' ? 'inline-flex' : 'none';
+}
+
+function vwLooksLikeBgmPath(value) {
+    const text = String(value || '').trim();
+    if (!text) return false;
+    return /[\\/]/.test(text) || /\.(mp3|wav|m4a|aac|flac|ogg|wma)$/i.test(text);
+}
+
+function vwApplyFolderGrouping(rows) {
+    const mode = document.getElementById('vw-folder-mode')?.value || 'column';
+    const groupSize = Math.max(
+        1,
+        Math.min(999, parseInt(document.getElementById('vw-folder-count')?.value || '6', 10) || 6)
+    );
+    return rows.map((row, index) => {
+        let folderName = '';
+        if (mode === 'column') {
+            folderName = String(row.folderName || '').trim();
+        } else if (mode === 'count') {
+            folderName = `第${String(Math.floor(index / groupSize) + 1).padStart(2, '0')}组`;
+        }
+        return { ...row, folderName };
+    });
+}
+
 // 刷新音色列表
 async function refreshVWVoices() {
     const select = document.getElementById('vw-default-voice');
@@ -150,8 +179,9 @@ async function vwPasteFromClipboard() {
         let rows = [];
 
         // 读取当前全选复选框状态作为新任务默认值
-        const defaultSplit = document.getElementById('vw-select-all-split')?.checked ?? true;
-        const defaultMp4 = document.getElementById('vw-select-all-mp4')?.checked ?? false;
+        const audioSubtitleOnly = document.getElementById('vw-audio-subtitle-only')?.checked ?? false;
+        const defaultSplit = audioSubtitleOnly ? false : (document.getElementById('vw-select-all-split')?.checked ?? true);
+        const defaultMp4 = audioSubtitleOnly ? false : (document.getElementById('vw-select-all-mp4')?.checked ?? false);
 
         for (const item of clipboardItems) {
             // 优先解析 HTML
@@ -183,9 +213,15 @@ async function vwPasteFromClipboard() {
                         if (!subtitleText) subtitleText = ttsText; // 如果第二列为空白，直接使用第一列文案
 
                         const voiceId = cells[2]?.textContent.trim() || '';
-                        const bgmPath = cells[3]?.textContent.trim() || '';
+                        let bgmPath = cells[3]?.textContent.trim() || '';
+                        let folderName = cells[4]?.textContent.trim() || '';
+                        // 没有配乐列时，允许第4列直接作为文件夹名。
+                        if (!folderName && bgmPath && !vwLooksLikeBgmPath(bgmPath)) {
+                            folderName = bgmPath;
+                            bgmPath = '';
+                        }
                         if (ttsText) {
-                            rows.push({ ttsText, subtitleText, voiceId, bgmPath, split: defaultSplit, exportMp4: defaultMp4 });
+                            rows.push({ ttsText, subtitleText, voiceId, bgmPath, folderName, audioSubtitleOnly, split: defaultSplit, exportMp4: defaultMp4 });
                         }
                     }
                 });
@@ -206,11 +242,19 @@ async function vwPasteFromClipboard() {
                         
                         // 只在有真实内容时压入
                         if (ttsText) {
+                            let bgmPath = parts[3]?.trim() || '';
+                            let folderName = parts[4]?.trim() || '';
+                            if (!folderName && bgmPath && !vwLooksLikeBgmPath(bgmPath)) {
+                                folderName = bgmPath;
+                                bgmPath = '';
+                            }
                             rows.push({
                                 ttsText: ttsText,
                                 subtitleText: subtitleText,
                                 voiceId: parts[2]?.trim() || '',
-                                bgmPath: parts[3]?.trim() || '',
+                                bgmPath,
+                                folderName,
+                                audioSubtitleOnly,
                                 split: defaultSplit,
                                 exportMp4: defaultMp4
                             });
@@ -225,6 +269,7 @@ async function vwPasteFromClipboard() {
             return;
         }
 
+        rows = vwApplyFolderGrouping(rows);
         vwTasks = rows.map((row, idx) => ({
             id: idx,
             ...row,
@@ -289,6 +334,7 @@ function renderVWTasks() {
                 <strong>[列2] AI字幕原文:</strong> ${escapeHtml(task.subtitleText.substring(0, 60).replace(/\n/g, ' | '))}${task.subtitleText.length > 60 ? '...' : ''}
             </div>
             ${task.voiceId ? `<div style="font-size: 10px; color: var(--text-muted); margin-top: 2px;">音色: ${escapeHtml(task.voiceId)}</div>` : ''}
+            ${task.folderName ? `<div style="font-size:10px;color:#74c0fc;margin-top:2px;">📁 文件夹: ${escapeHtml(task.folderName)}</div>` : ''}
             <div style="display:flex;align-items:center;gap:6px;margin-top:4px;font-size:10px;color:var(--text-muted);">
                 <span style="min-width:30px;">配乐:</span>
                 <span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${escapeHtml(task.bgmPath || '')}">
@@ -471,6 +517,8 @@ function vwToggleSplit(id, checked) {
         // 如果勾选拆分，自动取消黑屏MP4
         if (task.split) {
             task.exportMp4 = false;
+            const onlyCb = document.getElementById('vw-audio-subtitle-only');
+            if (onlyCb) onlyCb.checked = false;
         }
         renderVWTasks();
         updateVWTaskCount();
@@ -488,6 +536,8 @@ function vwToggleMp4(id, checked) {
         if (newValue) {
             // 如果勾选黑屏MP4，自动取消拆分
             task.split = false;
+            const onlyCb = document.getElementById('vw-audio-subtitle-only');
+            if (onlyCb) onlyCb.checked = false;
         }
         task.exportMp4 = newValue;
 
@@ -507,6 +557,8 @@ function vwToggleAllSplit() {
     // 如果勾选了拆分，自动取消全选黑屏MP4
     if (checked) {
         document.getElementById('vw-select-all-mp4').checked = false;
+        const onlyCb = document.getElementById('vw-audio-subtitle-only');
+        if (onlyCb) onlyCb.checked = false;
     }
     renderVWTasks();
     updateVWTaskCount();
@@ -519,6 +571,8 @@ function vwToggleAllMp4() {
     // 如果要勾选黑屏MP4，先取消全选拆分
     if (checked) {
         document.getElementById('vw-select-all-split').checked = false;
+        const onlyCb = document.getElementById('vw-audio-subtitle-only');
+        if (onlyCb) onlyCb.checked = false;
         vwTasks.forEach(t => {
             t.split = false;
             t.exportMp4 = true;
@@ -530,6 +584,31 @@ function vwToggleAllMp4() {
     }
     renderVWTasks();
     updateVWTaskCount();
+}
+
+// 仅生成完整音频和字幕：统一关闭拆分、MP4 和 FCPXML。
+function vwToggleAudioSubtitleOnly() {
+    const checked = document.getElementById('vw-audio-subtitle-only')?.checked ?? false;
+    vwTasks.forEach(task => { task.audioSubtitleOnly = checked; });
+    if (!checked) {
+        renderVWTasks();
+        return;
+    }
+
+    const splitCb = document.getElementById('vw-select-all-split');
+    const mp4Cb = document.getElementById('vw-select-all-mp4');
+    const fcpxmlCb = document.getElementById('vw-export-fcpxml');
+    if (splitCb) splitCb.checked = false;
+    if (mp4Cb) mp4Cb.checked = false;
+    if (fcpxmlCb) fcpxmlCb.checked = false;
+
+    vwTasks.forEach(task => {
+        task.split = false;
+        task.exportMp4 = false;
+    });
+    renderVWTasks();
+    updateVWTaskCount();
+    showToast('已切换为仅音频+字幕：只生成 MP3 和 SRT', 'success');
 }
 
 // 更新全选复选框状态（根据当前任务状态）
@@ -586,7 +665,8 @@ function updateVWTaskCount() {
         const mp4Count = vwTasks.filter(t => t.exportMp4).length;
         const selectedCount = vwTasks.filter(t => t.selected).length;
         const bgmCount = vwTasks.filter(t => !!t.bgmPath).length;
-        countEl.textContent = `共 ${vwTasks.length} 条，已选 ${selectedCount} 条，${splitCount} 条拆分，${mp4Count} 条黑屏MP4，${bgmCount} 条配乐`;
+        const folderCount = new Set(vwTasks.map(t => String(t.folderName || '').trim()).filter(Boolean)).size;
+        countEl.textContent = `共 ${vwTasks.length} 条，${folderCount} 个文件夹，已选 ${selectedCount} 条，${splitCount} 条拆分，${mp4Count} 条黑屏MP4，${bgmCount} 条配乐`;
     }
 }
 
@@ -745,7 +825,11 @@ async function startVoiceoverWorkflow(forceAll = false) {
             updateVWProgress(current, total, `并发 ${workerCount} · Worker ${workerIndex + 1} 正在处理 #${i + 1}`);
 
             try {
-                const exportFcpxml = document.getElementById('vw-export-fcpxml')?.checked ?? true;
+                const audioSubtitleOnly = document.getElementById('vw-audio-subtitle-only')?.checked ?? false;
+                task.audioSubtitleOnly = audioSubtitleOnly;
+                const exportFcpxml = audioSubtitleOnly
+                    ? false
+                    : (document.getElementById('vw-export-fcpxml')?.checked ?? true);
                 // 每个 worker 从不同 Key 开始；首选 Key 不可用时，后端会按此顺序轮询其余 Key。
                 const workerGladiaKeys = gladiaKeys.length > 0
                     ? gladiaKeys.map((_, offset) => gladiaKeys[(workerIndex + offset) % gladiaKeys.length])
@@ -770,6 +854,8 @@ async function startVoiceoverWorkflow(forceAll = false) {
                         export_fcpxml: exportFcpxml,  // 导出达芬奇字幕
                         seamless_fcpxml: true,  // 默认无缝字幕
                         output_dir: batchOutputDir,
+                        group_name: task.folderName || '',
+                        export_subtitle_txt: !audioSubtitleOnly,
                         // 每个 worker 使用不同的首选 Gladia Key，并在失败时自动轮换备用 Key。
                         gladia_keys: workerGladiaKeys,
                         language: alignLang
@@ -882,6 +968,7 @@ async function retryVWSubtitleTask(task, gladiaKeys) {
                 language: document.getElementById('vw-align-lang')?.value || '英语',
                 export_fcpxml: document.getElementById('vw-export-fcpxml')?.checked ?? true,
                 seamless_fcpxml: true,
+                export_subtitle_txt: task.audioSubtitleOnly !== true,
             }),
         });
     const data = await response.json();

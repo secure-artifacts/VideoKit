@@ -55,7 +55,7 @@ async function appendTailSilenceToMp3(filePath, seconds, tempDir, baseName) {
     return true;
 }
 
-async function generateWorkflowSubtitles({ sourcePath, subtitleText, outputDir, taskPrefix, gladiaKeys, language, exportFcpxml = true, seamlessFcpxml = true }) {
+async function generateWorkflowSubtitles({ sourcePath, subtitleText, outputDir, taskPrefix, gladiaKeys, language, exportFcpxml = true, seamlessFcpxml = true, exportSubtitleTxt = true }) {
     if (!sourcePath || !fs.existsSync(sourcePath)) throw new Error('已生成的配音文件不存在');
     if (!subtitleText || !String(subtitleText).trim()) throw new Error('字幕文案为空');
     let activeGladiaKeys = gladiaKeys;
@@ -72,14 +72,16 @@ async function generateWorkflowSubtitles({ sourcePath, subtitleText, outputDir, 
     fs.mkdirSync(audioGroup, { recursive: true });
     fs.mkdirSync(metadataGroup, { recursive: true });
 
-    const subtitleTxtPath = path.join(videoGroup, `${taskPrefix}.txt`);
+    const subtitleTxtPath = exportSubtitleTxt
+        ? path.join(videoGroup, `${taskPrefix}.txt`)
+        : path.join(metadataGroup, `${taskPrefix}_source_text.tmp.txt`);
     fs.writeFileSync(subtitleTxtPath, subtitleText, 'utf-8');
     const fileName = path.parse(sourcePath).name;
     const arrayPath = path.join(metadataGroup, `${fileName}_audio_text_withtime.json`);
     const textPath = path.join(metadataGroup, `${fileName}_transcription.txt`);
     const result = await gladia.transcribeAudio(sourcePath, activeGladiaKeys, language);
     fs.writeFileSync(arrayPath, JSON.stringify(result.wordTimeInfo, null, 4), 'utf-8');
-    fs.writeFileSync(textPath, result.fullText, 'utf-8');
+    if (exportSubtitleTxt) fs.writeFileSync(textPath, result.fullText, 'utf-8');
 
     const subtitleUtils = require('./subtitleUtils');
     const { audioSubtitleSearchDifferentStrong } = require('./subtitleAlignment');
@@ -90,16 +92,26 @@ async function generateWorkflowSubtitles({ sourcePath, subtitleText, outputDir, 
     const sourceTextWithInfo = subtitleUtils.readTextWithGoogleDoc(subtitleTxtPath);
     const targetSrtPath = path.join(audioGroup, `${taskPrefix}.srt`);
     const targetFcpxmlPath = exportFcpxml ? path.join(audioGroup, `${taskPrefix}.fcpxml`) : null;
-    const alignResult = audioSubtitleSearchDifferentStrong(
-        langCode, audioGroup, taskPrefix, result.wordTimeInfo, result.fullText,
-        sourceTextWithInfo, {}, false, true, exportFcpxml, seamlessFcpxml,
-        targetSrtPath, targetFcpxmlPath
-    );
-    if (typeof alignResult === 'string' && !alignResult.startsWith('生成了字幕文件')) {
-        throw new Error(`字幕对齐失败: ${alignResult}`);
+    try {
+        const alignResult = audioSubtitleSearchDifferentStrong(
+            langCode, audioGroup, taskPrefix, result.wordTimeInfo, result.fullText,
+            sourceTextWithInfo, {}, false, true, exportFcpxml, seamlessFcpxml,
+            targetSrtPath, targetFcpxmlPath
+        );
+        if (typeof alignResult === 'string' && !alignResult.startsWith('生成了字幕文件')) {
+            throw new Error(`字幕对齐失败: ${alignResult}`);
+        }
+        if (!fs.existsSync(targetSrtPath)) throw new Error('字幕对齐完成，但没有生成 SRT 文件');
+    } finally {
+        if (!exportSubtitleTxt) {
+            try { fs.unlinkSync(subtitleTxtPath); } catch (_) { }
+        }
     }
-    if (!fs.existsSync(targetSrtPath)) throw new Error('字幕对齐完成，但没有生成 SRT 文件');
-    return { srt_path: targetSrtPath, subtitle_txt_path: subtitleTxtPath, fcpxml_path: targetFcpxmlPath };
+    return {
+        srt_path: targetSrtPath,
+        subtitle_txt_path: exportSubtitleTxt ? subtitleTxtPath : null,
+        fcpxml_path: targetFcpxmlPath
+    };
 }
 
 /**
@@ -122,6 +134,8 @@ async function ttsWorkflow(data) {
         tail_silence = 0,
         key_index = null,
         output_dir: rawOutputDir = '',
+        group_name = '',
+        export_subtitle_txt = true,
         gladia_keys = null,
         language = 'english'
     } = data;
@@ -154,6 +168,14 @@ async function ttsWorkflow(data) {
     let outputDir = rawOutputDir.trim();
     if (!outputDir) {
         outputDir = path.join(os.homedir(), 'Downloads', buildWorkflowBatchFolderName(today));
+    }
+    const safeGroupName = String(group_name || '')
+        .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
+        .replace(/^\.+$/, '_')
+        .trim()
+        .slice(0, 100);
+    if (safeGroupName) {
+        outputDir = path.join(outputDir, safeGroupName);
     }
     fs.mkdirSync(outputDir, { recursive: true });
 
@@ -259,6 +281,7 @@ async function ttsWorkflow(data) {
                 sourcePath, subtitleText: subtitle_text, outputDir, taskPrefix,
                 gladiaKeys: gladia_keys, language, exportFcpxml: export_fcpxml,
                 seamlessFcpxml: seamless_fcpxml,
+                exportSubtitleTxt: export_subtitle_txt !== false,
             });
             srtPath = subtitleResult.srt_path;
             subtitleTxtPath = subtitleResult.subtitle_txt_path;
@@ -304,6 +327,7 @@ async function retryWorkflowSubtitles(data) {
         language: data.language || 'english',
         exportFcpxml: data.export_fcpxml !== false,
         seamlessFcpxml: data.seamless_fcpxml !== false,
+        exportSubtitleTxt: data.export_subtitle_txt !== false,
     });
 }
 

@@ -9158,6 +9158,34 @@ function _getMultiPresetConfig() {
     return { presets, naming };
 }
 
+function reelsUpdateCustomBitrateUI() {
+    const quality = (document.getElementById('reels-quality') || {}).value || 'low';
+    const settingsEl = document.getElementById('reels-custom-bitrate-settings');
+    if (settingsEl) settingsEl.style.display = quality === 'custom' ? 'inline-flex' : 'none';
+    const presetRates = {
+        high: { target: 12, max: 16 },
+        medium: { target: 8, max: 11 },
+        low: { target: 1.5, max: 2.5 },
+        ultrafast: { target: 2.5, max: 3.5 },
+    };
+    const rates = quality === 'custom'
+        ? _readReelsCustomBitrate()
+        : (presetRates[quality] || presetRates.low);
+    const label = document.getElementById('reels-quality-bitrate-label');
+    if (label) label.textContent = `目标 ${rates.target} / 最大 ${rates.max} Mbps`;
+}
+window.reelsUpdateCustomBitrateUI = reelsUpdateCustomBitrateUI;
+
+function _readReelsCustomBitrate() {
+    let target = parseFloat((document.getElementById('reels-custom-bitrate') || {}).value || '5');
+    let max = parseFloat((document.getElementById('reels-custom-max-bitrate') || {}).value || '7');
+    if (!Number.isFinite(target)) target = 5;
+    if (!Number.isFinite(max)) max = 7;
+    target = Math.max(1, Math.min(30, target));
+    max = Math.max(target, Math.min(50, max));
+    return { target, max };
+}
+
 /**
  * 为导出创建一个临时任务副本，应用指定的覆层预设但保留原文案
  * @param {object} task 原始任务
@@ -9332,6 +9360,9 @@ async function reelsStartExport() {
     const presetMap = { high: 'medium', medium: 'fast', low: 'faster', ultrafast: 'ultrafast' };
     const crf = crfMap[quality] || 23;
     const qualityPreset = presetMap[quality] || 'faster';
+    const customBitrate = quality === 'custom' ? _readReelsCustomBitrate() : null;
+    const targetBitrateMbps = customBitrate ? customBitrate.target : null;
+    const maxBitrateMbps = customBitrate ? customBitrate.max : null;
     const useKaraoke = document.getElementById('reels-karaoke-hl');
     const karaokeHL = useKaraoke ? useKaraoke.checked : false;
     let voiceVolume = parseFloat((document.getElementById('reels-voice-volume') || {}).value || '100');
@@ -10158,7 +10189,7 @@ async function reelsStartExport() {
                                 stereoWidth: _getReverbConfig().stereoWidth,
                                 audioFxTarget: _getReverbConfig().audioFxTarget,
                                 bgHasAudio: bgPath && !_isImageFile(bgPath) && !(voiceSource && voiceSource === bgPath),
-                                qualityPreset, crf,
+                                qualityPreset, crf, targetBitrateMbps, maxBitrateMbps,
                             },
                             outputPath,
                             concurrency: parallelConcurrency,
@@ -10252,6 +10283,8 @@ async function reelsStartExport() {
                     useGPU: gpuEnabled,
                     crf,
                     qualityPreset,
+                    targetBitrateMbps,
+                    maxBitrateMbps,
                     isCancelled: () => !_reelsState.isExporting,
                     onProgress: (pct) => {
                         if (statusEl) statusEl.textContent = `导出中 ${i + 1}/${totalJobs}: ${task.fileName}${presetLabel} (${pct}%)`;
@@ -10578,6 +10611,8 @@ function collectCurrentProjectState() {
     const exportOpts = {
         outputDir: (document.getElementById('reels-output-dir') || {}).value || '',
         quality: (document.getElementById('reels-quality') || {}).value || 'medium',
+        customBitrateMbps: _readReelsCustomBitrate().target,
+        customMaxBitrateMbps: _readReelsCustomBitrate().max,
         suffix: (document.getElementById('reels-suffix') || {}).value || '_subtitled',
         namingMode: (document.getElementById('reels-export-naming-mode-outer') || {}).value || (document.getElementById('reels-naming-mode') || {}).value || localStorage.getItem('reels_naming_mode') || 'text',
         namingStartDate: localStorage.getItem('reels_naming_start_date') || '',
@@ -10669,6 +10704,9 @@ function applyRestoredProject(result) {
         const setCheck = (id, val) => { const el = document.getElementById(id); if (el) el.checked = !!val; };
         if (opts.outputDir) setVal('reels-output-dir', opts.outputDir);
         if (opts.quality) setVal('reels-quality', opts.quality);
+        if (opts.customBitrateMbps !== undefined) setVal('reels-custom-bitrate', opts.customBitrateMbps);
+        if (opts.customMaxBitrateMbps !== undefined) setVal('reels-custom-max-bitrate', opts.customMaxBitrateMbps);
+        reelsUpdateCustomBitrateUI();
         if (opts.suffix) setVal('reels-suffix', opts.suffix);
         if (opts.namingMode) {
             setVal('reels-naming-mode', opts.namingMode);
@@ -10803,6 +10841,8 @@ function reelsSaveProject() {
     const exportOpts = {
         outputDir: (document.getElementById('reels-output-dir') || {}).value || '',
         quality: (document.getElementById('reels-quality') || {}).value || 'medium',
+        customBitrateMbps: _readReelsCustomBitrate().target,
+        customMaxBitrateMbps: _readReelsCustomBitrate().max,
         suffix: (document.getElementById('reels-suffix') || {}).value || '_subtitled',
         namingMode: (document.getElementById('reels-export-naming-mode-outer') || {}).value || (document.getElementById('reels-naming-mode') || {}).value || localStorage.getItem('reels_naming_mode') || 'text',
         namingStartDate: localStorage.getItem('reels_naming_start_date') || '',

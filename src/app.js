@@ -14031,7 +14031,7 @@ function replaceAutoEditReviewRow(button, sourceIndex) {
 }
 function recalculateAutoEditReviewRow(button) {
     const timeline = button?.closest('.autoedit-review-row')?.dataset?.wordTimeline || '';
-    recalculateAutoEditCutFromScript(button, timeline);
+    return recalculateAutoEditCutFromScript(button, timeline);
 }
 
 async function openAutoEditMissedSpeechFix(button) {
@@ -14125,6 +14125,7 @@ function assignAutoEditMissingBlock(button, direction) {
     if (!target) return showToast(`没有找到可归入的${direction === 'previous' ? '上一' : '下一'}段`, 'error');
     const textarea = target.querySelector('.ae-review-script');
     if (!textarea) return;
+    const originalText = textarea.value;
     let cleanMissing = '';
     try { cleanMissing = decodeURIComponent(placeholder.dataset.missingText || '').trim(); } catch (_) { cleanMissing = ''; }
     textarea.value = direction === 'previous'
@@ -14133,13 +14134,20 @@ function assignAutoEditMissingBlock(button, direction) {
     textarea.dispatchEvent(new Event('input', { bubbles: true }));
     target.dataset.modified = 'true';
     const recalcButton = Array.from(target.querySelectorAll('button')).find(item => item.textContent.includes('重算切点'));
-    if (recalcButton) recalculateAutoEditReviewRow(recalcButton);
+    const cutUpdated = recalcButton ? recalculateAutoEditReviewRow(recalcButton) : false;
+    if (!cutUpdated) {
+        textarea.value = originalText;
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        showToast('没有可靠地定位到对应声音，本次归段已撤回。请重新转录，或先手动调整出点', 'warning', 8000);
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return;
+    }
     placeholder.dataset.assigned = 'true';
     placeholder.style.opacity = '.65';
     const title = placeholder.querySelector('.ae-missing-placeholder-title');
     if (title && !title.textContent.includes('已归入')) title.textContent += ` · 已归入${direction === 'previous' ? '上一' : '下一'}段`;
     target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    showToast(`已将缺失文案归到${direction === 'previous' ? '上一' : '下一'}段，并尝试重算切点`, 'success');
+    showToast(`已将缺失文案归到${direction === 'previous' ? '上一' : '下一'}段，并同步更新最终剪辑切点`, 'success');
 }
 function playAutoEditResultSegment(index) {
     const segment = autoEditLastResult?.segments?.[index];
@@ -14542,10 +14550,13 @@ async function retranscribeAutoEditReviewClip(filePath) {
 
 function recalculateAutoEditCutFromScript(button, encodedTimeline) {
     const row = button.closest('.autoedit-review-row');
-    if (!row) return;
+    if (!row) return false;
     let timeline = [];
     try { timeline = JSON.parse(decodeURIComponent(encodedTimeline || '')); } catch (_) {}
-    if (!timeline.length) return showToast('当前分析结果没有逐词时间轴，请重新执行快速分析', 'error');
+    if (!timeline.length) {
+        showToast('当前分析结果没有逐词时间轴，请重新执行快速分析', 'error');
+        return false;
+    }
 
     const targetText = row.querySelector('.ae-review-script')?.value || '';
     const numberWords = {zero:'0',one:'1',two:'2',three:'3',four:'4',five:'5',six:'6',seven:'7',eight:'8',nine:'9',ten:'10'};
@@ -14558,7 +14569,10 @@ function recalculateAutoEditCutFromScript(button, encodedTimeline) {
         ? Array.from(targetText).map(normalize).filter(Boolean)
         : targetText.split(/\s+/).map(normalize).filter(Boolean);
     const sourceTokens = timeline.map(item => normalize(item.word));
-    if (!targetTokens.length) return showToast('目标文案为空，无法重算切点', 'error');
+    if (!targetTokens.length) {
+        showToast('目标文案为空，无法重算切点', 'error');
+        return false;
+    }
 
     const editDistance = (a, b) => {
         const prev=Array.from({length:b.length+1},(_,i)=>i);
@@ -14584,7 +14598,10 @@ function recalculateAutoEditCutFromScript(button, encodedTimeline) {
             if(!best||score>best.score||(score===best.score&&(end-start)<(best.end-best.start)))best={start,end,score};
         }
     }
-    if (!best || best.score < 0.62) return showToast('修改文案与实际识别文字差异过大，无法安全重算切点；请检查文字或重新转录', 'error', 7000);
+    if (!best || best.score < 0.62) {
+        showToast('修改文案与实际识别文字差异过大，无法安全重算切点；请检查文字或重新转录', 'error', 7000);
+        return false;
+    }
 
     const first = timeline[best.start];
     const last = timeline[best.end];
@@ -14592,10 +14609,13 @@ function recalculateAutoEditCutFromScript(button, encodedTimeline) {
     const tailPad = Math.max(0, parseFloat(document.getElementById('autoedit-tail-pad')?.value || '0.08'));
     const startInput = row.querySelector('.ae-review-start');
     const endInput = row.querySelector('.ae-review-end');
+    const sourceDuration = Number(row.dataset.sourceDuration || 0);
     startInput.value = Math.max(0, Number(first.start) - leadPad).toFixed(3);
-    endInput.value = Math.max(Number(first.start), Number(last.end) + tailPad).toFixed(3);
+    const paddedEnd = Math.max(Number(first.start), Number(last.end) + tailPad);
+    endInput.value = (sourceDuration > 0 ? Math.min(sourceDuration, paddedEnd) : paddedEnd).toFixed(3);
     row.dataset.modified = 'true';
     showToast(`切点已更新为 ${startInput.value}s - ${endInput.value}s（定位相似度 ${Math.round(best.score*100)}%）`, best.score < .8 ? 'info' : 'success');
+    return true;
 }
 
 let autoEditReviewDragIndex = -1;

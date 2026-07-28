@@ -19,6 +19,56 @@ test('non-Windows encoders retain normal FFmpeg threading', () => {
     assert.equal(rawVideo._test.stableJpegEncoderArgs('linux').includes('-threads'), false);
 });
 
+test('Reels quality levels use stable capped bitrate targets', () => {
+    assert.deepEqual(rawVideo._test.h264RateControlArgs(15), [
+        '-b:v', '12M', '-maxrate', '16M', '-bufsize', '24M',
+    ]);
+    assert.deepEqual(rawVideo._test.h264RateControlArgs(18), [
+        '-b:v', '8M', '-maxrate', '11M', '-bufsize', '16M',
+    ]);
+    assert.deepEqual(rawVideo._test.h264RateControlArgs(23), [
+        '-b:v', '1.5M', '-maxrate', '2.5M', '-bufsize', '3M',
+    ]);
+    assert.deepEqual(rawVideo._test.h264RateControlArgs(26), [
+        '-b:v', '2500k', '-maxrate', '3500k', '-bufsize', '5M',
+    ]);
+});
+
+test('custom Reels bitrate overrides presets and clamps invalid ranges', () => {
+    assert.deepEqual(rawVideo._test.h264RateControlArgs(23, 6.5, 9), [
+        '-b:v', '6.5M', '-maxrate', '9M', '-bufsize', '13M',
+    ]);
+    assert.deepEqual(rawVideo._test.h264RateControlArgs(23, 40, 2), [
+        '-b:v', '30M', '-maxrate', '30M', '-bufsize', '60M',
+    ]);
+});
+
+test('Windows GPU encoders share the ordinary quality bitrate cap', () => {
+    const candidates = rawVideo._test.gpuH264EncoderCandidates('win32', 23);
+    assert.deepEqual(candidates.map(candidate => candidate.codec), [
+        'h264_nvenc', 'h264_amf', 'h264_qsv',
+    ]);
+    for (const candidate of candidates) {
+        assert.deepEqual(
+            candidate.args.slice(candidate.args.indexOf('-b:v')),
+            ['-b:v', '1.5M', '-maxrate', '2.5M', '-bufsize', '3M']
+        );
+    }
+});
+
+test('macOS GPU and CPU fallback use the same ordinary quality bitrate cap', () => {
+    const [videoToolbox] = rawVideo._test.gpuH264EncoderCandidates('darwin', 23);
+    const cpu = rawVideo._test.cpuH264EncoderArgs('faster', 23, 'darwin');
+    assert.deepEqual(
+        videoToolbox.args.slice(videoToolbox.args.indexOf('-b:v')),
+        ['-b:v', '1.5M', '-maxrate', '2.5M', '-bufsize', '3M']
+    );
+    assert.deepEqual(
+        cpu.slice(cpu.indexOf('-b:v')),
+        ['-b:v', '1.5M', '-maxrate', '2.5M', '-bufsize', '3M']
+    );
+});
+
 test('overlay frame validation allows only normal encoder rounding', () => {
     assert.equal(rawVideo._test.expectedFrameCount(8, 30), 238);
     assert.equal(rawVideo._test.expectedFrameCount(0, 30), 0);
