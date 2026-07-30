@@ -109,6 +109,7 @@ const _batchTableState = {
         { id: 'tab_1', name: '默认', materialDir: '', lastRefreshTime: null, tasks: [] }
     ],
     activeTabId: 'tab_1',
+    appliedTabIds: [],
     nextTabId: 2,
     // ── 视频分配模式（默认关闭） ──
     videoDropRouteEnabled: false,
@@ -135,6 +136,52 @@ function _getActiveTab() {
     return _batchTableState.tabs.find(t => t.id === _batchTableState.activeTabId) || _batchTableState.tabs[0];
 }
 
+function _normalizeBatchTabState() {
+    if (!_batchTableState.tabs.length) return;
+    if (!_batchTableState.tabs.some(t => t.id === _batchTableState.activeTabId)) {
+        _batchTableState.activeTabId = _batchTableState.tabs[0].id;
+    }
+    const maxNumericId = _batchTableState.tabs.reduce((max, tab) => {
+        const match = String(tab.id || '').match(/^tab_(\d+)$/);
+        return match ? Math.max(max, parseInt(match[1], 10) || 0) : max;
+    }, 0);
+    _batchTableState.nextTabId = Math.max(
+        Number(_batchTableState.nextTabId) || 1,
+        maxNumericId + 1,
+    );
+}
+
+function _stripBatchGroupMeta(task) {
+    const clean = _cloneBatchTasks([task])[0] || {};
+    delete clean._batchTabId;
+    delete clean._batchTabName;
+    delete clean._batchTabOrder;
+    delete clean._batchTaskOrder;
+    delete clean._batchProjection;
+    return clean;
+}
+
+function _isBatchGroupedProjection(tasks = window._reelsState?.tasks || []) {
+    return tasks.length > 0 && tasks.some(t => t && t._batchProjection && t._batchTabId);
+}
+
+/** 将外部按组任务的修改精确回写到各自标签，避免覆盖当前活动标签。 */
+function _syncGroupedProjectionToTabs(activeTasks) {
+    const grouped = new Map();
+    for (const task of activeTasks) {
+        if (!task?._batchTabId) continue;
+        if (!grouped.has(task._batchTabId)) grouped.set(task._batchTabId, []);
+        grouped.get(task._batchTabId).push(task);
+    }
+    for (const tabId of (_batchTableState.appliedTabIds || [])) {
+        const tab = _batchTableState.tabs.find(t => t.id === tabId);
+        if (!tab) continue;
+        tab.tasks = (grouped.get(tabId) || [])
+            .sort((a, b) => (a._batchTaskOrder || 0) - (b._batchTaskOrder || 0))
+            .map(_stripBatchGroupMeta);
+    }
+}
+
 function _syncTasksToActiveTab() {
     const tab = _getActiveTab();
     if (!tab) return;
@@ -144,6 +191,10 @@ function _syncTasksToActiveTab() {
     (tab.tasks || []).forEach(t => _ensureTaskId(t));
 
     const activeTasks = window._reelsState.tasks || [];
+    if (_isBatchGroupedProjection(activeTasks)) {
+        _syncGroupedProjectionToTabs(activeTasks);
+        return;
+    }
     const tabTasks = tab.tasks || [];
 
     const tabTasksMap = new Map();
@@ -172,6 +223,7 @@ function _syncTasksToActiveTab() {
 
 function _loadTabTasks(tab) {
     window._reelsState.tasks = _cloneBatchTasks(tab ? tab.tasks || [] : []);
+    _batchTableState.appliedTabIds = [];
     window._reelsState.tasks.forEach(t => _ensureTaskId(t));
     _resolveDuplicateTaskNames(window._reelsState.tasks);
     window._reelsState.selectedIdx = -1;
@@ -233,6 +285,7 @@ async function _renameTab(tabId) {
 // ★ 应用标签页：将选中标签页的任务合并到当前任务列表
 function _showMergeTabsModal() {
     // 先保存当前标签的 DOM 编辑
+    try { _applyBatchTableChanges(); } catch (e) { console.warn('[MergeTabs] apply changes failed:', e); }
     _syncTasksToActiveTab();
 
     const tabs = _batchTableState.tabs;
@@ -307,23 +360,31 @@ function _showMergeTabsModal() {
             return;
         }
 
-        // 合并选中标签页的任务
+        // 建立按标签分组的外部任务投影；标签本身仍保持独立。
         const mergedTasks = [];
-        _batchTableState.tabs.forEach(tab => {
+        _batchTableState.tabs.forEach((tab, tabOrder) => {
             if (!selectedIds.has(tab.id)) return;
-            (tab.tasks || []).forEach(t => {
+            (tab.tasks || []).forEach((t, taskOrder) => {
                 const cloned = _cloneBatchTasks([t])[0];
-                if (cloned) mergedTasks.push(cloned);
+                if (cloned) {
+                    cloned._batchProjection = true;
+                    cloned._batchTabId = tab.id;
+                    cloned._batchTabName = tab.name;
+                    cloned._batchTabOrder = tabOrder;
+                    cloned._batchTaskOrder = taskOrder;
+                    mergedTasks.push(cloned);
+                }
             });
         });
 
-        // 写入当前 state.tasks
+        // 写入外部投影，不覆盖任何一个标签页的数据。
+        _batchTableState.appliedTabIds = Array.from(selectedIds);
         window._reelsState.tasks = mergedTasks;
         window._reelsState.selectedIdx = -1;
         _skipNextApply = true;
 
         console.log(`[MergeTabs] 已合并 ${selectedIds.size} 个标签页, 共 ${mergedTasks.length} 条任务`);
-        alert(`✅ 已合并 ${selectedIds.size} 个标签页，共 ${mergedTasks.length} 条任务到当前列表`);
+        alert(`✅ 已应用 ${selectedIds.size} 个标签页，共 ${mergedTasks.length} 条任务。\n外部列表将按标签分组，修改会回写各自标签。`);
         close();
         _renderBatchTable();
         if (typeof _renderTaskList === 'function') _renderTaskList();
@@ -1087,7 +1148,7 @@ function _renderBatchTable() {
                             <option value="eleven_monolingual_v1">Eleven Monolingual v1</option>
                         </select>
                         <span style="font-size:11px;color:#888;">人声-配音音色:</span>
-                        <input list="rbt-tts-voices-list" id="rbt-tts-default-voice" class="rbt-select" style="width:110px;height:24px;font-size:11px;padding:0 4px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);color:#ccc;" placeholder="输入或选择音色ID" />
+                        <input list="rbt-tts-voices-list" id="rbt-tts-default-voice" class="rbt-select" style="width:180px;height:24px;font-size:11px;padding:0 4px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);color:#ccc;" placeholder="选择音色或手动输入 Voice ID" title="可从当前 ElevenLabs 账号可访问的音色中选择，也可直接粘贴或手动输入 Voice ID" />
                         <datalist id="rbt-tts-voices-list"></datalist>
                         <button class="rbt-btn" id="rbt-refresh-voices-btn" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;" title="刷新列表">刷新</button>
                         <button class="rbt-btn" id="rbt-apply-voice-all-btn" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;" title="应用全部空行">应用全部</button>
@@ -1105,7 +1166,11 @@ function _renderBatchTable() {
                             <option value="rbt-ai-gemini-btn">分步: 仅执行 AI 改写及处理文案</option>
                             <option value="rbt-ai-tts-all-btn">分步: 仅执行 批量生成配音及本地时间轴提取</option>
                         </select>
-                        <button class="rbt-btn" id="rbt-unified-execute-btn" style="background:rgba(255,255,255,0.1); color:#fff; border:1px solid rgba(255,255,255,0.2); font-size:11px; padding:2px 16px; border-radius:4px; cursor:pointer;">启动流水线执行</button>
+                        <select id="rbt-unified-execute-scope" class="rbt-select" title="选择工作流处理范围" style="height:24px;font-size:11px;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.1);border-radius:4px;padding:0 7px;color:#ccc;">
+                            <option value="current">当前标签</option>
+                            <option value="all-tabs">全部标签（一键）</option>
+                        </select>
+                        <button class="rbt-btn" id="rbt-unified-execute-btn" title="开始执行左侧选择的工作流和标签范围" style="background:linear-gradient(135deg,#7c5cff,#a855f7);color:#fff;border:1px solid rgba(216,180,254,.9);font-size:11px;font-weight:700;padding:3px 18px;border-radius:5px;cursor:pointer;box-shadow:0 0 12px rgba(168,85,247,.55);">🚀 启动流水线执行</button>
                         <button class="rbt-btn" id="rbt-ai-settings-btn" style="padding:2px 10px;font-size:11px;background:rgba(168,85,247,0.15);border:1px solid rgba(168,85,247,0.3);color:#a78bfa;border-radius:4px;cursor:pointer;" title="配置 Gemini API Key 和自定义 Prompt 指令">⚙️ AI设置</button>
                         <span class="rbt-batch-rowbreak"></span>
                         <span class="rbt-batch-subgroup">对齐设定</span>
@@ -1145,6 +1210,7 @@ function _renderBatchTable() {
                         <label style="display:flex;align-items:center;font-size:11px;color:#ccc;cursor:pointer;gap:4px;"><input type="checkbox" id="rbt-select-all" style="margin:0;transform:scale(0.8);"> 全选</label>
                         <button class="rbt-btn" id="rbt-invert-select" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;">反选</button>
                         <button class="rbt-btn" id="rbt-deselect-all" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;">取消</button>
+                        <button class="rbt-btn" id="rbt-delete-selected" disabled style="padding:2px 9px;font-size:11px;background:rgba(239,68,68,0.14);border:1px solid rgba(239,68,68,0.35);color:#f87171;font-weight:600;">🗑 删除选中</button>
                         <span style="color:rgba(255,255,255,0.2);margin:0 2px;">|</span>
                         <button class="rbt-btn" id="rbt-ai-preset-btn" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;" title="一键覆盖选中行参数">任务预设设置</button>
                         <button class="rbt-btn" id="rbt-import-task-preset-btn" style="padding:2px 6px;font-size:10px;background:rgba(100,100,255,0.1);border:1px solid rgba(100,100,255,0.2);color:#8b8bfa;" title="导入任务组合预设 JSON 文件">📥</button>
@@ -2265,7 +2331,7 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates, textcards, s
             </td>
             <td class="rbt-col-tts_voice rbt-grp-audio">
                 <div style="display:flex;flex-direction:column;gap:4px;">
-                    <input type="text" class="rbt-input rbt-tts-voice-input" data-idx="${idx}" value="${_escHtml(task.ttsVoiceId || '')}" placeholder="Voice ID" style="width:80px;font-size:10px;padding:2px;border:1px solid #333;background:#111;color:#fff;">
+                    <input type="text" list="rbt-tts-voices-list" class="rbt-input rbt-tts-voice-input" data-idx="${idx}" value="${_escHtml(task.ttsVoiceId || '')}" placeholder="选择或输入 Voice ID" title="点击选择 ElevenLabs 音色，或手动输入 Voice ID" style="width:150px;font-size:10px;padding:2px;border:1px solid #333;background:#111;color:#fff;">
                     <button class="rbt-btn rbt-tts-gen-btn" data-idx="${idx}" style="font-size:10px;padding:2px;background:#5e5ce6;color:#fff;border:none;">▶ 生成配音</button>
                     ${task.status === 'generating' ? '<span style="font-size:10px;color:#ffd43b;">Generating...</span>' : task.status === 'success' ? '<span style="font-size:10px;color:#4ade80;font-weight:bold;">✅ 最新生成完成</span>' : task.status === 'error' ? '<span style="font-size:10px;color:#ff3333;">❌ 出错</span>' : ''}
                 </div>
@@ -2468,8 +2534,10 @@ function _bindBatchTableEvents() {
             // Clear all tabs
             if (e.target.closest('.rbt-tab-clear-all')) {
                 if (!confirm(`确定清空删除所有 ${_batchTableState.tabs.length} 个标签页及全部任务？\n\n此操作不可撤销！`)) return;
+                window._reelsState.tasks = [];
                 _batchTableState.tabs = [];
                 _batchTableState.activeTabId = null;
+                _batchTableState.appliedTabIds = [];
                 _addTab('默认');
                 return;
             }
@@ -2956,6 +3024,26 @@ function _bindBatchTableEvents() {
         const selectAll = container.querySelector('#rbt-select-all');
         if (selectAll) selectAll.checked = false;
         _updateBatchSelectCount();
+    });
+    container.querySelector('#rbt-delete-selected')?.addEventListener('click', () => {
+        const indices = _getSelectedIndices();
+        if (indices.length === 0) {
+            if (typeof showToast === 'function') showToast('请先勾选需要删除的任务行', 'info');
+            return;
+        }
+        if (!confirm(`确定删除当前标签页中选中的 ${indices.length} 条任务吗？\n\n此操作不会影响其他标签页。`)) return;
+        const tasks = window._reelsState?.tasks || [];
+        [...indices].sort((a, b) => b - a).forEach(idx => {
+            if (idx >= 0 && idx < tasks.length) tasks.splice(idx, 1);
+        });
+        _batchTableState.selectedRows = new Set();
+        if (typeof _syncTasksToActiveTab === 'function') _syncTasksToActiveTab();
+        _skipNextApply = true;
+        _renderBatchTable();
+        if (typeof _renderTaskList === 'function') _renderTaskList();
+        if (typeof window.reelsSaveHistory === 'function') window.reelsSaveHistory();
+        if (typeof _batchAutoSave === 'function') _batchAutoSave();
+        if (typeof showToast === 'function') showToast(`✅ 已删除 ${indices.length} 条选中任务`, 'success');
     });
 
     // ══ Batch template apply ══
@@ -3444,8 +3532,13 @@ function _bindBatchTableEvents() {
     });
 
     // 绑定新的融合执行大按钮
-    container.querySelector('#rbt-unified-execute-btn')?.addEventListener('click', () => {
+    container.querySelector('#rbt-unified-execute-btn')?.addEventListener('click', async () => {
         const modeBtnId = container.querySelector('#rbt-unified-execute-mode').value;
+        const scope = container.querySelector('#rbt-unified-execute-scope')?.value || 'current';
+        if (scope === 'all-tabs') {
+            await _runWorkflowAcrossAllTabs(modeBtnId);
+            return;
+        }
         const targetBtn = container.querySelector('#' + modeBtnId);
         if (targetBtn) {
             targetBtn.click(); // 通过隐藏按钮触发原生绑定事件
@@ -3628,6 +3721,11 @@ function _bindBatchTableEvents() {
     executeModeSelect?.addEventListener('change', () => {
         localStorage.setItem('rbt_unified_execute_mode', executeModeSelect.value);
     });
+    const executeScopeSelect = container.querySelector('#rbt-unified-execute-scope');
+    if (executeScopeSelect) executeScopeSelect.value = localStorage.getItem('rbt_unified_execute_scope') || 'current';
+    executeScopeSelect?.addEventListener('change', () => {
+        localStorage.setItem('rbt_unified_execute_scope', executeScopeSelect.value);
+    });
 
     // 刷新音色列表
     container.querySelector('#rbt-refresh-voices-btn')?.addEventListener('click', () => {
@@ -3637,8 +3735,11 @@ function _bindBatchTableEvents() {
     // 应用音色到全部空行
     container.querySelector('#rbt-apply-voice-all-btn')?.addEventListener('click', () => {
         const voiceSelect = container.querySelector('#rbt-tts-default-voice');
-        const voiceId = voiceSelect?.value;
-        const voiceName = voiceSelect?.options[voiceSelect.selectedIndex]?.text || '';
+        const voiceId = voiceSelect?.value?.trim() || '';
+        // 当前控件是支持手动输入的 input + datalist，不再具有 select.options。
+        // 已知 ID 显示音色名称；手动输入的新 ID 则直接显示 ID。
+        const matchedVoice = (_rbtVoiceCache || []).find(v => v.voice_id === voiceId);
+        const voiceName = matchedVoice?.name || voiceId;
         if (!voiceId) { alert('请先选择一个音色'); return; }
         const tasks = window._reelsState?.tasks || [];
         let applied = 0;
@@ -3648,6 +3749,9 @@ function _bindBatchTableEvents() {
                 applied++;
             }
         }
+        // 任务状态已在上面直接更新。重绘时不能再把旧表格中的空输入框
+        // 同步回 state，否则刚应用的 Voice ID 会立刻被覆盖掉。
+        _skipNextApply = true;
         _renderBatchTable();
         showToast(`已将音色「${voiceName}」应用到 ${applied} 个空行`, 'success');
     });
@@ -4141,7 +4245,7 @@ function _bindBatchTableEvents() {
         });
         if (cell) cell.classList.add('rbt-drag-over');
     });
-    panel.addEventListener('drop', (e) => {
+    panel.addEventListener('drop', async (e) => {
         _dragCounter = 0;
         _hideDropOverlay();
         panel.querySelectorAll('.rbt-droppable.rbt-drag-over').forEach(c => c.classList.remove('rbt-drag-over'));
@@ -4207,28 +4311,7 @@ function _bindBatchTableEvents() {
         const paths = files.map(f => (typeof getFileNativePath === 'function') ? getFileNativePath(f) : (f.path || f.name)).filter(Boolean);
         const dirs = paths.filter(p => _isDirectoryPath(p));
         if (dirs.length > 0) {
-            if (dirs.length > 1) {
-                const result = _importFoldersAsIndependentQueues(dirs);
-                if (typeof showToast === 'function') {
-                    if (result.queueCount > 0) {
-                        showToast(`📚 已建立 ${result.queueCount} 个独立文件夹队列，共 ${result.taskCount} 条任务`, 'success', 6000);
-                    } else {
-                        showToast('未识别到完整素材组；每个文件夹需包含音频和视频', 'warning', 6000);
-                    }
-                }
-                return;
-            }
-            let total = 0;
-            for (const dir of dirs) {
-                total += _importMaterialGroupFolders(dir, { mode: 'append', silent: true }) || 0;
-            }
-            if (typeof showToast === 'function') {
-                if (total > 0) {
-                    showToast(`📦 已导入 ${total} 个素材组任务`, 'success', 5000);
-                } else {
-                    showToast('未识别到素材组；请确认文件夹内包含音频和视频，或总文件夹下有素材组子文件夹', 'warning', 6000);
-                }
-            }
+            await _importFoldersAsFileTaskTabs(dirs);
             return;
         }
 
@@ -7448,6 +7531,12 @@ function _showColumnSettingsPopup(anchor) {
     if (existing) { existing.remove(); return; }
 
     const vis = _getColVisibility();
+    const ACTIVE_COL_MODE_KEY = 'rbt-col-active-mode';
+    let activeColMode = localStorage.getItem(ACTIVE_COL_MODE_KEY) || '';
+    const _setActiveColMode = (mode) => {
+        activeColMode = mode || 'manual';
+        localStorage.setItem(ACTIVE_COL_MODE_KEY, activeColMode);
+    };
     const popup = document.createElement('div');
     popup.id = 'rbt-col-settings-popup';
     // Position near anchor
@@ -7459,6 +7548,17 @@ function _showColumnSettingsPopup(anchor) {
 
     // ── 预设方案定义 ──
     const presets = [
+        {
+            name: '🚀 一键工作流',
+            desc: '一键工作流常用列：背景视频、原文案、音色、配音与字幕结果、常用调整参数、命名和模板',
+            cols: [
+                'exportname',
+                'bg', 'bgscale', 'bgdurscale', 'bgvol',
+                'ai_script', 'tts_text', 'txtcontent', 'tts_voice',
+                'audio', 'voicevol', 'audiodurscale', 'srt',
+                'bgm', 'dur', 'tpl'
+            ]
+        },
         {
             name: 'HeyGen匹配字幕',
             desc: '背景视频 + 根据背景素材声音对齐字幕',
@@ -7525,16 +7625,13 @@ function _showColumnSettingsPopup(anchor) {
         const p = presets[i];
         html += `<button class="rbt-col-preset-btn" data-preset="${i}" title="${p.desc}"
             style="padding:3px 10px;border-radius:4px;border:1px solid #333;background:#1e1e38;color:#ccc;font-size:11px;cursor:pointer;transition:all .15s;white-space:nowrap;"
-            onmouseover="this.style.background='#2a2a5a';this.style.borderColor='var(--accent)';this.style.color='#fff'"
-            onmouseout="this.style.background='#1e1e38';this.style.borderColor='#333';this.style.color='#ccc'"
         >${p.name}</button>`;
     }
     // 显示完整（全部列）按钮
     html += `<button id="rbt-col-preset-showall" title="显示所有列"
-        style="padding:3px 10px;border-radius:4px;border:1px solid #50c878;background:rgba(80,200,120,0.1);color:#50c878;font-size:11px;cursor:pointer;transition:all .15s;white-space:nowrap;font-weight:600;"
-        onmouseover="this.style.background='rgba(80,200,120,0.25)';this.style.color='#6fea9d'"
-        onmouseout="this.style.background='rgba(80,200,120,0.1)';this.style.color='#50c878'"
+        style="padding:3px 10px;border-radius:4px;border:1px solid #333;background:#1e1e38;color:#ccc;font-size:11px;cursor:pointer;transition:all .15s;white-space:nowrap;font-weight:600;"
     >📋 显示完整</button>`;
+    html += `<span id="rbt-col-custom-mode" style="display:none;padding:3px 10px;border-radius:4px;border:1px solid #f59e0b;background:rgba(245,158,11,.15);color:#fbbf24;font-size:11px;font-weight:700;white-space:nowrap;box-shadow:0 0 10px rgba(245,158,11,.25);">✏️ 自定义模式</span>`;
     html += '</div></div>';
 
     // ── Categorized columns ──
@@ -7604,6 +7701,65 @@ function _showColumnSettingsPopup(anchor) {
             chk.checked = vis[chk.dataset.col] !== false;
         });
     };
+    const _matchesVisibleColumns = (enabledCols) => {
+        const enabled = new Set(enabledCols || []);
+        return _RBT_COLUMNS.every(col => (vis[col.key] !== false) === enabled.has(col.key));
+    };
+    const _refreshPresetHighlight = () => {
+        const matchedBuiltinIndex = presets.findIndex(preset => _matchesVisibleColumns(preset.cols));
+        const allVisible = _RBT_COLUMNS.every(col => vis[col.key] !== false);
+        const matchedCustomName = Object.keys(customPresets).find(name => _matchesVisibleColumns(customPresets[name]));
+        if (!activeColMode) {
+            if (matchedBuiltinIndex >= 0) _setActiveColMode(`builtin:${matchedBuiltinIndex}`);
+            else if (allVisible) _setActiveColMode('showall');
+            else if (matchedCustomName) _setActiveColMode(`custom:${matchedCustomName}`);
+            else _setActiveColMode('manual');
+        } else if (
+            (activeColMode.startsWith('builtin:') && matchedBuiltinIndex !== parseInt(activeColMode.split(':')[1]))
+            || (activeColMode === 'showall' && !allVisible)
+            || (activeColMode.startsWith('custom:')
+                && (!Object.prototype.hasOwnProperty.call(customPresets, activeColMode.slice(7))
+                    || !_matchesVisibleColumns(customPresets[activeColMode.slice(7)])))
+        ) {
+            _setActiveColMode('manual');
+        }
+        popup.querySelectorAll('.rbt-col-preset-btn').forEach(btn => {
+            const preset = presets[parseInt(btn.dataset.preset)];
+            const active = !!preset
+                && activeColMode === `builtin:${btn.dataset.preset}`
+                && _matchesVisibleColumns(preset.cols);
+            btn.style.background = active ? 'linear-gradient(135deg,#5b4bb7,#7c5cff)' : '#1e1e38';
+            btn.style.borderColor = active ? '#b8a7ff' : '#333';
+            btn.style.color = active ? '#fff' : '#ccc';
+            btn.style.boxShadow = active ? '0 0 0 1px rgba(184,167,255,.35),0 0 12px rgba(124,92,255,.45)' : 'none';
+            btn.style.fontWeight = active ? '700' : '400';
+            btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+        });
+        const showAllBtn = popup.querySelector('#rbt-col-preset-showall');
+        if (showAllBtn) {
+            const active = activeColMode === 'showall' && allVisible;
+            showAllBtn.style.background = active ? 'rgba(80,200,120,0.22)' : '#1e1e38';
+            showAllBtn.style.borderColor = active ? '#50c878' : '#333';
+            showAllBtn.style.color = active ? '#6fea9d' : '#ccc';
+            showAllBtn.style.boxShadow = active ? '0 0 12px rgba(80,200,120,.32)' : 'none';
+            showAllBtn.setAttribute('aria-pressed', active ? 'true' : 'false');
+        }
+        popup.querySelectorAll('.rbt-col-custom-btn').forEach(btn => {
+            const cols = customPresets[btn.dataset.customName] || [];
+            const active = activeColMode === `custom:${btn.dataset.customName}` && _matchesVisibleColumns(cols);
+            const wrapper = btn.parentElement;
+            if (wrapper) {
+                wrapper.style.background = active ? 'rgba(124,92,255,.28)' : '#1e1e38';
+                wrapper.style.borderColor = active ? '#a78bfa' : '#333';
+                wrapper.style.boxShadow = active ? '0 0 10px rgba(124,92,255,.35)' : 'none';
+            }
+            btn.style.color = active ? '#fff' : '#ccc';
+            btn.style.fontWeight = active ? '700' : '400';
+        });
+        const customMode = popup.querySelector('#rbt-col-custom-mode');
+        if (customMode) customMode.style.display = activeColMode === 'manual' ? 'inline-flex' : 'none';
+    };
+    _refreshPresetHighlight();
 
     // Event: preset buttons
     popup.querySelectorAll('.rbt-col-preset-btn').forEach(btn => {
@@ -7612,51 +7768,63 @@ function _showColumnSettingsPopup(anchor) {
             // Turn all off first, then turn on only preset cols
             for (const col of _RBT_COLUMNS) vis[col.key] = false;
             for (const k of p.cols) vis[k] = true;
+            _setActiveColMode(`builtin:${btn.dataset.preset}`);
             _saveColVisibility(vis);
             _applyColVisibility();
             _syncCheckboxes();
+            _refreshPresetHighlight();
         });
     });
 
     // Event: 显示完整（全部列）
     popup.querySelector('#rbt-col-preset-showall')?.addEventListener('click', () => {
         for (const col of _RBT_COLUMNS) vis[col.key] = true;
+        _setActiveColMode('showall');
         _saveColVisibility(vis);
         _applyColVisibility();
         _syncCheckboxes();
+        _refreshPresetHighlight();
     });
 
     // Event: checkbox change
     popup.querySelectorAll('.rbt-col-vis-chk').forEach(chk => {
         chk.addEventListener('change', () => {
             vis[chk.dataset.col] = chk.checked;
+            _setActiveColMode('manual');
             _saveColVisibility(vis);
             _applyColVisibility();
+            _refreshPresetHighlight();
         });
     });
 
     // Event: select all
     popup.querySelector('#rbt-col-vis-all').addEventListener('click', () => {
         for (const col of _RBT_COLUMNS) vis[col.key] = true;
+        _setActiveColMode('manual');
         _saveColVisibility(vis);
         _applyColVisibility();
         _syncCheckboxes();
+        _refreshPresetHighlight();
     });
 
     // Event: select none
     popup.querySelector('#rbt-col-vis-none').addEventListener('click', () => {
         for (const col of _RBT_COLUMNS) vis[col.key] = false;
+        _setActiveColMode('manual');
         _saveColVisibility(vis);
         _applyColVisibility();
         _syncCheckboxes();
+        _refreshPresetHighlight();
     });
 
     // Event: reset
     popup.querySelector('#rbt-col-vis-reset').addEventListener('click', () => {
         for (const col of _RBT_COLUMNS) vis[col.key] = col.default;
+        _setActiveColMode('manual');
         _saveColVisibility(vis);
         _applyColVisibility();
         _syncCheckboxes();
+        _refreshPresetHighlight();
     });
 
     // Event: close
@@ -7717,9 +7885,11 @@ function _showColumnSettingsPopup(anchor) {
             if (!cols) return;
             for (const col of _RBT_COLUMNS) vis[col.key] = false;
             for (const k of cols) vis[k] = true;
+            _setActiveColMode(`custom:${btn.dataset.customName}`);
             _saveColVisibility(vis);
             _applyColVisibility();
             _syncCheckboxes();
+            _refreshPresetHighlight();
         });
     });
 
@@ -7770,6 +7940,7 @@ function _showColumnSettingsPopup(anchor) {
                     for (const col of _RBT_COLUMNS) {
                         if (col.key in data.columns) vis[col.key] = data.columns[col.key];
                     }
+                    _setActiveColMode('manual');
                     _saveColVisibility(vis);
                     _applyColVisibility();
                 }
@@ -10396,14 +10567,23 @@ async function _rbtLoadVoiceList() {
         const response = await apiFetch(`${API_BASE}/elevenlabs/voices`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({})
+            // 同时请求账号音色与 ElevenLabs 社区热门音色。
+            // 输入框仍是 datalist，列表外的 Voice ID 也可以手动输入。
+            body: JSON.stringify({ include_shared: true })
         });
         const data = await response.json();
 
         if (data.voices && data.voices.length > 0) {
-            _rbtVoiceCache = data.voices;
-            _populateVoiceSelect(inputEl, data.voices, prevValue);
-            inputEl.placeholder = '输入或选择音色ID';
+            const seen = new Set();
+            _rbtVoiceCache = data.voices
+                .filter(v => v && v.voice_id && !seen.has(v.voice_id) && seen.add(v.voice_id))
+                .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, {
+                    numeric: true,
+                    sensitivity: 'base',
+                }));
+            _populateVoiceSelect(inputEl, _rbtVoiceCache, prevValue);
+            inputEl.placeholder = `选择音色或输入 ID（${_rbtVoiceCache.length} 个）`;
+            inputEl.title = `已加载 ${_rbtVoiceCache.length} 个当前 ElevenLabs 账号可访问的音色；也可手动输入 Voice ID`;
         } else {
             inputEl.placeholder = '无可用音色';
         }
@@ -10424,7 +10604,9 @@ function _populateVoiceSelect(inputEl, voices, prevValue) {
     for (const v of voices) {
         const opt = document.createElement('option');
         opt.value = v.voice_id;
-        opt.textContent = `${v.name}`;
+        const category = v.category ? ` · ${v.category}` : '';
+        opt.label = `${v.name || v.voice_id}${category}`;
+        opt.textContent = opt.label;
         datalist.appendChild(opt);
     }
 
@@ -10797,6 +10979,72 @@ async function _runTTSBatchProcessing() {
     }
 }
 
+async function _runWorkflowAcrossAllTabs(modeBtnId) {
+    if (!_batchTableState.tabs.length) return false;
+    try { _applyBatchTableChanges(); } catch (_) { }
+    _syncTasksToActiveTab();
+
+    const originalTabId = _batchTableState.activeTabId;
+    const tabIds = _batchTableState.tabs.map(tab => tab.id);
+    let processedTabs = 0;
+    let failedTabs = 0;
+
+    for (let tabPos = 0; tabPos < tabIds.length; tabPos++) {
+        const tabId = tabIds[tabPos];
+        const tab = _batchTableState.tabs.find(t => t.id === tabId);
+        if (!tab) continue;
+        _switchToTab(tabId, { skipSave: true });
+        const tasks = window._reelsState?.tasks || [];
+        showToast(`跨标签工作流 ${tabPos + 1}/${tabIds.length}：${tab.name}`, 'info');
+
+        try {
+            if (modeBtnId === 'rbt-ai-gemini-btn') {
+                if (tasks.some(t => String(t.aiScript || '').trim())) {
+                    const ok = await _runGeminiBatchProcessing();
+                    if (!ok) failedTabs++;
+                    else processedTabs++;
+                }
+            } else if (modeBtnId === 'rbt-ai-tts-all-btn') {
+                if (tasks.some(t => String(t.ttsText || '').trim())) {
+                    await _runTTSBatchProcessing();
+                    processedTabs++;
+                }
+            } else {
+                let stageOk = true;
+                if (tasks.some(t => String(t.aiScript || '').trim())) {
+                    stageOk = await _runGeminiBatchProcessing();
+                }
+                if (stageOk && tasks.some(t => String(t.ttsText || '').trim())) {
+                    await _runTTSBatchProcessing();
+                    const alignIndices = tasks.map((task, idx) => ({ task, idx }))
+                        .filter(({ task }) => String(task.txtContent || '').trim() && task.audioPath && !task.aligned && !task.srtPath)
+                        .map(({ idx }) => idx);
+                    if (alignIndices.length) {
+                        await _batchAlignAllTasks({
+                            targetIndices: alignIndices,
+                            forceRealign: false,
+                            forceTranscribe: false,
+                        });
+                    }
+                }
+                if (stageOk) processedTabs++;
+                else failedTabs++;
+            }
+        } catch (error) {
+            failedTabs++;
+            console.error(`[跨标签工作流] ${tab.name} 失败:`, error);
+        }
+        _syncTasksToActiveTab();
+    }
+
+    if (_batchTableState.tabs.some(tab => tab.id === originalTabId)) {
+        _switchToTab(originalTabId, { skipSave: true });
+    }
+    if (typeof _batchAutoSave === 'function') _batchAutoSave();
+    showToast(`跨标签工作流完成：成功 ${processedTabs} 个标签${failedTabs ? `，失败 ${failedTabs} 个` : ''}`, failedTabs ? 'info' : 'success', 6000);
+    return failedTabs === 0;
+}
+
 async function _runGeminiBatchProcessing() {
     // 先同步 DOM 输入框的值到 state，确保能读到用户填入的数据
     try { _applyBatchTableChanges(); } catch (e) { }
@@ -10950,6 +11198,23 @@ function _applyAiPresetBatch() {
                 <div><label style="font-size:11px;color:#888;">音频变速 %</label><input id="_p-audioscale" type="number" value="100" min="10" max="500" style="width:100%;padding:5px;background:#222;color:#fff;border:1px solid #444;border-radius:4px;font-size:11px;"></div>
             </div>
         </div>
+        <div style="margin-bottom:12px;padding:10px;background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.22);border-radius:6px;">
+            <label style="font-size:12px;color:#c7d2fe;">应用范围</label>
+            <select id="_p-scope" style="width:100%;padding:6px;margin-top:5px;background:#222;color:#fff;border:1px solid #555;border-radius:5px;font-size:12px;">
+                <option value="selected">当前标签的选中行（未选则当前标签全部）</option>
+                <option value="current">当前标签全部任务</option>
+                <option value="tabs">勾选的多个标签页</option>
+                <option value="all">全部标签页（一键批量设置）</option>
+            </select>
+            <div id="_p-tab-list" style="display:none;max-height:120px;overflow:auto;margin-top:7px;padding:6px;background:rgba(0,0,0,.2);border-radius:4px;">
+                ${_batchTableState.tabs.map(tab => `
+                    <label style="display:flex;align-items:center;gap:6px;padding:3px 2px;font-size:11px;color:#ccc;cursor:pointer;">
+                        <input type="checkbox" class="_p-tab-check" value="${_escHtml(tab.id)}" ${tab.id === _batchTableState.activeTabId ? 'checked' : ''}>
+                        <span>${_escHtml(tab.name)}</span>
+                        <span style="margin-left:auto;color:#777;">${(tab.tasks || []).length} 条</span>
+                    </label>`).join('')}
+            </div>
+        </div>
         <div style="display:flex;gap:8px;margin-bottom:8px;">
             <input id="_p-save-name" style="flex:1;padding:6px;background:#222;color:#fff;border:1px solid #444;border-radius:4px;font-size:12px;" placeholder="预设名称（可保存）">
             <button id="_p-save-btn" style="padding:6px 12px;background:#3b82f6;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;">💾 保存</button>
@@ -10957,7 +11222,7 @@ function _applyAiPresetBatch() {
         </div>
         <div style="display:flex;gap:8px;justify-content:flex-end;border-top:1px solid #333;padding-top:12px;">
             <button id="_p-cancel" style="padding:8px 20px;background:#333;color:#aaa;border:1px solid #555;border-radius:6px;cursor:pointer;">取消</button>
-            <button id="_p-apply" style="padding:8px 20px;background:linear-gradient(135deg,#a855f7,#6366f1);color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;">✅ 应用到选中行</button>
+            <button id="_p-apply" style="padding:8px 20px;background:linear-gradient(135deg,#a855f7,#6366f1);color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;">✅ 一键应用设置</button>
         </div>
     `;
     overlay.appendChild(dialog);
@@ -10965,6 +11230,11 @@ function _applyAiPresetBatch() {
     overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
 
     const sel = dialog.querySelector('#_preset-sel');
+    const scopeSelect = dialog.querySelector('#_p-scope');
+    const tabList = dialog.querySelector('#_p-tab-list');
+    scopeSelect.addEventListener('change', () => {
+        tabList.style.display = scopeSelect.value === 'tabs' ? 'block' : 'none';
+    });
     const fillFields = (p) => {
         dialog.querySelector('#_p-voice').value = p.voiceId || '';
         dialog.querySelector('#_p-tpl').value = p.tpl || '';
@@ -11000,26 +11270,52 @@ function _applyAiPresetBatch() {
 
     dialog.querySelector('#_p-apply').addEventListener('click', () => {
         const preset = _readPresetFields(dialog);
-        const indices = _getSelectedIndices();
-        const tasks = window._reelsState.tasks;
-        const targetIdxs = indices.length > 0 ? indices : tasks.map((_, i) => i);
+        const scope = scopeSelect.value;
+        try { _applyBatchTableChanges(); } catch (_) { }
+        _syncTasksToActiveTab();
 
-        for (const idx of targetIdxs) {
-            const task = tasks[idx];
+        const applyPreset = (task) => {
+            if (!task) return;
             if (preset.voiceId) task.ttsVoiceId = preset.voiceId;
             if (preset.tpl) task._subtitlePreset = preset.tpl;
             if (preset.overlayTpl) {
                 task._overlayPresetName = preset.overlayTpl;
                 _applyOverlayGroupPresetToTask(task, preset.overlayTpl);
             }
-            if (preset.bgScale !== undefined && preset.bgScale !== 100) task.bgScale = preset.bgScale;
-            if (preset.bgDurScale !== undefined && preset.bgDurScale !== 100) task.bgDurScale = preset.bgDurScale;
-            if (preset.audioDurScale !== undefined && preset.audioDurScale !== 100) task.audioDurScale = preset.audioDurScale;
+            task.bgScale = preset.bgScale;
+            task.bgDurScale = preset.bgDurScale;
+            task.audioDurScale = preset.audioDurScale;
+        };
+
+        let targets = [];
+        const indices = _getSelectedIndices();
+        const activeTab = _getActiveTab();
+        if (scope === 'selected') {
+            const currentTasks = window._reelsState.tasks || [];
+            targets = (indices.length > 0 ? indices.map(i => currentTasks[i]) : currentTasks).filter(Boolean);
+        } else if (scope === 'current') {
+            targets = activeTab?.tasks || [];
+        } else {
+            const selectedTabIds = scope === 'all'
+                ? new Set(_batchTableState.tabs.map(tab => tab.id))
+                : new Set(Array.from(dialog.querySelectorAll('._p-tab-check:checked')).map(el => el.value));
+            if (selectedTabIds.size === 0) {
+                alert('请至少勾选一个标签页');
+                return;
+            }
+            for (const tab of _batchTableState.tabs) {
+                if (selectedTabIds.has(tab.id)) targets.push(...(tab.tasks || []));
+            }
         }
+        targets.forEach(applyPreset);
+
+        // 如果直接修改了标签存储，重新载入当前标签以显示最新结果。
+        if (scope !== 'selected' && activeTab) _loadTabTasks(activeTab);
         overlay.remove();
         _skipNextApply = true;
         _renderBatchTable();
-        showToast(`预设已应用到 ${targetIdxs.length} 行`, 'success');
+        if (typeof _batchAutoSave === 'function') _batchAutoSave();
+        showToast(`预设已应用到 ${targets.length} 个任务`, 'success');
     });
 }
 
@@ -11052,14 +11348,15 @@ async function _openAISettingsModal() {
         <div style="margin-bottom:12px;">
             <label style="display:block;font-size:12px;color:#ccc;margin-bottom:6px;">模型选择</label>
             <select id="_ai-model" style="width:100%;padding:8px;background:#222;color:#fff;border:1px solid #555;border-radius:6px;font-size:13px;cursor:pointer;">
-                <option value="gemini-3.5-flash">⚡ gemini-3.5-flash (GA·最新最快)</option>
-                <option value="gemini-3.1-pro">🧠 gemini-3.1-pro (GA·高级推理)</option>
-                <option value="gemini-3.1-flash">⚡ gemini-3.1-flash (GA·高速通用)</option>
-                <option value="gemini-3.1-flash-lite" selected>⚡ gemini-3.1-flash-lite (GA·Lite⚡·默认)</option>
-                <option value="gemini-2.5-pro">🧠 gemini-2.5-pro (GA·强推理)</option>
+                <option value="gemini-3.5-flash-lite" selected>⚡ gemini-3.5-flash-lite (GA·免费推荐)</option>
+                <option value="gemini-3.1-flash-lite">⚡ gemini-3.1-flash-lite (GA·低成本备用)</option>
+                <option value="gemini-3.5-flash">🧠 gemini-3.5-flash (GA·高质量)</option>
                 <option value="gemini-2.5-flash">⚡ gemini-2.5-flash (GA·快速稳定)</option>
+                <option value="gemini-2.5-flash-lite">⚡ gemini-2.5-flash-lite (GA·兼容备用)</option>
+                <option value="gemini-2.5-pro">🧠 gemini-2.5-pro (GA·强推理)</option>
+                <option value="gemini-3.1-pro-preview">🧠 gemini-3.1-pro-preview (预览·限制较严)</option>
                 <option value="gemma-4-31b-it">💎 Gemma 4 31B (Dense·256K·30RPM)</option>
-                <option value="gemma-4-26b-it">💎 Gemma 4 26B MoE (256K·30RPM)</option>
+                <option value="gemma-4-26b-a4b-it">💎 Gemma 4 26B A4B (256K·30RPM)</option>
             </select>
         </div>
         
@@ -11102,7 +11399,7 @@ async function _openAISettingsModal() {
         const resp = await apiFetch('settings/gemini-keys', { method: 'GET' });
         const data = await resp.json();
         if (data) {
-            dialog.querySelector('#_ai-keys').value = (data.keys || []).join('\\n');
+            dialog.querySelector('#_ai-keys').value = (data.keys || []).join('\n');
             if (data.model) dialog.querySelector('#_ai-model').value = data.model;
             if (data.prompt) dialog.querySelector('#_ai-prompt').value = data.prompt;
             if (data.lineBreakMode === 'script') {
@@ -11124,7 +11421,7 @@ async function _openAISettingsModal() {
     }));
 
     dialog.querySelector('#_ai-save').addEventListener('click', async () => {
-        const keyLines = dialog.querySelector('#_ai-keys').value.split('\\n').map(s => s.trim()).filter(s => s);
+        const keyLines = dialog.querySelector('#_ai-keys').value.split(/\r?\n/).map(s => s.trim()).filter(s => s);
         const promptRaw = dialog.querySelector('#_ai-prompt').value; // let it be empty if space only
         const lbMode = dialog.querySelector('input[name="_ai-lb-mode"]:checked')?.value || 'ai';
         const selectedModel = dialog.querySelector('#_ai-model').value;
@@ -11545,6 +11842,118 @@ function _importFoldersAsIndependentQueues(dirs) {
     if (typeof _batchAutoSave === 'function') _batchAutoSave();
     return { queueCount, taskCount };
 }
+
+/**
+ * 拖入文件夹专用：一个文件夹一个标签页、一个主媒体文件一个任务。
+ * 同名音频/SRT/TXT 作为伴随文件挂到视频/图片任务，避免重复任务；
+ * 没有同名画面的音频仍独立生成任务。素材组按钮继续使用旧导入器。
+ */
+async function _importFoldersAsFileTaskTabs(dirs) {
+    const validDirs = [...new Set((dirs || []).filter(Boolean))];
+    if (validDirs.length === 0) return { tabCount: 0, taskCount: 0, skippedCount: 0 };
+    if (!window.electronAPI || !window.electronAPI.scanDirectory) {
+        if (typeof showToast === 'function') showToast('请在桌面应用中使用文件夹拖拽', 'error');
+        return { tabCount: 0, taskCount: 0, skippedCount: validDirs.length };
+    }
+
+    _syncTasksToActiveTab();
+    let tabCount = 0;
+    let taskCount = 0;
+    let skippedCount = 0;
+
+    for (const dir of validDirs) {
+        const files = (await window.electronAPI.scanDirectory(dir) || [])
+            .filter(f => f && !f.isDirectory && f.path)
+            .sort(_naturalSortByName);
+        const supported = files.filter(f => {
+            const ext = String(f.name || '').split('.').pop().toLowerCase();
+            return _MAT_BG_EXTS.has(ext) || _MAT_AUDIO_EXTS.has(ext)
+                || _MAT_SRT_EXTS.has(ext) || _MAT_TXT_EXTS.has(ext);
+        });
+        if (supported.length === 0) {
+            skippedCount++;
+            continue;
+        }
+
+        const byBase = new Map();
+        for (const f of supported) {
+            const base = _baseFileName(f.name || '');
+            if (!byBase.has(base)) byBase.set(base, { visuals: [], audio: null, srt: null, txt: null });
+            const group = byBase.get(base);
+            const ext = String(f.name || '').split('.').pop().toLowerCase();
+            if (_MAT_AUDIO_EXTS.has(ext)) group.audio ||= f;
+            else if (_MAT_SRT_EXTS.has(ext)) group.srt ||= f;
+            else if (_MAT_TXT_EXTS.has(ext)) group.txt ||= f;
+            else if (_MAT_BG_EXTS.has(ext)) group.visuals.push(f);
+        }
+
+        const tasks = [];
+        for (const [base, group] of byBase) {
+            const primaries = group.visuals.length ? group.visuals : (group.audio ? [group.audio] : []);
+            for (let primaryIndex = 0; primaryIndex < primaries.length; primaryIndex++) {
+                const primary = primaries[primaryIndex];
+                const task = _createEmptyTask();
+                const duplicateSuffix = primaries.length > 1 ? `_${primaryIndex + 1}` : '';
+                task.baseName = `${base}${duplicateSuffix}`;
+                task.fileName = `${task.baseName}.mp4`;
+                if (group.visuals.length) {
+                    _setTaskSingleBackground(task, primary.path, { clearBgSrcUrl: true, detectImage: true });
+                    if (group.audio) task.audioPath = group.audio.path;
+                } else {
+                    task.audioPath = primary.path;
+                }
+                if (group.srt) {
+                    task.srtPath = group.srt.path;
+                    _readSrtViaElectronAPI(task, group.srt.path);
+                }
+                if (group.txt) {
+                    task.txtPath = group.txt.path;
+                    try {
+                        task.txtContent = await window.electronAPI.readFileText(group.txt.path) || '';
+                        task.aligned = false;
+                    } catch (e) {
+                        console.warn('[FolderTaskTabs] TXT read failed:', group.txt.path, e);
+                    }
+                }
+                _ensureTaskId(task);
+                tasks.push(task);
+            }
+        }
+        if (tasks.length === 0) {
+            skippedCount++;
+            continue;
+        }
+
+        const baseName = _getPathBaseName(dir) || `文件夹${tabCount + 1}`;
+        const existingNames = new Set(_batchTableState.tabs.map(tab => tab.name));
+        let tabName = baseName;
+        let suffix = 2;
+        while (existingNames.has(tabName)) tabName = `${baseName} (${suffix++})`;
+        _addTab(tabName);
+        const tab = _getActiveTab();
+        tab.materialDir = dir;
+        tab.tasks = tasks;
+        _loadTabTasks(tab);
+        tabCount++;
+        taskCount += tasks.length;
+    }
+
+    _resolveDuplicateTaskNames(window._reelsState.tasks || []);
+    _skipNextApply = true;
+    _renderBatchTable();
+    if (typeof _renderTaskList === 'function') _renderTaskList();
+    if (typeof _batchAutoSave === 'function') _batchAutoSave();
+    if (typeof showToast === 'function') {
+        if (tabCount > 0) {
+            const skipped = skippedCount ? `，跳过 ${skippedCount} 个空/不支持的文件夹` : '';
+            showToast(`📚 已建立 ${tabCount} 个标签页，共 ${taskCount} 条文件任务${skipped}`, 'success', 6500);
+        } else {
+            showToast('文件夹中没有可创建任务的视频、图片或音频', 'warning', 6000);
+        }
+    }
+    return { tabCount, taskCount, skippedCount };
+}
+window.reelsImportFoldersAsTaskTabs = _importFoldersAsFileTaskTabs;
 
 async function _selectAndImportMaterialGroupFolders(options = {}) {
     if (!window.require && !(window.electronAPI && window.electronAPI.selectDirectory)) {
@@ -13867,9 +14276,15 @@ function _updateBatchSelectCount() {
     if (!container) return;
     const el = container.querySelector('#rbt-selected-count');
     const exportBtn = container.querySelector('#rbt-export-selected-btn');
+    const deleteBtn = container.querySelector('#rbt-delete-selected');
     const count = _batchTableState.selectedRows.size;
     if (el) el.textContent = count > 0 ? `已选 ${count} 行` : '';
     if (exportBtn) exportBtn.style.display = count > 0 ? '' : 'none';
+    if (deleteBtn) {
+        deleteBtn.disabled = count === 0;
+        deleteBtn.style.opacity = count > 0 ? '1' : '0.45';
+        deleteBtn.title = count > 0 ? `删除当前标签页中选中的 ${count} 行` : '请先勾选任务行';
+    }
 
     const tasks = window._reelsState?.tasks || [];
     const allSelected = tasks.length > 0 && count === tasks.length;
@@ -14993,6 +15408,7 @@ function _batchAutoRestore() {
             }));
             _batchTableState.activeTabId = data.activeTabId || _batchTableState.tabs[0].id;
             _batchTableState.nextTabId = data.nextTabId || _batchTableState.tabs.length + 1;
+            _normalizeBatchTabState();
             // Load active tab's tasks
             const activeTab = _getActiveTab();
             if (activeTab && activeTab.tasks.length > 0) {
@@ -15154,6 +15570,7 @@ window._extLoadProject = async (pathStr) => {
             _batchTableState.projectName = parts[parts.length - 1]; // update current name
             _batchTableState.activeTabId = data.activeTabId || _batchTableState.tabs[0].id;
             _batchTableState.nextTabId = data.nextTabId || _batchTableState.tabs.length + 1;
+            _normalizeBatchTabState();
             const activeTab = _getActiveTab();
             _loadTabTasks(activeTab);
             _skipNextApply = true;
@@ -15470,6 +15887,7 @@ function _batchImportConfig(file) {
                 }));
                 _batchTableState.activeTabId = data.activeTabId || _batchTableState.tabs[0].id;
                 _batchTableState.nextTabId = data.nextTabId || _batchTableState.tabs.length + 1;
+                _normalizeBatchTabState();
                 const activeTab = _getActiveTab();
                 _loadTabTasks(activeTab);
                 _skipNextApply = true;
@@ -16944,7 +17362,7 @@ function _bindMediaSidebarEvents(container) {
             poolArea.style.background = '';
             poolArea.style.boxShadow = '';
         });
-        poolArea.addEventListener('drop', (e) => {
+        poolArea.addEventListener('drop', async (e) => {
             e.preventDefault();
             e.stopPropagation();
             poolArea.style.background = '';
@@ -16957,29 +17375,9 @@ function _bindMediaSidebarEvents(container) {
                 }).filter(Boolean);
                 const dirs = paths.filter(p => _isDirectoryPath(p));
                 if (dirs.length > 0) {
-                    if (dirs.length > 1) {
-                        const result = _importFoldersAsIndependentQueues(dirs);
-                        const filePaths = paths.filter(p => !_isDirectoryPath(p));
-                        if (filePaths.length > 0) _addFilesByPath(filePaths);
-                        if (typeof showToast === 'function') {
-                            if (result.queueCount > 0) {
-                                showToast(`📚 已建立 ${result.queueCount} 个独立文件夹队列，共 ${result.taskCount} 条任务`, 'success', 6000);
-                            } else if (filePaths.length === 0) {
-                                showToast('未识别到完整素材组；每个文件夹需包含音频和视频', 'warning', 6000);
-                            }
-                        }
-                        return;
-                    }
-                    let total = 0;
-                    for (const dir of dirs) {
-                        total += _importMaterialGroupFolders(dir, { mode: 'append', silent: true }) || 0;
-                    }
+                    await _importFoldersAsFileTaskTabs(dirs);
                     const filePaths = paths.filter(p => !_isDirectoryPath(p));
                     if (filePaths.length > 0) _addFilesByPath(filePaths);
-                    if (typeof showToast === 'function') {
-                        if (total > 0) showToast(`📦 已导入 ${total} 个素材组任务`, 'success', 5000);
-                        else if (filePaths.length === 0) showToast('未识别到素材组；请确认文件夹内包含音频和视频，或总文件夹下有素材组子文件夹', 'warning', 6000);
-                    }
                 } else {
                     handleFiles(files);
                 }

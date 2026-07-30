@@ -24,6 +24,24 @@ let _currentTemplateContext = {
     name: '',
 };
 
+const TEMPLATE_CARD_SIZE_KEY = 'videokit_template_card_size';
+
+function _getTemplateCardSize() {
+    const stored = parseInt(localStorage.getItem(TEMPLATE_CARD_SIZE_KEY) || '240', 10);
+    return Number.isFinite(stored) ? Math.max(100, Math.min(360, stored)) : 240;
+}
+
+function _setTemplateCardSize(value) {
+    const size = Math.max(100, Math.min(360, parseInt(value, 10) || 240));
+    localStorage.setItem(TEMPLATE_CARD_SIZE_KEY, String(size));
+    const slider = document.getElementById('tpl-card-size-slider');
+    const label = document.getElementById('tpl-card-size-value');
+    const grid = document.getElementById('tpl-card-grid');
+    if (slider && Number(slider.value) !== size) slider.value = String(size);
+    if (label) label.textContent = `${size}px`;
+    if (grid) grid.style.setProperty('--tpl-card-size', `${size}px`);
+}
+
 function _setCurrentTemplateContext(id, name) {
     _currentTemplateContext = {
         id: id || '',
@@ -89,6 +107,11 @@ function openTemplateLibrary(onSelectCallback = null, opts = {}) {
                     <button onclick="_exportAllTemplates()" style="padding:5px 12px;font-size:11px;font-weight:600;background:rgba(236,72,153,0.15);color:#ec4899;border:1px solid rgba(236,72,153,0.3);border-radius:8px;cursor:pointer;">📤 导出全部</button>
                     <span id="tpl-current-template-label" style="max-width:170px;font-size:10px;color:#777;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span>
                     `}
+                    <label title="调整模板卡片大小" style="display:flex;align-items:center;gap:5px;padding:3px 7px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);border-radius:8px;color:#999;font-size:10px;white-space:nowrap;">
+                        <span>卡片</span>
+                        <input id="tpl-card-size-slider" type="range" min="100" max="360" step="20" value="${_getTemplateCardSize()}" oninput="_setTemplateCardSize(this.value)" style="width:82px;accent-color:#7c5cff;">
+                        <span id="tpl-card-size-value" style="width:35px;text-align:right;">${_getTemplateCardSize()}px</span>
+                    </label>
                     <button onclick="document.getElementById('template-library-modal').style.display='none'" style="background:none;border:none;color:#888;font-size:20px;cursor:pointer;padding:4px 8px;">✕</button>
                 </div>
             </div>
@@ -138,7 +161,7 @@ async function _refreshTemplateList() {
             return;
         }
 
-        let html = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px;">';
+        let html = `<div id="tpl-card-grid" style="--tpl-card-size:${_getTemplateCardSize()}px;display:grid;grid-template-columns:repeat(auto-fill,minmax(var(--tpl-card-size),var(--tpl-card-size)));gap:16px;justify-content:start;align-items:start;">`;
         for (const tpl of templates) {
             const thumbSrc = tpl.thumbnail || '';
             const dateStr = tpl.updatedAt ? new Date(tpl.updatedAt).toLocaleDateString('zh-CN') : '';
@@ -154,11 +177,11 @@ async function _refreshTemplateList() {
                 : `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#555;font-size:36px;">🎬</div>`;
 
             const actionsHtml = isPicker ? `
-                <div class="tpl-actions" style="position:absolute;top:8px;right:8px;display:flex;gap:4px;opacity:0;transition:opacity 0.2s;background:rgba(0,0,0,0.7);padding:6px;border-radius:8px;">
+                <div class="tpl-actions" style="position:absolute;top:8px;right:8px;left:8px;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:4px;opacity:0;transition:opacity 0.2s;background:rgba(0,0,0,0.7);padding:6px;border-radius:8px;">
                     <button data-action="pick" ${isDisabledPick ? 'disabled' : ''} style="padding:4px 12px;font-size:12px;font-weight:600;background:${isDisabledPick ? 'rgba(120,120,130,0.35)' : 'linear-gradient(135deg,#7c5cff,#a855f7)'};color:${isDisabledPick ? '#999' : '#fff'};border:none;border-radius:6px;cursor:${isDisabledPick ? 'not-allowed' : 'pointer'};">${isDisabledPick ? '已添加' : '✅ 选用此模板'}</button>
                 </div>
             ` : `
-                <div class="tpl-actions" style="position:absolute;top:8px;right:8px;display:flex;gap:4px;opacity:1;transition:opacity 0.2s;background:rgba(0,0,0,0.5);padding:4px;border-radius:8px;">
+                <div class="tpl-actions" style="position:absolute;top:8px;right:8px;left:8px;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:4px;opacity:1;transition:opacity 0.2s;background:rgba(0,0,0,0.5);padding:4px;border-radius:8px;">
                     <button data-action="load" style="padding:4px 6px;font-size:11px;background:rgba(59,130,246,0.9);color:#fff;border:none;border-radius:6px;cursor:pointer;" title="覆盖当前工程直接载入">🔽</button>
                     <button data-action="window" style="padding:4px 6px;font-size:11px;background:rgba(99,102,241,0.9);color:#fff;border:none;border-radius:6px;cursor:pointer;" title="独立新窗口打开">🪟</button>
                     <button data-action="export" style="padding:4px 6px;font-size:11px;background:rgba(16,185,129,0.2);color:#10b981;border:none;border-radius:6px;cursor:pointer;" title="仅导出 JSON 配置">📤</button>
@@ -172,7 +195,7 @@ async function _refreshTemplateList() {
                 <div class="tpl-card" data-id="${safeId}" data-name="${safeName}" data-disabled-pick="${isDisabledPick ? 'true' : 'false'}" style="background:rgba(255,255,255,${isDisabledPick ? '0.018' : '0.03'});border:1px solid ${isDisabledPick ? 'rgba(120,120,130,0.28)' : 'rgba(255,255,255,0.06)'};border-radius:12px;overflow:hidden;cursor:${isDisabledPick ? 'not-allowed' : 'pointer'};transition:all 0.2s;position:relative;${isDisabledPick ? 'opacity:0.58;' : ''}"
                      onmouseenter="this.style.borderColor='rgba(99,102,241,0.4)';this.style.transform='translateY(-2px)'"
                      onmouseleave="this.style.borderColor='rgba(255,255,255,0.06)';this.style.transform='none'">
-                    <div style="aspect-ratio:9/16;max-height:280px;background:#0a0a1a;overflow:hidden;">
+                    <div style="width:100%;aspect-ratio:9/16;background:#0a0a1a;overflow:hidden;">
                         ${thumbHtml}
                     </div>
                     ${isDisabledPick ? '<div style="position:absolute;left:8px;top:8px;background:rgba(16,185,129,0.9);color:#06150f;font-size:11px;font-weight:700;padding:3px 8px;border-radius:999px;">已添加</div>' : ''}
@@ -318,21 +341,84 @@ async function saveCurrentAsTemplate() {
     if (!name || !name.trim()) return;
 
     try {
-        const payload = _captureCurrentTemplatePayload(name.trim());
+        const baseName = name.trim();
+        const basePayload = _captureCurrentTemplatePayload(baseName);
+
+        // 批量表格存在多个分组时，每个非空分组保存为一个独立模板。
+        // 这样模板库仍保持“一张模板 = 一组任务”，加载后不会丢失或混合分组。
+        let groups = [];
+        if (typeof _batchTableState !== 'undefined' && Array.isArray(_batchTableState.tabs)) {
+            if (typeof _syncTasksToActiveTab === 'function') _syncTasksToActiveTab();
+            groups = _batchTableState.tabs.filter(tab => Array.isArray(tab.tasks) && tab.tasks.length > 0);
+        }
+
+        if (groups.length > 1) {
+            let saved = 0;
+            const failed = [];
+            const usedNames = new Map();
+
+            for (let index = 0; index < groups.length; index++) {
+                const group = groups[index];
+                const rawGroupName = String(group.name || `分组${index + 1}`).trim() || `分组${index + 1}`;
+                const seenCount = (usedNames.get(rawGroupName) || 0) + 1;
+                usedNames.set(rawGroupName, seenCount);
+                const groupName = seenCount > 1 ? `${rawGroupName}_${seenCount}` : rawGroupName;
+                const templateName = `${baseName}_${groupName}`;
+                const projectData = ReelsProject.collectProjectData({
+                    tasks: group.tasks,
+                    backgroundLibrary: basePayload.projectData.backgroundLibrary || [],
+                    style: basePayload.projectData.style || {},
+                    exportOpts: basePayload.projectData.exportOpts || {},
+                    selectedIdx: group.tasks.length ? 0 : -1,
+                });
+
+                try {
+                    const resp = await apiFetch(`${API_BASE}/templates/save`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            name: templateName,
+                            // 当前画面只属于激活分组，避免给其他分组保存错误缩略图。
+                            thumbnail: group.id === _batchTableState.activeTabId ? basePayload.thumbnail : '',
+                            projectData,
+                        }),
+                    });
+                    const result = await resp.json();
+                    if (!(result.success || result.data?.success)) {
+                        throw new Error(result.error || '保存失败');
+                    }
+                    saved++;
+                } catch (e) {
+                    failed.push(`${groupName}: ${e.message}`);
+                }
+            }
+
+            if (!saved) throw new Error(failed.join('；') || '所有分组保存失败');
+            _setCurrentTemplateContext('', '');
+            if (typeof showToast === 'function') {
+                showToast(
+                    `已按分组保存 ${saved} 个模板${failed.length ? `，${failed.length} 个失败` : ''} ✅`,
+                    failed.length ? 'warning' : 'success'
+                );
+            }
+            if (failed.length) console.warn('[Template] 分组模板保存失败:', failed);
+            _refreshTemplateList();
+            return;
+        }
+
+        const payload = basePayload;
         const resp = await apiFetch(`${API_BASE}/templates/save`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
         });
         const result = await resp.json();
-        if (result.success || result.data?.success) {
-            const savedId = result.id || result.data?.id || '';
-            if (savedId) _setCurrentTemplateContext(savedId, name.trim());
-            if (typeof showToast === 'function') showToast(`模板「${name}」已保存 ✅`, 'success');
-            _refreshTemplateList();
-        } else {
-            throw new Error(result.error || '保存失败');
-        }
+        if (!(result.success || result.data?.success)) throw new Error(result.error || '保存失败');
+
+        const savedId = result.id || result.data?.id || '';
+        if (savedId) _setCurrentTemplateContext(savedId, baseName);
+        if (typeof showToast === 'function') showToast(`模板「${baseName}」已保存 ✅`, 'success');
+        _refreshTemplateList();
     } catch (e) {
         if (typeof showToast === 'function') showToast('保存模板失败: ' + e.message, 'error');
     }

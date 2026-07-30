@@ -3607,10 +3607,10 @@
                       <select id="reels-style-scope" class="select" style="font-size:11px;min-width:150px;"
                         onchange="reelsOnStyleApplyScopeChange()">
                         <option value="task">仅当前任务</option>
-                        <option value="folder" selected>当前文件夹队列</option>
+                        <option value="folder" selected>当前分组 / 文件夹队列</option>
                         <option value="all">全部任务</option>
                       </select>
-                      <span style="font-size:11px;color:var(--text-secondary);">默认：同一文件夹队列内样式一致，不同队列互不影响</span>
+                      <span style="font-size:11px;color:var(--text-secondary);">默认：同一标签分组或文件夹队列内样式一致，组间互不影响</span>
                     </div>
                     <div class="param-row" style="margin-top: 6px; gap: 6px; align-items: center; flex-wrap: wrap;">
                       <button class="btn btn-secondary" style="font-size: 11px; padding: 3px 10px; flex:0 0 auto;" onclick="reelsSavePreset()">保存</button>
@@ -5510,14 +5510,15 @@
             
             <p class="hint" style="margin-top: 12px; font-weight: 500;">模型选择</p>
             <select id="gemini-model" class="select" style="width: 100%; font-size: 12px;">
-                <option value="gemini-3.5-flash">⚡ gemini-3.5-flash (GA·最新最快)</option>
-                <option value="gemini-3.1-pro">🧠 gemini-3.1-pro (GA·高级推理)</option>
-                <option value="gemini-3.1-flash">⚡ gemini-3.1-flash (GA·高速通用)</option>
-                <option value="gemini-3.1-flash-lite" selected>⚡ gemini-3.1-flash-lite (GA·Lite⚡·默认)</option>
-                <option value="gemini-2.5-pro">🧠 gemini-2.5-pro (GA·强推理)</option>
+                <option value="gemini-3.5-flash-lite" selected>⚡ gemini-3.5-flash-lite (GA·免费推荐)</option>
+                <option value="gemini-3.1-flash-lite">⚡ gemini-3.1-flash-lite (GA·低成本备用)</option>
+                <option value="gemini-3.5-flash">🧠 gemini-3.5-flash (GA·高质量)</option>
                 <option value="gemini-2.5-flash">⚡ gemini-2.5-flash (GA·快速稳定)</option>
+                <option value="gemini-2.5-flash-lite">⚡ gemini-2.5-flash-lite (GA·兼容备用)</option>
+                <option value="gemini-2.5-pro">🧠 gemini-2.5-pro (GA·强推理)</option>
+                <option value="gemini-3.1-pro-preview">🧠 gemini-3.1-pro-preview (预览·限制较严)</option>
                 <option value="gemma-4-31b-it">💎 Gemma 4 31B (Dense·256K·30RPM)</option>
-                <option value="gemma-4-26b-it">💎 Gemma 4 26B MoE (256K·30RPM)</option>
+                <option value="gemma-4-26b-a4b-it">💎 Gemma 4 26B A4B (256K·30RPM)</option>
             </select>
 
             <p class="hint" style="margin-top: 8px; font-size: 10px; color: var(--text-muted);">💡 自动识别：AIza... 开头走 AI Studio，其他 Key 自动走 Vertex AI — 无需手动设置</p>

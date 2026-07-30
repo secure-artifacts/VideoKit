@@ -90,6 +90,14 @@ function loadGeminiKeys() {
     if (data && Array.isArray(data.keys)) {
         data.keys = data.keys.map(k => typeof k === 'string' ? k.trim() : '').filter(Boolean);
     }
+    // 迁移旧版界面曾保存的无效/非标准模型 ID。
+    const legacyModelMap = {
+        'gemini-3.1-pro': 'gemini-3.1-pro-preview',
+        'gemini-3.1-flash': 'gemini-3.5-flash',
+        'gemma-4-26b-it': 'gemma-4-26b-a4b-it',
+    };
+    if (legacyModelMap[data.model]) data.model = legacyModelMap[data.model];
+    if (!data.model) data.model = 'gemini-3.5-flash-lite';
     if (!data.prompt || !data.prompt.trim()) {
         data.prompt = DEFAULT_GEMINI_PROMPT;
     }

@@ -31,14 +31,24 @@ function createAiInstance(apiKey) {
  * 带重试和 Key 轮换的 Gemini SDK 调用
  */
 async function callWithRetry(keys, modelId, config, maxRetries = 3) {
-    let lastError = null;
-    let keyIndex = Math.floor(Math.random() * keys.length);
+    const usableKeys = (keys || []).map(k => String(k || '').trim()).filter(Boolean);
+    if (usableKeys.length === 0) throw new Error('未配置可用的 Gemini API Key');
 
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
-        const apiKey = keys[keyIndex % keys.length].trim();
+    const startIndex = Math.floor(Math.random() * usableKeys.length);
+    const orderedKeys = usableKeys.map((_, i) => usableKeys[(startIndex + i) % usableKeys.length]);
+    const retryQueue = [];
+    const failures = [];
+    const maxAttempts = usableKeys.length + Math.max(0, maxRetries - 1);
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        const apiKey = attempt < orderedKeys.length
+            ? orderedKeys[attempt]
+            : retryQueue.shift();
+        if (!apiKey) break;
+        const keyNumber = usableKeys.indexOf(apiKey) + 1;
 
         try {
-            console.log(`[Gemini] 第 ${attempt + 1}/${maxRetries} 次请求 (Key #${keyIndex % keys.length + 1}, ${isAiStudioKey(apiKey) ? 'AI Studio' : 'Vertex AI'})`);
+            console.log(`[Gemini] 第 ${attempt + 1}/${maxAttempts} 次请求 (Key #${keyNumber}, ${isAiStudioKey(apiKey) ? 'AI Studio' : 'Vertex AI'})`);
 
             const ai = createAiInstance(apiKey);
             const response = await ai.models.generateContent({
@@ -51,24 +61,53 @@ async function callWithRetry(keys, modelId, config, maxRetries = 3) {
         } catch (e) {
             const msg = e.message || String(e);
             const status = e.status || e.httpStatusCode || 0;
+            const isTransient = status === 429 || status === 503 || status === 500 ||
+                msg.includes('429') || msg.includes('503') || msg.includes('RESOURCE_EXHAUSTED') ||
+                msg.includes('UNAVAILABLE') || msg.includes('high demand');
+            const isAuthFailure = status === 401 || status === 403 ||
+                msg.includes('401') || msg.includes('403') || msg.includes('API_KEY_INVALID') ||
+                msg.includes('PERMISSION_DENIED') || msg.includes('API key expired');
+            const isModelFailure = status === 404 || msg.includes('404') || msg.toLowerCase().includes('model') && msg.toLowerCase().includes('not found');
 
-            // 可重试：429 限流、503 过载、500 内部错误
-            if (status === 429 || status === 503 || status === 500 ||
-                msg.includes('429') || msg.includes('503') || msg.includes('RESOURCE_EXHAUSTED')) {
-                const waitSec = Math.pow(2, attempt) * 2 + Math.random() * 2;
-                console.warn(`[Gemini] ${status || '限流'}，等待 ${waitSec.toFixed(1)}s 后重试...`);
-                lastError = e;
-                keyIndex++;
-                await new Promise(r => setTimeout(r, waitSec * 1000));
+            failures.push({ keyNumber, message: msg, transient: isTransient });
+
+            // 模型不存在是全局配置错误，换 Key 没有意义。
+            if (isModelFailure) {
+                throw new Error(`Gemini 模型 ${modelId} 不存在或当前项目无权使用，请更换模型。原始错误：${msg}`);
+            }
+
+            // 限流/服务繁忙：先尝试下一个 Key，所有 Key 试过后再短暂重试。
+            if (isTransient) {
+                if (retryQueue.length < Math.max(0, maxRetries - 1)) retryQueue.push(apiKey);
+                const hasNext = attempt + 1 < maxAttempts && (attempt + 1 < orderedKeys.length || retryQueue.length > 0);
+                if (hasNext) {
+                    const waitMs = Math.min(3000, 500 * (attempt + 1));
+                    console.warn(`[Gemini] Key #${keyNumber} 暂时受限/繁忙，${waitMs}ms 后切换下一个 Key`);
+                    await new Promise(r => setTimeout(r, waitMs));
+                }
                 continue;
             }
 
-            // 不可重试
+            // 单个 Key 的鉴权失败不能拖垮整个池，继续尝试其他 Key。
+            if (isAuthFailure && attempt + 1 < orderedKeys.length) {
+                console.warn(`[Gemini] Key #${keyNumber} 鉴权失败，切换下一个 Key`);
+                continue;
+            }
+
+            // 400/INVALID_ARGUMENT 通常是请求或模型配置错误，不能误报成 Key 无效。
+            if (status === 400 || msg.includes('400') || msg.includes('INVALID_ARGUMENT')) {
+                throw new Error(`Gemini 请求参数或模型配置不兼容：${msg}`);
+            }
+
+            // 其他错误仍尝试尚未检查的 Key。
+            if (attempt + 1 < orderedKeys.length) continue;
             throw new Error(`Gemini API 错误: ${msg}`);
         }
     }
 
-    throw new Error(`Gemini 请求在 ${maxRetries} 次重试后仍然失败。\n最后错误：${lastError?.message || '未知错误'}\n\n建议：\n1. 等待 1-2 分钟后重试\n2. 检查是否有其他可用的 API Key`);
+    const transientCount = failures.filter(f => f.transient).length;
+    const summary = failures.slice(-3).map(f => `Key #${f.keyNumber}: ${f.message.slice(0, 160)}`).join('\n');
+    throw new Error(`所有 Gemini Key 均尝试失败（共 ${usableKeys.length} 个，暂时限流/繁忙 ${transientCount} 次）。\n${summary}\n\n429 不代表 Key 失效；请等待后重试或检查项目实际额度。`);
 }
 
 /**
@@ -80,7 +119,7 @@ async function processScripts(scripts, keys, customPrompt, modelId) {
     }
 
     const systemPrompt = customPrompt && customPrompt.trim() ? customPrompt.trim() : DEFAULT_GEMINI_PROMPT;
-    const resolvedModel = (modelId && modelId.trim()) ? modelId.trim() : 'gemini-3.1-flash-lite';
+    const resolvedModel = (modelId && modelId.trim()) ? modelId.trim() : 'gemini-3.5-flash-lite';
     console.log(`[Gemini] 使用模型: ${resolvedModel}`);
 
     const numberedInputs = scripts.map((s) => `[${s.idx}] ${s.text}`).join('\n\n');
@@ -132,12 +171,12 @@ ${numberedInputs}
 }
 
 /**
- * 批量测试 API Keys（并发，每波 20 个）
+ * 批量测试 API Keys（低并发，避免测试动作本身触发免费额度 429）
  * 自动根据 Key 前缀路由到 AI Studio 或 Vertex AI 端点
  */
 async function testKeys(keys, modelId) {
-    const resolvedModel = (modelId && modelId.trim()) ? modelId.trim() : 'gemini-3.1-flash-lite';
-    const CONCURRENCY = 20;
+    const resolvedModel = (modelId && modelId.trim()) ? modelId.trim() : 'gemini-3.5-flash-lite';
+    const CONCURRENCY = 3;
 
     const testOne = async (apiKey, idx) => {
         const startTime = Date.now();
@@ -170,7 +209,7 @@ async function testKeys(keys, modelId) {
             } else if (msg.includes('404') || msg.includes('not found')) {
                 reason = `模型 ${resolvedModel} 不存在`;
             } else if (msg.includes('400') || msg.includes('INVALID_ARGUMENT')) {
-                reason = 'Key 格式无效';
+                reason = '请求参数或模型配置不兼容（不代表 Key 无效）';
             }
             if (reason.length > 80) reason = reason.slice(0, 77) + '...';
             return { idx, key: apiKey, success: false, error: reason, latency: elapsed, mode };

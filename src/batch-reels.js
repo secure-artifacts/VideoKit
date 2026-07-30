@@ -1970,6 +1970,18 @@ function _getSubtitleStyleScope() {
     return el ? (el.value || 'folder') : 'folder';
 }
 
+function _getCurrentReelsGroupTasks() {
+    const task = _getSelectedTask();
+    if (!task) return [];
+    if (task._batchTabId) {
+        return (_reelsState.tasks || []).filter(t => t._batchTabId === task._batchTabId);
+    }
+    if (task._folderQueueId) {
+        return (_reelsState.tasks || []).filter(t => t._folderQueueId === task._folderQueueId);
+    }
+    return [task];
+}
+
 function _getNamedSubtitlePresetStyle(name) {
     if (!name || !window.ReelsStyleEngine) return null;
     const data = ReelsStyleEngine.loadSubtitlePresets();
@@ -2005,11 +2017,9 @@ function _persistSubtitleStyleByScope(style) {
     }
     const task = _getSelectedTask();
     if (!task) return;
-    if (scope === 'folder' && task._folderQueueId) {
-        for (const queueTask of _reelsState.tasks) {
-            if (queueTask._folderQueueId === task._folderQueueId) {
-                queueTask.subtitleStyle = _cloneSubtitleStyle(safeStyle);
-            }
+    if (scope === 'folder') {
+        for (const queueTask of _getCurrentReelsGroupTasks()) {
+            queueTask.subtitleStyle = _cloneSubtitleStyle(safeStyle);
         }
         return;
     }
@@ -7001,6 +7011,8 @@ function _renderTaskList() {
         return;
     }
 
+    if (!_reelsState.batchGroupCollapsed) _reelsState.batchGroupCollapsed = {};
+    let lastBatchGroupId = null;
     let lastFolderQueueId = null;
     container.innerHTML = tasks.map((task, i) => {
         const selected = i === _reelsState.selectedIdx;
@@ -7095,6 +7107,33 @@ function _renderTaskList() {
         // 未选中导出时降低整行不透明度
         const rowOpacity = exportChecked ? '1' : '0.45';
 
+        let batchGroupHeader = '';
+        const batchGroupId = task._batchTabId || '';
+        const batchGroupCollapsed = batchGroupId ? !!_reelsState.batchGroupCollapsed[batchGroupId] : false;
+        if (batchGroupId && batchGroupId !== lastBatchGroupId) {
+            const groupName = escapeTaskText(task._batchTabName || '未命名分组');
+            const groupTasks = tasks.filter(item => item._batchTabId === batchGroupId);
+            const groupSelected = groupTasks.filter(item => item._exportSelected !== false).length;
+            const encodedGroupId = encodeURIComponent(batchGroupId);
+            batchGroupHeader = `
+                <div class="reels-batch-group-header"
+                    style="display:flex;align-items:center;gap:7px;padding:8px 7px;margin:7px 0 3px;
+                           border-radius:6px;background:rgba(123,139,239,0.16);border:1px solid rgba(123,139,239,0.35);
+                           color:#c7d2fe;font-size:11px;font-weight:700;">
+                    <button onclick="event.stopPropagation(); reelsToggleBatchGroup(decodeURIComponent('${encodedGroupId}'))"
+                        style="border:none;background:transparent;color:#c7d2fe;cursor:pointer;padding:0;font-size:11px;"
+                        title="折叠/展开分组">${batchGroupCollapsed ? '▶' : '▼'}</button>
+                    <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${groupName}">📑 ${groupName}</span>
+                    <span style="margin-left:auto;color:#94a3b8;font-weight:400;">${groupSelected}/${groupTasks.length}</span>
+                    <button onclick="event.stopPropagation(); reelsToggleBatchGroupExport(decodeURIComponent('${encodedGroupId}'), true)"
+                        style="border:1px solid rgba(123,139,239,.35);background:rgba(123,139,239,.12);color:#c7d2fe;border-radius:4px;padding:1px 5px;cursor:pointer;font-size:9px;">全选</button>
+                    <button onclick="event.stopPropagation(); reelsToggleBatchGroupExport(decodeURIComponent('${encodedGroupId}'), false)"
+                        style="border:1px solid rgba(255,255,255,.12);background:transparent;color:#94a3b8;border-radius:4px;padding:1px 5px;cursor:pointer;font-size:9px;">取消</button>
+                </div>`;
+            lastFolderQueueId = null;
+        }
+        lastBatchGroupId = batchGroupId || null;
+
         let folderHeader = '';
         const queueId = task._folderQueueId || '';
         const queueCollapsed = queueId ? !!_reelsState.folderQueueCollapsed[queueId] : false;
@@ -7114,7 +7153,7 @@ function _renderTaskList() {
         }
         lastFolderQueueId = queueId || null;
 
-        return `${folderHeader}
+        return `${batchGroupHeader}${folderHeader}
             <div class="reels-task-item ${selected ? 'reels-task-selected' : ''}"
                  onclick="reelsSelectTask(${i})"
                  title="${escapeTaskText(task.fileName)}"
@@ -7123,7 +7162,7 @@ function _renderTaskList() {
                         background: ${selected ? 'rgba(0,212,255,0.15)' : 'transparent'};
                         border-left: 3px solid ${selected ? '#4c9eff' : 'transparent'};
                         opacity: ${rowOpacity};
-                        ${queueCollapsed ? 'display:none;' : ''}
+                        ${(queueCollapsed || batchGroupCollapsed) ? 'display:none;' : ''}
                         ${selected ? 'box-shadow: inset 0 0 0 1px rgba(0,212,255,0.3);' : ''}">
                 <input type="checkbox" class="reels-export-cb" data-task-idx="${i}" ${exportChecked ? 'checked' : ''}
                     style="accent-color:var(--accent-color,#7b8bef);transform:scale(1.25);margin:0 6px 0 4px;flex-shrink:0;cursor:pointer;"
@@ -7142,6 +7181,21 @@ function _renderTaskList() {
     const selectedEl = container.querySelector('.reels-task-selected');
     if (selectedEl) selectedEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 }
+
+function reelsToggleBatchGroup(groupId) {
+    if (!_reelsState.batchGroupCollapsed) _reelsState.batchGroupCollapsed = {};
+    _reelsState.batchGroupCollapsed[groupId] = !_reelsState.batchGroupCollapsed[groupId];
+    _renderTaskList();
+}
+window.reelsToggleBatchGroup = reelsToggleBatchGroup;
+
+function reelsToggleBatchGroupExport(groupId, checked) {
+    (_reelsState.tasks || []).forEach(task => {
+        if (task._batchTabId === groupId) task._exportSelected = !!checked;
+    });
+    _renderTaskList();
+}
+window.reelsToggleBatchGroupExport = reelsToggleBatchGroupExport;
 
 // ═══════════════════════════════════════════════════════
 // Cover Edit Mode Toggle
@@ -8282,8 +8336,9 @@ function reelsOpenSubtitlePresetPicker(anchorEl) {
             if (applyAll && _reelsState.tasks) {
                 _reelsState.tasks.forEach(t => t._subtitlePreset = selectedVal || '');
             } else {
-                const t = _getSelectedTask();
-                if (t) t._subtitlePreset = selectedVal || '';
+                const scope = typeof _getSubtitleStyleScope === 'function' ? _getSubtitleStyleScope() : 'task';
+                const targets = scope === 'folder' ? _getCurrentReelsGroupTasks() : [_getSelectedTask()].filter(Boolean);
+                targets.forEach(t => { t._subtitlePreset = selectedVal || ''; });
             }
 
             // Trigger the same logic as the old onchange event if necessary
@@ -9590,11 +9645,18 @@ async function reelsStartExport() {
             // ── 多模板矩阵：调整输出路径 ──
             let jobOutputDir = outputDirTrimmed;
             let jobBaseName = baseName;
+            if (task._batchTabId) {
+                const safeGroupName = String(task._batchTabName || '未命名分组')
+                    .replace(/[<>:"/\\|?*]+/g, '_')
+                    .replace(/[. ]+$/g, '')
+                    .trim() || '未命名分组';
+                jobOutputDir = `${jobOutputDir}${outputJoinSep}${safeGroupName}`;
+            }
             if (task._folderQueueId) {
                 const safeQueueName = String(task._folderQueueName || '文件夹队列')
                     .replace(/[<>:"/\\|?*]+/g, '_')
                     .trim() || '文件夹队列';
-                jobOutputDir = `${outputDirTrimmed}${outputJoinSep}${safeQueueName}`;
+                jobOutputDir = `${jobOutputDir}${outputJoinSep}${safeQueueName}`;
             }
             if (job.presetName) {
                 const safePresetName = job.presetName.replace(/[<>:"/\\|?*]+/g, '_');
@@ -9654,10 +9716,12 @@ async function reelsStartExport() {
                 
                 // 策略4: 从批量表格的素材文件夹 materialDir 中搜索
                 if (!fixedPath && typeof _batchTableState !== 'undefined' && _batchTableState.tabs) {
-                    const activeTab = (typeof _getActiveTab === 'function')
-                        ? _getActiveTab()
-                        : (_batchTableState.tabs.find(t => t.id === _batchTableState.activeTabId) || _batchTableState.tabs[0]);
-                    const matDir = activeTab?.materialDir;
+                    const sourceTab = task._batchTabId
+                        ? _batchTableState.tabs.find(t => t.id === task._batchTabId)
+                        : ((typeof _getActiveTab === 'function')
+                            ? _getActiveTab()
+                            : (_batchTableState.tabs.find(t => t.id === _batchTableState.activeTabId) || _batchTableState.tabs[0]));
+                    const matDir = sourceTab?.materialDir;
                     if (matDir) {
                         // 拼接 materialDir + bareFileName
                         const candidate = matDir.replace(/\\/g, '/').replace(/\/$/, '') + '/' + bareFileName;
@@ -10445,26 +10509,46 @@ async function reelsStartExport() {
     }
     await Promise.all(workers);
 
-    // ── 统一输出单轴 FCPXML ──
+    // ── 按标签分组输出 FCPXML；未分组任务仍输出一个总时间线 ──
     if (doFcpxml && fcpxmlBatchTasks.length > 0 && !canceled && typeof window.reelsBatchFcpxmlExport === 'function') {
-        const batchName = `BatchTimeline_${dateStr}_${timeStr}`;
-        try {
-            if (statusEl) statusEl.textContent = '🚀 正在合并 FCPXML 时间线...';
-            const res = await window.reelsBatchFcpxmlExport({
-                tasks: fcpxmlBatchTasks,
-                outputDir: outputDirTrimmed,
-                taskName: batchName,
-                fps: 30,
-                compoundMode: fcpxmlCompound,
-                onLog: (msg) => console.log(`[FCPXML Bulk] ${msg}`)
-            });
-            _reelsState.lastExportOutputPath = res.outputPath;
-        } catch (err) {
-            failCount += fcpxmlBatchTasks.length;
-            okCount = 0;
-            const errMsg = err && err.message ? err.message : String(err);
-            failDetails.push(`FCPXML时间线生成失败: ${errMsg}`);
-            console.error('[FCPXML] 批量生成时间线失败:', err);
+        const fcpxmlGroups = new Map();
+        for (const item of fcpxmlBatchTasks) {
+            const groupId = item.task?._batchTabId || '__ungrouped__';
+            if (!fcpxmlGroups.has(groupId)) fcpxmlGroups.set(groupId, []);
+            fcpxmlGroups.get(groupId).push(item);
+        }
+        for (const [groupId, groupTasks] of fcpxmlGroups) {
+            const sourceTask = groupTasks[0]?.task;
+            const rawGroupName = groupId === '__ungrouped__' ? '' : String(sourceTask?._batchTabName || '未命名分组');
+            const safeGroupName = rawGroupName
+                .replace(/[<>:"/\\|?*]+/g, '_')
+                .replace(/[. ]+$/g, '')
+                .trim();
+            const groupOutputDir = safeGroupName
+                ? `${outputDirTrimmed}${outputJoinSep}${safeGroupName}`
+                : outputDirTrimmed;
+            const batchName = safeGroupName
+                ? `${safeGroupName}_Timeline_${dateStr}_${timeStr}`
+                : `BatchTimeline_${dateStr}_${timeStr}`;
+            try {
+                if (window.electronAPI?.ensureDirectory) await window.electronAPI.ensureDirectory(groupOutputDir);
+                if (statusEl) statusEl.textContent = `🚀 正在生成 FCPXML：${safeGroupName || '全部任务'}...`;
+                const res = await window.reelsBatchFcpxmlExport({
+                    tasks: groupTasks,
+                    outputDir: groupOutputDir,
+                    taskName: batchName,
+                    fps: 30,
+                    compoundMode: fcpxmlCompound,
+                    onLog: (msg) => console.log(`[FCPXML ${safeGroupName || 'Bulk'}] ${msg}`)
+                });
+                _reelsState.lastExportOutputPath = res.outputPath;
+            } catch (err) {
+                failCount += groupTasks.length;
+                okCount = Math.max(0, okCount - groupTasks.length);
+                const errMsg = err && err.message ? err.message : String(err);
+                failDetails.push(`FCPXML「${safeGroupName || '全部任务'}」生成失败: ${errMsg}`);
+                console.error(`[FCPXML] 分组 ${safeGroupName || '全部任务'} 生成失败:`, err);
+            }
         }
     }
 
@@ -11108,8 +11192,11 @@ function reelsMarkStyleDirty(e) {
             if (t._subtitlePreset) { t._subtitlePreset = ''; modified = true; }
         }
     } else {
-        const task = typeof _getSelectedTask === 'function' ? _getSelectedTask() : null;
-        if (task && task._subtitlePreset) { task._subtitlePreset = ''; modified = true; }
+        const scope = typeof _getSubtitleStyleScope === 'function' ? _getSubtitleStyleScope() : 'task';
+        const targets = scope === 'folder' ? _getCurrentReelsGroupTasks() : [_getSelectedTask()].filter(Boolean);
+        for (const task of targets) {
+            if (task && task._subtitlePreset) { task._subtitlePreset = ''; modified = true; }
+        }
     }
 
     if (modified) {

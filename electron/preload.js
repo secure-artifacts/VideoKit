@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer, webUtils, webFrame } = require('electron');
+const { contextBridge, ipcRenderer, webUtils, webFrame, clipboard } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { pathToFileURL, fileURLToPath } = require('url');
@@ -121,6 +121,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     pathJoin: (...args) => path.join(...args),
     pathBasename: (p) => path.basename(p),
     getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+    writeClipboardText: (text) => {
+        clipboard.writeText(String(text || ''));
+        return true;
+    },
 
     // 选择目录
     selectDirectory: () => ipcRenderer.invoke('select-directory'),

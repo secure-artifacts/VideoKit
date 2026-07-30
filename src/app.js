@@ -7800,7 +7800,7 @@ async function saveGeminiKeys() {
 async function testGeminiKeys() {
     const keysText = document.getElementById('gemini-keys').value;
     const keysRaw = keysText.split('\n').map(s => s.trim()).filter(s => s);
-    const model = document.getElementById('gemini-model')?.value || 'gemini-2.5-flash';
+    const model = document.getElementById('gemini-model')?.value || 'gemini-3.5-flash-lite';
     const resultsDiv = document.getElementById('gemini-test-results');
     const statusEl = document.getElementById('gemini-test-status');
 

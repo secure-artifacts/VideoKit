@@ -5574,12 +5574,29 @@ class ReelsOverlayPanel {
         .rop-list-arrow { font-size:9px; color:#666; width:10px; flex-shrink:0; }
         .rop-list-label { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         .rop-list-time { font-size:10px; color:#888; font-family:monospace; white-space:nowrap; }
-        .rop-list-toggle-eye { background:none; border:none; color:#888; cursor:pointer; font-size:12px; padding:0 2px;
-                               line-height:1; flex-shrink:0; transition:color 0.15s; margin-left:4px; margin-right:2px; }
-        .rop-list-toggle-eye:hover { filter: brightness(1.2); }
-        .rop-list-del { background:none; border:none; color:#666; cursor:pointer; font-size:13px; padding:0 4px;
-                        line-height:1; flex-shrink:0; transition:color 0.15s; }
-        .rop-list-del:hover { color:var(--error); }
+        .rop-list-edit-name,
+        .rop-list-toggle-eye,
+        .rop-list-move-up,
+        .rop-list-move-down,
+        .rop-list-del {
+            appearance:none; -webkit-appearance:none; box-sizing:border-box;
+            width:25px; height:24px; min-width:25px; padding:0;
+            display:inline-flex; align-items:center; justify-content:center;
+            border:1px solid rgba(255,255,255,0.18); border-radius:4px;
+            background:#252838; color:#e5e7eb; cursor:pointer;
+            font-family:"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif;
+            font-size:12px; line-height:1; flex-shrink:0;
+            transition:background 0.15s,border-color 0.15s,color 0.15s;
+        }
+        .rop-list-edit-name { margin-left:4px; }
+        .rop-list-edit-name:hover,
+        .rop-list-toggle-eye:hover,
+        .rop-list-move-up:hover,
+        .rop-list-move-down:hover {
+            background:#3b4160; border-color:#7c8cff; color:#fff;
+        }
+        .rop-list-del { background:#34252b; border-color:rgba(248,113,113,0.3); color:#f87171; font-size:14px; }
+        .rop-list-del:hover { background:#542d38; border-color:#f87171; color:#fff; }
         .rop-empty { padding:16px; text-align:center; color:#555; font-style:italic; }
         .rop-group { padding:8px 10px; background:var(--bg-tertiary, #0f0f2e); border-radius:6px; margin-top:8px; }
         .rop-group-title { font-weight:bold; font-size:11px; color:#8899bb; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px; }

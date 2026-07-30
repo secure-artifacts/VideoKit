@@ -63,6 +63,7 @@ function _bcLoadDraftOnce() {
                 bindings: { ...(t.bindings || {}) },
                 bgCycle: t.bgCycle || null,
                 source: t.source || null,
+                materialFolder: t.materialFolder || null,
             }))
             : [];
 
@@ -100,6 +101,7 @@ function _bcSaveDraftNow() {
                 bindings: { ...(t.bindings || {}) },
                 bgCycle: t.bgCycle || null,
                 source: t.source || null,
+                materialFolder: t.materialFolder || null,
             })),
             savedAt: new Date().toISOString(),
         };
@@ -224,6 +226,85 @@ function _bcPickBgCycleFiles(tpl, ti) {
     } else {
         alert('请在桌面版中使用此功能');
     }
+}
+
+const BC_FOLDER_BG_EXTS = new Set(['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp']);
+
+function _bcEnsureFolderBackgroundColumn(tpl, ti) {
+    let ci = Number(tpl?.bindings?.__bg__);
+    const name = `组${ti + 1}-背景视频`;
+    const usedByOtherTemplate = Number.isInteger(ci) && _bulkState.templates.some((other, otherTi) =>
+        otherTi !== ti && Number(other?.bindings?.__bg__) === ci
+    );
+    if (Number.isInteger(ci) && ci >= 0 && ci < _bulkState.columns.length && !usedByOtherTemplate) return ci;
+    ci = _bulkState.columns.findIndex(col => col?.name === name);
+    if (ci < 0) {
+        _bulkState.columns.push({ name, type: 'media', kind: 'video' });
+        ci = _bulkState.columns.length - 1;
+        _bulkState.rows.forEach(row => {
+            while (row.length < _bulkState.columns.length) row.push('');
+        });
+    }
+    if (!tpl.bindings) tpl.bindings = {};
+    tpl.bindings.__bg__ = ci;
+    return ci;
+}
+
+async function _bcRefreshTemplateMaterialFolder(tpl, ti, options = {}) {
+    const folder = tpl?.materialFolder;
+    if (!folder?.path) {
+        if (!options.silent) alert('请先为该模板选择素材文件夹');
+        return 0;
+    }
+    if (!window.electronAPI?.scanDirectory) {
+        alert('请在桌面版中使用文件夹刷新');
+        return 0;
+    }
+    const entries = await window.electronAPI.scanDirectory(folder.path);
+    const files = (entries || [])
+        .filter(item => !item?.isDirectory && item.path && BC_FOLDER_BG_EXTS.has(_bcFileExt(item.name || item.path)))
+        .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true }))
+        .map(item => item.path);
+    tpl.materialFolder = {
+        path: folder.path,
+        mode: folder.mode === 'concat' ? 'concat' : 'rows',
+        files,
+        refreshedAt: Date.now(),
+        columnIndex: Number.isInteger(folder.columnIndex) ? folder.columnIndex : null,
+    };
+    tpl.bgCycle = files.slice();
+
+    if (tpl.materialFolder.mode === 'rows') {
+        const ci = _bcEnsureFolderBackgroundColumn(tpl, ti);
+        tpl.materialFolder.columnIndex = ci;
+        const neededRows = Math.max(20, files.length);
+        _bcEnsureRows(neededRows);
+        _bulkState.rows.forEach(row => { row[ci] = ''; });
+        files.forEach((path, ri) => { _bulkState.rows[ri][ci] = path; });
+    }
+    _bcRenderTable();
+    _bcRenderBindings();
+    _bcScheduleDraftSave();
+    if (!options.silent && typeof showToast === 'function') {
+        showToast(`✅ 「${tpl.label}」已读取 ${files.length} 个背景素材`, 'success');
+    }
+    return files.length;
+}
+
+async function _bcPickTemplateMaterialFolder(tpl, ti) {
+    if (!window.electronAPI?.selectDirectory) {
+        alert('请在桌面版中选择素材文件夹');
+        return;
+    }
+    const path = await window.electronAPI.selectDirectory();
+    if (!path) return;
+    tpl.materialFolder = {
+        path,
+        mode: tpl.materialFolder?.mode === 'concat' ? 'concat' : 'rows',
+        files: [],
+        refreshedAt: 0,
+    };
+    await _bcRefreshTemplateMaterialFolder(tpl, ti);
 }
 
 // 显示背景循环详情弹窗
@@ -498,6 +579,128 @@ function _bcColumnFromName(name) {
     return col;
 }
 
+const BC_QUICK_COLUMN_PRESETS = {
+    default: {
+        label: '默认配置',
+        columns: ['原始完整文案', '标题', '正文'],
+    },
+    overlay: {
+        label: '覆层模板表',
+        columns: ['覆层标题', '覆层正文', '覆层结尾', '背景视频', '导出命名'],
+    },
+    voice_workflow: {
+        label: '人声工作流表',
+        columns: ['人声-原文案', '人声-断行文案', '人声-配音文案', '人声ID', '背景视频', '导出命名'],
+    },
+};
+
+function _bcCurrentQuickColumnPresetId() {
+    const currentNames = (_bulkState.columns || []).map(col => String(col?.name || '').trim());
+    for (const [presetId, preset] of Object.entries(BC_QUICK_COLUMN_PRESETS)) {
+        if (preset.columns.length === currentNames.length
+            && preset.columns.every((name, index) => name === currentNames[index])) {
+            return presetId;
+        }
+    }
+    return '';
+}
+
+function _bcApplyQuickColumnPreset(presetId, groupCount = 1) {
+    const preset = BC_QUICK_COLUMN_PRESETS[presetId];
+    if (!preset) return false;
+    const safeGroupCount = Math.max(1, Math.min(500, parseInt(groupCount) || 1));
+    if (safeGroupCount > 100 && !confirm(`将建立 ${safeGroupCount} 组、共 ${safeGroupCount * preset.columns.length} 列。\n表格首次渲染可能需要一些时间，是否继续？`)) {
+        return false;
+    }
+    const hasData = _bulkState.rows.some(row => row.some(cell => String(cell || '').trim()));
+    if (hasData && !confirm(`应用「${preset.label}」${safeGroupCount > 1 ? ` × ${safeGroupCount} 组` : ''}会更换表格列。\n同名列的数据会保留，其他列数据将清空。是否继续？`)) {
+        return false;
+    }
+
+    const oldColumns = _bulkState.columns || [];
+    const oldRows = _bulkState.rows || [];
+    const oldIndexByName = new Map(oldColumns.map((col, index) => [String(col?.name || '').trim(), index]));
+    const columnNames = [];
+    for (let groupIndex = 0; groupIndex < safeGroupCount; groupIndex++) {
+        const prefix = safeGroupCount > 1 ? `组${groupIndex + 1}-` : '';
+        preset.columns.forEach(name => columnNames.push(`${prefix}${name}`));
+    }
+    const newColumns = columnNames.map(_bcColumnFromName);
+    const newRows = oldRows.map(oldRow => newColumns.map(col => {
+        const oldIndex = oldIndexByName.get(col.name);
+        return oldIndex == null ? '' : (oldRow[oldIndex] || '');
+    }));
+
+    _bulkState.columns = newColumns;
+    _bulkState.rows = newRows.length ? newRows : Array.from({ length: 20 }, () => new Array(newColumns.length).fill(''));
+    _bcSelection = null;
+    _bcAutoRebindAllTemplates();
+    _bcRenderTable();
+    _bcRenderBindings();
+    _bcScheduleDraftSave();
+    if (typeof showToast === 'function') {
+        showToast(`✅ 已应用「${preset.label}」${safeGroupCount > 1 ? `，共 ${safeGroupCount} 组` : ''}`, 'success');
+    }
+    return true;
+}
+
+const BC_STANDARD_COLUMN_NAMES = [...new Set([
+    ...Object.values(BC_QUICK_COLUMN_PRESETS).flatMap(preset => preset.columns),
+    '人声-音频文件', '人声-SRT字幕', '内容视频', '背景图片',
+    '滚动字幕标题', '滚动字幕正文', '普通文本',
+])];
+
+function _bcTsvCell(value) {
+    const text = String(value ?? '');
+    return /[\t\r\n"]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+async function _bcCopyWholeTable() {
+    const lines = [
+        (_bulkState.columns || []).map(col => _bcTsvCell(col?.name || '')).join('\t'),
+        ...(_bulkState.rows || []).map(row =>
+            (_bulkState.columns || []).map((_, ci) => _bcTsvCell(row?.[ci] || '')).join('\t')
+        ),
+    ];
+    const text = lines.join('\n');
+    const button = document.getElementById('bc-copy-table');
+    const originalLabel = button?.textContent || '📄 复制整表';
+    try {
+        if (window.electronAPI?.writeClipboardText) {
+            window.electronAPI.writeClipboardText(text);
+        } else if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(text);
+        } else {
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.style.cssText = 'position:fixed;left:-99999px;top:-99999px;';
+            document.body.appendChild(textarea);
+            textarea.select();
+            const copied = document.execCommand('copy');
+            textarea.remove();
+            if (!copied) throw new Error('copy command rejected');
+        }
+        if (button) {
+            button.textContent = '✅ 已复制';
+            setTimeout(() => {
+                if (button.isConnected) button.textContent = originalLabel;
+            }, 1500);
+        }
+        if (typeof showToast === 'function') showToast('✅ 已复制整张表格（包含表头）', 'success');
+        return true;
+    } catch (e) {
+        console.warn('[BulkCreate] Copy whole table failed:', e);
+        if (button) {
+            button.textContent = '❌ 复制失败';
+            setTimeout(() => {
+                if (button.isConnected) button.textContent = originalLabel;
+            }, 1800);
+        }
+        if (typeof showToast === 'function') showToast('复制失败，请检查剪贴板权限', 'error');
+        return false;
+    }
+}
+
 function _bcNativeFilePath(file) {
     if (!file) return '';
     if (typeof getFileNativePath === 'function') return getFileNativePath(file);
@@ -565,7 +768,12 @@ function _bcPrompt(title, placeholder) {
 // ── Bindable fields from a task's overlays ──
 function _bcFieldsFromTask(task) {
     const fields = [];
-    if (task.bgPath || task.videoPath) {
+    const hasBackgroundColumn = (_bulkState.columns || []).some(col =>
+        col?.type === 'media'
+        && ['image', 'video'].includes(_bcColumnKind(col))
+        && /背景|素材|bg|background/i.test(String(col.name || ''))
+    );
+    if (task.bgPath || task.videoPath || hasBackgroundColumn) {
         fields.push({ key: '__bg__', label: '🎨 背景素材', type: 'media', kinds: ['image', 'video'] });
     }
     if (task.audioPath) {
@@ -585,6 +793,9 @@ function _bcFieldsFromTask(task) {
     }
     if (_bcTextColumnCandidatesForCategory('tts_text').length > 0 || task.ttsText) {
         fields.push({ key: '__tts__', label: '🎙️ 人声-配音文案（手动绑定）', type: 'text', category: 'tts_text' });
+    }
+    if (_bcTextColumnCandidatesForCategory('voice_id').length > 0 || task.ttsVoiceId) {
+        fields.push({ key: '__voice_id__', label: '🗣️ 人声ID（可手动输入）', type: 'text', category: 'voice_id' });
     }
     const overlays = task.overlays || [];
     overlays.forEach((ov, li) => {
@@ -654,6 +865,7 @@ const BC_FIELD_CATEGORY_COLUMN_NAMES = {
     ai_source: ['人声-原文案', 'ai源文案', 'ai源', 'ai原文', '原文案', '源文案', 'ai_script', 'aiscript'],
     dynamic_subtitle: ['人声-断行文案', '断行文案', '动态字幕断行后', '断行后', '字幕断行', '字幕文本', '字幕文案', 'txtcontent', 'txt_content'],
     tts_text: ['人声-配音文案', '配音文案', 'tts文案', 'tts_text', 'ttstext', 'voice text'],
+    voice_id: ['人声id', '音色id', 'voice id', 'voice_id', 'voiceid', 'ttsvoiceid'],
     card_title: ['文字卡片标题', '卡片标题', '覆层标题', '标题', 'title', 'headline'],
     card_body: ['文字卡片正文', '卡片正文', '覆层内容', '覆层正文', '正文', 'body'],
     card_footer: ['文字卡片结尾', '卡片结尾', '覆层结尾', '结尾', '尾标', 'footer', 'ending'],
@@ -878,7 +1090,7 @@ function _bcRenderTable() {
         hdr += `<th class="bc-col-header ${c.type === 'media' ? 'bc-media-col-header' : ''}" data-ci="${ci}" style="min-width:110px;padding:3px 5px;position:relative;">
             <div style="display:flex;align-items:center;gap:4px;">
                 <select class="bc-col-kind" data-ci="${ci}" title="选择列类型" style="width:74px;background:#0a0a14;border:1px solid #333;border-radius:3px;color:#ddd;font-size:10px;padding:1px;">${_bcColumnKindOptions(c)}</select>
-                <input class="bc-col-name" data-ci="${ci}" value="${_bcEsc(c.name)}" style="flex:1;background:transparent;border:none;border-bottom:1px solid #333;color:#ddd;font-size:11px;padding:1px;min-width:0;" title="右键呼出表格菜单">
+                <input class="bc-col-name" data-ci="${ci}" list="bc-standard-column-names" value="${_bcEsc(c.name)}" style="flex:1;background:transparent;border:none;border-bottom:1px solid #333;color:#ddd;font-size:11px;padding:1px;min-width:0;" title="可手写，也可从下拉列表选择标准表头">
             </div>
         </th>`;
     });
@@ -895,7 +1107,8 @@ function _bcRenderTable() {
         });
         body += `<td><span class="bc-row-del" data-ri="${ri}" style="cursor:pointer;color:#f44;font-size:9px;">✕</span></td></tr>`;
     });
-    el.innerHTML = '<table class="bc-data-table"><thead>'+hdr+'</thead><tbody>'+body+'</tbody></table>';
+    const columnNameOptions = BC_STANDARD_COLUMN_NAMES.map(name => `<option value="${_bcEsc(name)}"></option>`).join('');
+    el.innerHTML = `<datalist id="bc-standard-column-names">${columnNameOptions}</datalist><table class="bc-data-table"><thead>${hdr}</thead><tbody>${body}</tbody></table>`;
     _bcUpdateSelectionUI();
     _bcScheduleDraftSave();
 }
@@ -931,6 +1144,10 @@ function _bcRenderBindings() {
         const cycleBadge = tpl.bgCycle && tpl.bgCycle.length > 0
             ? `<span class="bc-tpl-bgcycle" data-ti="${ti}" style="cursor:pointer;font-size:9px;background:rgba(16,185,129,0.2);color:#10b981;border:1px solid rgba(16,185,129,0.3);padding:1px 4px;border-radius:4px;" title="已自动读取当前预设的 ${tpl.bgCycle.length} 个循环素材，点击查看">🔄 自动循环(${tpl.bgCycle.length})</span>`
             : `<span class="bc-tpl-bgcycle" data-ti="${ti}" style="cursor:pointer;font-size:9px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);color:#777;padding:1px 4px;border-radius:4px;" title="没有从该模板工程读取到多个背景素材，点击可手动补充">单背景</span>`;
+        const materialFolderName = tpl.materialFolder?.path
+            ? _bcFileName(tpl.materialFolder.path)
+            : '未绑定文件夹';
+        const materialFolderCount = tpl.materialFolder?.files?.length || 0;
         const fields = _bcFieldsFromTask(task);
         html += `<div style="background:rgba(255,255,255,0.03);border:1px solid #2a2a3a;border-radius:8px;padding:8px;margin-bottom:8px;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px;">
@@ -945,6 +1162,14 @@ function _bcRenderBindings() {
                     <div style="display:flex;align-items:center;gap:4px;margin-top:2px;">
                         <span style="color:#666;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px;" title="${_bcEsc(task.bgPath || task.videoPath || '')}">bg: ${_bcEsc(bgName)}</span>
                         ${cycleBadge}
+                    </div>
+                    <div style="display:flex;align-items:center;gap:3px;margin-top:4px;">
+                        <button class="bc-tpl-folder-pick" data-ti="${ti}" title="${_bcEsc(tpl.materialFolder?.path || '选择固定素材文件夹')}" style="padding:1px 5px;background:rgba(76,158,255,.1);border:1px solid rgba(76,158,255,.25);border-radius:3px;color:#8fc7ff;font-size:9px;cursor:pointer;">📁 ${_bcEsc(materialFolderName)}</button>
+                        <select class="bc-tpl-folder-mode" data-ti="${ti}" title="文件夹素材使用方式" style="background:#10101b;border:1px solid #2d2d40;border-radius:3px;color:#aaa;font-size:9px;padding:1px;">
+                            <option value="rows" ${tpl.materialFolder?.mode !== 'concat' ? 'selected' : ''}>一个素材一行</option>
+                            <option value="concat" ${tpl.materialFolder?.mode === 'concat' ? 'selected' : ''}>顺序拼接</option>
+                        </select>
+                        <button class="bc-tpl-folder-refresh" data-ti="${ti}" style="padding:1px 5px;background:rgba(46,213,115,.08);border:1px solid rgba(46,213,115,.2);border-radius:3px;color:#6fcf97;font-size:9px;cursor:pointer;">刷新${materialFolderCount ? `(${materialFolderCount})` : ''}</button>
                     </div>
                 </div>
                 <span class="bc-tpl-del" data-ti="${ti}" style="cursor:pointer;color:#f44;font-size:11px;margin-left:6px;flex-shrink:0;" title="移除此模板">✕</span>
@@ -1430,16 +1655,9 @@ function _bcGenerateTasks() {
 
     const total = rows.length * _bulkState.templates.length;
 
-    // Ask grouping mode only if multiple templates
-    let separateTabs = false;
-    if (_bulkState.templates.length > 1) {
-        separateTabs = confirm(
-            `将生成 ${total} 个任务（${rows.length}行 × ${_bulkState.templates.length}模板）\n\n` +
-            `选择生成方式：\n\n` +
-            `确定 = 每个模板单独一个标签页（导出时自动分文件夹）\n` +
-            `取消 = 全部放入当前标签页`
-        );
-    }
+    // 明确的生成方式，避免每次依赖难理解的确定/取消弹窗。
+    const outputMode = document.getElementById('bc-output-mode')?.value || 'separate';
+    const separateTabs = _bulkState.templates.length > 1 && outputMode === 'separate';
 
     _bcWarnAllDuplicateTextBindings();
 
@@ -1597,6 +1815,7 @@ function _bcBuildTask(tpl, row, rowIdx, taskNum, cols) {
         else if (f.key === '__ai__') { task.aiScript = val; }
         else if (f.key === '__txt__') { task.txtContent = val; }
         else if (f.key === '__tts__') { task.ttsText = val; }
+        else if (f.key === '__voice_id__') { task.ttsVoiceId = val; }
         else if (f.key === '__export_name__') { task.exportName = val; }
         else if (f.key.startsWith('L')) {
             const m = f.key.match(/^L(\d+)_(.+)$/);
@@ -1606,6 +1825,17 @@ function _bcBuildTask(tpl, row, rowIdx, taskNum, cols) {
         } else if (['title_text', 'body_text', 'footer_text'].includes(f.key)) {
             if (task.overlays && task.overlays[0]) setOverlayText(task.overlays[0], f.key, val);
         }
+    }
+    if (tpl.materialFolder?.mode === 'concat' && Array.isArray(tpl.materialFolder.files) && tpl.materialFolder.files.length > 0) {
+        const pool = tpl.materialFolder.files.filter(Boolean);
+        task.bgMode = 'multi';
+        task.bgClipPool = pool.slice();
+        task.bgClipActivePool = pool.slice();
+        task.bgClipOrder = 'sequence';
+        task.bgPath = pool[0];
+        task.videoPath = pool[0];
+        task.bgSrcUrl = null;
+        task.srcUrl = null;
     }
     return task;
 }
@@ -1629,6 +1859,7 @@ async function _bcSavePreset() {
             bindings: { ...t.bindings },
             bgCycle: t.bgCycle || null,
             source: t.source || null,
+            materialFolder: t.materialFolder || null,
         })),
         savedAt: new Date().toISOString(),
     };
@@ -1675,7 +1906,7 @@ function _bcLoadPreset() {
             const p = presets[name];
             if (!p) return;
             _bulkState.columns = JSON.parse(JSON.stringify(p.columns || []));
-            _bulkState.templates = (p.templates || []).map(t => ({ task: t.task, label: t.label, bindings: { ...t.bindings }, bgCycle: t.bgCycle || null, source: t.source || null }));
+            _bulkState.templates = (p.templates || []).map(t => ({ task: t.task, label: t.label, bindings: { ...t.bindings }, bgCycle: t.bgCycle || null, source: t.source || null, materialFolder: t.materialFolder || null }));
             // Keep existing rows but pad/trim to match new column count
             _bulkState.rows.forEach(r => {
                 while (r.length < _bulkState.columns.length) r.push('');
@@ -1800,7 +2031,7 @@ function _bcImportPreset() {
                 // Legacy single-preset format: load directly into current state
                 if (!data.columns) { alert('不是有效的大量制作模版文件'); return; }
                 _bulkState.columns = data.columns;
-                _bulkState.templates = (data.templates || []).map(t => ({ task: t.task, label: t.label, bindings: { ...t.bindings }, bgCycle: t.bgCycle || null, source: t.source || null }));
+                _bulkState.templates = (data.templates || []).map(t => ({ task: t.task, label: t.label, bindings: { ...t.bindings }, bgCycle: t.bgCycle || null, source: t.source || null, materialFolder: t.materialFolder || null }));
                 _bulkState.rows.forEach(r => {
                     while (r.length < _bulkState.columns.length) r.push('');
                     if (r.length > _bulkState.columns.length) r.length = _bulkState.columns.length;
@@ -1965,13 +2196,26 @@ function _showBulkCreateModal() {
                     <span style="font-size:11px;color:#666;">工程模板 × 数据表格 = 批量任务</span>
                 </div>
                 <div style="display:flex;gap:6px;">
+                    <select id="bc-output-mode" title="大量制作生成方式" style="padding:4px 8px;background:#202033;color:#ddd;border:1px solid #444;border-radius:5px;font-size:11px;">
+                        <option value="separate" selected>每个模板独立标签（推荐）</option>
+                        <option value="current">全部放入当前标签</option>
+                    </select>
                     <button id="bc-generate" style="padding:5px 18px;background:linear-gradient(135deg,#7c5cff,#a855f7);border:none;border-radius:5px;color:#fff;cursor:pointer;font-size:12px;font-weight:600;">🚀 生成任务</button>
                     <button id="bc-close" style="padding:3px 10px;background:rgba(255,255,255,0.05);border:1px solid #333;border-radius:5px;color:#888;cursor:pointer;font-size:11px;">关闭</button>
                 </div>
             </div>
             <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
                 <span style="color:#888;font-size:10px;margin-right:2px;">数据:</span>
+                <select id="bc-quick-columns" title="一键建立常用表格列" style="padding:2px 7px;background:#202033;color:#b9aaff;border:1px solid rgba(124,92,255,.45);border-radius:4px;font-size:10px;">
+                    <option value="" ${_bcCurrentQuickColumnPresetId() ? '' : 'selected'}>⚡ 快捷列模板</option>
+                    <option value="default" ${_bcCurrentQuickColumnPresetId() === 'default' ? 'selected' : ''}>⚙️ 默认配置</option>
+                    <option value="overlay" ${_bcCurrentQuickColumnPresetId() === 'overlay' ? 'selected' : ''}>🧱 覆层模板表</option>
+                    <option value="voice_workflow" ${_bcCurrentQuickColumnPresetId() === 'voice_workflow' ? 'selected' : ''}>🎙️ 人声工作流表</option>
+                </select>
+                <input id="bc-quick-group-count" type="number" min="1" max="500" value="1" title="一次建立多少组相同结构的列，最多500组" style="width:52px;padding:2px 4px;background:#202033;color:#ddd;border:1px solid #444;border-radius:4px;font-size:10px;">
+                <button id="bc-build-column-groups" title="按左侧选择的快捷列模板批量建立多组列" style="padding:2px 8px;background:rgba(124,92,255,.13);border:1px solid rgba(124,92,255,.35);border-radius:4px;color:#b9aaff;cursor:pointer;font-size:10px;">批量建组</button>
                 <button id="bc-paste-tsv" style="padding:2px 8px;background:rgba(255,255,255,0.08);border:1px solid #333;border-radius:4px;color:#ccc;cursor:pointer;font-size:10px;">📋 粘贴TSV</button>
+                <button id="bc-copy-table" style="padding:2px 8px;background:rgba(76,158,255,.1);border:1px solid rgba(76,158,255,.28);border-radius:4px;color:#8fc7ff;cursor:pointer;font-size:10px;">📄 复制整表</button>
                 <button id="bc-add-row" style="padding:2px 8px;background:rgba(255,255,255,0.08);border:1px solid #333;border-radius:4px;color:#ccc;cursor:pointer;font-size:10px;">+ 添加行</button>
                 <button id="bc-clear" style="padding:2px 8px;background:rgba(255,80,80,0.08);border:1px solid rgba(255,80,80,0.2);border-radius:4px;color:#f88;cursor:pointer;font-size:10px;">清空</button>
                 <span style="color:rgba(255,255,255,0.1);margin:0 4px;">|</span>
@@ -1981,6 +2225,7 @@ function _showBulkCreateModal() {
                 <button id="bc-reload-source" style="padding:2px 8px;background:rgba(76,158,255,0.1);border:1px solid rgba(76,158,255,0.25);border-radius:4px;color:#8fc7ff;cursor:pointer;font-size:10px;" title="重新读取已添加模板对应的最新模板工程，保留当前列绑定">🔄 刷新工程</button>
                 <button id="bc-export-preset" style="padding:2px 8px;background:rgba(255,255,255,0.05);border:1px solid #333;border-radius:4px;color:#aaa;cursor:pointer;font-size:10px;">⬆ 导出</button>
                 <button id="bc-import-preset" style="padding:2px 8px;background:rgba(255,255,255,0.05);border:1px solid #333;border-radius:4px;color:#aaa;cursor:pointer;font-size:10px;">⬇ 导入</button>
+                <span id="bc-folder-drop" style="margin-left:8px;padding:3px 10px;border:1px dashed rgba(124,92,255,.65);border-radius:5px;color:#b9aaff;font-size:10px;">📁 可拖入多个文件夹：每夹一标签、每文件一任务</span>
             </div>
         </div>
         <div style="display:flex;flex:1;overflow:hidden;">
@@ -2003,12 +2248,54 @@ function _showBulkCreateModal() {
     // Block events from leaking to app-level handlers after modal controls handle them.
     ov.addEventListener('mousedown', e => e.stopPropagation());
     ov.addEventListener('pointerdown', e => e.stopPropagation());
+    ov.addEventListener('dragover', e => {
+        const hasFiles = Array.from(e.dataTransfer?.types || []).includes('Files');
+        if (!hasFiles) return;
+        e.preventDefault();
+        e.stopPropagation();
+        e.dataTransfer.dropEffect = 'copy';
+        const hint = ov.querySelector('#bc-folder-drop');
+        if (hint) hint.style.background = 'rgba(124,92,255,.22)';
+    });
+    ov.addEventListener('dragleave', e => {
+        if (e.relatedTarget && ov.contains(e.relatedTarget)) return;
+        const hint = ov.querySelector('#bc-folder-drop');
+        if (hint) hint.style.background = '';
+    });
+    ov.addEventListener('drop', async e => {
+        const files = Array.from(e.dataTransfer?.files || []);
+        if (!files.length) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const hint = ov.querySelector('#bc-folder-drop');
+        if (hint) hint.style.background = '';
+        const paths = files.map(f => typeof getFileNativePath === 'function'
+            ? getFileNativePath(f) : (f.path || '')).filter(Boolean);
+        const dirs = paths.filter(p => typeof _isDirectoryPath === 'function' && _isDirectoryPath(p));
+        if (!dirs.length) {
+            if (typeof showToast === 'function') showToast('这里请拖入一个或多个文件夹', 'warning');
+            return;
+        }
+        if (typeof window.reelsImportFoldersAsTaskTabs !== 'function') {
+            if (typeof showToast === 'function') showToast('文件夹任务导入器尚未加载，请重启应用', 'error');
+            return;
+        }
+        const result = await window.reelsImportFoldersAsTaskTabs(dirs);
+        if (result?.tabCount > 0) _bcCloseModal();
+    });
 
     // ── Click events ──
     ov.addEventListener('click', e => {
         const t = e.target;
         if (t.id === 'bc-close') { _bcCloseModal(); return; }
         if (t.id === 'bc-add-row') { _bulkState.rows.push(new Array(_bulkState.columns.length).fill('')); _bcRenderTable(); return; }
+        if (t.id === 'bc-copy-table') { _bcCopyWholeTable(); return; }
+        if (t.id === 'bc-build-column-groups') {
+            const presetId = ov.querySelector('#bc-quick-columns')?.value || 'default';
+            const groupCount = ov.querySelector('#bc-quick-group-count')?.value || 1;
+            _bcApplyQuickColumnPreset(presetId, groupCount);
+            return;
+        }
         if (t.id === 'bc-add-col') {
             _bcPrompt('输入列名（多列用逗号分隔）', 'FB标题, FB正文, FB尾标, TK标题, TK正文').then(input => {
                 if (!input || !input.trim()) return;
@@ -2051,6 +2338,18 @@ function _showBulkCreateModal() {
             }
             return;
         }
+        if (t.classList.contains('bc-tpl-folder-pick')) {
+            const ti = parseInt(t.dataset.ti);
+            const tpl = _bulkState.templates[ti];
+            if (tpl) _bcPickTemplateMaterialFolder(tpl, ti);
+            return;
+        }
+        if (t.classList.contains('bc-tpl-folder-refresh')) {
+            const ti = parseInt(t.dataset.ti);
+            const tpl = _bulkState.templates[ti];
+            if (tpl) _bcRefreshTemplateMaterialFolder(tpl, ti);
+            return;
+        }
         if (t.classList.contains('bc-tpl-del')) { _bulkState.templates.splice(parseInt(t.dataset.ti),1); _bcRenderBindings(); return; }
         if (t.classList.contains('bc-col-insert')) {
             const ci = parseInt(t.dataset.ci);
@@ -2088,10 +2387,39 @@ function _showBulkCreateModal() {
             _bcRenderTable(); _bcRenderBindings(); return;
         }
     });
+    ov.querySelector('#bc-quick-columns')?.addEventListener('change', e => {
+        const presetId = e.target.value;
+        if (presetId && !_bcApplyQuickColumnPreset(presetId)) {
+            e.target.value = _bcCurrentQuickColumnPresetId();
+        }
+    });
 
     // ── Change events ──
     ov.addEventListener('change', e => {
         const t = e.target;
+        if (t.classList.contains('bc-tpl-folder-mode')) {
+            const ti = parseInt(t.dataset.ti);
+            const tpl = _bulkState.templates[ti];
+            if (!tpl) return;
+            tpl.materialFolder = {
+                path: tpl.materialFolder?.path || '',
+                files: Array.isArray(tpl.materialFolder?.files) ? tpl.materialFolder.files : [],
+                refreshedAt: tpl.materialFolder?.refreshedAt || 0,
+                columnIndex: Number.isInteger(tpl.materialFolder?.columnIndex) ? tpl.materialFolder.columnIndex : null,
+                mode: t.value === 'concat' ? 'concat' : 'rows',
+            };
+            if (tpl.materialFolder.mode === 'concat' && Number.isInteger(tpl.materialFolder.columnIndex)) {
+                const oldFiles = new Set(tpl.materialFolder.files || []);
+                const ci = tpl.materialFolder.columnIndex;
+                _bulkState.rows.forEach(row => {
+                    if (oldFiles.has(row?.[ci])) row[ci] = '';
+                });
+                _bcRenderTable();
+            }
+            if (tpl.materialFolder.path) _bcRefreshTemplateMaterialFolder(tpl, ti);
+            else _bcScheduleDraftSave();
+            return;
+        }
         if (t.classList.contains('bc-col-name')) { _bulkState.columns[parseInt(t.dataset.ci)].name=t.value; _bcRenderBindings(); _bcScheduleDraftSave(); return; }
         if (t.classList.contains('bc-col-kind')) {
             const ci = parseInt(t.dataset.ci);
