@@ -2156,6 +2156,15 @@
               <button id="autoedit-mode-single" class="btn btn-primary" onclick="setAutoEditMode('single')">单套</button>
               <button id="autoedit-mode-batch" class="btn btn-secondary" onclick="setAutoEditMode('batch')">批量任务</button>
             </div>
+            <div class="form-section" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;border:1px solid rgba(245,158,11,.45);background:rgba(245,158,11,.08);">
+              <strong style="color:#fcd34d;">🧪 文案检测版本:</strong>
+              <select id="autoedit-matching-engine" class="select" style="width:190px;">
+                <option value="legacy" selected>经典版（稳定）</option>
+                <option value="multilingual_v2">智能版 V2（独立切点）</option>
+                <option value="compare_v2">经典版 vs V2（逐段对比）</option>
+              </select>
+              <span id="autoedit-matching-engine-hint" class="hint" style="margin:0;flex:1;min-width:300px;">经典版保持原有匹配和报错逻辑。</span>
+            </div>
             <div id="autoedit-batch-panel" class="form-section" style="display:none;">
               <h4 style="margin-bottom:10px;color:var(--text-secondary);">📚 批量自动剪辑</h4>
               <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
@@ -2281,14 +2290,15 @@
                 </div>
                 <div style="display: flex; align-items: center; gap: 8px;">
                   <label>前留白:</label>
-                  <input type="number" id="autoedit-lead-pad" class="input input-small" value="0.04" min="0" max="2" step="0.01" style="width: 72px;">
+                  <input type="number" id="autoedit-lead-pad" class="input input-small" value="0.12" min="0" max="2" step="0.01" style="width: 72px;">
                   <span style="font-size: 11px; color: var(--text-muted);">秒</span>
                 </div>
                 <div style="display: flex; align-items: center; gap: 8px;">
                   <label>后留白:</label>
-                  <input type="number" id="autoedit-tail-pad" class="input input-small" value="0.08" min="0" max="2" step="0.01" style="width: 72px;">
+                  <input type="number" id="autoedit-tail-pad" class="input input-small" value="0.22" min="0" max="2" step="0.01" style="width: 72px;">
                   <span style="font-size: 11px; color: var(--text-muted);">秒</span>
                 </div>
+                <span style="font-size:11px;color:#86efac;">自然衔接默认值；想更舒缓可把后留白调到 0.30–0.40 秒</span>
                 <div style="display: flex; align-items: center; gap: 8px;">
                   <label>匹配阈值:</label>
                   <input type="number" id="autoedit-min-score" class="input input-small" value="0.52" min="0.1" max="1" step="0.01" style="width: 72px;">
@@ -3072,21 +3082,21 @@
             <div class="param-row" style="margin-bottom: 8px;">
               <button class="btn btn-secondary" onclick="vwPasteFromClipboard()">📋 从表格粘贴</button>
               <button class="btn btn-secondary" onclick="vwClearAll()">🧹 清空</button>
-              <label style="margin-left:12px;font-size:12px;">分文件夹:</label>
+              <label style="margin-left:12px;font-size:12px;">账号文件夹:</label>
               <select id="vw-folder-mode" class="select" style="width:150px;font-size:12px;"
                 onchange="vwUpdateFolderModeUI()">
-                <option value="column" selected>按额外一列名称</option>
-                <option value="count">按固定条数</option>
-                <option value="none">不分文件夹</option>
+                <option value="column" selected>按额外一列账号名</option>
+                <option value="count">按固定条数分账号</option>
+                <option value="none">不分账号文件夹</option>
               </select>
               <span id="vw-folder-count-wrap" style="display:none;align-items:center;gap:5px;font-size:12px;">
                 每 <input type="number" id="vw-folder-count" class="input" value="6" min="1" max="999"
-                  style="width:62px;height:28px;"> 条一个文件夹
+                  style="width:62px;height:28px;"> 条一个账号文件夹
               </span>
             </div>
             <div class="param-row" style="margin-bottom:8px;">
               <span style="font-size: 12px; color: var(--text-muted);" title="可以在 Google Sheets 或 Excel 中直接框选复制多行表格数据">
-                📋 列格式: 1 配音文案｜2 字幕原文｜3 音色ID(可选)｜4 配乐路径(可选)｜5 文件夹名(可选)；没有配乐时第4列也可直接填文件夹名
+                📋 列格式: 1 配音文案｜2 字幕原文｜3 音色ID(可选)｜4 配乐路径(可选)｜5 账号名(可选)；没有配乐时第4列也可直接填账号名
               </span>
             </div>
 
@@ -3145,6 +3155,7 @@
               </button>
               <button class="btn btn-secondary" id="vw-restart-all-btn"
                 onclick="restartAllVoiceoverWorkflow()"
+                disabled
                 title="明确重新生成全部任务，包括已经成功的项目">
                 🔁 全部重新生成
               </button>
@@ -5126,6 +5137,7 @@
             <div class="reels-timeline-bar">
               <div class="reels-timeline-header collapsed" onclick="this.classList.toggle('collapsed');this.nextElementSibling.classList.toggle('collapsed')">
                 <span>🎬 时间线</span>
+                <span style="font-size:10px;color:var(--text-muted);font-weight:normal;margin-left:8px;">框选 / Shift连选 / Ctrl(Cmd)点选 · 拖动所选片段可整体移动</span>
                 <span class="tl-toggle">▼</span>
               </div>
               <div class="reels-timeline-body collapsed">
@@ -5178,15 +5190,15 @@
                 <label>画质:</label>
                 <select id="reels-quality" class="select" style="width:160px;font-size:11px;"
                   onchange="reelsUpdateCustomBitrateUI()">
-                  <option value="high">极致无损 (最高质量)</option>
-                  <option value="medium">高画质 (口播常用)</option>
-                  <option value="low" selected>普通均衡 (Reels推荐)</option>
+                  <option value="high">Reels高质量</option>
+                  <option value="medium">口播高质量</option>
+                  <option value="low" selected>口播低质量 (默认)</option>
                   <option value="ultrafast">极速导出 (预览用)</option>
                   <option value="custom">自定义码率</option>
                 </select>
                 <span id="reels-quality-bitrate-label"
                   style="font-size:10px;color:var(--text-secondary);white-space:nowrap;"
-                  title="当前档位的视频目标码率 / 最大码率">目标 1.5 / 最大 2.5 Mbps</span>
+                  title="当前档位的视频目标码率 / 最大码率">目标 2 / 最大 3 Mbps</span>
                 <span id="reels-custom-bitrate-settings" style="display:none;align-items:center;gap:4px;">
                   <label title="视频平均目标码率">目标:</label>
                   <input type="number" id="reels-custom-bitrate" class="input input-small"
@@ -5198,6 +5210,10 @@
                     min="1" max="50" step="0.5" value="7" style="width:52px;font-size:11px;"
                     oninput="reelsUpdateCustomBitrateUI()">
                   <span>Mbps</span>
+                </span>
+                <span style="font-size:10px;color:var(--text-muted);line-height:1.35;"
+                  title="口播低质量：固定机位、人物和背景运动少；口播高质量：绿幕、头发衣物细节多或人物动作较多；Reels高质量：动态背景、转场、运动镜头和平台高质量上传。">
+                  说明：静态口播选低质量 · 细节/动作较多选口播高质量 · 动态Reels选Reels高质量
                 </span>
                 <span style="width:1px;height:16px;background:var(--border-color);margin:0 2px;display:inline-block;"></span>
                 <label>后缀:</label>

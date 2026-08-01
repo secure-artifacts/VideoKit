@@ -281,7 +281,8 @@ async function vwPasteFromClipboard() {
             srtPath: null,
             subtitleTxtPath: null,
             mp4Path: null,
-            segments: null
+            segments: null,
+            outputGroupName: null
         }));
         // 新粘贴的数据属于新批次；只有同一批任务暂停后继续时才复用输出目录。
         vwWorkflowBatchOutputDir = '';
@@ -289,7 +290,7 @@ async function vwPasteFromClipboard() {
 
         renderVWTasks();
         updateVWTaskCount();
-        document.getElementById('vw-start-btn').disabled = false;
+        resetVWWorkflowUI(true);
         showToast(`已添加 ${vwTasks.length} 条任务`, 'success');
 
     } catch (error) {
@@ -334,7 +335,7 @@ function renderVWTasks() {
                 <strong>[列2] AI字幕原文:</strong> ${escapeHtml(task.subtitleText.substring(0, 60).replace(/\n/g, ' | '))}${task.subtitleText.length > 60 ? '...' : ''}
             </div>
             ${task.voiceId ? `<div style="font-size: 10px; color: var(--text-muted); margin-top: 2px;">音色: ${escapeHtml(task.voiceId)}</div>` : ''}
-            ${task.folderName ? `<div style="font-size:10px;color:#74c0fc;margin-top:2px;">📁 文件夹: ${escapeHtml(task.folderName)}</div>` : ''}
+            ${task.folderName ? `<div style="font-size:10px;color:#74c0fc;margin-top:2px;">📁 账号: ${escapeHtml(task.folderName)}</div>` : ''}
             <div style="display:flex;align-items:center;gap:6px;margin-top:4px;font-size:10px;color:var(--text-muted);">
                 <span style="min-width:30px;">配乐:</span>
                 <span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${escapeHtml(task.bgmPath || '')}">
@@ -650,11 +651,55 @@ function vwInvertSplit() {
 
 // 清空任务
 function vwClearAll() {
+    if (vwWorkflowRunning || vwRetryAllRunning) {
+        showToast('任务仍在执行，请先暂停并等待当前请求结束后再清空', 'warning');
+        return;
+    }
+
     vwTasks = [];
+    vwWorkflowBatchOutputDir = '';
+    vwWorkflowPauseRequested = false;
+    window._vwLastOutputFolder = '';
+    try {
+        localStorage.removeItem(VW_RESUME_STORAGE_KEY);
+    } catch (error) {
+        console.warn('[一键配音] 清除续跑状态失败:', error);
+    }
     renderVWTasks();
     updateVWTaskCount();
     updateSelectAllState();
-    document.getElementById('vw-start-btn').disabled = true;
+    resetVWWorkflowUI(false);
+    showToast('已清空一键配音字幕任务', 'info');
+}
+
+// 将执行区恢复到尚未开始的状态，避免新批次或清空后残留上一次的进度。
+function resetVWWorkflowUI(hasTasks = vwTasks.length > 0) {
+    const startBtn = document.getElementById('vw-start-btn');
+    const pauseBtn = document.getElementById('vw-pause-btn');
+    const restartAllBtn = document.getElementById('vw-restart-all-btn');
+    const retryAllBtn = document.getElementById('vw-retry-all-subtitles-btn');
+    const progressEl = document.getElementById('vw-progress');
+    const progressTextEl = document.getElementById('vw-progress-text');
+    const progressPercentEl = document.getElementById('vw-progress-percent');
+    const progressBarEl = document.getElementById('vw-progress-bar');
+
+    if (startBtn) {
+        startBtn.disabled = !hasTasks;
+        startBtn.textContent = '🚀 开始生成配音字幕';
+    }
+    if (pauseBtn) {
+        pauseBtn.disabled = true;
+        pauseBtn.textContent = '⏸ 暂停';
+    }
+    if (restartAllBtn) restartAllBtn.disabled = !hasTasks;
+    if (retryAllBtn) {
+        retryAllBtn.disabled = true;
+        retryAllBtn.textContent = '🔄 重试所有失败字幕';
+    }
+    if (progressEl) progressEl.style.display = 'none';
+    if (progressTextEl) progressTextEl.textContent = '准备中...';
+    if (progressPercentEl) progressPercentEl.textContent = '0%';
+    if (progressBarEl) progressBarEl.style.width = '0%';
 }
 
 // 更新任务计数
@@ -666,7 +711,7 @@ function updateVWTaskCount() {
         const selectedCount = vwTasks.filter(t => t.selected).length;
         const bgmCount = vwTasks.filter(t => !!t.bgmPath).length;
         const folderCount = new Set(vwTasks.map(t => String(t.folderName || '').trim()).filter(Boolean)).size;
-        countEl.textContent = `共 ${vwTasks.length} 条，${folderCount} 个文件夹，已选 ${selectedCount} 条，${splitCount} 条拆分，${mp4Count} 条黑屏MP4，${bgmCount} 条配乐`;
+        countEl.textContent = `共 ${vwTasks.length} 条，${folderCount} 个账号文件夹，已选 ${selectedCount} 条，${splitCount} 条拆分，${mp4Count} 条黑屏MP4，${bgmCount} 条配乐`;
     }
 }
 
@@ -718,6 +763,7 @@ async function restartAllVoiceoverWorkflow() {
         task.segments = null;
         task.outputFolder = null;
         task.taskPrefix = null;
+        task.outputGroupName = null;
     });
     vwWorkflowBatchOutputDir = '';
     window._vwLastOutputFolder = '';
@@ -873,6 +919,7 @@ async function startVoiceoverWorkflow(forceAll = false) {
                 task.subtitleTxtPath = ttsData.subtitle_txt_path || null;
                 task.outputFolder = ttsData.output_folder;
                 task.taskPrefix = ttsData.task_prefix;
+                task.outputGroupName = ttsData.group_name || '';
                 task.mp4Path = ttsData.mp4_path || null;
                 task.segments = ttsData.segments;
                 task.status = ttsData.partial_success ? 'partial' : 'done';
@@ -964,6 +1011,8 @@ async function retryVWSubtitleTask(task, gladiaKeys) {
                 subtitle_text: task.subtitleText,
                 output_dir: task.outputFolder,
                 task_prefix: task.taskPrefix,
+                // 新任务使用“总目录 → 内容类型 → 账号”层级；旧续跑任务没有该字段时保持原路径。
+                group_name: task.outputGroupName || '',
                 gladia_keys: gladiaKeys,
                 language: document.getElementById('vw-align-lang')?.value || '英语',
                 export_fcpxml: document.getElementById('vw-export-fcpxml')?.checked ?? true,
@@ -1059,6 +1108,7 @@ document.addEventListener('DOMContentLoaded', () => {
         renderVWTasks();
         updateVWTaskCount();
         const startBtn = document.getElementById('vw-start-btn');
+        const restartAllBtn = document.getElementById('vw-restart-all-btn');
         const remainingCount = vwTasks.filter(task =>
             task.status === 'pending' || task.status === 'error' || task.status === 'generating'
         ).length;
@@ -1068,6 +1118,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 ? `▶️ 继续未完成 (${remainingCount})`
                 : '✅ 已全部生成';
         }
+        if (restartAllBtn) restartAllBtn.disabled = false;
         showToast(`已恢复上次一键配音任务：${vwTasks.length} 条，未完成 ${remainingCount} 条`, 'info');
     }
     setTimeout(refreshVWVoices, 1000);

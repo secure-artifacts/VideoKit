@@ -6707,9 +6707,14 @@ function _importDroppedReelsTaskFolders(dirPaths) {
     }
 
     if (imported > 0) {
+        // 外部拖入的每个账号/文件夹队列，同时自动建立同名批量表格标签页。
+        // 任务列表保持合并显示；进入批量表格后可分别编辑每个账号。
+        if (typeof window.reelsSyncExternalFolderQueuesToTabs === 'function') {
+            window.reelsSyncExternalFolderQueuesToTabs();
+        }
         _renderTaskList();
         reelsSelectTask(firstImportedIndex);
-        if (typeof _batchAutoSave === 'function') _batchAutoSave();
+        if (typeof _batchAutoSave === 'function') _batchAutoSave({ skipSync: true });
     }
     return { imported, importedFolders, skipped, unmatched, replaced };
 }
@@ -6719,6 +6724,14 @@ function reelsToggleFolderQueue(queueId) {
     _reelsState.folderQueueCollapsed[queueId] = !_reelsState.folderQueueCollapsed[queueId];
     _renderTaskList();
 }
+
+function reelsToggleFolderQueueExport(queueId, checked) {
+    (_reelsState.tasks || []).forEach(task => {
+        if (task._folderQueueId === queueId) task._exportSelected = !!checked;
+    });
+    _renderTaskList();
+}
+window.reelsToggleFolderQueueExport = reelsToggleFolderQueueExport;
 
 function _onTaskListDrop(e) {
     e.preventDefault();
@@ -7012,6 +7025,9 @@ function _renderTaskList() {
     }
 
     if (!_reelsState.batchGroupCollapsed) _reelsState.batchGroupCollapsed = {};
+    // 没有来源标签页的任务通常是此前已保留在列表中的旧任务。
+    // 以前它们没有标题，和新导入的批量任务混在一起时非常容易被忽略。
+    const legacyGroupId = '__reels_existing_tasks__';
     let lastBatchGroupId = null;
     let lastFolderQueueId = null;
     container.innerHTML = tasks.map((task, i) => {
@@ -7108,11 +7124,12 @@ function _renderTaskList() {
         const rowOpacity = exportChecked ? '1' : '0.45';
 
         let batchGroupHeader = '';
-        const batchGroupId = task._batchTabId || '';
-        const batchGroupCollapsed = batchGroupId ? !!_reelsState.batchGroupCollapsed[batchGroupId] : false;
-        if (batchGroupId && batchGroupId !== lastBatchGroupId) {
-            const groupName = escapeTaskText(task._batchTabName || '未命名分组');
-            const groupTasks = tasks.filter(item => item._batchTabId === batchGroupId);
+        const isLegacyTask = !task._batchTabId;
+        const batchGroupId = task._batchTabId || legacyGroupId;
+        const batchGroupCollapsed = !!_reelsState.batchGroupCollapsed[batchGroupId];
+        if (batchGroupId !== lastBatchGroupId) {
+            const groupName = escapeTaskText(isLegacyTask ? '已有任务（未归档）' : (task._batchTabName || '未命名分组'));
+            const groupTasks = tasks.filter(item => isLegacyTask ? !item._batchTabId : item._batchTabId === batchGroupId);
             const groupSelected = groupTasks.filter(item => item._exportSelected !== false).length;
             const encodedGroupId = encodeURIComponent(batchGroupId);
             batchGroupHeader = `
@@ -7123,12 +7140,13 @@ function _renderTaskList() {
                     <button onclick="event.stopPropagation(); reelsToggleBatchGroup(decodeURIComponent('${encodedGroupId}'))"
                         style="border:none;background:transparent;color:#c7d2fe;cursor:pointer;padding:0;font-size:11px;"
                         title="折叠/展开分组">${batchGroupCollapsed ? '▶' : '▼'}</button>
-                    <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${groupName}">📑 ${groupName}</span>
+                    <input type="checkbox" ${groupSelected === groupTasks.length ? 'checked' : ''}
+                        onchange="event.stopPropagation(); reelsToggleBatchGroupExport(decodeURIComponent('${encodedGroupId}'), this.checked)"
+                        onclick="event.stopPropagation()"
+                        style="accent-color:var(--accent-color,#7b8bef);margin:0;transform:scale(1.08);cursor:pointer;"
+                        title="本组总开关：勾选则本组全部参与导出，取消则本组全部不导出">
+                    <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${groupName}">${isLegacyTask ? '🕘' : '📑'} ${groupName}</span>
                     <span style="margin-left:auto;color:#94a3b8;font-weight:400;">${groupSelected}/${groupTasks.length}</span>
-                    <button onclick="event.stopPropagation(); reelsToggleBatchGroupExport(decodeURIComponent('${encodedGroupId}'), true)"
-                        style="border:1px solid rgba(123,139,239,.35);background:rgba(123,139,239,.12);color:#c7d2fe;border-radius:4px;padding:1px 5px;cursor:pointer;font-size:9px;">全选</button>
-                    <button onclick="event.stopPropagation(); reelsToggleBatchGroupExport(decodeURIComponent('${encodedGroupId}'), false)"
-                        style="border:1px solid rgba(255,255,255,.12);background:transparent;color:#94a3b8;border-radius:4px;padding:1px 5px;cursor:pointer;font-size:9px;">取消</button>
                 </div>`;
             lastFolderQueueId = null;
         }
@@ -7139,7 +7157,9 @@ function _renderTaskList() {
         const queueCollapsed = queueId ? !!_reelsState.folderQueueCollapsed[queueId] : false;
         if (queueId && queueId !== lastFolderQueueId) {
             const queueName = escapeTaskText(task._folderQueueName || '文件夹队列');
-            const queueCount = tasks.filter(item => item._folderQueueId === queueId).length;
+            const queueTasks = tasks.filter(item => item._folderQueueId === queueId);
+            const queueCount = queueTasks.length;
+            const queueSelected = queueTasks.filter(item => item._exportSelected !== false).length;
             const encodedQueueId = encodeURIComponent(queueId);
             folderHeader = `
                 <div class="reels-folder-queue-header" onclick="reelsToggleFolderQueue(decodeURIComponent('${encodedQueueId}'))"
@@ -7147,8 +7167,13 @@ function _renderTaskList() {
                            border-radius:6px;background:rgba(76,158,255,0.12);border:1px solid rgba(76,158,255,0.25);
                            color:#9ccaff;cursor:pointer;font-size:11px;font-weight:600;">
                     <span>${queueCollapsed ? '▶' : '▼'}</span>
+                    <input type="checkbox" ${queueSelected === queueCount ? 'checked' : ''}
+                        onchange="event.stopPropagation(); reelsToggleFolderQueueExport(decodeURIComponent('${encodedQueueId}'), this.checked)"
+                        onclick="event.stopPropagation()"
+                        style="accent-color:var(--accent-color,#7b8bef);margin:0;transform:scale(1.08);cursor:pointer;"
+                        title="本账号总开关：勾选则该账号全部任务参与导出，取消则全部不导出">
                     <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${queueName}">📁 ${queueName}</span>
-                    <span style="margin-left:auto;color:#789;font-weight:400;">${queueCount} 个任务</span>
+                    <span style="margin-left:auto;color:#789;font-weight:400;">${queueSelected}/${queueCount}</span>
                 </div>`;
         }
         lastFolderQueueId = queueId || null;
@@ -7191,7 +7216,9 @@ window.reelsToggleBatchGroup = reelsToggleBatchGroup;
 
 function reelsToggleBatchGroupExport(groupId, checked) {
     (_reelsState.tasks || []).forEach(task => {
-        if (task._batchTabId === groupId) task._exportSelected = !!checked;
+        if (groupId === '__reels_existing_tasks__' ? !task._batchTabId : task._batchTabId === groupId) {
+            task._exportSelected = !!checked;
+        }
     });
     _renderTaskList();
 }
@@ -9218,9 +9245,9 @@ function reelsUpdateCustomBitrateUI() {
     const settingsEl = document.getElementById('reels-custom-bitrate-settings');
     if (settingsEl) settingsEl.style.display = quality === 'custom' ? 'inline-flex' : 'none';
     const presetRates = {
-        high: { target: 12, max: 16 },
+        high: { target: 12, max: 12 },
         medium: { target: 8, max: 11 },
-        low: { target: 1.5, max: 2.5 },
+        low: { target: 2, max: 3 },
         ultrafast: { target: 2.5, max: 3.5 },
     };
     const rates = quality === 'custom'
@@ -9265,7 +9292,7 @@ async function reelsStartExport() {
     const workMode = _getWorkMode();
     
     if (!localStorage.getItem('reelsQualityReminderShown')) {
-        const proceed = confirm("【画质选择提醒】\\n\\n现已支持多种输出画质，您可以在底部的「🚀 导出设置」中调整。\\n\\n建议您先导出一个片段对比一下画质是否有明显差别，若无差别强烈建议选择「普通均衡 (Reels推荐)」以获得 3-5 倍的渲染速度提升。\\n（注：实测在绿幕口播视频中，高质量和普通会有一些差别）\\n\\n您要继续当前导出吗？（本提示仅显示一次）");
+        const proceed = confirm("【画质选择提醒】\\n\\n画质档位会显示目标码率和最大码率：\\n\\n• 口播低质量（默认 2/3 Mbps）：固定机位、人物和背景运动少\\n• 口播高质量（8/11 Mbps）：绿幕、细节多或人物动作较多\\n• Reels高质量（12 Mbps）：动态背景、转场和运动镜头\\n• 自定义码率：按需要手动设置\\n\\n建议先导出一个片段确认画质。您要继续当前导出吗？（本提示仅显示一次）");
         if (!proceed) return;
         localStorage.setItem('reelsQualityReminderShown', 'true');
     }
@@ -9500,6 +9527,20 @@ async function reelsStartExport() {
         }
     }
     const totalJobs = exportJobs.length;
+    // 并发任务各自上报进度。汇总时必须按每个任务的最新进度相加，
+    // 不能用“任务序号 + 当前百分比”，否则回调交错会让总进度条来回跳。
+    const jobProgress = new Array(totalJobs).fill(0);
+    let lastOverallProgress = 0;
+    const updateConcurrentOverallProgress = (jobIndex, pct) => {
+        const normalized = Math.max(0, Math.min(100, Number(pct) || 0));
+        jobProgress[jobIndex] = Math.max(jobProgress[jobIndex] || 0, normalized);
+        const overall = Math.round(jobProgress.reduce((sum, value) => sum + value, 0) / Math.max(1, totalJobs));
+        lastOverallProgress = Math.max(lastOverallProgress, overall);
+        const progressInner = document.getElementById('reels-export-progress-inner');
+        const progressText = document.getElementById('reels-export-progress-text');
+        if (progressInner) progressInner.style.width = `${lastOverallProgress}%`;
+        if (progressText) progressText.textContent = `${lastOverallProgress}% (${okCount + failCount}/${totalJobs})`;
+    };
 
     // ── 矩阵模式确认 ──
     if (multiPresetCfg && totalJobs > tasks.length) {
@@ -10352,12 +10393,7 @@ async function reelsStartExport() {
                     isCancelled: () => !_reelsState.isExporting,
                     onProgress: (pct) => {
                         if (statusEl) statusEl.textContent = `导出中 ${i + 1}/${totalJobs}: ${task.fileName}${presetLabel} (${pct}%)`;
-                        const progressInner = document.getElementById('reels-export-progress-inner');
-                        const progressText = document.getElementById('reels-export-progress-text');
-                        const blended = ((i + pct / 100) / totalJobs) * 100;
-                        const blendedPct = Math.round(blended);
-                        if (progressInner) progressInner.style.width = `${blendedPct}%`;
-                        if (progressText) progressText.textContent = `${blendedPct}% (${i}/${totalJobs})`;
+                        updateConcurrentOverallProgress(i, pct);
                     },
                     onLog: (msg) => console.log(`[WYSIWYG] ${task.fileName}: ${msg}`),
                 });
@@ -10499,7 +10535,7 @@ async function reelsStartExport() {
         if (originalOverlays !== null) {
             task.overlays = originalOverlays;
         }
-        _reelsUpdateExportProgressUI(okCount + failCount, totalJobs);
+        updateConcurrentOverallProgress(i, 100);
     }
     };
 

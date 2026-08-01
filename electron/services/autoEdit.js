@@ -9,6 +9,7 @@ const elevenlabsService = require('./elevenlabs');
 const subtitleService = require('./subtitle');
 const settingsService = require('./settings');
 const subtitleUtils = require('./subtitleUtils');
+const autoEditMatcherV2 = require('./autoEditMatcherV2');
 
 function normalizeText(text) {
     return String(text || '')
@@ -1118,8 +1119,17 @@ async function autoEditByScript(opts = {}) {
 
     const ignoreMismatch = opts.ignoreMismatch === true || opts.ignore_mismatch === true;
     const language = opts.language || 'auto';
-    const leadPad = Math.max(0, Number(opts.leadPad ?? opts.lead_pad ?? 0.04));
-    const tailPad = Math.max(0, Number(opts.tailPad ?? opts.tail_pad ?? 0.08));
+    const matchingEngine = autoEditMatcherV2.normalizeEngine(opts.matchingEngine || opts.matching_engine);
+    const isMultilingualV2 = matchingEngine === autoEditMatcherV2.ENGINE_ID;
+    const isCompareMode = matchingEngine === autoEditMatcherV2.COMPARE_ENGINE_ID;
+    const usesMultilingualV2 = isMultilingualV2 || isCompareMode;
+    const matchingEngineVersion = usesMultilingualV2 ? autoEditMatcherV2.ENGINE_VERSION : 1;
+    const reportPath = path.join(outputDir, isCompareMode ? 'comparison_report.md' : (isMultilingualV2 ? 'alignment_report_v2.md' : 'mismatch_report.md'));
+    const projectPath = path.join(outputDir, isCompareMode ? 'auto_edit_comparison_project.json' : (isMultilingualV2 ? 'auto_edit_project_v2.json' : 'auto_edit_project.json'));
+    // 默认保留自然的句前/句后呼吸空间。旧版紧凑节奏为 0.04/0.08，
+    // 连续片段容易显得抢拍；用户仍可在界面中手动改回旧值。
+    const leadPad = Math.max(0, Number(opts.leadPad ?? opts.lead_pad ?? 0.12));
+    const tailPad = Math.max(0, Number(opts.tailPad ?? opts.tail_pad ?? 0.22));
     const minScore = Math.max(0.1, Math.min(1, Number(opts.minScore ?? opts.min_score ?? 0.52)));
     const forceTranscribe = opts.forceTranscribe === true || opts.force_transcribe === true;
     const burnSubtitles = opts.burnSubtitles === true || opts.burn_subtitles === true;
@@ -2181,14 +2191,81 @@ async function autoEditByScript(opts = {}) {
                 : (previous ? `位于片段 #${previous.sourceIndex + 1} 之后` : (next ? `位于片段 #${next.sourceIndex + 1} 之前` : '未能确定相邻片段'));
         });
 
+        // V2 独立使用语言感知词窗重新计算每段入点/出点。
+        // 经典切点始终保留；仅当某一段无法可靠定位时，该段才单独回退经典切点。
+        const v2CutResults = usesMultilingualV2
+            ? plans.map(plan => {
+                const cut = autoEditMatcherV2.calculateCut(plan, { language, leadPad, tailPad });
+                plan.legacyStart = cut.legacyStart;
+                plan.legacyEnd = cut.legacyEnd;
+                plan.v2Start = cut.start;
+                plan.v2End = cut.end;
+                plan.v2CutAvailable = cut.applied;
+                plan.cutEngine = isCompareMode ? 'legacy' : cut.engine;
+                plan.v2CutScore = cut.score;
+                plan.v2CutReason = cut.reason;
+                if (cut.applied && !isCompareMode) {
+                    plan.start = cut.start;
+                    plan.end = cut.end;
+                    plan.wordStartIdx = cut.wordStartIdx;
+                    plan.wordEndIdx = cut.wordEndIdx;
+                    plan.matchedText = cut.matchedText || plan.matchedText;
+                }
+                return cut;
+            })
+            : [];
+
+        // V2 同时重新解释风险：识别文字不同默认属于待确认，不直接等同于“确定漏读”。
+        const v2Assessment = isMultilingualV2
+            || isCompareMode
+            ? autoEditMatcherV2.assessAnalysis({
+                plans,
+                matchInfo: allClipsMatchInfo,
+                missingBlocks: missingBlocksInfo,
+                language,
+            })
+            : null;
+        if (v2Assessment) {
+            for (let index = 0; index < allClipsMatchInfo.length; index++) {
+                const info = allClipsMatchInfo[index];
+                const assessment = v2Assessment.segments[index];
+                if (!assessment) continue;
+                info.legacySimilarity = info.similarity;
+                info.similarity = assessment.effectiveSimilarity;
+                info.isMismatch = assessment.status !== 'ready';
+                info.verificationLevel = assessment.verificationLevel;
+                info.issueReason = assessment.issueReason;
+                info.confidence = assessment.confidence;
+                info.cutEngine = plans[index]?.cutEngine || 'legacy';
+                info.cutScore = plans[index]?.v2CutScore || 0;
+                info.legacyStart = plans[index]?.legacyStart;
+                info.legacyEnd = plans[index]?.legacyEnd;
+                info.v2Start = plans[index]?.v2Start;
+                info.v2End = plans[index]?.v2End;
+                info.v2CutAvailable = plans[index]?.v2CutAvailable === true;
+                info.start = plans[index]?.start;
+                info.end = plans[index]?.end;
+            }
+            missingBlocksInfo.splice(0, missingBlocksInfo.length, ...v2Assessment.missingBlocks);
+            hasMismatch = v2Assessment.hasReviewWarnings;
+            anyClipMismatch = v2Assessment.segments.some(item => item.status !== 'ready');
+            console.log(`[自动剪辑][${isCompareMode ? '对比模式' : 'V2'}] V2 切点可用 ${v2CutResults.filter(item => item.applied).length}/${v2CutResults.length} 段；${v2Assessment.segments.filter(item => item.status === 'warning').length} 段识别差异待确认`);
+        }
+
         // Always generate the matching/mismatch report to make it convenient to inspect results
         try {
             let reportContent = '';
-            if (hasMismatch) {
+            if (usesMultilingualV2) {
+                reportContent += isCompareMode
+                    ? `# 🔀 经典版与智能版 V2 切点对比报告\n\n`
+                    : `# ${hasMismatch ? '⚠️' : '✅'} 智能版 V2 多语言对齐审核报告\n\n`;
+                reportContent += `> V2 只把语音识别结果作为审核证据。文字差异不等于实际漏读，所有未确认差异均按“待试听确认”处理，不会阻止剪辑导出。\n\n`;
+            } else if (hasMismatch) {
                 reportContent += `# ⚠️ 视频文案与音频不匹配检测报告 (Mismatch Report)\n\n`;
             } else {
                 reportContent += `# ✅ 视频文案与音频匹配成功报告 (Alignment Report)\n\n`;
             }
+            reportContent += `匹配引擎: \`${matchingEngine}\`（版本 ${matchingEngineVersion}）\n\n`;
             reportContent += `生成时间: ${new Date().toLocaleString()}\n\n`;
             
             const globalScriptText = lines.join('\n');
@@ -2197,7 +2274,9 @@ async function autoEditByScript(opts = {}) {
             reportContent += `## 📝 完整文本对照分析 (Full Text Comparison Analysis)\n\n`;
             reportContent += `<details open>\n`;
             reportContent += `<summary><b>🔍 点击展开/折叠 完整对比差异 (Visual Diff)</b></summary>\n\n`;
-            reportContent += `> 💡 提示：<del style="background-color: #ffeef0; color: #b30000; text-decoration: line-through; padding: 0 4px; border-radius: 2px;">红色删除线部分</del> 表示**参考文案中有但视频音频漏读/丢失**的内容；\n`;
+            reportContent += usesMultilingualV2
+                ? `> 💡 提示：<del style="background-color: #ffeef0; color: #b30000; text-decoration: line-through; padding: 0 4px; border-radius: 2px;">红色删除线部分</del> 表示**参考文案与语音识别文字存在差异，尚未确认是否漏读**；\n`
+                : `> 💡 提示：<del style="background-color: #ffeef0; color: #b30000; text-decoration: line-through; padding: 0 4px; border-radius: 2px;">红色删除线部分</del> 表示**参考文案中有但视频音频漏读/丢失**的内容；\n`;
             reportContent += `> <ins style="background-color: #e6ffec; color: #008000; text-decoration: none; padding: 0 4px; border-radius: 2px;">绿色高亮部分</ins> 表示**实际发音多读或识别出多余**的内容。\n\n`;
             reportContent += `${diffHtml}\n\n`;
             reportContent += `</details>\n\n`;
@@ -2216,40 +2295,57 @@ async function autoEditByScript(opts = {}) {
 
             if (workflowMode !== 'concat_first') {
                 if (missingBlocksInfo.length > 0) {
-                    reportContent += `## ❌ 视频音频中漏读/丢失的文案 (Missing Script Sections)\n\n`;
-                    reportContent += `以下文案在所有视频片段的语音中都**没有检测到对应的读音**。您可以选择忽略这些文案，或者为它们补录新的视频片段：\n\n`;
+                    reportContent += usesMultilingualV2
+                        ? `## ⚠️ 待试听确认的未归属文案\n\n`
+                        : `## ❌ 视频音频中漏读/丢失的文案 (Missing Script Sections)\n\n`;
+                    reportContent += usesMultilingualV2
+                        ? `以下文案没有被当前识别结果可靠归属到片段。它们可能是识别误差或片段边界误差，不能据此认定演员漏读，请试听相邻片段确认：\n\n`
+                        : `以下文案在所有视频片段的语音中都**没有检测到对应的读音**。您可以选择忽略这些文案，或者为它们补录新的视频片段：\n\n`;
                     for (const b of missingBlocksInfo) {
-                        reportContent += `### 🔴 丢失区块 #${b.index + 1} (对应文案行号: ${b.startLine + 1} - ${b.endLine + 1})\n`;
+                        reportContent += `### ${usesMultilingualV2 ? '🟡 待确认区块' : '🔴 丢失区块'} #${b.index + 1} (对应文案行号: ${b.startLine + 1} - ${b.endLine + 1})\n`;
                         reportContent += `> \`\`\`text\n> ${b.text}\n> \`\`\`\n`;
+                        if (usesMultilingualV2) reportContent += `- **说明**: ${b.issue_reason}\n`;
                         reportContent += `- **操作**: [action:add-supplementary-clip|line:${b.startLine}]\n\n`;
                     }
                     reportContent += `---\n\n`;
                 } else {
-                    reportContent += `## ❌ 视频音频中漏读/丢失的文案 (Missing Script Sections)\n\n`;
-                    reportContent += `🟢 没有检测到任何漏读/丢失的文案。\n\n`;
+                    reportContent += usesMultilingualV2
+                        ? `## ⚠️ 待试听确认的未归属文案\n\n`
+                        : `## ❌ 视频音频中漏读/丢失的文案 (Missing Script Sections)\n\n`;
+                    reportContent += usesMultilingualV2
+                        ? `🟢 当前没有需要试听确认的未归属文案。\n\n`
+                        : `🟢 没有检测到任何漏读/丢失的文案。\n\n`;
                     reportContent += `---\n\n`;
                 }
             }
 
             if (workflowMode === 'concat_first') {
-                reportContent += `说明: 合并后的完整视频转录与总文案相似度为 \`${globalSimPercent}%\`。${hasMismatch ? '🔴 未达到 80% 的匹配阈值或存在片段不匹配。' : '🟢 已达到 80% 的安全匹配阈值。'}\n\n`;
+                reportContent += usesMultilingualV2
+                    ? `说明: 合并后的完整视频转录与总文案原始相似度为 \`${globalSimPercent}%\`。该数值仅用于辅助定位，V2 不会据此认定漏读或阻断导出。\n\n`
+                    : `说明: 合并后的完整视频转录与总文案相似度为 \`${globalSimPercent}%\`。${hasMismatch ? '🔴 未达到 80% 的匹配阈值或存在片段不匹配。' : '🟢 已达到 80% 的安全匹配阈值。'}\n\n`;
                 reportContent += `## 📊 片段对齐分析\n\n`;
                 
                 const mismatches = allClipsMatchInfo.filter(m => m.isMismatch);
                 
                 for (const m of allClipsMatchInfo) {
-                    reportContent += `### ${m.isMismatch ? '🔴' : '🟢'} 片段 #${m.sourceIndex + 1}: ${m.fileName}\n`;
+                    reportContent += `### ${m.isMismatch ? (usesMultilingualV2 ? '🟡' : '🔴') : '🟢'} 片段 #${m.sourceIndex + 1}: ${m.fileName}\n`;
                     reportContent += `- **视频路径**: \`${m.clipPath}\` [time:${m.start},${m.end}]\n`;
                     reportContent += `- **片段局部匹配度**: \`${m.similarity}%\`\n`;
+                    if (usesMultilingualV2) {
+                        reportContent += isCompareMode
+                            ? `- **经典切点**: \`${Number(m.legacyStart).toFixed(3)}s - ${Number(m.legacyEnd).toFixed(3)}s\`\n- **V2 切点**: \`${Number(m.v2Start).toFixed(3)}s - ${Number(m.v2End).toFixed(3)}s\`${m.v2CutAvailable ? '' : '（不可用，默认经典）'}\n`
+                            : `- **实际采用切点**: \`${Number(m.start).toFixed(3)}s - ${Number(m.end).toFixed(3)}s\`（${m.cutEngine === autoEditMatcherV2.ENGINE_ID ? 'V2 独立切点' : '本段回退经典切点'}）\n`;
+                    }
                     reportContent += `- **应读参考文案**: "${m.scriptText.trim()}"\n`;
                     reportContent += `- **实际识别发音**: "${m.recognizedText.trim() || '(未检测到发音)'}"\n`;
+                    if (usesMultilingualV2 && m.issueReason) reportContent += `- **V2 判断**: ${m.issueReason}\n`;
                     if (m.isMismatch) {
                         reportContent += `- **操作**: [action:replace-clip|path:${m.clipPath}|index:${m.sourceIndex}] [action:retranscribe-clip|path:${m.clipPath}|index:${m.sourceIndex}]\n`;
                     }
                     reportContent += `\n`;
                 }
                 
-                if (hasMismatch && mismatches.length > 0) {
+                if (!usesMultilingualV2 && hasMismatch && mismatches.length > 0) {
                     reportContent += `---\n\n`;
                     reportContent += `## 🤖 Flow 智能体重新生成指令\n\n`;
                     reportContent += `请将下面的指令直接复制并发送给您的 Flow 视频生成智能体：\n\n`;
@@ -2263,24 +2359,34 @@ async function autoEditByScript(opts = {}) {
                     reportContent += `\`\`\`\n`;
                 }
             } else {
-                reportContent += `说明: 以下是各个片段识别出的实际发音内容与参考文案对比分析。${hasMismatch ? '⚠️ 部分片段匹配度较低（阈值设定为 85% 相似度，全局低于 80% 触发阻断）。' : '🟢 全片段匹配通过。'}\n\n`;
+                reportContent += usesMultilingualV2
+                    ? `说明: 以下是识别文字与参考文案的辅助对比。V2 使用语言感知分词、动态审核阈值和逐词置信度；差异只进入审核，不自动认定漏读，也不阻断导出。\n\n`
+                    : `说明: 以下是各个片段识别出的实际发音内容与参考文案对比分析。${hasMismatch ? '⚠️ 部分片段匹配度较低（阈值设定为 85% 相似度，全局低于 80% 触发阻断）。' : '🟢 全片段匹配通过。'}\n\n`;
                 reportContent += `---\n\n`;
                 reportContent += `## 📊 片段对齐清单\n\n`;
                 
                 const mismatches = allClipsMatchInfo.filter(m => m.isMismatch);
                 for (const m of allClipsMatchInfo) {
-                    reportContent += `### ${m.isMismatch ? '🔴' : '🟢'} 片段 #${m.sourceIndex + 1}: ${m.fileName}\n`;
+                    reportContent += `### ${m.isMismatch ? (usesMultilingualV2 ? '🟡' : '🔴') : '🟢'} 片段 #${m.sourceIndex + 1}: ${m.fileName}\n`;
                     reportContent += `- **视频路径**: \`${m.clipPath}\` [time:${m.start},${m.end}]\n`;
                     reportContent += `- **匹配度 (Similarity)**: \`${m.similarity}%\`\n`;
+                    if (usesMultilingualV2) {
+                        reportContent += isCompareMode
+                            ? `- **经典切点**: \`${Number(m.legacyStart).toFixed(3)}s - ${Number(m.legacyEnd).toFixed(3)}s\`\n- **V2 切点**: \`${Number(m.v2Start).toFixed(3)}s - ${Number(m.v2End).toFixed(3)}s\`${m.v2CutAvailable ? '' : '（不可用，默认经典）'}\n`
+                            : `- **实际采用切点**: \`${Number(m.start).toFixed(3)}s - ${Number(m.end).toFixed(3)}s\`（${m.cutEngine === autoEditMatcherV2.ENGINE_ID ? 'V2 独立切点' : '本段回退经典切点'}）\n`;
+                    }
                     reportContent += `- **应读参考文案**:\n  \`\`\`text\n  ${m.scriptText.trim()}\n  \`\`\`\n`;
                     reportContent += `- **视频实际识别**:\n  \`\`\`text\n  ${m.recognizedText.trim() || '(识别服务未返回文字结果)'}\n  \`\`\`\n`;
+                    if (usesMultilingualV2 && m.issueReason) {
+                        reportContent += `- **V2 判断**: ${m.issueReason}\n`;
+                    }
                     if (m.isMismatch) {
                         reportContent += `- **操作**: [action:replace-clip|path:${m.clipPath}|index:${m.sourceIndex}] [action:retranscribe-clip|path:${m.clipPath}|index:${m.sourceIndex}]\n`;
                     }
                     reportContent += `\n`;
                 }
  
-                if (hasMismatch && mismatches.length > 0) {
+                if (!usesMultilingualV2 && hasMismatch && mismatches.length > 0) {
                     reportContent += `---\n\n`;
                     reportContent += `## 🤖 Flow 智能体重新生成指令\n\n`;
                     reportContent += `请将下面的指令直接复制并发送给您的 Flow 视频生成智能体：\n\n`;
@@ -2295,7 +2401,6 @@ async function autoEditByScript(opts = {}) {
                 }
             }
  
-            const reportPath = path.join(outputDir, 'mismatch_report.md');
             fs.writeFileSync(reportPath, reportContent, 'utf-8');
             console.log(`[自动剪辑] 已在输出文件夹生成匹配报告: ${reportPath}`);
         } catch (reportErr) {
@@ -2313,16 +2418,24 @@ async function autoEditByScript(opts = {}) {
                 const recognizedText = plan.transcription?.fullText || plan.matchedText || '';
                 const recognitionEmpty = normalizeText(recognizedText).length === 0;
                 const scriptUnmatched = plan.scriptStartLine === -1 || !plan.scriptText;
+                const v2Segment = v2Assessment?.segments[index] || null;
                 const issueReasons = [];
-                if (transcriptionFailed) issueReasons.push(String(plan.transcription?.error || recognizedText || '转录失败').replace(/^\(转录失败:\s*|\)$/g, ''));
-                else if (recognitionEmpty) issueReasons.push('识别服务未返回文字');
-                if (scriptUnmatched) issueReasons.push('未匹配到断行文案');
-                if (info.isMismatch) issueReasons.push(`文案相似度 ${info.similarity || 0}%，低于 85%`);
+                if (v2Segment) {
+                    if (v2Segment.issueReason) issueReasons.push(v2Segment.issueReason);
+                } else {
+                    if (transcriptionFailed) issueReasons.push(String(plan.transcription?.error || recognizedText || '转录失败').replace(/^\(转录失败:\s*|\)$/g, ''));
+                    else if (recognitionEmpty) issueReasons.push('识别服务未返回文字');
+                    if (scriptUnmatched) issueReasons.push('未匹配到断行文案');
+                    if (info.isMismatch) issueReasons.push(`文案相似度 ${info.similarity || 0}%，低于 85%`);
+                }
                 if (isDuplicateClip) issueReasons.push(`与原片段 #${plan.duplicateOfSourceIndex + 1} 朗读内容重复`);
                 else if (hasDuplicateScript) issueReasons.push(`当前片段对应的整段文案从第 ${duplicateScriptLines.join('、')} 行开始重复出现；片段 #${plan.sourceIndex + 1} 可能对应多个位置，请核对前后片段顺序（不是视频重复）`);
-                const segmentStatus = transcriptionFailed || recognitionEmpty
+                const baseStatus = v2Segment
+                    ? v2Segment.status
+                    : (transcriptionFailed || recognitionEmpty ? 'error' : (scriptUnmatched || info.isMismatch ? 'warning' : 'ready'));
+                const segmentStatus = baseStatus === 'error'
                     ? 'error'
-                    : (scriptUnmatched || info.isMismatch || hasDuplicateScript || isDuplicateClip ? 'warning' : 'ready');
+                    : (baseStatus === 'warning' || hasDuplicateScript || isDuplicateClip ? 'warning' : 'ready');
                 return {
                     segment_id: plan.planId || `clip-${plan.sourceIndex}`,
                     index: index + 1,
@@ -2337,6 +2450,8 @@ async function autoEditByScript(opts = {}) {
                     similarity: info.similarity || 0,
                     status: segmentStatus,
                     issue_reason: issueReasons.join('；'),
+                    verification_level: v2Segment?.verificationLevel || (segmentStatus === 'ready' ? 'legacy_match' : 'legacy_warning'),
+                    recognition_confidence: v2Segment?.confidence || null,
                     ambiguity: isDuplicateClip
                         ? `与原片段 #${plan.duplicateOfSourceIndex + 1} 朗读内容重复，已继承同一文案位置`
                         : (hasDuplicateScript ? `整段文案从第 ${duplicateScriptLines.join('、')} 行开始重复；片段 #${plan.sourceIndex + 1} 的匹配位置有歧义（不是视频重复）` : ''),
@@ -2344,6 +2459,15 @@ async function autoEditByScript(opts = {}) {
                     duplicate_of_source_index: isDuplicateClip ? plan.duplicateOfSourceIndex + 1 : null,
                     start: plan.start,
                     end: plan.end,
+                    cut_engine: plan.cutEngine || 'legacy',
+                    cut_score: Math.round((plan.v2CutScore || 0) * 1000) / 1000,
+                    cut_reason: plan.v2CutReason || '',
+                    legacy_start: Number.isFinite(plan.legacyStart) ? plan.legacyStart : plan.start,
+                    legacy_end: Number.isFinite(plan.legacyEnd) ? plan.legacyEnd : plan.end,
+                    v2_start: Number.isFinite(plan.v2Start) ? plan.v2Start : plan.start,
+                    v2_end: Number.isFinite(plan.v2End) ? plan.v2End : plan.end,
+                    v2_cut_available: plan.v2CutAvailable === true,
+                    cut_selection: isCompareMode ? 'classic' : (plan.cutEngine === autoEditMatcherV2.ENGINE_ID ? 'v2' : 'classic'),
                     duration: Math.round((plan.end - plan.start) * 1000) / 1000,
                     speed: normalizeAutoEditSpeed(plan.speed),
                     source_duration: Math.round((plan.duration || plan.end) * 1000) / 1000,
@@ -2362,13 +2486,15 @@ async function autoEditByScript(opts = {}) {
                 error: analysisSegments.filter(segment => segment.status === 'error').length,
                 missing_blocks: missingBlocksInfo.length,
             };
-            const projectPath = path.join(outputDir, 'auto_edit_project.json');
             const projectData = {
-                version: 1,
+                version: usesMultilingualV2 ? 2 : 1,
                 created_at: new Date().toISOString(),
+                matching_engine: matchingEngine,
+                matching_engine_version: matchingEngineVersion,
+                language,
                 clips,
                 script_text: lines.join('\n'),
-                    output_settings: { width: targetWidth, height: targetHeight, fps, source: 'first_clip', fit_mode: fitMode },
+                output_settings: { width: targetWidth, height: targetHeight, fps, source: 'first_clip', fit_mode: fitMode },
                 missing_blocks: missingBlocksInfo,
                 segments: analysisSegments,
                 match_summary: analysisSummary,
@@ -2378,8 +2504,11 @@ async function autoEditByScript(opts = {}) {
                 success: true,
                 analysis_only: true,
                 message: `分析完成: ${analysisSegments.length} 段，请审核后正式导出`,
+                matching_engine: matchingEngine,
+                matching_engine_version: matchingEngineVersion,
+                language,
                 output_dir: outputDir,
-                report_path: path.join(outputDir, 'mismatch_report.md'),
+                report_path: reportPath,
                 project_path: projectPath,
                 output_settings: { width: targetWidth, height: targetHeight, fps, source: 'first_clip', fit_mode: fitMode },
                 missing_blocks: missingBlocksInfo,
@@ -2387,12 +2516,12 @@ async function autoEditByScript(opts = {}) {
                 match_summary: analysisSummary,
             };
         }
-        if ((hasMismatch || forceMismatch) && !ignoreMismatch) {
+        if (!usesMultilingualV2 && (hasMismatch || forceMismatch) && !ignoreMismatch) {
             throw new Error(JSON.stringify({
                 code: 'AUTOEDIT_TEXT_MISMATCH',
                 mismatches: allClipsMatchInfo,
                 missingBlocks: missingBlocksInfo,
-                report_path: path.join(outputDir, 'mismatch_report.md'),
+                report_path: reportPath,
                 output_dir: outputDir
             }));
         }
@@ -2431,6 +2560,7 @@ async function autoEditByScript(opts = {}) {
                     plan.end = safeEnd;
                 }
                 plan.speed = normalizeAutoEditSpeed(review.speed);
+                plan.cutSelection = ['classic', 'v2', 'manual'].includes(review.cut_selection) ? review.cut_selection : 'manual';
                 if (typeof review.script === 'string' && review.script.trim()) plan.scriptText = review.script.trim();
                 reviewedPlans.push(plan);
             }
@@ -2513,7 +2643,12 @@ async function autoEditByScript(opts = {}) {
                 let wordCursor = 0;
                 for (const line of reviewedLines) {
                     const scopedWords = (plan.words || []).slice(wordCursor);
-                    const match = scopedWords.length ? findBestWordWindow(scopedWords, line, 0.45) : null;
+                    const multilingualMatch = usesMultilingualV2 && scopedWords.length
+                        ? autoEditMatcherV2.findBestCutWindow(scopedWords, line, language)
+                        : null;
+                    const match = multilingualMatch || (
+                        scopedWords.length ? findBestWordWindow(scopedWords, line, 0.45) : null
+                    );
                     if (!match || !scopedWords[match.startIdx] || !scopedWords[match.endIdx]) {
                         lineMatches.length = 0;
                         break;
@@ -2639,6 +2774,22 @@ async function autoEditByScript(opts = {}) {
                 match_score: Math.round((plan.matchScore || 0) * 1000) / 1000,
                 start: plan.start,
                 end: plan.end,
+                cut_selection: plan.cutSelection || (
+                    plan.cutEngine === autoEditMatcherV2.ENGINE_ID ? 'v2' : 'classic'
+                ),
+                cut_engine: plan.cutSelection === 'manual'
+                    ? 'manual'
+                    : (
+                        plan.cutSelection === 'v2' || plan.cutEngine === autoEditMatcherV2.ENGINE_ID
+                            ? autoEditMatcherV2.ENGINE_ID
+                            : 'legacy'
+                    ),
+                cut_score: Math.round((plan.v2CutScore || 0) * 1000) / 1000,
+                legacy_start: Number.isFinite(plan.legacyStart) ? plan.legacyStart : plan.start,
+                legacy_end: Number.isFinite(plan.legacyEnd) ? plan.legacyEnd : plan.end,
+                v2_start: Number.isFinite(plan.v2Start) ? plan.v2Start : plan.start,
+                v2_end: Number.isFinite(plan.v2End) ? plan.v2End : plan.end,
+                v2_cut_available: plan.v2CutAvailable === true,
                 duration: Math.round((plan.end - plan.start) * 1000) / 1000,
                 transcription_source: plan.transcription.source,
                 word_timeline: (plan.words || []).map(word => ({
@@ -2888,7 +3039,10 @@ async function autoEditByScript(opts = {}) {
             subtitled_path: subtitledPath,
             final_video_path: subtitledPath || manualAudioVideoPath || voiceChangedVideoPath || outputPath,
             output_dir: outputDir,
-            report_path: path.join(outputDir, 'mismatch_report.md'),
+            report_path: reportPath,
+            matching_engine: matchingEngine,
+            matching_engine_version: matchingEngineVersion,
+            language,
             used_clip_count: selected.length,
             unused_clip_count: Math.max(0, clips.length - selected.length),
             unused_script_count: Math.max(0, lines.length - coveredLines.size),

@@ -35,6 +35,34 @@ function buildWorkflowBatchFolderName(date = new Date()) {
     return `${y}-${m}-${d}_${hh}${mm}_一键配音`;
 }
 
+function sanitizeWorkflowGroupName(groupName) {
+    return String(groupName || '')
+        .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
+        .replace(/^\.+$/, '_')
+        .trim()
+        .slice(0, 100);
+}
+
+function appendWorkflowGroupToTaskPrefix(taskPrefix, groupName) {
+    const safeGroupName = sanitizeWorkflowGroupName(groupName);
+    if (!safeGroupName) return taskPrefix;
+    const numberedPrefix = String(taskPrefix).match(/^(\d+-)(.*)$/);
+    return numberedPrefix
+        ? `${numberedPrefix[1]}${safeGroupName}_${numberedPrefix[2]}`
+        : `${safeGroupName}_${taskPrefix}`;
+}
+
+function resolveWorkflowOutputGroups(outputDir, taskPrefix, groupName = '') {
+    const safeGroupName = sanitizeWorkflowGroupName(groupName);
+    const groupParts = safeGroupName ? [safeGroupName] : [];
+    return {
+        safeGroupName,
+        videoGroup: path.join(outputDir, '_视频文案', ...groupParts),
+        audioGroup: path.join(outputDir, '_音频字幕', ...groupParts),
+        metadataGroup: path.join(outputDir, '_metadata', ...groupParts, taskPrefix),
+    };
+}
+
 async function appendTailSilenceToMp3(filePath, seconds, tempDir, baseName) {
     const tailSeconds = normalizeTailSilenceSeconds(seconds);
     if (!tailSeconds) return false;
@@ -55,7 +83,7 @@ async function appendTailSilenceToMp3(filePath, seconds, tempDir, baseName) {
     return true;
 }
 
-async function generateWorkflowSubtitles({ sourcePath, subtitleText, outputDir, taskPrefix, gladiaKeys, language, exportFcpxml = true, seamlessFcpxml = true, exportSubtitleTxt = true }) {
+async function generateWorkflowSubtitles({ sourcePath, subtitleText, outputDir, taskPrefix, groupName = '', gladiaKeys, language, exportFcpxml = true, seamlessFcpxml = true, exportSubtitleTxt = true }) {
     if (!sourcePath || !fs.existsSync(sourcePath)) throw new Error('已生成的配音文件不存在');
     if (!subtitleText || !String(subtitleText).trim()) throw new Error('字幕文案为空');
     let activeGladiaKeys = gladiaKeys;
@@ -65,9 +93,9 @@ async function generateWorkflowSubtitles({ sourcePath, subtitleText, outputDir, 
     }
     if (!activeGladiaKeys.length) throw new Error('未配置 Gladia API Key，请在设置中配置后再试');
 
-    const videoGroup = path.join(outputDir, '_视频文案');
-    const audioGroup = path.join(outputDir, '_音频字幕');
-    const metadataGroup = path.join(outputDir, '_metadata', taskPrefix);
+    const { videoGroup, audioGroup, metadataGroup } = resolveWorkflowOutputGroups(
+        outputDir, taskPrefix, groupName
+    );
     fs.mkdirSync(videoGroup, { recursive: true });
     fs.mkdirSync(audioGroup, { recursive: true });
     fs.mkdirSync(metadataGroup, { recursive: true });
@@ -169,14 +197,6 @@ async function ttsWorkflow(data) {
     if (!outputDir) {
         outputDir = path.join(os.homedir(), 'Downloads', buildWorkflowBatchFolderName(today));
     }
-    const safeGroupName = String(group_name || '')
-        .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
-        .replace(/^\.+$/, '_')
-        .trim()
-        .slice(0, 100);
-    if (safeGroupName) {
-        outputDir = path.join(outputDir, safeGroupName);
-    }
     fs.mkdirSync(outputDir, { recursive: true });
 
     // 提取文本前缀作为文件名
@@ -186,12 +206,14 @@ async function ttsWorkflow(data) {
     if (!textPrefix) textPrefix = 'audio';
 
     const dateSuffix = `${String(today.getMonth() + 1).padStart(2, '0')}${String(today.getDate()).padStart(2, '0')}`;
-    const taskPrefix = `${String(task_index + 1).padStart(2, '0')}-${textPrefix}_${dateSuffix}`;
+    const baseTaskPrefix = `${String(task_index + 1).padStart(2, '0')}-${textPrefix}_${dateSuffix}`;
+    const safeGroupName = sanitizeWorkflowGroupName(group_name);
+    const taskPrefix = appendWorkflowGroupToTaskPrefix(baseTaskPrefix, safeGroupName);
 
     // 创建分组目录
-    const videoGroup = path.join(outputDir, '_视频文案');
-    const audioGroup = path.join(outputDir, '_音频字幕');
-    const metadataGroup = path.join(outputDir, '_metadata', taskPrefix);
+    const { videoGroup, audioGroup, metadataGroup } = resolveWorkflowOutputGroups(
+        outputDir, taskPrefix, safeGroupName
+    );
     fs.mkdirSync(videoGroup, { recursive: true });
     fs.mkdirSync(audioGroup, { recursive: true });
     fs.mkdirSync(metadataGroup, { recursive: true });
@@ -279,6 +301,7 @@ async function ttsWorkflow(data) {
         try {
             const subtitleResult = await generateWorkflowSubtitles({
                 sourcePath, subtitleText: subtitle_text, outputDir, taskPrefix,
+                groupName: safeGroupName,
                 gladiaKeys: gladia_keys, language, exportFcpxml: export_fcpxml,
                 seamlessFcpxml: seamless_fcpxml,
                 exportSubtitleTxt: export_subtitle_txt !== false,
@@ -304,6 +327,7 @@ async function ttsWorkflow(data) {
         srt_path: srtPath,
         bgm_path: bgmPath || null,
         output_folder: outputDir,
+        group_name: safeGroupName,
         task_prefix: taskPrefix,
         mp4_path: mp4Path,
         segments,
@@ -323,6 +347,7 @@ async function retryWorkflowSubtitles(data) {
         subtitleText: data.subtitle_text,
         outputDir,
         taskPrefix,
+        groupName: data.group_name || '',
         gladiaKeys: data.gladia_keys,
         language: data.language || 'english',
         exportFcpxml: data.export_fcpxml !== false,
@@ -385,4 +410,6 @@ function generateSimpleSRT(wordTimeInfo, subtitleText, outputPath) {
 module.exports = {
     ttsWorkflow,
     retryWorkflowSubtitles,
+    resolveWorkflowOutputGroups,
+    appendWorkflowGroupToTaskPrefix,
 };

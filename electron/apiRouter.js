@@ -165,6 +165,7 @@ async function runAutoEditByScript(data = {}, progressSender = null) {
         outputDir: data.output_dir,
         outputPath: data.output_path,
         language: data.language || 'auto',
+        matchingEngine: data.matching_engine || data.matchingEngine || 'legacy',
         matchMode: data.match_mode || data.matchMode,
         workflowMode: data.workflow_mode || data.workflowMode || 'cut_first',
         gladiaKeys,

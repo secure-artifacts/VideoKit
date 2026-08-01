@@ -743,6 +743,9 @@ async function reelsWysiwygExport(params) {
     let cvFramesDir = null;
     let cvFrameCount = 0;
     let cvIsImageSequence = false;
+    // 任务私有：并发导出时不能共用 window 上的图片序列文件列表，
+    // 否则后启动的任务会覆盖前一个任务的帧索引，造成静帧/错帧。
+    let cvSeqFileList = null;
     if (contentVideoPath) {
         log(`阶段1.5: 预处理内容视频源 (${contentVideoPath})...`);
         const cvPathRaw = _normalizeOverlayLocalPath(contentVideoPath);
@@ -760,8 +763,8 @@ async function reelsWysiwygExport(params) {
                         cvFramesDir = cvPathRaw;
                         cvFrameCount = seqFiles.length;
                         cvIsImageSequence = true;
-                        // 缓存文件名列表供逐帧渲染使用
-                        window._cvSeqFileList = seqFiles;
+                        // 缓存文件名列表供本任务逐帧渲染使用（不可写入全局状态）。
+                        cvSeqFileList = seqFiles;
                         log(`覆层图片序列: ${seqFiles.length} 帧 (直接使用源目录)`);
                     }
                 }
@@ -926,9 +929,9 @@ async function reelsWysiwygExport(params) {
                 if (frameIdxCv !== currentCvIdx) {
                     const previousCvImg = currentCvImg;
                     let framePath;
-                    if (cvIsImageSequence && window._cvSeqFileList && window._cvSeqFileList.length > 0) {
+                    if (cvIsImageSequence && cvSeqFileList && cvSeqFileList.length > 0) {
                         // 图片序列: 使用原始文件名
-                        const seqFile = window._cvSeqFileList[frameIdxCv];
+                        const seqFile = cvSeqFileList[frameIdxCv];
                         framePath = `${cvFramesDir}/${seqFile}`;
                     } else {
                         // FFmpeg 提取的帧: frame_000001.png 格式
@@ -1159,7 +1162,7 @@ async function reelsWysiwygExport(params) {
             delete ov._allOverlays;
         }
         if (canvas) { canvas.width = 1; canvas.height = 1; }
-        if (window._cvSeqFileList) delete window._cvSeqFileList;
+        cvSeqFileList = null;
 
         // 清理背景帧（磁盘临时文件）
         if (framesDir) {
@@ -1191,7 +1194,7 @@ async function reelsWysiwygExport(params) {
             delete ov._allOverlays;
         }
         if (canvas) { canvas.width = 1; canvas.height = 1; }
-        if (window._cvSeqFileList) delete window._cvSeqFileList;
+        cvSeqFileList = null;
         try { await window.electronAPI.reelsComposeWysiwyg('abort', { sessionId }); } catch (_) { }
         if (framesDir) {
             try { await window.electronAPI.reelsComposeWysiwyg('cleanup-bg', { framesDir }); } catch (_) { }

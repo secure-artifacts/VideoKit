@@ -63,6 +63,8 @@ class ReelsTimelineEditor {
         this._pxPerSec = 80;          // 缩放
         this._autoFitDuration = true; // 任务加载时默认显示完整时长
         this._selectedClip = null;    // {trackIdx, clipIdx}
+        this._selectedClips = new Set(); // 多选键: "trackIdx:clipIdx"
+        this._selectionAnchor = null; // Shift 连选起点
         this._hoveredClip = null;
 
         // 拖拽状态
@@ -89,9 +91,14 @@ class ReelsTimelineEditor {
         Object.assign(this.canvas.style, {
             width: '100%', height: '100%', display: 'block', cursor: 'default'
         });
+        this.canvas.tabIndex = 0;
 
         // 事件
-        this.canvas.addEventListener('mousedown', (e) => this._onMouseDown(e));
+        this.canvas.addEventListener('mousedown', (e) => {
+            this.canvas.focus({ preventScroll: true });
+            this._onMouseDown(e);
+        });
+        this.canvas.addEventListener('keydown', (e) => this._onKeyDown(e));
         
         // 绑定到 window 以防止鼠标移出画布后拖拽断开/卡住
         window.addEventListener('mousemove', (e) => this._onMouseMove(e));
@@ -150,6 +157,7 @@ class ReelsTimelineEditor {
 
     setTracks(tracks) {
         this._tracks = tracks;
+        this._clearClipSelection();
     }
 
     /**
@@ -279,6 +287,9 @@ class ReelsTimelineEditor {
 
         // 播放头
         this._drawPlayhead(ctx, W, H);
+
+        // 框选区域
+        this._drawMarquee(ctx);
     }
 
     _drawRuler(ctx, W) {
@@ -424,7 +435,7 @@ class ReelsTimelineEditor {
         // 可见范围检查
         if (x + w < TL_HEADER_W || x > this._canvasW) return;
 
-        const isSelected = this._selectedClip?.trackIdx === trackIdx && this._selectedClip?.clipIdx === clipIdx;
+        const isSelected = this._selectedClips.has(this._clipKey(trackIdx, clipIdx));
         const isHovered = this._hoveredClip?.trackIdx === trackIdx && this._hoveredClip?.clipIdx === clipIdx;
 
         // 片段背景
@@ -522,7 +533,30 @@ class ReelsTimelineEditor {
         // 3. 检测是否点击了 Trim 手柄
         const hitInfo = this._hitTestClip(mx, my);
         if (hitInfo) {
-            this._selectedClip = { trackIdx: hitInfo.trackIdx, clipIdx: hitInfo.clipIdx };
+            const key = this._clipKey(hitInfo.trackIdx, hitInfo.clipIdx);
+            const toggleSelection = e.ctrlKey || e.metaKey;
+            const rangeSelection = e.shiftKey;
+
+            if (rangeSelection && this._selectionAnchor?.trackIdx === hitInfo.trackIdx) {
+                if (!toggleSelection) this._selectedClips.clear();
+                const from = Math.min(this._selectionAnchor.clipIdx, hitInfo.clipIdx);
+                const to = Math.max(this._selectionAnchor.clipIdx, hitInfo.clipIdx);
+                for (let ci = from; ci <= to; ci++) {
+                    this._selectedClips.add(this._clipKey(hitInfo.trackIdx, ci));
+                }
+            } else if (toggleSelection) {
+                if (this._selectedClips.has(key)) this._selectedClips.delete(key);
+                else this._selectedClips.add(key);
+                this._selectionAnchor = { trackIdx: hitInfo.trackIdx, clipIdx: hitInfo.clipIdx };
+            } else if (!this._selectedClips.has(key)) {
+                this._selectedClips.clear();
+                this._selectedClips.add(key);
+                this._selectionAnchor = { trackIdx: hitInfo.trackIdx, clipIdx: hitInfo.clipIdx };
+            }
+
+            this._selectedClip = this._selectedClips.has(key)
+                ? { trackIdx: hitInfo.trackIdx, clipIdx: hitInfo.clipIdx }
+                : this._firstSelectedClip();
             const clip = this._tracks[hitInfo.trackIdx].clips[hitInfo.clipIdx];
             const track = this._tracks[hitInfo.trackIdx];
 
@@ -546,22 +580,34 @@ class ReelsTimelineEditor {
             this._lastClickTime = now;
             this._lastClickClip = clipKey;
 
-            if (hitInfo.zone === 'start') {
+            if (!this._selectedClips.has(key)) {
+                this._drag = null;
+            } else if (hitInfo.zone === 'start') {
                 this._drag = { type: 'trim_start', trackIdx: hitInfo.trackIdx, clipIdx: hitInfo.clipIdx, origStart: clip.start, mx0: mx };
             } else if (hitInfo.zone === 'end') {
                 this._drag = { type: 'trim_end', trackIdx: hitInfo.trackIdx, clipIdx: hitInfo.clipIdx, origEnd: clip.end, mx0: mx };
             } else {
-                this._drag = { type: 'move', trackIdx: hitInfo.trackIdx, clipIdx: hitInfo.clipIdx, origStart: clip.start, origEnd: clip.end, mx0: mx };
+                const group = this._selectedClipRefs().map(item => ({
+                    ...item,
+                    origStart: item.clip.start,
+                    origEnd: item.clip.end,
+                }));
+                this._drag = {
+                    type: 'move', trackIdx: hitInfo.trackIdx, clipIdx: hitInfo.clipIdx,
+                    origStart: clip.start, origEnd: clip.end, mx0: mx, group,
+                };
             }
 
             if (this.onClipSelect) this.onClipSelect(hitInfo.trackIdx, hitInfo.clipIdx, clip);
         } else {
-            this._selectedClip = null;
-            // 点击轨道空白区域也触发 seek（更直觉的交互）
-            if (mx >= TL_HEADER_W) {
-                this._drag = { type: 'playhead' };
-                this._seekToX(mx, 'mousedown');
-            }
+            const keepExisting = e.ctrlKey || e.metaKey || e.shiftKey;
+            const baseSelection = keepExisting ? new Set(this._selectedClips) : new Set();
+            if (!keepExisting) this._clearClipSelection();
+            // 空白拖动执行框选；未发生拖动时 mouseup 仍按普通点击执行 seek。
+            this._drag = {
+                type: 'marquee', mx0: mx, my0: my, mx1: mx, my1: my,
+                moved: false, baseSelection,
+            };
         }
     }
 
@@ -580,6 +626,14 @@ class ReelsTimelineEditor {
                 return;
             }
 
+            if (this._drag.type === 'marquee') {
+                this._drag.mx1 = mx;
+                this._drag.my1 = my;
+                this._drag.moved = this._drag.moved || Math.hypot(mx - this._drag.mx0, my - this._drag.my0) >= 3;
+                if (this._drag.moved) this._updateMarqueeSelection(this._drag);
+                return;
+            }
+
             const clip = this._tracks[this._drag.trackIdx]?.clips[this._drag.clipIdx];
             if (!clip) return;
 
@@ -589,9 +643,17 @@ class ReelsTimelineEditor {
             } else if (this._drag.type === 'trim_end') {
                 clip.end = Math.max(clip.start + 0.05, this._drag.origEnd + dt);
             } else if (this._drag.type === 'move') {
-                const dur = this._drag.origEnd - this._drag.origStart;
-                clip.start = Math.max(0, this._drag.origStart + dt);
-                clip.end = clip.start + dur;
+                const group = this._drag.group || [];
+                const minStart = group.length > 0
+                    ? Math.min(...group.map(item => item.origStart))
+                    : this._drag.origStart;
+                const safeDt = Math.max(dt, -minStart);
+                for (const item of group) {
+                    item.clip.start = item.origStart + safeDt;
+                    item.clip.end = item.origEnd + safeDt;
+                    if (this.onClipChange) this.onClipChange(item.trackIdx, item.clipIdx, item.clip);
+                }
+                return;
             }
 
             if (this.onClipChange) this.onClipChange(this._drag.trackIdx, this._drag.clipIdx, clip);
@@ -622,8 +684,13 @@ class ReelsTimelineEditor {
 
     _onMouseUp(e) {
         const wasPlayheadDrag = this._drag && this._drag.type === 'playhead';
+        const marquee = this._drag && this._drag.type === 'marquee' ? this._drag : null;
         this._drag = null;
         if (wasPlayheadDrag && this.onSeek) this.onSeek(this._playheadPos, 'mouseup');
+        if (marquee && !marquee.moved) {
+            this._seekToX(marquee.mx0, 'mousedown');
+            if (this.onSeek) this.onSeek(this._playheadPos, 'mouseup');
+        }
     }
 
     _onWheel(e) {
@@ -640,6 +707,27 @@ class ReelsTimelineEditor {
         } else {
             // 水平滚动
             this._scrollX = Math.max(0, this._scrollX + e.deltaY);
+        }
+    }
+
+    _onKeyDown(e) {
+        if ((e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === 'a') {
+            e.preventDefault();
+            const preferredTrack = this._selectedClip?.trackIdx
+                ?? this._hoveredClip?.trackIdx
+                ?? this._tracks.findIndex(track => track.type === 'subs');
+            const trackIdx = preferredTrack >= 0 ? preferredTrack : 0;
+            const track = this._tracks[trackIdx];
+            this._selectedClips.clear();
+            if (track && !track.locked) {
+                for (let ci = 0; ci < track.clips.length; ci++) {
+                    this._selectedClips.add(this._clipKey(trackIdx, ci));
+                }
+            }
+            this._selectedClip = this._firstSelectedClip();
+            if (this._selectedClip) this._selectionAnchor = { ...this._selectedClip };
+        } else if (e.key === 'Escape') {
+            this._clearClipSelection();
         }
     }
 
@@ -680,6 +768,87 @@ class ReelsTimelineEditor {
     // ═══════════════════════════════════════════════
     // Helpers
     // ═══════════════════════════════════════════════
+
+    _clipKey(trackIdx, clipIdx) {
+        return `${trackIdx}:${clipIdx}`;
+    }
+
+    _clearClipSelection() {
+        this._selectedClips.clear();
+        this._selectedClip = null;
+        this._selectionAnchor = null;
+    }
+
+    _firstSelectedClip() {
+        const first = this._selectedClips.values().next().value;
+        if (!first) return null;
+        const [trackIdx, clipIdx] = first.split(':').map(Number);
+        return { trackIdx, clipIdx };
+    }
+
+    _selectedClipRefs() {
+        const refs = [];
+        for (const key of this._selectedClips) {
+            const [trackIdx, clipIdx] = key.split(':').map(Number);
+            const clip = this._tracks[trackIdx]?.clips[clipIdx];
+            if (clip) refs.push({ trackIdx, clipIdx, clip });
+        }
+        return refs;
+    }
+
+    _updateMarqueeSelection(drag) {
+        const left = Math.min(drag.mx0, drag.mx1);
+        const right = Math.max(drag.mx0, drag.mx1);
+        const top = Math.min(drag.my0, drag.my1);
+        const bottom = Math.max(drag.my0, drag.my1);
+        const selected = new Set(drag.baseSelection || []);
+
+        for (let ti = 0; ti < this._tracks.length; ti++) {
+            const track = this._tracks[ti];
+            for (let ci = 0; ci < track.clips.length; ci++) {
+                const rect = this._getClipCanvasRect(ti, ci);
+                if (rect.x < right && rect.x + rect.w > left && rect.y < bottom && rect.y + rect.h > top) {
+                    selected.add(this._clipKey(ti, ci));
+                }
+            }
+        }
+        this._selectedClips = selected;
+        this._selectedClip = this._firstSelectedClip();
+    }
+
+    _drawMarquee(ctx) {
+        if (!this._drag || this._drag.type !== 'marquee' || !this._drag.moved) return;
+        const x = Math.min(this._drag.mx0, this._drag.mx1);
+        const y = Math.min(this._drag.my0, this._drag.my1);
+        const w = Math.abs(this._drag.mx1 - this._drag.mx0);
+        const h = Math.abs(this._drag.my1 - this._drag.my0);
+        ctx.save();
+        ctx.fillStyle = 'rgba(76,158,255,0.16)';
+        ctx.strokeStyle = TL_COLORS.selected;
+        ctx.lineWidth = 1;
+        ctx.setLineDash([5, 3]);
+        ctx.fillRect(x, y, w, h);
+        ctx.strokeRect(x, y, w, h);
+        ctx.restore();
+    }
+
+    _getClipCanvasRect(trackIdx, clipIdx) {
+        const clip = this._tracks[trackIdx]?.clips[clipIdx];
+        if (!clip) return { x: 0, y: 0, w: 0, h: 0 };
+        let trackY = TL_RULER_H - this._scrollY;
+        for (let ti = 0; ti < trackIdx; ti++) {
+            trackY += TL_TRACK_HEIGHT + 1;
+            if (ti < this._tracks.length - 1 &&
+                (this._tracks[ti].domain || 'visual') === 'visual' &&
+                (this._tracks[ti + 1]?.domain || 'visual') === 'audio') trackY += 4;
+        }
+        return {
+            x: TL_HEADER_W + clip.start * this._pxPerSec - this._scrollX,
+            y: trackY + 3,
+            w: Math.max(TL_MIN_CLIP_W, (clip.end - clip.start) * this._pxPerSec),
+            h: TL_TRACK_HEIGHT - 6,
+        };
+    }
 
     _seekToX(mx, type) {
         const t = (mx - TL_HEADER_W + this._scrollX) / this._pxPerSec;

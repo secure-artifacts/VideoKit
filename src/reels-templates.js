@@ -344,12 +344,39 @@ async function saveCurrentAsTemplate() {
         const baseName = name.trim();
         const basePayload = _captureCurrentTemplatePayload(baseName);
 
-        // 批量表格存在多个分组时，每个非空分组保存为一个独立模板。
-        // 这样模板库仍保持“一张模板 = 一组任务”，加载后不会丢失或混合分组。
+        // 按任务列表实际显示的分组分别保存：批量标签页、文件夹/账号队列、
+        // 以及未归档的已有任务，都是独立模板。不能只看批量表格标签页，
+        // 因为文件夹导入的账号队列没有标签页时，也应当分开保存。
         let groups = [];
         if (typeof _batchTableState !== 'undefined' && Array.isArray(_batchTableState.tabs)) {
             if (typeof _syncTasksToActiveTab === 'function') _syncTasksToActiveTab();
-            groups = _batchTableState.tabs.filter(tab => Array.isArray(tab.tasks) && tab.tasks.length > 0);
+
+            const visibleGroups = new Map();
+            const visibleTasks = window._reelsState?.tasks || [];
+            visibleTasks.forEach(task => {
+                let id = 'legacy';
+                let name = '已有任务（未归档）';
+                if (task._batchTabId) {
+                    id = `tab:${task._batchTabId}`;
+                    name = task._batchTabName || '未命名分组';
+                } else if (task._folderQueueId) {
+                    id = `folder:${task._folderQueueId}`;
+                    name = task._folderQueueName || '文件夹队列';
+                }
+                if (!visibleGroups.has(id)) {
+                    visibleGroups.set(id, { id, name, tasks: [], isActive: false });
+                }
+                visibleGroups.get(id).tasks.push(task);
+            });
+
+            // 当前任务列表已经汇总显示多个组时，以它为准；否则回退到批量表格标签页。
+            if (visibleGroups.size > 1) {
+                groups = Array.from(visibleGroups.values());
+            } else {
+                groups = _batchTableState.tabs
+                    .filter(tab => Array.isArray(tab.tasks) && tab.tasks.length > 0)
+                    .map(tab => ({ ...tab, isActive: tab.id === _batchTableState.activeTabId }));
+            }
         }
 
         if (groups.length > 1) {
@@ -378,8 +405,10 @@ async function saveCurrentAsTemplate() {
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             name: templateName,
-                            // 当前画面只属于激活分组，避免给其他分组保存错误缩略图。
-                            thumbnail: group.id === _batchTableState.activeTabId ? basePayload.thumbnail : '',
+                            // 账号队列拆分保存时，当前预览画面可作为本次保存的可见缩略图。
+                            // 之前只给“激活标签”写缩略图，队列分组 ID 与标签 ID 不同，
+                            // 导致所有新模板都显示为空白场记板。
+                            thumbnail: basePayload.thumbnail,
                             projectData,
                         }),
                     });

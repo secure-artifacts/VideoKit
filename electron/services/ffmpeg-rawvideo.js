@@ -164,13 +164,13 @@ function h264RateControlArgs(crf = 23, targetBitrateMbps = null, maxBitrateMbps 
     }
 
     const numericCrf = Number.isFinite(Number(crf)) ? Number(crf) : 23;
-    let bitrate = '1.5M';
-    let maxrate = '2.5M';
-    let bufsize = '3M';
+    let bitrate = '2M';
+    let maxrate = '3M';
+    let bufsize = '4M';
 
     if (numericCrf <= 15) {
         bitrate = '12M';
-        maxrate = '16M';
+        maxrate = '12M';
         bufsize = '24M';
     } else if (numericCrf <= 18) {
         bitrate = '8M';

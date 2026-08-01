@@ -1994,11 +1994,17 @@ def elevenlabs_tts_workflow():
             downloads_folder = os.path.expanduser('~/Downloads')
             output_dir = os.path.join(downloads_folder, batch_name)
         
+        # 账号目录位于内容类型目录之下：总目录 → 音频字幕/视频文案 → 账号。
+        import re
+        raw_group_name = str(data.get('group_name', '') or '').strip()
+        safe_group_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', raw_group_name).strip()[:100]
+        if safe_group_name and re.fullmatch(r'\.+', safe_group_name):
+            safe_group_name = '_'
+
         # 确保目录存在
         os.makedirs(output_dir, exist_ok=True)
         
         # 提取前15个单词作为文件名前缀
-        import re
         # 移除 SSML 标签 <...> 和方括号标签 [...]
         clean_text = re.sub(r'<[^>]+>', '', text)
         clean_text = re.sub(r'\[[^\]]+\]', '', clean_text)  # 移除 [reverent] 等标签
@@ -2014,13 +2020,17 @@ def elevenlabs_tts_workflow():
         
         # 任务编号前缀：01-文案前缀_日期
         date_suffix = datetime.date.today().strftime('%m%d')
-        task_prefix = f"{task_index + 1:02d}-{text_prefix}_{date_suffix}"
+        base_task_prefix = f"{task_index + 1:02d}-{text_prefix}_{date_suffix}"
+        task_prefix = (
+            f"{task_index + 1:02d}-{safe_group_name}_{text_prefix}_{date_suffix}"
+            if safe_group_name else base_task_prefix
+        )
         
-        # 直接创建三类分组目录
-        # 视频文案直接放在 _视频文案/ 下，不创建任务子文件夹
-        video_group = os.path.join(output_dir, '_视频文案')
-        audio_group = os.path.join(output_dir, '_音频字幕', task_prefix)
-        metadata_group = os.path.join(output_dir, '_metadata', task_prefix)
+        # 直接创建三类分组目录；账号目录统一位于内容类型目录之下。
+        group_parts = [safe_group_name] if safe_group_name else []
+        video_group = os.path.join(output_dir, '_视频文案', *group_parts)
+        audio_group = os.path.join(output_dir, '_音频字幕', *group_parts)
+        metadata_group = os.path.join(output_dir, '_metadata', *group_parts, task_prefix)
         os.makedirs(video_group, exist_ok=True)
         os.makedirs(audio_group, exist_ok=True)
         os.makedirs(metadata_group, exist_ok=True)
@@ -2235,6 +2245,7 @@ def elevenlabs_tts_workflow():
         return jsonify({
             "audio_path": source_path,
             "output_folder": output_dir,
+            "group_name": safe_group_name,
             "task_prefix": task_prefix,
             "segments": segments,
             "segment_count": len(segments)

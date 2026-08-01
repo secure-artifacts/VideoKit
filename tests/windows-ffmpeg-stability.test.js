@@ -21,13 +21,13 @@ test('non-Windows encoders retain normal FFmpeg threading', () => {
 
 test('Reels quality levels use stable capped bitrate targets', () => {
     assert.deepEqual(rawVideo._test.h264RateControlArgs(15), [
-        '-b:v', '12M', '-maxrate', '16M', '-bufsize', '24M',
+        '-b:v', '12M', '-maxrate', '12M', '-bufsize', '24M',
     ]);
     assert.deepEqual(rawVideo._test.h264RateControlArgs(18), [
         '-b:v', '8M', '-maxrate', '11M', '-bufsize', '16M',
     ]);
     assert.deepEqual(rawVideo._test.h264RateControlArgs(23), [
-        '-b:v', '1.5M', '-maxrate', '2.5M', '-bufsize', '3M',
+        '-b:v', '2M', '-maxrate', '3M', '-bufsize', '4M',
     ]);
     assert.deepEqual(rawVideo._test.h264RateControlArgs(26), [
         '-b:v', '2500k', '-maxrate', '3500k', '-bufsize', '5M',
@@ -51,7 +51,7 @@ test('Windows GPU encoders share the ordinary quality bitrate cap', () => {
     for (const candidate of candidates) {
         assert.deepEqual(
             candidate.args.slice(candidate.args.indexOf('-b:v')),
-            ['-b:v', '1.5M', '-maxrate', '2.5M', '-bufsize', '3M']
+            ['-b:v', '2M', '-maxrate', '3M', '-bufsize', '4M']
         );
     }
 });
@@ -61,11 +61,11 @@ test('macOS GPU and CPU fallback use the same ordinary quality bitrate cap', () 
     const cpu = rawVideo._test.cpuH264EncoderArgs('faster', 23, 'darwin');
     assert.deepEqual(
         videoToolbox.args.slice(videoToolbox.args.indexOf('-b:v')),
-        ['-b:v', '1.5M', '-maxrate', '2.5M', '-bufsize', '3M']
+        ['-b:v', '2M', '-maxrate', '3M', '-bufsize', '4M']
     );
     assert.deepEqual(
         cpu.slice(cpu.indexOf('-b:v')),
-        ['-b:v', '1.5M', '-maxrate', '2.5M', '-bufsize', '3M']
+        ['-b:v', '2M', '-maxrate', '3M', '-bufsize', '4M']
     );
 });
 

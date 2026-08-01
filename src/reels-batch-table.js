@@ -11955,6 +11955,61 @@ async function _importFoldersAsFileTaskTabs(dirs) {
 }
 window.reelsImportFoldersAsTaskTabs = _importFoldersAsFileTaskTabs;
 
+/**
+ * 将外部任务列表按“文件夹/账号队列”自动镜像为批量表格标签页。
+ * 不切换当前标签，避免外部正在显示的合并任务列表被打断；重复导入同一文件夹时更新原标签。
+ */
+function _syncExternalFolderQueuesToTabs() {
+    const queueMap = new Map();
+    for (const task of (window._reelsState?.tasks || [])) {
+        if (!task?._folderQueueId) continue;
+        if (!queueMap.has(task._folderQueueId)) queueMap.set(task._folderQueueId, []);
+        queueMap.get(task._folderQueueId).push(task);
+    }
+    if (!queueMap.size) return { created: 0, updated: 0 };
+
+    let created = 0;
+    let updated = 0;
+    for (const [queueId, tasks] of queueMap) {
+        const firstTask = tasks[0] || {};
+        const name = String(firstTask._folderQueueName || '文件夹队列').trim() || '文件夹队列';
+        const sourceDir = firstTask._sourceFolder || '';
+        let tab = _batchTableState.tabs.find(item =>
+            item._folderQueueId === queueId || (sourceDir && item.materialDir === sourceDir)
+        );
+        if (tab) {
+            tab.name = name;
+            tab.tasks = _cloneBatchTasks(tasks);
+            tab._folderQueueId = queueId;
+            if (sourceDir) tab.materialDir = sourceDir;
+            updated++;
+            continue;
+        }
+
+        const usedNames = new Set(_batchTableState.tabs.map(item => item.name));
+        let tabName = name;
+        let suffix = 2;
+        while (usedNames.has(tabName)) tabName = `${name} (${suffix++})`;
+        tab = {
+            id: 'tab_' + _batchTableState.nextTabId++,
+            name: tabName,
+            materialDir: sourceDir,
+            lastRefreshTime: null,
+            _folderQueueId: queueId,
+            tasks: _cloneBatchTasks(tasks),
+        };
+        _batchTableState.tabs.push(tab);
+        created++;
+    }
+
+    _normalizeBatchTabState();
+    _skipNextApply = true;
+    _renderBatchTable();
+    _batchAutoSave({ skipSync: true });
+    return { created, updated };
+}
+window.reelsSyncExternalFolderQueuesToTabs = _syncExternalFolderQueuesToTabs;
+
 async function _selectAndImportMaterialGroupFolders(options = {}) {
     if (!window.require && !(window.electronAPI && window.electronAPI.selectDirectory)) {
         alert('素材组导入需要在桌面应用中使用');
@@ -15352,10 +15407,10 @@ function _serializeTasks(tasks) {
 }
 
 /** 自动保存到 localStorage (含所有标签页，如果配置了工程路径则自动写入硬盘) */
-function _batchAutoSave() {
+function _batchAutoSave(options = {}) {
     try {
-        // Sync current tasks to active tab first
-        _syncTasksToActiveTab();
+        // 外部队列刚被拆成多个标签时，外部列表仍是合并视图；此时不能用它覆盖当前标签。
+        if (!options.skipSync) _syncTasksToActiveTab();
         const data = {
             timestamp: new Date().toISOString(),
             version: '2.0',
@@ -15367,6 +15422,7 @@ function _batchAutoSave() {
                 id: tab.id,
                 name: tab.name,
                 materialDir: tab.materialDir || '',
+                folderQueueId: tab._folderQueueId || '',
                 lastRefreshTime: tab.lastRefreshTime || null,
                 tasks: _serializeTasks(tab.tasks),
             })),
@@ -15403,19 +15459,37 @@ function _batchAutoRestore() {
                 id: t.id,
                 name: t.name,
                 materialDir: t.materialDir || '',
+                _folderQueueId: t.folderQueueId || '',
                 lastRefreshTime: t.lastRefreshTime || null,
                 tasks: t.tasks || [],
             }));
             _batchTableState.activeTabId = data.activeTabId || _batchTableState.tabs[0].id;
             _batchTableState.nextTabId = data.nextTabId || _batchTableState.tabs.length + 1;
             _normalizeBatchTabState();
-            // Load active tab's tasks
-            const activeTab = _getActiveTab();
-            if (activeTab && activeTab.tasks.length > 0) {
-                const existing = window._reelsState.tasks || [];
-                if (existing.length === 0) {
-                    window._reelsState.tasks = activeTab.tasks.map(t => ({ ...t }));
-                }
+            // 将所有已保存标签投影回外部任务列表；之前只载入当前标签，
+            // 其余账号虽然仍在批量表格里，重启后却不会显示在外部列表。
+            const restoredTasks = [];
+            const restoredTabIds = [];
+            _batchTableState.tabs.forEach((tab, tabOrder) => {
+                const tabTasks = tab.tasks || [];
+                if (!tabTasks.length) return;
+                restoredTabIds.push(tab.id);
+                tabTasks.forEach((task, taskOrder) => {
+                    const cloned = _cloneBatchTasks([task])[0] || { ...task };
+                    cloned._batchProjection = true;
+                    cloned._batchTabId = tab.id;
+                    cloned._batchTabName = tab.name;
+                    cloned._batchTabOrder = tabOrder;
+                    cloned._batchTaskOrder = taskOrder;
+                    _ensureTaskId(cloned);
+                    restoredTasks.push(cloned);
+                });
+            });
+            if (restoredTasks.length > 0) {
+                window._reelsState.tasks = restoredTasks;
+                window._reelsState.selectedIdx = -1;
+                _batchTableState.appliedTabIds = restoredTabIds;
+                if (typeof _renderTaskList === 'function') _renderTaskList();
             }
             console.log(`[BatchTable] Auto-restored ${_batchTableState.tabs.length} tabs from ${data.timestamp}`);
         } else if (data.tasks && data.tasks.length > 0) {
