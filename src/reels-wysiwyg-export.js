@@ -14,12 +14,33 @@
 
 /**
  * Canvas → Raw RGBA Uint8Array（零压缩，专业级画质）
- * 注意：必须用 slice() 创建独立副本，避免 IPC 传输时 SharedArrayBuffer 问题
+ * 精准模式复制一个独立副本；流水线模式直接转移 ArrayBuffer，避免额外复制。
  */
-function _canvasToRawRGBA(canvas) {
+function _canvasToRawRGBA(canvas, transferable = false) {
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    return imageData.data.buffer.slice(0);
+    return transferable ? imageData.data.buffer : imageData.data.buffer.slice(0);
+}
+
+function _createFramePipeline(sessionId, batchSize = 3) {
+    let frames = [];
+    const flush = async () => {
+        if (!frames.length) return;
+        const batch = frames;
+        frames = [];
+        const result = await window.electronAPI.reelsComposeWysiwyg('frames', { sessionId, frames: batch });
+        const ok = result === true || (result && result.ok);
+        if (!ok) throw new Error((result && result.error) || '批量写入视频帧失败');
+    };
+    return {
+        async send(raw) {
+            frames.push(raw);
+            if (frames.length >= batchSize) await flush();
+        },
+        async drain() {
+            await flush();
+        },
+    };
 }
 
 /**
@@ -384,6 +405,7 @@ async function reelsWysiwygExport(params) {
         qualityPreset = 'faster',
         targetBitrateMbps = null,
         maxBitrateMbps = null,
+        exportEngine = 'precise',
         onProgress,
         onLog,
         isCancelled,
@@ -628,7 +650,8 @@ async function reelsWysiwygExport(params) {
             loopFade = false; 
             // 只要不是多视频，就可以霸王硬上弓恢复极速直通路径！
             // ⚠️ 但如果有覆层使用了 blend mode，则不能走 alpha overlay（FFmpeg overlay 不支持 CSS 混合模式）
-            if (params.alphaOverlayBgPath === null && !_hasBlendOverlay) {
+            if (params.alphaOverlayBgPath === null && !_hasBlendOverlay
+                && !contentVideoDirectBg && !contentVideoBlurBg) {
                 const uiFastAlpha = (document.getElementById('reels-fast-alpha-mode') || {}).checked !== false;
                 if (uiFastAlpha) params.alphaOverlayBgPath = backgroundPath; 
             }
@@ -650,7 +673,9 @@ async function reelsWysiwygExport(params) {
     let bgAudioPath = null;
     
     if (params.alphaOverlayBgPath) {
-        log('⚡ Alpha Overlay 模式激活：全面跳过底图解压与多层内存搬运！');
+        log(loopFade && !_isImageFile(params.alphaOverlayBgPath)
+            ? '⚡ 背景直通 + FFmpeg 循环透明过渡：跳过 Canvas 底图解压与搬运。'
+            : '⚡ Alpha Overlay 模式激活：全面跳过底图解压与多层内存搬运！');
         progress(18);
     } else if (contentVideoBlurBg || contentVideoDirectBg) {
         log('使用内容视频直接作为背景或模糊背景，跳过背景预处理');
@@ -816,6 +841,11 @@ async function reelsWysiwygExport(params) {
         bgVolume,
         backgroundPath: isMultiClip ? bgAudioPath : backgroundPath,
         alphaOverlayBgPath: params.alphaOverlayBgPath || null,
+        alphaBgDuration: params.alphaOverlayBgPath && !_isImageFile(params.alphaOverlayBgPath)
+            ? await window.electronAPI.getMediaDuration(params.alphaOverlayBgPath)
+            : 0,
+        loopFade,
+        loopFadeDur,
         // Multi-clip mode: use bgAudioPath if present. Single mode: check if bg has audio.
         bgHasAudio: isMultiClip ? (!!bgAudioPath) : ((voicePath && backgroundPath && voicePath === backgroundPath) ? false : !_isImageFile(backgroundPath)),
         bgmPath: bgmPath || '',
@@ -844,6 +874,16 @@ async function reelsWysiwygExport(params) {
         contentVideoBlurBg: contentVideoBlurBg || false,
     });
     if (!sessionId) throw new Error('FFmpeg 启动失败');
+
+    // 极速流水线与极速硬件模式都使用无拷贝帧通道；硬件编码器由主进程探测并自动回退。
+    let framePipeline = null;
+    const normalizedEngine = exportEngine === 'experimental' ? 'hardware' : exportEngine;
+    const wantsPipeline = normalizedEngine === 'pipeline' || normalizedEngine === 'hardware';
+    if (normalizedEngine === 'hardware') log('极速硬件模式：正在自动探测系统 H.264 硬件编码器，不可用时回退 CPU。');
+    if (wantsPipeline) {
+        framePipeline = _createFramePipeline(sessionId, 3);
+        log('阶段2.1: 已启用三帧批量流水线（同画布、同 FFmpeg 编码）。');
+    }
 
     // 全局蒙版
     const hasMask = !!style.global_mask_enabled;
@@ -1119,17 +1159,18 @@ async function reelsWysiwygExport(params) {
                 _drawWatermarks(ctx, targetWidth, targetHeight);
             }
 
-            // ── Canvas → Raw RGBA → IPC（零压缩）──
-            const rawBuf = _canvasToRawRGBA(canvas);
-            const frameResult = await window.electronAPI.reelsComposeWysiwyg('frame', {
-                sessionId,
-                raw: rawBuf,
-            });
-            // 兼容旧版 boolean 和新版 { ok, error, detail } 格式
-            const frameOk = frameResult === true || (frameResult && frameResult.ok);
-            if (!frameOk) {
-                const errMsg = (frameResult && frameResult.error) || '未知编码错误';
-                throw new Error(`第 ${frameIdx + 1} 帧写入失败：${errMsg}`);
+            // ── Canvas → Raw RGBA → FFmpeg ──
+            if (framePipeline) {
+                // getImageData 已经返回独立 ArrayBuffer；直接交给 IPC，避免再 slice 一次整帧。
+                await framePipeline.send(_canvasToRawRGBA(canvas, true));
+            } else {
+                const rawBuf = _canvasToRawRGBA(canvas);
+                const frameResult = await window.electronAPI.reelsComposeWysiwyg('frame', { sessionId, raw: rawBuf });
+                const frameOk = frameResult === true || (frameResult && frameResult.ok);
+                if (!frameOk) {
+                    const errMsg = (frameResult && frameResult.error) || '未知编码错误';
+                    throw new Error(`第 ${frameIdx + 1} 帧写入失败：${errMsg}`);
+                }
             }
 
             // ── 进度 + UI yield ──
@@ -1145,6 +1186,7 @@ async function reelsWysiwygExport(params) {
         }
 
         // ═══ 阶段 4: 完成编码 + 混合音频 ═══
+        if (framePipeline) await framePipeline.drain();
         log('阶段4: 完成编码与音频混合...');
         progress(88);
         const result = await window.electronAPI.reelsComposeWysiwyg('finish', { sessionId });

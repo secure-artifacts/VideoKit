@@ -1158,6 +1158,78 @@
               <p class="hint" style="margin-top: 8px;">灵敏度值越小检测到的场景切换越多。建议先用默认值 0.3 分析，如果太多或太少再调整。</p>
             </div>
 
+            <!-- 拆分导出水印 -->
+            <div class="form-section" style="border: 1px solid rgba(102,126,234,.28); border-radius: 8px; padding: 14px;">
+              <div style="display:flex; align-items:center; gap:8px; margin-bottom:12px;">
+                <input type="checkbox" id="scene-watermark-enabled" onchange="toggleSceneWatermarkOptions()">
+                <label for="scene-watermark-enabled" style="font-weight:600; color:var(--text-secondary);">导出时添加水印</label>
+                <span style="font-size:11px; color:var(--text-muted);">应用到每一个拆分片段</span>
+              </div>
+              <div id="scene-watermark-options" class="hidden">
+                <div class="param-row" style="flex-wrap:wrap; gap:12px; margin-bottom:10px;">
+                  <div style="display:flex; align-items:center; gap:8px;">
+                    <label>类型:</label>
+                    <select id="scene-watermark-type" class="select" onchange="toggleSceneWatermarkType()" style="width:110px;">
+                      <option value="text">文字水印</option>
+                      <option value="image">透明图片</option>
+                    </select>
+                  </div>
+                  <div style="display:flex; align-items:center; gap:8px;">
+                    <label>位置:</label>
+                    <select id="scene-watermark-position" class="select" style="width:110px;">
+                      <option value="top-left">左上角</option>
+                      <option value="top-right" selected>右上角</option>
+                      <option value="top-center">上方居中</option>
+                      <option value="bottom-left">左下角</option>
+                      <option value="bottom-right">右下角</option>
+                      <option value="bottom-center">下方居中</option>
+                      <option value="center">居中</option>
+                    </select>
+                  </div>
+                </div>
+                <div id="scene-watermark-text-options">
+                  <div class="param-row" style="flex-wrap:wrap; gap:12px;">
+                    <div style="display:flex; align-items:center; gap:6px;"><label>预设:</label><select id="scene-watermark-preset" class="select" onchange="applySceneWatermarkPreset(this.value)" style="width:145px;"><option value="">-- 选择预设 --</option><option value="AI Generated" selected>AI Generated</option><option value="Generated With AI">Generated With AI</option><option value="AI Created">AI Created</option><option value="Made with AI">Made with AI</option><option value="AI Powered">AI Powered</option></select></div>
+                    <div style="display:flex; align-items:center; gap:8px;"><label>文字:</label><input id="scene-watermark-text" class="input" value="AI Generated" style="width:160px;"></div>
+                    <div style="display:flex; align-items:center; gap:6px;"><label>字体:</label><select id="scene-watermark-font" class="select" style="width:110px;"><option value="Arial">Arial</option><option value="Helvetica">Helvetica</option><option value="Times New Roman">Times</option><option value="Microsoft YaHei">微软雅黑</option><option value="PingFang SC">苹方</option><option value="SimHei">黑体</option></select></div>
+                    <div style="display:flex; align-items:center; gap:8px;"><label>字号:</label><input id="scene-watermark-font-size" type="number" class="input input-small" value="32" min="8" max="300" style="width:60px;"></div>
+                    <div style="display:flex; align-items:center; gap:6px;"><label>文字颜色:</label><input id="scene-watermark-color" type="color" value="#ffffff"></div>
+                    <div style="display:flex; align-items:center; gap:6px;"><label>文字透明度:</label><input id="scene-watermark-opacity-range" type="range" min="0" max="1" step="0.05" value="0.8" oninput="syncSceneWatermarkOpacity(this.value)" style="width:70px;"><input id="scene-watermark-opacity" type="number" class="input input-small" value="0.8" min="0" max="1" step="0.05" oninput="syncSceneWatermarkOpacity(this.value, true)" style="width:55px;"></div>
+                    <label style="display:flex; align-items:center; gap:4px;"><input id="scene-watermark-background" type="checkbox" checked> 背景</label>
+                    <div style="display:flex; align-items:center; gap:6px;"><label>背景颜色:</label><input id="scene-watermark-bg-color" type="color" value="#000000"></div>
+                    <div style="display:flex; align-items:center; gap:6px;"><label>背景透明度:</label><input id="scene-watermark-bg-opacity" type="number" class="input input-small" value="0.35" min="0" max="1" step="0.05" style="width:55px;"></div>
+                    <div style="display:flex; align-items:center; gap:6px;"><label>背景边距:</label><input id="scene-watermark-bg-padding" type="number" class="input input-small" value="12" min="0" max="100" style="width:55px;"><span class="hint">px</span></div>
+                    <label style="display:flex; align-items:center; gap:4px;"><input id="scene-watermark-stroke" type="checkbox" checked> 描边</label>
+                    <div style="display:flex; align-items:center; gap:6px;"><label>描边色:</label><input id="scene-watermark-stroke-color" type="color" value="#000000"></div>
+                    <div style="display:flex; align-items:center; gap:6px;"><label>描边宽度:</label><input id="scene-watermark-stroke-width" type="number" class="input input-small" value="2" min="0" max="20" style="width:55px;"></div>
+                    <label style="display:flex; align-items:center; gap:4px;"><input id="scene-watermark-shadow" type="checkbox"> 阴影</label>
+                  </div>
+                </div>
+                <div id="scene-watermark-image-options" class="hidden">
+                  <div class="param-row" style="flex-wrap:wrap; gap:12px;">
+                    <div class="file-input-group" style="flex:1; min-width:280px;"><input id="scene-watermark-image-path" type="text" class="input file-path" placeholder="选择透明 PNG / 图片水印" readonly><input id="scene-watermark-image-input" type="file" class="hidden-file-input" accept=".png,.webp,.jpg,.jpeg" onchange="selectSceneWatermarkImage(this)"><button class="btn btn-secondary" onclick="document.getElementById('scene-watermark-image-input').click()">选择图片</button></div>
+                    <div style="display:flex; align-items:center; gap:6px;"><label>宽度:</label><input id="scene-watermark-image-width" type="number" class="input input-small" value="180" min="10" max="2000" style="width:65px;"><span class="hint">px</span></div>
+                    <div style="display:flex; align-items:center; gap:6px;"><label>透明度:</label><input id="scene-watermark-image-opacity" type="number" class="input input-small" value="1" min="0" max="1" step="0.05" style="width:55px;"></div>
+                  </div>
+                </div>
+                <div class="param-row" style="margin-top:12px; align-items:center; gap:12px;">
+                  <span class="hint">位置微调：</span><button class="btn btn-secondary" type="button" onclick="adjustSceneWatermarkOffset(0,-5)" style="padding:3px 8px;">⬆️</button><button class="btn btn-secondary" type="button" onclick="adjustSceneWatermarkOffset(-5,0)" style="padding:3px 8px;">⬅️</button><button class="btn btn-secondary" type="button" onclick="adjustSceneWatermarkOffset(5,0)" style="padding:3px 8px;">➡️</button><button class="btn btn-secondary" type="button" onclick="adjustSceneWatermarkOffset(0,5)" style="padding:3px 8px;">⬇️</button><label>X:</label><input id="scene-watermark-offset-x-range" type="range" min="0" max="500" value="24" oninput="syncSceneWatermarkOffset('x', this.value, true)" style="width:90px;"><input id="scene-watermark-offset-x" type="number" class="input input-small" value="24" min="0" max="500" oninput="syncSceneWatermarkOffset('x', this.value)" style="width:55px;"><span class="hint">px</span><label>Y:</label><input id="scene-watermark-offset-y-range" type="range" min="0" max="500" value="24" oninput="syncSceneWatermarkOffset('y', this.value, true)" style="width:90px;"><input id="scene-watermark-offset-y" type="number" class="input input-small" value="24" min="0" max="500" oninput="syncSceneWatermarkOffset('y', this.value)" style="width:55px;"><span class="hint">px</span>
+                </div>
+                <div style="display:flex; align-items:center; gap:10px; margin-top:12px;">
+                  <button class="btn btn-secondary" type="button" onclick="addSceneWatermark()">➕ 新增水印</button>
+                  <button class="btn btn-secondary" type="button" onclick="exportSceneWatermarkPreset()">💾 导出预设</button>
+                  <input id="scene-watermark-preset-import" type="file" class="hidden-file-input" accept=".json" onchange="importSceneWatermarkPreset(this)">
+                  <button class="btn btn-secondary" type="button" onclick="document.getElementById('scene-watermark-preset-import').click()">📂 导入预设</button>
+                  <span class="hint">当前编辑的水印会实时更新预览；点击下方项目可分别调整。</span>
+                </div>
+                <div id="scene-watermark-list" style="display:flex; flex-direction:column; gap:6px; margin-top:10px;"></div>
+                <div style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,.08);">
+                  <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;"><strong style="font-size:13px; color:var(--text-secondary);">最终水印效果预览</strong><span class="hint">按导出时的叠加顺序实时显示</span></div>
+                  <div style="display:flex; justify-content:center; padding:10px; background:#10131c; border-radius:6px;"><canvas id="scene-watermark-preview-canvas" width="180" height="320" style="width:180px; max-width:100%; height:auto; border-radius:4px; background:#27364d;"></canvas></div>
+                </div>
+              </div>
+            </div>
+
             <!-- 批量操作按钮 -->
             <div class="form-section" style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
               <div style="display: flex; align-items: center; gap: 8px;">
@@ -5216,6 +5288,16 @@
                   说明：静态口播选低质量 · 细节/动作较多选口播高质量 · 动态Reels选Reels高质量
                 </span>
                 <span style="width:1px;height:16px;background:var(--border-color);margin:0 2px;display:inline-block;"></span>
+                <label>输出:</label>
+                <select id="reels-export-engine" class="select" style="width:142px;font-size:11px;"
+                  onchange="reelsUpdateExportEngineUI()">
+                  <option value="precise" selected>精准画布（兼容）</option>
+                  <option value="pipeline">极速流水线（推荐）</option>
+                  <option value="hardware">极速硬件（自动检测）</option>
+                </select>
+                <span id="reels-export-engine-desc" style="font-size:10px;color:var(--text-muted);"
+                  title="极速模式由 FFmpeg 直接处理背景和循环透明过渡，Canvas 只绘制字幕/覆层；极速硬件不可用时自动回退 CPU。">逐帧确认，兼容优先</span>
+                <span style="width:1px;height:16px;background:var(--border-color);margin:0 2px;display:inline-block;"></span>
                 <label>后缀:</label>
                 <input type="text" id="reels-suffix" class="input input-small" value="_subtitled"
                   style="width:90px;font-size:11px;">
@@ -5426,6 +5508,9 @@
                 style="display:flex; align-items:center; gap:8px; margin-top:6px; font-size:11px; color:var(--text-secondary);">
                 <span>进度:</span>
                 <span id="reels-export-progress-text">0% (0/0)</span>
+              </div>
+              <div id="reels-export-job-progress-list"
+                style="display:none;max-height:210px;overflow:auto;margin-top:7px;padding:5px;border:1px solid var(--border-color);border-radius:6px;background:rgba(0,0,0,.12);">
               </div>
               <div style="display:flex; align-items:center; gap:8px; margin-top:6px;">
                 <span style="font-size:11px; color:var(--text-secondary); white-space:nowrap;">最新输出:</span>

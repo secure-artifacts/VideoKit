@@ -749,6 +749,33 @@ function _buildFrameTimestamps(segments, duration, framesPerScene, boundaryOffse
     return deduped;
 }
 
+function clampWatermarkOpacity(value, fallback) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? Math.max(0, Math.min(1, parsed)) : fallback;
+}
+
+function sceneWatermarkPosition(position, image = false, offsetX = 24, offsetY = 24) {
+    const width = image ? 'w' : 'tw';
+    const height = image ? 'h' : 'th';
+    const mainWidth = image ? 'W' : 'w';
+    const mainHeight = image ? 'H' : 'h';
+    const xOffset = Math.max(0, Number(offsetX) || 0);
+    const yOffset = Math.max(0, Number(offsetY) || 0);
+    switch (position) {
+        case 'top-left': return [String(xOffset), String(yOffset)];
+        case 'top-center': return [`(${mainWidth}-${width})/2`, String(yOffset)];
+        case 'bottom-left': return [String(xOffset), `${mainHeight}-${height}-${yOffset}`];
+        case 'bottom-right': return [`${mainWidth}-${width}-${xOffset}`, `${mainHeight}-${height}-${yOffset}`];
+        case 'bottom-center': return [`(${mainWidth}-${width})/2`, `${mainHeight}-${height}-${yOffset}`];
+        case 'center': return [`(${mainWidth}-${width})/2`, `(${mainHeight}-${height})/2`];
+        default: return [`${mainWidth}-${width}-${xOffset}`, String(yOffset)];
+    }
+}
+
+function escapeDrawtextValue(value) {
+    return String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\\\'").replace(/:/g, '\\:').replace(/%/g, '\\%');
+}
+
 /** 场景拆分 */
 async function sceneSplit(filePath, segments, outputDir, options = {}) {
     const baseName = path.parse(filePath).name;
@@ -767,15 +794,60 @@ async function sceneSplit(filePath, segments, outputDir, options = {}) {
         const outputFilename = `${baseName}_scene${String(idx).padStart(3, '0')}${ext}`;
         const outputPath = path.join(sceneOutputDir, outputFilename);
 
-        await runCommand('ffmpeg', [
-            '-y', '-i', filePath,
-            '-ss', start.toFixed(3),
-            '-to', end.toFixed(3),
+        const watermarks = Array.isArray(options.watermarks)
+            ? options.watermarks
+            : (options.watermark ? [options.watermark] : []);
+        const args = [
+            '-y', '-ss', start.toFixed(3), '-to', end.toFixed(3), '-i', filePath,
+        ];
+
+        const filters = [];
+        let lastVideo = '0:v';
+        let inputIndex = 1;
+        for (let wIdx = 0; wIdx < watermarks.length; wIdx++) {
+            const watermark = watermarks[wIdx];
+            const outputLabel = `wmv${wIdx}`;
+            if (watermark?.type === 'image') {
+                if (!watermark.image_path || !fs.existsSync(watermark.image_path)) throw new Error('图片水印文件不存在');
+                const imageWidth = Math.max(10, Math.min(2000, parseInt(watermark.image_width) || 180));
+                const opacity = clampWatermarkOpacity(watermark.opacity, 1);
+                const [x, y] = sceneWatermarkPosition(watermark.position, true, watermark.offset_x, watermark.offset_y);
+                const imageLabel = `wmi${wIdx}`;
+                args.push('-loop', '1', '-i', watermark.image_path);
+                filters.push(`[${inputIndex}:v]scale=${imageWidth}:-1,format=rgba,colorchannelmixer=aa=${opacity.toFixed(2)}[${imageLabel}]`);
+                filters.push(`[${lastVideo}][${imageLabel}]overlay=${x}:${y}:format=auto[${outputLabel}]`);
+                inputIndex++;
+            } else if (watermark?.type === 'text') {
+                const [x, y] = sceneWatermarkPosition(watermark.position, false, watermark.offset_x, watermark.offset_y);
+                const fontSize = Math.max(8, Math.min(300, parseInt(watermark.font_size) || 32));
+                const textOpacity = clampWatermarkOpacity(watermark.opacity, 0.8);
+                const bgOpacity = clampWatermarkOpacity(watermark.background_opacity, 0.35);
+                const color = String(watermark.color || '#ffffff').replace('#', '');
+                const backgroundColor = String(watermark.background_color || '#000000').replace('#', '');
+                let filter = `[${lastVideo}]drawtext=text='${escapeDrawtextValue(watermark.text || 'AI Generated')}':font='${escapeDrawtextValue(watermark.font || 'Arial')}':fontsize=${fontSize}:fontcolor=0x${color}@${textOpacity.toFixed(2)}:x=${x}:y=${y}`;
+                if (watermark.background !== false) {
+                    const padding = Math.max(0, Math.min(100, Number(watermark.background_padding ?? 12)));
+                    filter += `:box=1:boxborderw=${padding}:boxcolor=0x${backgroundColor}@${bgOpacity.toFixed(2)}`;
+                }
+                if (watermark.stroke !== false) filter += `:borderw=${Math.max(0, Math.min(20, Number(watermark.stroke_width) || 2))}:bordercolor=0x${String(watermark.stroke_color || '#000000').replace('#', '')}@${textOpacity.toFixed(2)}`;
+                if (watermark.shadow) filter += ':shadowx=2:shadowy=2:shadowcolor=black@0.5';
+                filters.push(`${filter}[${outputLabel}]`);
+            } else {
+                continue;
+            }
+            lastVideo = outputLabel;
+        }
+        if (filters.length) {
+            args.push('-filter_complex', filters.join(';'), '-map', `[${lastVideo}]`, '-map', '0:a?', '-shortest');
+        }
+
+        args.push(
             '-c:v', 'libx264', '-crf', '15', '-preset', 'medium',
             '-c:a', 'aac', '-b:a', '192k',
             '-avoid_negative_ts', 'make_zero',
             outputPath
-        ]);
+        );
+        await runCommand('ffmpeg', args, { timeout: Math.max(DEFAULT_TIMEOUT, 3600000) });
 
         exported.push({
             path: outputPath,

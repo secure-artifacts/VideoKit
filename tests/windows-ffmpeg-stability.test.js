@@ -75,6 +75,23 @@ test('overlay frame validation allows only normal encoder rounding', () => {
     assert.equal(rawVideo._test.expectedFrameCount(8, 0), 0);
 });
 
+test('raw video export rejects every incomplete RGBA frame', () => {
+    assert.equal(rawVideo._test.validateRawFrameSize(1080, 1920, 1080 * 1920 * 4), '');
+    assert.equal(
+        rawVideo._test.validateRawFrameSize(1080, 1920, 1080 * 1920 * 4 - 4),
+        '帧数据不完整：实际 8294396 字节，期望 8294400 字节'
+    );
+});
+
+test('raw video export rejects a missing final frame', () => {
+    assert.equal(rawVideo._test.validateFrameCompletion(300, 300), '');
+    assert.equal(
+        rawVideo._test.validateFrameCompletion(300, 299),
+        '导出帧数不完整：实际写入 299 帧，计划 300 帧'
+    );
+    assert.equal(rawVideo._test.validateFrameCompletion(0, 12), '');
+});
+
 test('missing FFmpeg audio inputs are reported as a clear file error', () => {
     const stderr = [
         '[in#1] Error opening input: No such file or directory',

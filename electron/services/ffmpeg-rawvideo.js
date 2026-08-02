@@ -1320,7 +1320,18 @@ async function startSession(opts) {
         // Fast Alpha Overlay 模式：直接由 FFmpeg 解码背景图像/视频
         const bgExt = require('path').extname(opts.alphaOverlayBgPath).toLowerCase();
         const isAlphaBgImage = ['.jpg', '.jpeg', '.png', '.webp', '.bmp'].includes(bgExt);
-        if (isAlphaBgImage) {
+        const rawBgDuration = Math.max(0, Number(opts.alphaBgDuration) || 0);
+        const scaledBgDuration = rawBgDuration * Math.max(0.01, (bgDurScale || 100) / 100);
+        const fadeDur = Math.min(Math.max(0.05, Number(opts.loopFadeDur) || 1), scaledBgDuration * 0.4);
+        const useDirectLoopFade = !isAlphaBgImage && opts.loopFade && scaledBgDuration > fadeDur + 0.05
+            && targetDuration > scaledBgDuration + 0.01;
+        let bgInputCount = 1;
+        if (useDirectLoopFade) {
+            const step = scaledBgDuration - fadeDur;
+            bgInputCount = Math.max(2, Math.ceil((targetDuration - scaledBgDuration) / step) + 1);
+            for (let i = 0; i < bgInputCount; i++) args.push('-i', opts.alphaOverlayBgPath);
+            console.log(`[WYSIWYG] 背景直通 xfade 循环: ${bgInputCount} 段, fade=${fadeDur.toFixed(3)}s`);
+        } else if (isAlphaBgImage) {
             args.push('-loop', '1', '-i', opts.alphaOverlayBgPath);
         } else {
             args.push('-stream_loop', '-1', '-i', opts.alphaOverlayBgPath);
@@ -1362,7 +1373,25 @@ async function startSession(opts) {
         // overlay 默认可继承高帧率背景的时间基，导致 FFmpeg 输出帧数约为写入帧数的 2 倍，
         // 提前达到 -frames:v 后以 code=0 正常退出，随后的管道写入却会被上层误报为失败。
         // 在最终输出端固定任务帧率，保证一个 Canvas 帧对应一个输出帧。
-        const filterComplex = `[0:v]${scaleCropFilter},${ptsFilter}[bg];[1:v]scale=in_range=full:in_color_matrix=bt709:out_range=limited:out_color_matrix=bt709,format=yuva420p[fg];[bg][fg]overlay=0:0:format=auto:shortest=1,fps=${fps}[outv]`;
+        let bgFilter;
+        if (useDirectLoopFade) {
+            const parts = [];
+            for (let i = 0; i < bgInputCount; i++) {
+                parts.push(`[${i}:v]${scaleCropFilter},${ptsFilter},fps=${fps},format=yuv420p,settb=AVTB,setpts=PTS-STARTPTS[bg${i}]`);
+            }
+            let previous = 'bg0';
+            const step = scaledBgDuration - fadeDur;
+            for (let i = 1; i < bgInputCount; i++) {
+                const out = i === bgInputCount - 1 ? 'bg' : `bgx${i}`;
+                parts.push(`[${previous}][bg${i}]xfade=transition=fade:duration=${fadeDur.toFixed(3)}:offset=${(i * step).toFixed(3)}[${out}]`);
+                previous = out;
+            }
+            bgFilter = parts.join(';');
+        } else {
+            bgFilter = `[0:v]${scaleCropFilter},${ptsFilter}[bg]`;
+        }
+        const fgInput = bgInputCount;
+        const filterComplex = `${bgFilter};[${fgInput}:v]scale=in_range=full:in_color_matrix=bt709:out_range=limited:out_color_matrix=bt709,format=yuva420p[fg];[bg][fg]overlay=0:0:format=auto:shortest=1,fps=${fps}[outv]`;
         args.push('-filter_complex', filterComplex, '-map', '[outv]');
 
     } else {
@@ -1454,6 +1483,23 @@ async function startSession(opts) {
     return sessionId;
 }
 
+function validateRawFrameSize(width, height, actualSize) {
+    const expectedSize = Number(width) * Number(height) * 4;
+    if (!Number.isFinite(expectedSize) || expectedSize <= 0) return '视频帧尺寸配置无效';
+    if (actualSize !== expectedSize) {
+        return `帧数据不完整：实际 ${actualSize} 字节，期望 ${expectedSize} 字节`;
+    }
+    return '';
+}
+
+function validateFrameCompletion(totalFrames, frameCount) {
+    const expected = Number(totalFrames) || 0;
+    if (expected > 0 && frameCount !== expected) {
+        return `导出帧数不完整：实际写入 ${frameCount} 帧，计划 ${expected} 帧`;
+    }
+    return '';
+}
+
 async function writeFrame(sessionId, rawData) {
     const session = sessions.get(sessionId);
     if (!session || session.closed) {
@@ -1489,14 +1535,12 @@ async function writeFrame(sessionId, rawData) {
             return { ok: false, error: `帧数据格式无法识别 (${typeof rawData})` };
         }
 
-        // 验证帧数据大小（RGBA 数据应 = width * height * 4）
+        // 每一帧都必须是完整 RGBA 数据；禁止静默跳过损坏帧并生成问题成片。
         const expectedSize = session.width * session.height * 4;
-        if (buf.length < 100) {
-            console.warn(`[WYSIWYG] writeFrame: 帧数据太小 (${buf.length} bytes)，跳过`);
-            return { ok: true };
-        }
-        if (buf.length !== expectedSize && session.frameCount === 0) {
-            console.warn(`[WYSIWYG] ⚠️ 首帧数据大小不匹配: 实际 ${buf.length} bytes, 期望 ${expectedSize} bytes (${session.width}x${session.height}x4)`);
+        const sizeError = validateRawFrameSize(session.width, session.height, buf.length);
+        if (sizeError) {
+            console.error(`[WYSIWYG] writeFrame: ${sizeError}`);
+            return { ok: false, error: sizeError };
         }
 
         if (session.frameCount === 0) {
@@ -1557,10 +1601,67 @@ async function writeFrame(sessionId, rawData) {
     }
 }
 
+// 持久帧通道：避免每一帧都走一次 ipcRenderer.invoke 的往返等待。
+// Canvas 像素仍由同一个 FFmpeg/rawvideo 编码器处理，因而不会改变画面效果。
+function attachFramePipeline(sessionId, port) {
+    const session = sessions.get(sessionId);
+    if (!session || session.closed || !port) {
+        return { ok: false, error: '编码会话无效，无法建立帧流水线' };
+    }
+    if (session.framePipeline) {
+        try { session.framePipeline.port.close(); } catch (_) { }
+    }
+    const pipeline = { port, pending: Promise.resolve(), failed: null, closed: false, expectedSeq: 0 };
+    session.framePipeline = pipeline;
+    port.on('message', (event) => {
+        const data = event && event.data ? event.data : event;
+        if (!data || data.type !== 'frame' || pipeline.closed) return;
+        pipeline.pending = pipeline.pending.then(async () => {
+            if (!pipeline.failed && (!Number.isInteger(data.seq) || data.seq !== pipeline.expectedSeq)) {
+                pipeline.failed = `帧序号不连续：收到 ${data.seq}，期望 ${pipeline.expectedSeq}`;
+            }
+            if (!pipeline.failed) {
+                pipeline.expectedSeq++;
+                const result = await writeFrame(sessionId, data.raw);
+                if (!result || !result.ok) pipeline.failed = (result && result.error) || '帧流水线写入失败';
+            }
+            try {
+                port.postMessage({ type: 'ack', seq: data.seq, ok: !pipeline.failed, error: pipeline.failed || '' });
+            } catch (_) { }
+        }).catch((err) => {
+            pipeline.failed = err.message || '帧流水线异常';
+            try { port.postMessage({ type: 'ack', seq: data.seq, ok: false, error: pipeline.failed }); } catch (_) { }
+        });
+    });
+    try { port.start(); } catch (_) { }
+    return { ok: true };
+}
+
+async function flushFramePipeline(session) {
+    if (!session || !session.framePipeline) return;
+    await session.framePipeline.pending;
+    const pipeline = session.framePipeline;
+    pipeline.closed = true;
+    try { pipeline.port.close(); } catch (_) { }
+    session.framePipeline = null;
+    if (pipeline.failed) throw new Error(pipeline.failed);
+}
+
 async function finishSession(sessionId) {
     const session = sessions.get(sessionId);
     if (!session) return { error: '会话不存在' };
     if (session.closed) return { error: '会话已关闭' };
+    try {
+        await flushFramePipeline(session);
+    } catch (e) {
+        abortSession(sessionId);
+        return { error: `帧流水线失败：${e.message}` };
+    }
+    const completionError = validateFrameCompletion(session.totalFrames, session.frameCount);
+    if (completionError) {
+        abortSession(sessionId);
+        return { error: completionError };
+    }
     session.closed = true;
 
     const mb = (session.bytesWritten / 1024 / 1024).toFixed(1);
@@ -2100,6 +2201,11 @@ function abortSession(sessionId) {
     const session = sessions.get(sessionId);
     if (!session) return;
     session.closed = true;
+    if (session.framePipeline) {
+        session.framePipeline.closed = true;
+        try { session.framePipeline.port.close(); } catch (_) { }
+        session.framePipeline = null;
+    }
     try { session.proc.stdin.destroy(); } catch (_) { }
     try { session.proc.kill('SIGKILL'); } catch (_) { }
     cleanup(session);
@@ -2140,6 +2246,17 @@ async function finishVideoOnly(sessionId) {
     const session = sessions.get(sessionId);
     if (!session) return { error: '会话不存在' };
     if (session.closed) return { error: '会话已关闭' };
+    try {
+        await flushFramePipeline(session);
+    } catch (e) {
+        abortSession(sessionId);
+        return { error: `帧流水线失败：${e.message}` };
+    }
+    const completionError = validateFrameCompletion(session.totalFrames, session.frameCount);
+    if (completionError) {
+        abortSession(sessionId);
+        return { error: completionError };
+    }
     session.closed = true;
 
     const mb = (session.bytesWritten / 1024 / 1024).toFixed(1);
@@ -2498,12 +2615,12 @@ async function handleWysiwygIPC(action, data) {
         case 'frame':
             return writeFrame(data.sessionId, data.raw);
         case 'frames': {
-            let ok = true;
+            let result = { ok: true };
             for (const f of (data.frames || [])) {
-                ok = await writeFrame(data.sessionId, f);
-                if (!ok) break;
+                result = await writeFrame(data.sessionId, f);
+                if (!result || !result.ok) break;
             }
-            return ok;
+            return result;
         }
         case 'finish':
             return finishSession(data.sessionId);
@@ -2600,6 +2717,7 @@ async function renderChromiumAudioWav(opts) {
 
 module.exports = {
     handleWysiwygIPC,
+    attachFramePipeline,
     renderChromiumAudioWav,
     parallelExport,
     _test: {
@@ -2610,5 +2728,7 @@ module.exports = {
         formatMixFailure,
         formatMediaError,
         expectedFrameCount,
+        validateRawFrameSize,
+        validateFrameCompletion,
     },
 };

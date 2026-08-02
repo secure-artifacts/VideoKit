@@ -8315,6 +8315,9 @@ function applySmartSplitPoints() {
 let sceneFiles = [];         // [{path, name}]
 let sceneResults = {};       // { filePath: { data, segments } }
 let sceneOutputDir = '';
+let sceneWatermarks = [];
+let selectedSceneWatermarkIndex = -1;
+const SCENE_WATERMARK_STORAGE_KEY = 'sceneSplitWatermarkPresetV1';
 
 function getSceneOutputFolderMode() {
     return document.getElementById('scene-output-folder-mode')?.value || 'per_video';
@@ -8325,8 +8328,318 @@ function createSceneBatchName(kind = 'scenes') {
     return `scene_batch_${kind}_${stamp}`;
 }
 
+function toggleSceneWatermarkOptions() {
+    document.getElementById('scene-watermark-options')?.classList.toggle(
+        'hidden', !document.getElementById('scene-watermark-enabled')?.checked
+    );
+    saveSceneWatermarkPreset();
+}
+
+function toggleSceneWatermarkType() {
+    const isImage = document.getElementById('scene-watermark-type')?.value === 'image';
+    document.getElementById('scene-watermark-text-options')?.classList.toggle('hidden', isImage);
+    document.getElementById('scene-watermark-image-options')?.classList.toggle('hidden', !isImage);
+    syncSceneWatermarkEditor();
+}
+
+function applySceneWatermarkPreset(value) {
+    if (value) document.getElementById('scene-watermark-text').value = value;
+    syncSceneWatermarkEditor();
+}
+
+function syncSceneWatermarkOpacity(value, fromNumber = false) {
+    const opacity = Math.max(0, Math.min(1, Number(value) || 0));
+    document.getElementById('scene-watermark-opacity').value = opacity;
+    if (!fromNumber) document.getElementById('scene-watermark-opacity-range').value = opacity;
+    syncSceneWatermarkEditor();
+}
+
+function adjustSceneWatermarkOffset(dx, dy) {
+    const x = document.getElementById('scene-watermark-offset-x');
+    const y = document.getElementById('scene-watermark-offset-y');
+    if (x) x.value = Math.max(0, (Number(x.value) || 0) + dx);
+    if (y) y.value = Math.max(0, (Number(y.value) || 0) + dy);
+    const xRange = document.getElementById('scene-watermark-offset-x-range');
+    const yRange = document.getElementById('scene-watermark-offset-y-range');
+    if (xRange) xRange.value = x.value;
+    if (yRange) yRange.value = y.value;
+    syncSceneWatermarkEditor();
+}
+
+function syncSceneWatermarkOffset(axis, value, fromRange = false) {
+    const offset = Math.max(0, Math.min(500, Number(value) || 0));
+    const number = document.getElementById(`scene-watermark-offset-${axis}`);
+    const range = document.getElementById(`scene-watermark-offset-${axis}-range`);
+    if (number) number.value = offset;
+    if (!fromRange && range) range.value = offset;
+    syncSceneWatermarkEditor();
+}
+
+function selectSceneWatermarkImage(input) {
+    const file = input.files?.[0];
+    if (!file) return;
+    input.dataset.filePath = getFileNativePath(file);
+    if (input.dataset.previewUrl) URL.revokeObjectURL(input.dataset.previewUrl);
+    input.dataset.previewUrl = URL.createObjectURL(file);
+    document.getElementById('scene-watermark-image-path').value = file.name;
+    syncSceneWatermarkEditor();
+    saveSceneWatermarkPreset();
+}
+
+function syncSceneWatermarkEditor() {
+    if (selectedSceneWatermarkIndex < 0 || !sceneWatermarks[selectedSceneWatermarkIndex]) return;
+    const item = sceneWatermarks[selectedSceneWatermarkIndex];
+    item.position = document.getElementById('scene-watermark-position')?.value || 'top-right';
+    item.offset_x = Number(document.getElementById('scene-watermark-offset-x')?.value) || 0;
+    item.offset_y = Number(document.getElementById('scene-watermark-offset-y')?.value) || 0;
+    if (item.type === 'image') {
+        item.image_width = Number(document.getElementById('scene-watermark-image-width')?.value) || 180;
+        item.opacity = Number(document.getElementById('scene-watermark-image-opacity')?.value ?? 1);
+        const imageInput = document.getElementById('scene-watermark-image-input');
+        if (imageInput?.dataset.filePath) { item.image_path = imageInput.dataset.filePath; item.preview_url = imageInput.dataset.previewUrl || item.preview_url; }
+    } else {
+        Object.assign(item, {
+            text: document.getElementById('scene-watermark-text')?.value || '', font: document.getElementById('scene-watermark-font')?.value || 'Arial', font_size: Number(document.getElementById('scene-watermark-font-size')?.value) || 32,
+            color: document.getElementById('scene-watermark-color')?.value || '#ffffff', opacity: Number(document.getElementById('scene-watermark-opacity')?.value ?? .8),
+            background: document.getElementById('scene-watermark-background')?.checked ?? true, background_color: document.getElementById('scene-watermark-bg-color')?.value || '#000000', background_opacity: Number(document.getElementById('scene-watermark-bg-opacity')?.value ?? .35), background_padding: Number(document.getElementById('scene-watermark-bg-padding')?.value) || 0,
+            stroke: document.getElementById('scene-watermark-stroke')?.checked ?? true, stroke_color: document.getElementById('scene-watermark-stroke-color')?.value || '#000000', stroke_width: Number(document.getElementById('scene-watermark-stroke-width')?.value) || 2, shadow: document.getElementById('scene-watermark-shadow')?.checked ?? false,
+        });
+    }
+    renderSceneWatermarkList(); renderSceneWatermarkPreview(); saveSceneWatermarkPreset();
+}
+
+function selectSceneWatermark(index) {
+    const item = sceneWatermarks[index];
+    if (!item) return;
+    selectedSceneWatermarkIndex = index;
+    document.getElementById('scene-watermark-type').value = item.type;
+    document.getElementById('scene-watermark-position').value = item.position || 'top-right';
+    document.getElementById('scene-watermark-offset-x').value = item.offset_x ?? 24;
+    document.getElementById('scene-watermark-offset-y').value = item.offset_y ?? 24;
+    document.getElementById('scene-watermark-offset-x-range').value = item.offset_x ?? 24;
+    document.getElementById('scene-watermark-offset-y-range').value = item.offset_y ?? 24;
+    if (item.type === 'image') {
+        document.getElementById('scene-watermark-image-path').value = item.image_path?.split(/[\\/]/).pop() || '';
+        document.getElementById('scene-watermark-image-width').value = item.image_width || 180;
+        document.getElementById('scene-watermark-image-opacity').value = item.opacity ?? 1;
+    } else {
+        ['text','font','font_size','color','opacity','background_color','background_opacity','background_padding','stroke_color','stroke_width'].forEach(key => { const el = document.getElementById(`scene-watermark-${key.replaceAll('_', '-')}`); if (el && item[key] !== undefined) el.value = item[key]; });
+        document.getElementById('scene-watermark-stroke').checked = item.stroke ?? true;
+        document.getElementById('scene-watermark-shadow').checked = item.shadow ?? false;
+        document.getElementById('scene-watermark-background').checked = item.background ?? true;
+        document.getElementById('scene-watermark-opacity-range').value = item.opacity ?? .8;
+    }
+    toggleSceneWatermarkType(); renderSceneWatermarkList(); renderSceneWatermarkPreview();
+}
+
+function getSceneWatermarkDraft() {
+    const ids = ['scene-watermark-type', 'scene-watermark-position', 'scene-watermark-preset', 'scene-watermark-text', 'scene-watermark-font', 'scene-watermark-font-size', 'scene-watermark-color', 'scene-watermark-opacity', 'scene-watermark-bg-color', 'scene-watermark-bg-opacity', 'scene-watermark-bg-padding', 'scene-watermark-stroke-color', 'scene-watermark-stroke-width', 'scene-watermark-image-width', 'scene-watermark-image-opacity', 'scene-watermark-offset-x', 'scene-watermark-offset-y'];
+    const draft = {};
+    ids.forEach(id => { const el = document.getElementById(id); if (el) draft[id] = el.value; });
+    draft.stroke = document.getElementById('scene-watermark-stroke')?.checked ?? true;
+    draft.shadow = document.getElementById('scene-watermark-shadow')?.checked ?? false;
+    draft.background = document.getElementById('scene-watermark-background')?.checked ?? true;
+    draft.image_path = document.getElementById('scene-watermark-image-input')?.dataset.filePath || '';
+    return draft;
+}
+
+function saveSceneWatermarkPreset() {
+    try {
+        localStorage.setItem(SCENE_WATERMARK_STORAGE_KEY, JSON.stringify({ version: 1, enabled: document.getElementById('scene-watermark-enabled')?.checked ?? false, draft: getSceneWatermarkDraft(), watermarks: sceneWatermarks.map(({ preview_url, ...watermark }) => watermark) }));
+    } catch (error) { console.warn('保存场景水印预设失败:', error); }
+}
+
+function applySceneWatermarkPresetData(data) {
+    if (!data || !Array.isArray(data.watermarks)) throw new Error('不是有效的场景水印预设文件');
+    const draft = data.draft || {};
+    Object.entries(draft).forEach(([id, value]) => {
+        const el = document.getElementById(id);
+        if (el && id !== 'stroke' && id !== 'shadow' && id !== 'background' && id !== 'image_path') el.value = value;
+    });
+    document.getElementById('scene-watermark-stroke').checked = draft.stroke ?? true;
+    document.getElementById('scene-watermark-shadow').checked = draft.shadow ?? false;
+    document.getElementById('scene-watermark-background').checked = draft.background ?? true;
+    const opacityRange = document.getElementById('scene-watermark-opacity-range');
+    if (opacityRange) opacityRange.value = document.getElementById('scene-watermark-opacity').value;
+    const imageInput = document.getElementById('scene-watermark-image-input');
+    if (draft.image_path && imageInput) {
+        imageInput.dataset.filePath = draft.image_path;
+        imageInput.dataset.previewUrl = normalizeFilePath(draft.image_path);
+        document.getElementById('scene-watermark-image-path').value = draft.image_path.split(/[\\/]/).pop();
+    }
+    sceneWatermarks = data.watermarks.map(watermark => ({ ...watermark, preview_url: watermark.type === 'image' ? normalizeFilePath(watermark.image_path) : '' }));
+    document.getElementById('scene-watermark-enabled').checked = data.enabled ?? sceneWatermarks.length > 0;
+    toggleSceneWatermarkType();
+    toggleSceneWatermarkOptions();
+    selectedSceneWatermarkIndex = sceneWatermarks.length - 1;
+    renderSceneWatermarkList();
+    renderSceneWatermarkPreview();
+    saveSceneWatermarkPreset();
+}
+
+function loadSceneWatermarkPreset() {
+    try {
+        const raw = localStorage.getItem(SCENE_WATERMARK_STORAGE_KEY);
+        if (raw) applySceneWatermarkPresetData(JSON.parse(raw));
+        else { renderSceneWatermarkList(); renderSceneWatermarkPreview(); }
+    } catch (error) { console.warn('读取场景水印预设失败:', error); }
+}
+
+function exportSceneWatermarkPreset() {
+    const payload = { version: 1, enabled: document.getElementById('scene-watermark-enabled')?.checked ?? false, draft: getSceneWatermarkDraft(), watermarks: sceneWatermarks.map(({ preview_url, ...watermark }) => watermark) };
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }));
+    link.download = '场景拆分水印预设.json';
+    link.click();
+    URL.revokeObjectURL(link.href);
+}
+
+async function importSceneWatermarkPreset(input) {
+    const file = input.files?.[0];
+    if (!file) return;
+    try {
+        applySceneWatermarkPresetData(JSON.parse(await file.text()));
+        showToast('水印预设已导入并自动保存', 'success');
+    } catch (error) { showToast(`导入失败：${error.message}`, 'error'); }
+    input.value = '';
+}
+
+function addSceneWatermark() {
+    if (!document.getElementById('scene-watermark-enabled')?.checked) {
+        showToast('请先启用“导出时添加水印”', 'error');
+        return;
+    }
+    const type = document.getElementById('scene-watermark-type')?.value || 'text';
+    const position = document.getElementById('scene-watermark-position')?.value || 'top-right';
+    if (type === 'image') {
+        const imagePath = document.getElementById('scene-watermark-image-input')?.dataset.filePath;
+        if (!imagePath) { showToast('请选择图片水印文件', 'error'); return; }
+        sceneWatermarks.push({
+            type, position, image_path: imagePath,
+            preview_url: document.getElementById('scene-watermark-image-input')?.dataset.previewUrl || '',
+            image_width: Number(document.getElementById('scene-watermark-image-width')?.value) || 180,
+            opacity: Number(document.getElementById('scene-watermark-image-opacity')?.value ?? 1),
+            offset_x: Number(document.getElementById('scene-watermark-offset-x')?.value) || 0,
+            offset_y: Number(document.getElementById('scene-watermark-offset-y')?.value) || 0,
+        });
+    } else {
+        sceneWatermarks.push({
+            type, position,
+            text: document.getElementById('scene-watermark-text')?.value?.trim() || 'AI Generated',
+            font: document.getElementById('scene-watermark-font')?.value || 'Arial',
+            font_size: Number(document.getElementById('scene-watermark-font-size')?.value) || 32,
+            color: document.getElementById('scene-watermark-color')?.value || '#ffffff',
+            opacity: Number(document.getElementById('scene-watermark-opacity')?.value ?? 0.8),
+            background_color: document.getElementById('scene-watermark-bg-color')?.value || '#000000',
+            background_opacity: Number(document.getElementById('scene-watermark-bg-opacity')?.value ?? 0.35),
+            background: document.getElementById('scene-watermark-background')?.checked ?? true,
+            background_padding: Number(document.getElementById('scene-watermark-bg-padding')?.value) || 0,
+            stroke: document.getElementById('scene-watermark-stroke')?.checked ?? true,
+            stroke_color: document.getElementById('scene-watermark-stroke-color')?.value || '#000000',
+            stroke_width: Number(document.getElementById('scene-watermark-stroke-width')?.value) || 2,
+            shadow: document.getElementById('scene-watermark-shadow')?.checked ?? false,
+            offset_x: Number(document.getElementById('scene-watermark-offset-x')?.value) || 0,
+            offset_y: Number(document.getElementById('scene-watermark-offset-y')?.value) || 0,
+        });
+    }
+    renderSceneWatermarkList();
+    renderSceneWatermarkPreview();
+    saveSceneWatermarkPreset();
+}
+
+function renderSceneWatermarkList() {
+    const list = document.getElementById('scene-watermark-list');
+    if (!list) return;
+    list.innerHTML = sceneWatermarks.map((watermark, index) => {
+        const summary = watermark.type === 'image'
+            ? `🖼️ 图片：${watermark.image_path.split(/[\\/]/).pop()}，宽 ${watermark.image_width}px`
+            : `🔤 文字：${escapeHtml(watermark.text)}，${watermark.font_size}px`;
+        return `<div onclick="selectSceneWatermark(${index})" style="cursor:pointer; display:flex; align-items:center; gap:8px; padding:6px 8px; background:${index === selectedSceneWatermarkIndex ? 'rgba(102,126,234,.18)' : 'var(--bg-tertiary)'}; border:1px solid ${index === selectedSceneWatermarkIndex ? 'var(--accent)' : 'transparent'}; border-radius:5px; font-size:12px;"><span style="color:var(--accent);">#${index + 1}</span><span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${summary}</span><span class="hint">${watermark.position}</span><button class="btn btn-secondary" type="button" style="padding:2px 7px; color:var(--error);" onclick="event.stopPropagation();removeSceneWatermark(${index})">✕</button></div>`;
+    }).join('') || '<p class="hint" style="margin:0;">尚未添加水印；启用后直接导出会不加水印。</p>';
+}
+
+function removeSceneWatermark(index) {
+    if (sceneWatermarks[index]?.preview_url) URL.revokeObjectURL(sceneWatermarks[index].preview_url);
+    sceneWatermarks.splice(index, 1);
+    selectedSceneWatermarkIndex = sceneWatermarks.length ? Math.min(index, sceneWatermarks.length - 1) : -1;
+    renderSceneWatermarkList();
+    renderSceneWatermarkPreview();
+    saveSceneWatermarkPreset();
+}
+
+function getScenePreviewPosition(position, itemWidth, itemHeight, canvasWidth, canvasHeight, offsetX = 24, offsetY = 24) {
+    const scale = canvasWidth / 1080;
+    const xOffset = offsetX * scale, yOffset = offsetY * scale;
+    switch (position) {
+        case 'top-left': return [xOffset, yOffset];
+        case 'top-center': return [(canvasWidth - itemWidth) / 2, yOffset];
+        case 'bottom-left': return [xOffset, canvasHeight - itemHeight - yOffset];
+        case 'bottom-right': return [canvasWidth - itemWidth - xOffset, canvasHeight - itemHeight - yOffset];
+        case 'bottom-center': return [(canvasWidth - itemWidth) / 2, canvasHeight - itemHeight - yOffset];
+        case 'center': return [(canvasWidth - itemWidth) / 2, (canvasHeight - itemHeight) / 2];
+        default: return [canvasWidth - itemWidth - xOffset, yOffset];
+    }
+}
+
+async function renderSceneWatermarkPreview() {
+    const canvas = document.getElementById('scene-watermark-preview-canvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const { width, height } = canvas;
+    const bg = ctx.createLinearGradient(0, 0, width, height);
+    bg.addColorStop(0, '#385170'); bg.addColorStop(.52, '#16263a'); bg.addColorStop(1, '#0b1220');
+    ctx.fillStyle = bg; ctx.fillRect(0, 0, width, height);
+    ctx.fillStyle = 'rgba(255,255,255,.1)';
+    for (let x = -height; x < width; x += 48) { ctx.fillRect(x, 0, 2, height); }
+    for (const watermark of sceneWatermarks) {
+        if (watermark.type === 'text') {
+            const size = Math.max(9, Math.min(48, (Number(watermark.font_size) || 32) * width / 1280));
+            ctx.font = `${size}px "${watermark.font || 'Arial'}", sans-serif`;
+            const textWidth = ctx.measureText(watermark.text).width;
+            const boxPad = watermark.background === false ? 0 : Math.max(0, Math.min(30, Number(watermark.background_padding ?? 12) * width / 1080));
+            const boxWidth = textWidth + boxPad * 2;
+            const boxHeight = size + boxPad * 2;
+            const [x, y] = getScenePreviewPosition(watermark.position, boxWidth, boxHeight, width, height, watermark.offset_x, watermark.offset_y);
+            if (watermark.background !== false) {
+                ctx.globalAlpha = Number(watermark.background_opacity ?? .35);
+                ctx.fillStyle = watermark.background_color || '#000000';
+                ctx.fillRect(x, y, boxWidth, boxHeight);
+            }
+            ctx.globalAlpha = Number(watermark.opacity ?? .8);
+            ctx.fillStyle = watermark.color || '#ffffff';
+            ctx.textBaseline = 'middle';
+            if (watermark.stroke !== false) { ctx.lineWidth = Math.max(.5, (Number(watermark.stroke_width) || 2) * width / 1080); ctx.strokeStyle = watermark.stroke_color || '#000000'; ctx.strokeText(watermark.text, x + boxPad, y + boxHeight / 2); }
+            if (watermark.shadow) { ctx.shadowColor = 'rgba(0,0,0,.6)'; ctx.shadowBlur = 3; ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 2; }
+            ctx.fillText(watermark.text, x + boxPad, y + boxHeight / 2);
+            ctx.shadowColor = 'transparent';
+        } else if (watermark.type === 'image' && watermark.preview_url) {
+            try {
+                const image = await new Promise((resolve, reject) => { const img = new Image(); img.onload = () => resolve(img); img.onerror = reject; img.src = watermark.preview_url; });
+                const imageWidth = Math.max(12, Math.min(width * .7, (Number(watermark.image_width) || 180) * width / 1280));
+                const imageHeight = imageWidth * image.naturalHeight / image.naturalWidth;
+                const [x, y] = getScenePreviewPosition(watermark.position, imageWidth, imageHeight, width, height, watermark.offset_x, watermark.offset_y);
+                ctx.globalAlpha = Number(watermark.opacity ?? 1);
+                ctx.drawImage(image, x, y, imageWidth, imageHeight);
+            } catch { /* 图片仍可正常导出；预览加载失败时跳过 */ }
+        }
+    }
+    ctx.globalAlpha = 1;
+}
+
+function getSceneWatermarkOptions() {
+    if (!document.getElementById('scene-watermark-enabled')?.checked) return [];
+    if (sceneWatermarks.length === 0) throw new Error('请先添加至少一个水印项目');
+    return sceneWatermarks;
+}
+
 // 初始化场景检测
 document.addEventListener('DOMContentLoaded', () => {
+    loadSceneWatermarkPreset();
+    const sceneWatermarkControls = ['scene-watermark-type', 'scene-watermark-position', 'scene-watermark-preset', 'scene-watermark-text', 'scene-watermark-font', 'scene-watermark-font-size', 'scene-watermark-color', 'scene-watermark-background', 'scene-watermark-bg-color', 'scene-watermark-bg-opacity', 'scene-watermark-bg-padding', 'scene-watermark-stroke', 'scene-watermark-stroke-color', 'scene-watermark-stroke-width', 'scene-watermark-shadow', 'scene-watermark-image-width', 'scene-watermark-image-opacity', 'scene-watermark-offset-x', 'scene-watermark-offset-y'];
+    sceneWatermarkControls.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) { el.addEventListener('input', syncSceneWatermarkEditor); el.addEventListener('change', syncSceneWatermarkEditor); }
+    });
     const sceneInput = document.getElementById('scene-video-input');
     if (sceneInput) {
         sceneInput.addEventListener('change', (e) => {
@@ -8672,6 +8985,8 @@ async function exportSingleFile(idx) {
         return;
     }
 
+    let watermark;
+    try { watermark = getSceneWatermarkOptions(); } catch (error) { showToast(error.message, 'error'); return; }
     const outputDir = document.getElementById('media-output-path').value || '';
     const folderMode = getSceneOutputFolderMode();
     const batchName = folderMode === 'batch' ? createSceneBatchName('scenes') : '';
@@ -8690,7 +9005,8 @@ async function exportSingleFile(idx) {
                 segments: selectedSegments,
                 output_dir: outputDir,
                 folder_mode: folderMode,
-                batch_name: batchName
+                batch_name: batchName,
+                watermarks: watermark
             })
         });
 
@@ -8715,6 +9031,8 @@ async function exportAllScenes() {
         return;
     }
 
+    let watermark;
+    try { watermark = getSceneWatermarkOptions(); } catch (error) { showToast(error.message, 'error'); return; }
     const outputDir = document.getElementById('media-output-path').value || '';
     const folderMode = getSceneOutputFolderMode();
     const batchName = folderMode === 'batch' ? createSceneBatchName('scenes') : '';
@@ -8740,7 +9058,8 @@ async function exportAllScenes() {
                     segments: result.segments,
                     output_dir: outputDir,
                     folder_mode: folderMode,
-                    batch_name: batchName
+                    batch_name: batchName,
+                    watermarks: watermark
                 })
             });
 

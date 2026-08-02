@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, powerSaveBlocker, protocol, shell, net, screen, desktopCapturer } = require('electron');
+const { app, BrowserWindow, ipcMain, MessageChannelMain, dialog, powerSaveBlocker, protocol, shell, net, screen, desktopCapturer } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { Readable } = require('stream');
@@ -572,9 +572,22 @@ app.whenReady().then(async () => {
     });
 
     // IPC: WYSIWYG 逐帧渲染导出（与 Canvas 预览 100% 一致）
-    const { handleWysiwygIPC, parallelExport } = require('./services/ffmpeg-rawvideo');
+    const { handleWysiwygIPC, attachFramePipeline, parallelExport } = require('./services/ffmpeg-rawvideo');
     ipcMain.handle('reels-compose-wysiwyg', async (event, action, data) => {
         return handleWysiwygIPC(action, data);
+    });
+    ipcMain.on('reels-frame-pipeline-open', (event, data = {}) => {
+        const { port1, port2 } = new MessageChannelMain();
+        const result = attachFramePipeline(data.sessionId, port1);
+        try {
+            event.sender.postMessage('reels-frame-pipeline-ready', {
+                requestId: data.requestId,
+                ...result,
+            }, [port2]);
+        } catch (err) {
+            try { port1.close(); port2.close(); } catch (_) { }
+            console.warn('[WYSIWYG] 无法建立帧流水线:', err.message);
+        }
     });
 
     // IPC: 并行影子窗口导出（V3 多切片渲染）

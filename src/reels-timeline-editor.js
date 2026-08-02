@@ -62,6 +62,8 @@ class ReelsTimelineEditor {
         this._scrollY = 0;
         this._pxPerSec = 80;          // 缩放
         this._autoFitDuration = true; // 任务加载时默认显示完整时长
+        this._hasManualTimelineView = false; // 拖动片段后固定当前时间尺比例
+        this._timelineTaskKey = null;
         this._selectedClip = null;    // {trackIdx, clipIdx}
         this._selectedClips = new Set(); // 多选键: "trackIdx:clipIdx"
         this._selectionAnchor = null; // Shift 连选起点
@@ -136,11 +138,19 @@ class ReelsTimelineEditor {
     // Public API
     // ═══════════════════════════════════════════════
 
-    setDuration(dur) {
+    setDuration(dur, options = {}) {
+        const fit = options.fit === true;
         this._duration = Math.max(1, dur);
-        this._autoFitDuration = true;
-        this._scrollX = 0;
-        this._fitDurationToViewport();
+        // 只有切换任务或用户主动要求时才重新适应窗口。
+        // 字幕拖动会让预览重新上报时长，不能因此反复改变刻度尺缩放。
+        if (fit) {
+            this._autoFitDuration = true;
+            this._hasManualTimelineView = false;
+            this._scrollX = 0;
+            this._fitDurationToViewport();
+        } else if (this._autoFitDuration && !this._hasManualTimelineView) {
+            this._fitDurationToViewport();
+        }
     }
 
     _fitDurationToViewport() {
@@ -596,6 +606,12 @@ class ReelsTimelineEditor {
                     type: 'move', trackIdx: hitInfo.trackIdx, clipIdx: hitInfo.clipIdx,
                     origStart: clip.start, origEnd: clip.end, mx0: mx, group,
                 };
+            }
+
+            // 编辑片段后保持当前尺子比例；预览时长的后续刷新不能把视图拉伸/压缩。
+            if (this._drag && this._drag.type !== 'playhead') {
+                this._autoFitDuration = false;
+                this._hasManualTimelineView = true;
             }
 
             if (this.onClipSelect) this.onClipSelect(hitInfo.trackIdx, hitInfo.clipIdx, clip);

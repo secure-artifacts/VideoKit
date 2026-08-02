@@ -898,6 +898,7 @@ async function routeAPI(endpoint, data, progressSender = null, sender = null) {
             return await ffmpegService.sceneSplit(data.file_path, data.segments, data.output_dir, {
                 folderMode: data.folder_mode || 'per_video',
                 batchName: data.batch_name || '',
+                watermarks: Array.isArray(data.watermarks) ? data.watermarks : [],
             });
 
         case 'media/scene-detect-frames': {

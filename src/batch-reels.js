@@ -2640,37 +2640,24 @@ function reelsUpdatePreview() {
     const fastAlphaCb = document.getElementById('reels-fast-alpha-mode');
     const fastAlphaStatusEl = document.getElementById('fast-alpha-status-text');
     if (fastAlphaCb && fastAlphaStatusEl && _selectedTask) {
-        if (!fastAlphaCb.checked) {
+        const exportEngine = (document.getElementById('reels-export-engine') || {}).value || 'precise';
+        const fastEnabled = fastAlphaCb.checked || exportEngine === 'pipeline' || exportEngine === 'hardware';
+        if (!fastEnabled) {
             fastAlphaStatusEl.style.display = 'none';
         } else {
-            const effectivePool = _getEffectiveBgClipPool(_selectedTask);
-            const bgPath = _reelsState.bgPath || effectivePool[0] || '';
-            const isBgVideo = bgPath && !_isImageFile(bgPath);
-            const loopFade = (document.getElementById('reels-loop-fade') || {}).checked !== false;
-            
-            const isMultiClip = effectivePool.length > 0;
-            const isCrossfadeVideo = isBgVideo && loopFade;
-            
-            if (isMultiClip) {
+            const capability = _getReelsFastExportCapability(_selectedTask, _reelsState.bgPath || '');
+            if (!capability.supported) {
                 fastAlphaStatusEl.style.display = 'inline-block';
                 fastAlphaStatusEl.style.color = '#faad14';
                 fastAlphaStatusEl.style.background = '#fffbe6';
                 fastAlphaStatusEl.style.border = '1px solid #ffe58f';
-                fastAlphaStatusEl.textContent = '当前自动回退常规模式 (多片段转场)';
-            } else if (isCrossfadeVideo) {
-                fastAlphaStatusEl.style.display = 'inline-block';
-                fastAlphaStatusEl.style.color = '#faad14';
-                fastAlphaStatusEl.style.background = '#fffbe6';
-                fastAlphaStatusEl.style.border = '1px solid #ffe58f';
-                fastAlphaStatusEl.textContent = '当前自动回退常规模式 (循环首尾过滤)';
-            } else if (bgPath) {
+                fastAlphaStatusEl.textContent = `当前自动回退逐帧背景（${capability.reason}）`;
+            } else {
                 fastAlphaStatusEl.style.display = 'inline-block';
                 fastAlphaStatusEl.style.color = '#52c41a';
                 fastAlphaStatusEl.style.background = '#f6ffed';
                 fastAlphaStatusEl.style.border = '1px solid #b7eb8f';
                 fastAlphaStatusEl.textContent = '✓ 支持提速';
-            } else {
-                fastAlphaStatusEl.style.display = 'none';
             }
         }
     }
@@ -4097,6 +4084,41 @@ function _normalizeLocalMediaPath(p) {
 function _isImageFile(filePath) {
     const ext = (filePath || '').split('.').pop().toLowerCase();
     return ['jpg', 'jpeg', 'png', 'webp', 'bmp'].includes(ext);
+}
+
+function _getReelsFastExportCapability(task, explicitBgPath = '') {
+    if (!task) return { supported: false, reason: '缺少任务信息' };
+    const bgPath = explicitBgPath || task.bgPath || task.videoPath || '';
+    if (!bgPath) return { supported: false, reason: '缺少背景素材' };
+    if (task.bgMode === 'multi' && _getEffectiveBgClipPool(task).length > 0) {
+        return { supported: false, reason: '多背景片段需要逐帧合成' };
+    }
+    if (task.bgMode && task.bgMode !== 'single') {
+        return { supported: false, reason: '当前背景模式不是单素材' };
+    }
+    if (task.contentVideoDirectBg || task.contentVideoBlurBg) {
+        return { supported: false, reason: '内容视频背景需要逐帧合成' };
+    }
+    const hasBlendOverlay = (task.overlays || []).some((overlay) =>
+        overlay && !overlay.disabled && overlay.blend_mode && overlay.blend_mode !== 'source-over'
+    );
+    if (hasBlendOverlay) {
+        return { supported: false, reason: '覆层使用了混合模式' };
+    }
+    return { supported: true, reason: '单背景可直通，字幕和覆层使用透明画布' };
+}
+
+function _describeReelsFastCapability(capability, fastAlphaEnabled, fastEngineEnabled) {
+    if (fastAlphaEnabled && capability.supported) {
+        return { kind: 'full', reason: '已启用背景直通；字幕和覆层使用透明画布' };
+    }
+    if (capability.supported) {
+        return { kind: 'available', reason: `${capability.reason}；当前输出模式未启用极速链路` };
+    }
+    return {
+        kind: fastEngineEnabled ? 'partial' : 'unsupported',
+        reason: `${capability.reason}${fastEngineEnabled ? '；仍保留批量流水线或硬件编码' : ''}`,
+    };
 }
 
 function _resolvePreviewBackgroundPath(task) {
@@ -5903,13 +5925,16 @@ function _updateTimelineForTask(task) {
     const totalDur = window.ReelsPreviewV2?.isOpen?.()
         ? window.ReelsPreviewV2.getTimelineDuration()
         : contentDur;
+    const taskKey = task.id || task.fileName || task.audioPath || task.bgPath || '';
+    const isNewTimelineTask = editor._timelineTaskKey !== taskKey;
     editor.loadAudioTrack(aDur, task.audioPath ? '人声' : '音频');
     // 背景在预览/输出中会循环覆盖整段内容，轨道也应显示实际覆盖时长，
     // 不能在无配音时退回到单个背景素材的原始时长。
     const bgTrackDur = totalDur;
     const bgTrackName = task.contentVideoDirectBg ? '内容背景' : (totalDur > vDur + 0.01 ? '背景(循环)' : '背景');
     editor.loadBackgroundTrack(bgTrackDur, bgTrackName);
-    editor.setDuration(totalDur);
+    editor.setDuration(totalDur, { fit: isNewTimelineTask });
+    editor._timelineTaskKey = taskKey;
 }
 
 function _buildAudioSubtitleMatchKey(name) {
@@ -7100,23 +7125,17 @@ function _renderTaskList() {
             }
         }
 
-        const effectivePool = _getEffectiveBgClipPool(task);
-        const isMultiClip = effectivePool.length > 0;
-        const isCrossfadeVideo = (task.bgPath && !_isImageFile(task.bgPath)) && (document.getElementById('reels-loop-fade') || {}).checked !== false;
-        const bgValid = task.bgPath || effectivePool[0];
-        const canAlpha = bgValid && !isMultiClip && (!task.bgMode || task.bgMode === 'single') && !isCrossfadeVideo;
-        const fastAlphaEnabled = (document.getElementById('reels-fast-alpha-mode') || {}).checked !== false;
+        const capability = _getReelsFastExportCapability(task);
+        const exportEngine = (document.getElementById('reels-export-engine') || {}).value || 'precise';
+        const fastAlphaEnabled = (document.getElementById('reels-fast-alpha-mode') || {}).checked === true
+            || exportEngine === 'pipeline' || exportEngine === 'hardware';
 
         let alphaIcon = '';
         if (fastAlphaEnabled) {
-            if (bgValid && !isMultiClip && (!task.bgMode || task.bgMode === 'single')) {
-                if (!isCrossfadeVideo) {
-                    alphaIcon = `<span title="此任务完美兼容极速贴合 (Fast Alpha) ⚡" style="font-size:10px; opacity:0.9;">⚡</span>`;
-                } else {
-                    alphaIcon = `<span title="已开启首尾渐变。系统将智能判定：若无需循环底图，将自动恢复极速模式 ⚡" style="font-size:10px; opacity:0.8;">🐢/⚡</span>`;
-                }
+            if (capability.supported) {
+                alphaIcon = `<span title="此任务支持极速背景直通" style="font-size:10px; opacity:0.9;">⚡</span>`;
             } else {
-                alphaIcon = `<span title="由于多片段拼接或复杂底板转场，强制回退常规渲染 🐢" style="font-size:10px; filter:grayscale(1); opacity:0.4;">🐢</span>`;
+                alphaIcon = `<span title="${escapeTaskText(capability.reason)}；背景回退逐帧渲染" style="font-size:10px; filter:grayscale(1); opacity:0.55;">🐢</span>`;
             }
         }
 
@@ -8760,6 +8779,136 @@ function _reelsUpdateExportProgressUI(done, total) {
     if (progressText) progressText.textContent = `${pct}% (${safeDone}/${safeTotal})`;
 }
 
+function _reelsInitJobProgressUI(jobs) {
+    const list = document.getElementById('reels-export-job-progress-list');
+    if (!list) return;
+    list.replaceChildren();
+    if (!Array.isArray(jobs) || jobs.length === 0) {
+        list.style.display = 'none';
+        return;
+    }
+
+    const heading = document.createElement('div');
+    heading.textContent = `任务进度（${jobs.length}）`;
+    heading.style.cssText = 'font-size:11px;color:var(--text-secondary);margin:0 2px 5px;';
+    list.appendChild(heading);
+
+    jobs.forEach((job, index) => {
+        const row = document.createElement('div');
+        row.dataset.jobIndex = String(index);
+        row.dataset.jobState = 'pending';
+        row.dataset.jobProgress = '0';
+        row.style.cssText = 'display:grid;grid-template-columns:minmax(130px,1fr) minmax(80px,1.15fr) 72px 78px 38px;gap:7px;align-items:center;padding:4px 3px;border-top:1px solid rgba(255,255,255,.055);font-size:10px;';
+
+        const name = document.createElement('span');
+        const presetLabel = job && job.presetName ? ` [${job.presetName}]` : '';
+        name.textContent = `${index + 1}. ${(job && job.task && job.task.fileName) || '未命名任务'}${presetLabel}`;
+        name.title = name.textContent;
+        name.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-primary);';
+
+        const track = document.createElement('span');
+        track.style.cssText = 'height:5px;border-radius:999px;background:rgba(255,255,255,.12);overflow:hidden;';
+        const bar = document.createElement('span');
+        bar.dataset.role = 'bar';
+        bar.style.cssText = 'display:block;width:0;height:100%;border-radius:inherit;background:#6b7280;transition:width .16s linear,background-color .16s;';
+        track.appendChild(bar);
+
+        const stage = document.createElement('span');
+        stage.dataset.role = 'stage';
+        stage.textContent = '等待中';
+        stage.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-secondary);';
+
+        const speed = document.createElement('span');
+        speed.dataset.role = 'speed';
+        speed.textContent = '检测中';
+        speed.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;color:var(--text-secondary);';
+
+        const percent = document.createElement('span');
+        percent.dataset.role = 'percent';
+        percent.textContent = '0%';
+        percent.style.cssText = 'text-align:right;font-variant-numeric:tabular-nums;color:var(--text-secondary);';
+
+        row.append(name, track, stage, speed, percent);
+        list.appendChild(row);
+
+        let capabilityTask = job && job.task;
+        if (capabilityTask && job.presetName && typeof _cloneTaskWithPreset === 'function') {
+            capabilityTask = _cloneTaskWithPreset(capabilityTask, job.presetName);
+        }
+        const exportEngine = (document.getElementById('reels-export-engine') || {}).value || 'precise';
+        const fastEngineEnabled = exportEngine === 'pipeline' || exportEngine === 'hardware';
+        const fastAlphaEnabled = fastEngineEnabled
+            || (document.getElementById('reels-fast-alpha-mode') || {}).checked === true;
+        const capability = _getReelsFastExportCapability(capabilityTask);
+        const display = _describeReelsFastCapability(capability, fastAlphaEnabled, fastEngineEnabled);
+        _reelsUpdateJobFastCapabilityUI(index, display.kind, display.reason);
+    });
+    list.style.display = 'block';
+    list.scrollTop = 0;
+}
+
+function _reelsUpdateJobFastCapabilityUI(jobIndex, kind, reason = '') {
+    const list = document.getElementById('reels-export-job-progress-list');
+    if (!list) return;
+    const safeIndex = Math.max(0, Math.floor(Number(jobIndex) || 0));
+    const speedEl = list.querySelector(`[data-job-index="${safeIndex}"] [data-role="speed"]`);
+    if (!speedEl) return;
+    const states = {
+        full: { text: '⚡ 极速链路', color: '#43c977' },
+        available: { text: '支持极速', color: '#43c977' },
+        partial: { text: '部分加速', color: '#d6a84b' },
+        unsupported: { text: '不支持极速', color: '#d6a84b' },
+        none: { text: '不适用', color: 'var(--text-secondary)' },
+    };
+    const view = states[kind] || { text: '检测中', color: 'var(--text-secondary)' };
+    speedEl.textContent = view.text;
+    speedEl.style.color = view.color;
+    speedEl.title = reason || view.text;
+}
+
+function _reelsUpdateJobProgressUI(jobIndex, pct, stage, state = 'running') {
+    const list = document.getElementById('reels-export-job-progress-list');
+    if (!list) return;
+    const safeIndex = Math.max(0, Math.floor(Number(jobIndex) || 0));
+    const row = list.querySelector(`[data-job-index="${safeIndex}"]`);
+    if (!row) return;
+    if (state === 'running' && ['success', 'failed', 'canceled'].includes(row.dataset.jobState)) return;
+
+    const reported = Math.max(0, Math.min(100, Math.round(Number(pct) || 0)));
+    const normalized = Math.max(Number(row.dataset.jobProgress) || 0, reported);
+    const colors = {
+        pending: '#6b7280',
+        running: '#4da3ff',
+        success: '#43c977',
+        failed: '#ff6b6b',
+        canceled: '#d6a84b',
+    };
+    row.dataset.jobState = state;
+    row.dataset.jobProgress = String(normalized);
+    const bar = row.querySelector('[data-role="bar"]');
+    const stageEl = row.querySelector('[data-role="stage"]');
+    const percentEl = row.querySelector('[data-role="percent"]');
+    if (bar) {
+        bar.style.width = `${normalized}%`;
+        bar.style.backgroundColor = colors[state] || colors.running;
+    }
+    if (stageEl) {
+        stageEl.textContent = stage || (state === 'pending' ? '等待中' : '导出中');
+        stageEl.style.color = colors[state] || 'var(--text-secondary)';
+    }
+    if (percentEl) percentEl.textContent = `${normalized}%`;
+}
+
+function _reelsCancelUnfinishedJobProgressUI() {
+    const list = document.getElementById('reels-export-job-progress-list');
+    if (!list) return;
+    list.querySelectorAll('[data-job-index]').forEach((row) => {
+        if (row.dataset.jobState === 'success' || row.dataset.jobState === 'failed') return;
+        const pct = parseFloat((row.querySelector('[data-role="percent"]') || {}).textContent) || 0;
+        _reelsUpdateJobProgressUI(Number(row.dataset.jobIndex), pct, '已取消', 'canceled');
+    });
+}
+
 function _reelsParentDir(filePath) {
     if (!filePath || typeof filePath !== 'string') return '';
     const normalized = filePath.replace(/\\/g, '/');
@@ -8862,6 +9011,7 @@ function reelsSelectIntro() {
 function reelsCancelExport() {
     if (_reelsState.isExporting) {
         _reelsState.isExporting = false;
+        _reelsCancelUnfinishedJobProgressUI();
         const statusEl = document.getElementById('reels-export-status');
         if (statusEl) statusEl.textContent = '⚠️ 已取消';
         const exportBtn = document.getElementById('reels-export-btn');
@@ -9088,6 +9238,9 @@ async function _exportCoverVideo(task, taskStyle, outputDirTrimmed, baseName) {
         offCanvas.width = tw;
         offCanvas.height = th;
         const outputPath = `${outputDirTrimmed}/temp_${baseName}_cover_piece.mp4`;
+        let exportEngine = (document.getElementById('reels-export-engine') || {}).value || 'precise';
+        if (exportEngine === 'experimental') exportEngine = 'hardware';
+        const gpuEnabled = (document.getElementById('reels-use-gpu') || {}).checked || exportEngine === 'hardware';
         
         await window.reelsWysiwygExport({
             canvas: offCanvas,
@@ -9108,6 +9261,8 @@ async function _exportCoverVideo(task, taskStyle, outputDirTrimmed, baseName) {
             bgFlipV: task.cover.bgFlipV || task.bgFlipV || false,
             targetWidth: tw,
             targetHeight: th,
+            exportEngine,
+            useGPU: gpuEnabled,
         });
         return outputPath;
     } catch (e) {
@@ -9257,6 +9412,39 @@ function reelsUpdateCustomBitrateUI() {
     if (label) label.textContent = `目标 ${rates.target} / 最大 ${rates.max} Mbps`;
 }
 window.reelsUpdateCustomBitrateUI = reelsUpdateCustomBitrateUI;
+
+async function reelsUpdateExportEngineUI() {
+    const engineEl = document.getElementById('reels-export-engine');
+    let engine = (engineEl || {}).value || 'precise';
+    if (engine === 'experimental') {
+        engine = 'hardware';
+        if (engineEl) engineEl.value = engine;
+    }
+    const desc = document.getElementById('reels-export-engine-desc');
+    if (!desc) return;
+    const descriptions = {
+        precise: '逐帧确认，兼容优先',
+        pipeline: '背景直通 + 三帧批量（保留透明过渡）',
+        hardware: '背景直通 + 显卡编码（保留透明过渡）',
+    };
+    desc.textContent = descriptions[engine] || descriptions.precise;
+    desc.style.color = 'var(--text-muted)';
+    if (engine === 'hardware' && window.electronAPI?.reelsComposeWysiwyg) {
+        desc.textContent = '正在检测硬件编码器…';
+        try {
+            const result = await window.electronAPI.reelsComposeWysiwyg('probe-gpu', {});
+            if ((document.getElementById('reels-export-engine') || {}).value !== 'hardware') return;
+            desc.textContent = result?.available
+                ? `可用：${result.name || '硬件 H.264'}`
+                : '未检测到硬件编码器，导出时回退 CPU';
+            desc.style.color = result?.available ? '#52c41a' : '#faad14';
+        } catch (_) {
+            desc.textContent = '检测失败，导出时自动回退 CPU';
+            desc.style.color = '#faad14';
+        }
+    }
+}
+window.reelsUpdateExportEngineUI = reelsUpdateExportEngineUI;
 
 function _readReelsCustomBitrate() {
     let target = parseFloat((document.getElementById('reels-custom-bitrate') || {}).value || '5');
@@ -9435,6 +9623,8 @@ async function reelsStartExport() {
     if (!outputDir) { alert('请先选择输出目录'); return; }
 
     const quality = document.getElementById('reels-quality').value;
+    let exportEngine = (document.getElementById('reels-export-engine') || {}).value || 'precise';
+    if (exportEngine === 'experimental') exportEngine = 'hardware';
     const suffix = document.getElementById('reels-suffix').value || '_subtitled';
     const namingMode = (document.getElementById('reels-export-naming-mode-outer') || {}).value || (document.getElementById('reels-naming-mode') || {}).value || localStorage.getItem('reels_naming_mode') || 'text';
     _persistSubtitleStyleByScope(_readStyleFromUI());
@@ -9552,6 +9742,7 @@ async function reelsStartExport() {
         }
     }
 
+    _reelsInitJobProgressUI(exportJobs);
     _reelsUpdateExportProgressUI(0, totalJobs);
 
     // ═══ 文件名去重：行号 + 冲突检测 ═══
@@ -9639,6 +9830,7 @@ async function reelsStartExport() {
         const presetLabel = job.presetName ? ` [${job.presetName}]` : '';
 
         // ── 确保当前任务的所有覆层与字幕使用的字体全部预加载完成 ──
+        _reelsUpdateJobProgressUI(i, 0, '加载字体', 'running');
         if (statusEl) statusEl.textContent = `加载字体中 ${i + 1}/${totalJobs}: ${task.fileName}${presetLabel}`;
         const fontsToLoad = new Set();
         if (taskStyle && taskStyle.font_family) {
@@ -9678,6 +9870,7 @@ async function reelsStartExport() {
             }
         }
 
+        _reelsUpdateJobProgressUI(i, Math.max(1, jobProgress[i] || 0), '准备导出', 'running');
         if (statusEl) statusEl.textContent = `导出中 ${i + 1}/${totalJobs}: ${task.fileName}${presetLabel}`;
 
         try {
@@ -9901,17 +10094,14 @@ async function reelsStartExport() {
                     isCancelled: () => !_reelsState.isExporting,
                     onProgress: (pct) => {
                         if (statusEl) statusEl.textContent = `分层导出 ${i + 1}/${totalJobs}: ${task.fileName}${presetLabel} (${pct}%)`;
-                        const progressInner = document.getElementById('reels-export-progress-inner');
-                        const progressText = document.getElementById('reels-export-progress-text');
-                        const blended = ((i + pct / 100) / totalJobs) * 100;
-                        const blendedPct = Math.round(blended);
-                        if (progressInner) progressInner.style.width = `${blendedPct}%`;
-                        if (progressText) progressText.textContent = `${blendedPct}% (${i}/${totalJobs})`;
+                        _reelsUpdateJobProgressUI(i, pct, '分层导出', 'running');
+                        updateConcurrentOverallProgress(i, pct);
                     },
                     onLog: (msg) => console.log(`[Layered] ${task.fileName}: ${msg}`),
                 });
                 if (layeredResult && layeredResult.cancelled) {
                     canceled = true;
+                    _reelsUpdateJobProgressUI(i, jobProgress[i], '已取消', 'canceled');
                     break;
                 }
                 finalOutputPath = layeredResult?.layersDir || jobOutputDir;
@@ -10148,15 +10338,10 @@ async function reelsStartExport() {
                 });
                 okCount += 1;
                 // 更新进度并进入下一个
-                _reelsUpdateExportProgressUI(okCount + failCount, totalJobs);
-                const pct = 100;
                 if (statusEl) statusEl.textContent = `FCPXML整理数据 ${i + 1}/${totalJobs}: ${task.fileName}${presetLabel}`;
-                const progressInner = document.getElementById('reels-export-progress-inner');
-                const progressText = document.getElementById('reels-export-progress-text');
-                const blended = ((i + pct / 100) / totalJobs) * 100;
-                const blendedPct = Math.round(blended);
-                if (progressInner) progressInner.style.width = `${blendedPct}%`;
-                if (progressText) progressText.textContent = `${blendedPct}% (${i}/${totalJobs})`;
+                _reelsUpdateJobFastCapabilityUI(i, 'none', 'FCPXML 不进行视频编码');
+                _reelsUpdateJobProgressUI(i, 100, '整理完成', 'success');
+                updateConcurrentOverallProgress(i, 100);
                 continue;
             }
 
@@ -10315,14 +10500,18 @@ async function reelsStartExport() {
 
                 // ═══ Fast Alpha Overlay 检测 ═══
                 const fastAlphaCb = document.getElementById('reels-fast-alpha-mode');
-                const fastAlphaEnabled = fastAlphaCb ? fastAlphaCb.checked : false;
-                const isBgVideo = bgPath && !_isImageFile(bgPath);
-                const canUseAlpha = fastAlphaEnabled 
-                    && bgPath 
-                    && Math.abs((task.bgDurScale || 100) - 100) < 0.01
-                    && _getEffectiveBgClipPool(task).length === 0
-                    && (!task.bgMode || task.bgMode === 'single')
-                    && !(isBgVideo && loopFade); // 如果是视频且开启了首尾过渡转场，回退稳定模式
+                // 流水线/硬件模式自动尝试背景直通；不再要求用户另外勾选“极速贴合”。
+                // 不兼容的多背景、时长变速仍会安全回退完整 Canvas。
+                const fastEngineEnabled = exportEngine === 'pipeline' || exportEngine === 'hardware';
+                const fastAlphaEnabled = fastEngineEnabled || (fastAlphaCb ? fastAlphaCb.checked : false);
+                const fastCapability = _getReelsFastExportCapability(task, bgPath);
+                const canUseAlpha = fastAlphaEnabled && fastCapability.supported;
+                const capabilityDisplay = _describeReelsFastCapability(
+                    fastCapability,
+                    fastAlphaEnabled,
+                    fastEngineEnabled,
+                );
+                _reelsUpdateJobFastCapabilityUI(i, capabilityDisplay.kind, capabilityDisplay.reason);
 
                 // ═══ V2 单线程 WYSIWYG 导出（兜底 / 常规路径）═══
                 if (!wysiwygDone) {
@@ -10385,25 +10574,30 @@ async function reelsStartExport() {
                     stereoWidth: _getReverbConfig().stereoWidth,
                     audioFxTarget: _getReverbConfig().audioFxTarget,
                     useMemoryDecoder: memoryDecoderEnabled,
-                    useGPU: gpuEnabled,
+                    useGPU: gpuEnabled || exportEngine === 'hardware',
                     crf,
                     qualityPreset,
                     targetBitrateMbps,
                     maxBitrateMbps,
+                    exportEngine,
                     isCancelled: () => !_reelsState.isExporting,
                     onProgress: (pct) => {
                         if (statusEl) statusEl.textContent = `导出中 ${i + 1}/${totalJobs}: ${task.fileName}${presetLabel} (${pct}%)`;
+                        const stage = pct < 20 ? '准备素材' : (pct < 88 ? '渲染画面' : '编码混音');
+                        _reelsUpdateJobProgressUI(i, pct, stage, 'running');
                         updateConcurrentOverallProgress(i, pct);
                     },
                     onLog: (msg) => console.log(`[WYSIWYG] ${task.fileName}: ${msg}`),
                 });
                 if (wysiwygResult && wysiwygResult.cancelled) {
                     canceled = true;
+                    _reelsUpdateJobProgressUI(i, jobProgress[i], '已取消', 'canceled');
                     break;
                 }
                 } // end if (!wysiwygDone)
             } else if (hasVoiceAudio && voiceSource) {
                 // ── 回退: ASS 字幕方式导出（需要配音）──
+                _reelsUpdateJobFastCapabilityUI(i, 'unsupported', '当前任务使用 ASS 稳定导出链路');
                 const aDurScale = task.audioDurScale || 100;
                 const factor = aDurScale / 100;
                 const scaledSegments = (factor !== 1.0 && task.segments) 
@@ -10434,6 +10628,7 @@ async function reelsStartExport() {
                     bgm_start: Math.max(0, parseFloat(task.bgmStart) || 0),
                 });
             } else if (window.electronAPI && window.electronAPI.burnSubtitles) {
+                _reelsUpdateJobFastCapabilityUI(i, 'unsupported', '当前任务使用字幕烧录稳定链路');
                 const aDurScale = task.audioDurScale || 100;
                 const factor = aDurScale / 100;
                 const scaledSegments = (factor !== 1.0 && task.segments) 
@@ -10452,6 +10647,7 @@ async function reelsStartExport() {
                     useGPU: gpuEnabled,
                 });
             } else {
+                _reelsUpdateJobFastCapabilityUI(i, 'unsupported', '当前环境缺少极速导出接口');
                 console.warn('[Reels] FFmpeg IPC not available, skipping:', task.fileName);
             }
 
@@ -10461,6 +10657,7 @@ async function reelsStartExport() {
 
             if (doMp4 && finalHookPath && window.electronAPI && window.electronAPI.concatVideo) {
                 const concatOutput = outputPath.replace('.mp4', '_final_tmp.mp4');
+                _reelsUpdateJobProgressUI(i, Math.max(94, jobProgress[i] || 0), '拼接前置', 'running');
                 await window.electronAPI.concatVideo({
                     introPath: finalHookPath,
                     mainPath: currentOutputToConcat,
@@ -10480,6 +10677,7 @@ async function reelsStartExport() {
             // 拼接封面片段 (Cover -> [Hook] -> Main)
             if (coverMp4Path && doMp4 && window.electronAPI && window.electronAPI.concatVideo) {
                 const coverConcatOutput = outputPath.replace('.mp4', '_final.mp4');
+                _reelsUpdateJobProgressUI(i, Math.max(96, jobProgress[i] || 0), '拼接封面', 'running');
                 if (statusEl) statusEl.textContent = `拼接中 ${i + 1}/${totalJobs}: 合并封面视频${presetLabel}...`;
                 await window.electronAPI.concatVideo({
                     introPath: coverMp4Path,
@@ -10521,6 +10719,7 @@ async function reelsStartExport() {
             }
 
             okCount += 1;
+            _reelsUpdateJobProgressUI(i, 100, '已完成', 'success');
             _reelsState.lastExportOutputPath = finalOutputPath;
             _reelsUpdateLastOutputUI(finalOutputPath);
         } catch (err) {
@@ -10528,6 +10727,7 @@ async function reelsStartExport() {
             failCount += 1;
             const errMsg = err && err.message ? err.message : String(err || '未知错误');
             failDetails.push(`${task.fileName}${presetLabel}: ${errMsg}`);
+            _reelsUpdateJobProgressUI(i, jobProgress[i], '失败', 'failed');
             if (statusEl) statusEl.textContent = `❌ 导出失败: ${task.fileName}${presetLabel} - ${errMsg}`;
             _reelsUpdateLastErrorUI(`${task.fileName}${presetLabel}: ${errMsg}`);
         }
@@ -10544,6 +10744,7 @@ async function reelsStartExport() {
         workers.push(processNext());
     }
     await Promise.all(workers);
+    if (canceled) _reelsCancelUnfinishedJobProgressUI();
 
     // ── 按标签分组输出 FCPXML；未分组任务仍输出一个总时间线 ──
     if (doFcpxml && fcpxmlBatchTasks.length > 0 && !canceled && typeof window.reelsBatchFcpxmlExport === 'function') {
@@ -10731,6 +10932,7 @@ function collectCurrentProjectState() {
     const exportOpts = {
         outputDir: (document.getElementById('reels-output-dir') || {}).value || '',
         quality: (document.getElementById('reels-quality') || {}).value || 'medium',
+        exportEngine: (document.getElementById('reels-export-engine') || {}).value || 'precise',
         customBitrateMbps: _readReelsCustomBitrate().target,
         customMaxBitrateMbps: _readReelsCustomBitrate().max,
         suffix: (document.getElementById('reels-suffix') || {}).value || '_subtitled',
@@ -10824,9 +11026,11 @@ function applyRestoredProject(result) {
         const setCheck = (id, val) => { const el = document.getElementById(id); if (el) el.checked = !!val; };
         if (opts.outputDir) setVal('reels-output-dir', opts.outputDir);
         if (opts.quality) setVal('reels-quality', opts.quality);
+        if (opts.exportEngine) setVal('reels-export-engine', opts.exportEngine === 'experimental' ? 'hardware' : opts.exportEngine);
         if (opts.customBitrateMbps !== undefined) setVal('reels-custom-bitrate', opts.customBitrateMbps);
         if (opts.customMaxBitrateMbps !== undefined) setVal('reels-custom-max-bitrate', opts.customMaxBitrateMbps);
         reelsUpdateCustomBitrateUI();
+        reelsUpdateExportEngineUI();
         if (opts.suffix) setVal('reels-suffix', opts.suffix);
         if (opts.namingMode) {
             setVal('reels-naming-mode', opts.namingMode);
@@ -10961,6 +11165,7 @@ function reelsSaveProject() {
     const exportOpts = {
         outputDir: (document.getElementById('reels-output-dir') || {}).value || '',
         quality: (document.getElementById('reels-quality') || {}).value || 'medium',
+        exportEngine: (document.getElementById('reels-export-engine') || {}).value || 'precise',
         customBitrateMbps: _readReelsCustomBitrate().target,
         customMaxBitrateMbps: _readReelsCustomBitrate().max,
         suffix: (document.getElementById('reels-suffix') || {}).value || '_subtitled',
