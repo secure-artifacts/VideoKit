@@ -181,6 +181,9 @@ function createWindow() {
             nodeIntegration: false,
             contextIsolation: true,
             sandbox: false,
+            // Reels preview is canvas-driven. Keep its media decoders and
+            // animation clock alive when the user briefly switches apps.
+            backgroundThrottling: false,
             webSecurity: true,  // Re-enabled for security; local media loads via local-media:// protocol
             preload: path.join(__dirname, 'preload.js')
         },
@@ -1199,6 +1202,7 @@ app.whenReady().then(async () => {
                 nodeIntegration: false,
                 contextIsolation: true,
                 sandbox: false,
+                backgroundThrottling: false,
                 webSecurity: true, // Re-enabled for security; local media loads via local-media:// protocol
                 preload: path.join(__dirname, 'preload.js'),
             },

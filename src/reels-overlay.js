@@ -1458,6 +1458,7 @@ function _drawTextOverlay(ctx, ov, x, y, w, h, currentTime) {
  */
 function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime) {
     const originalOverlay = ov;
+    const guideLineW = Math.max(2, canvasW / 540);
     if (ov.body_follow_title) {
         const indep = ov.independent_effects;
         const strokeC = (indep ? ov.title_stroke_color : ov.text_stroke_color) || '#000000';
@@ -2217,7 +2218,7 @@ function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime
             ctx.restore();
             
             if (!ov._exporting && (ov.debug_title || (ov.debug_title === undefined && ov.debug_layout))) {
-                ctx.save(); ctx.strokeStyle='#ff5555'; ctx.lineWidth=1; ctx.setLineDash([4,4]);
+                ctx.save(); ctx.globalAlpha = 1; ctx.strokeStyle='#ff5555'; ctx.lineWidth=guideLineW; ctx.setLineDash([guideLineW * 2, guideLineW * 2]);
                 ctx.strokeRect(_sectionX(tW, customX), secBaseY, tW, tSpace);
                 ctx.restore();
             }
@@ -2413,7 +2414,7 @@ function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime
             ctx.restore();
             
             if (!ov._exporting && (ov.debug_body || (ov.debug_body === undefined && ov.debug_layout))) {
-                ctx.save(); ctx.strokeStyle='#55ff55'; ctx.lineWidth=1; ctx.setLineDash([4,4]);
+                ctx.save(); ctx.globalAlpha = 1; ctx.strokeStyle='#55ff55'; ctx.lineWidth=guideLineW; ctx.setLineDash([guideLineW * 2, guideLineW * 2]);
                 ctx.strokeRect(_sectionX(bW, customX), secBaseY, bW, bSpace);
                 ctx.restore();
             }
@@ -2493,7 +2494,7 @@ function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime
             ctx.restore();
             
             if (!ov._exporting && (ov.debug_footer || (ov.debug_footer === undefined && ov.debug_layout))) {
-                ctx.save(); ctx.strokeStyle='#5555ff'; ctx.lineWidth=1; ctx.setLineDash([4,4]);
+                ctx.save(); ctx.globalAlpha = 1; ctx.strokeStyle='#5590ff'; ctx.lineWidth=guideLineW; ctx.setLineDash([guideLineW * 2, guideLineW * 2]);
                 ctx.strokeRect(_sectionX(fW, customX), secBaseY, fW, fSpace);
                 ctx.restore();
             }
@@ -2514,8 +2515,8 @@ function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime
         ctx.globalAlpha = 0.9;
         
         ctx.strokeStyle = '#00ff00';
-        ctx.lineWidth = 1;
-        ctx.setLineDash([4, 4]);
+        ctx.lineWidth = guideLineW;
+        ctx.setLineDash([guideLineW * 2, guideLineW * 2]);
         
         // 上边距线
         const topEdge = cardY + padT;
@@ -2582,6 +2583,7 @@ function _drawTextCardSideBySideOverlay(ctx, ov, x, y, w, h, canvasW, canvasH) {
     ctx.save();
     ctx.textBaseline = 'alphabetic';
     const cacheOwner = ov._sideBySideCacheOwner || ov;
+    const guideLineW = Math.max(2, canvasW / 540);
 
     const padL = ov.padding_left ?? 40;
     const padR = ov.padding_right ?? 40;
@@ -2722,10 +2724,12 @@ function _drawTextCardSideBySideOverlay(ctx, ov, x, y, w, h, canvasW, canvasH) {
     drawSideSection('title', titleLines, titleFont, titleFontSize, titleBgPadH, titleBgPadTop, titleBgPadBottom, titleMetrics, titleX, boxY, titleBoxW, boxH);
     drawSideSection('body', bodyLines, bodyFont, bodyFontSize, bodyBgPadH, bodyBgPadTop, bodyBgPadBottom, bodyMetrics, bodyX, boxY, bodyBoxW, boxH);
 
-    if (ov.debug_layout) {
+    if (ov.debug_layout && !ov._exporting) {
         ctx.save();
+        ctx.globalAlpha = 1;
         ctx.strokeStyle = 'rgba(76,158,255,0.75)';
-        ctx.setLineDash([8, 5]);
+        ctx.lineWidth = guideLineW;
+        ctx.setLineDash([guideLineW * 3, guideLineW * 2]);
         ctx.strokeRect(x, cardY, w, cardH);
         ctx.restore();
     }
@@ -2862,10 +2866,12 @@ function _drawTextCardSideBySideOverlay(ctx, ov, x, y, w, h, canvasW, canvasH) {
         ctx.shadowOffsetY = 0;
         ctx.letterSpacing = '0px';
 
-        if ((prefix === 'title' && ov.debug_title) || (prefix === 'body' && ov.debug_body)) {
+        if (!ov._exporting && ((prefix === 'title' && ov.debug_title) || (prefix === 'body' && ov.debug_body))) {
             ctx.save();
+            ctx.globalAlpha = 1;
             ctx.strokeStyle = prefix === 'title' ? 'rgba(255,215,0,0.85)' : 'rgba(110,198,255,0.85)';
-            ctx.setLineDash([6, 4]);
+            ctx.lineWidth = guideLineW;
+            ctx.setLineDash([guideLineW * 3, guideLineW * 2]);
             ctx.strokeRect(bgX, bgY, boxW, bgH);
             ctx.restore();
         }

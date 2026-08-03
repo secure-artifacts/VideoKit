@@ -2128,6 +2128,11 @@ function _readStyleFromUI() {
         box_transition_enabled: chk('reels-box-transition'),
         box_transition_color_to: val('reels-box-transition-color') || '#FF6600',
 
+        // Underline controls are rendered by ReelsCanvasRenderer.  They were
+        // present in the UI but omitted here, leaving the feature unreachable.
+        use_underline: chk('reels-use-underline'),
+        color_underline: val('reels-underline-color') || '#FFD700',
+
         // Dynamic box
         dynamic_box: chk('reels-dynamic-box'),
         dynamic_box_stroke: chk('reels-dynamic-box-stroke'),
@@ -2141,7 +2146,9 @@ function _readStyleFromUI() {
         high_padding: num('reels-high-padding', 4),
         high_offset_y: 0,
 
-        karaoke_highlight: chk('reels-karaoke'),
+        // The checkbox lives in the project menu.  The old id did not exist,
+        // so this setting was always saved as false and the control was inert.
+        karaoke_highlight: chk('reels-karaoke-hl'),
 
         // Position & Layout
         pos_x: num('reels-pos-x', 50) / 100,
@@ -2214,8 +2221,11 @@ function _readStyleFromUI() {
         blur_sharp_clear_frac: 0.4,
 
         // Typewriter
-        tw_revealed_color: '#FFFFFF',
-        tw_revealed_stroke_color: '#000000',
+        typewriter_reveal_type: val('reels-typewriter-reveal-type') || 'word',
+        // Empty values deliberately fall back to the normal color controls.
+        // Hard-coded values here used to make typewriter ignore those controls.
+        tw_revealed_color: '',
+        tw_revealed_stroke_color: '',
         tw_unrevealed_color: '#808080',
         tw_unrevealed_stroke_color: '#404040',
         tw_unrevealed_opacity: 100,
@@ -2548,6 +2558,7 @@ function _writeStyleToUI(style) {
     set('reels-glow-color', style.holy_glow_color || '#FFFFAA');
     set('reels-glow-radius', style.holy_glow_radius || 6);
     set('reels-blur-max', style.blur_sharp_max || 20);
+    set('reels-typewriter-reveal-type', style.typewriter_reveal_type || 'word');
     set('reels-random-word-spacing', style.random_word_spacing || 0);
     set('reels-random-word-spacing-range', style.random_word_spacing || 0);
     set('reels-random-line-spacing', style.random_line_spacing || 0);
@@ -3194,7 +3205,12 @@ function _drawSubtitlePreviewRange(ctx, style, canvasW, canvasH) {
     ctx.lineTo(cx, y + h);
     ctx.stroke();
     ctx.restore();
-}const watermarkImageCache = new Map();
+}
+// V2 preview uses the same guide calculation so the checkbox has identical
+// behaviour in both preview engines.
+window._drawSubtitlePreviewRange = _drawSubtitlePreviewRange;
+
+const watermarkImageCache = new Map();
 
 function _normalizeWatermarkPath(pathValue) {
     if (!pathValue) return '';
@@ -6903,6 +6919,7 @@ function reelsAutoMatchFiles() {
     const audios = _reelsState.pendingFiles.audios.splice(0);
     const srts = _reelsState.pendingFiles.srts.splice(0);
     const txts = _reelsState.pendingFiles.txts.splice(0);
+    const receivedFiles = backgrounds.length + audios.length + srts.length + txts.length > 0;
     const matchMode = _getMatchMode();
 
     for (const bg of backgrounds) {
@@ -6983,7 +7000,12 @@ function reelsAutoMatchFiles() {
     _renderTaskList();
     if (_reelsState.selectedIdx < 0 && _reelsState.tasks.length > 0) {
         reelsSelectTask(0);
+    } else if (receivedFiles && _reelsState.selectedIdx >= 0) {
+        // SRT/TXT are read asynchronously. A video/audio path may arrive after
+        // the current task was already selected, so explicitly refresh it.
+        reelsSelectTask(_reelsState.selectedIdx);
     }
+    if (receivedFiles) window.ReelsPreviewV2?.recover?.('素材导入完成');
 }
 
 function reelsClearTasks() {

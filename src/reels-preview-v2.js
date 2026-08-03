@@ -60,6 +60,10 @@
         gainNodes: new Map(),
         audioFxNodes: [],
         audioFxSig: '',
+        recoveryTimer: null,
+        recoveryAttempts: 0,
+        recoveryInProgress: false,
+        wasDocumentHidden: false,
     };
     const watermarkImageCache = new Map();
     const REVERB_PRESETS = {
@@ -251,9 +255,12 @@
             }
             .rpv2-media {
                 position: absolute;
-                width: 1px;
-                height: 1px;
-                opacity: 0;
+                left: 0;
+                top: 0;
+                width: 2px;
+                height: 2px;
+                /* Chromium may suspend a fully transparent video decoder. */
+                opacity: 0.002;
                 pointer-events: none;
             }
             .rpv2-floating-open {
@@ -325,7 +332,7 @@
         state.canvas.height = getTargetHeight();
         state.renderer = window.ReelsCanvasRenderer ? new window.ReelsCanvasRenderer(state.canvas) : null;
 
-        root.querySelector('[data-action="refresh"]').addEventListener('click', () => loadCurrentTask(true));
+        root.querySelector('[data-action="refresh"]').addEventListener('click', () => recoverMedia('manual-refresh', true));
         root.querySelector('[data-action="fit"]').addEventListener('click', () => fitStage(true));
         root.querySelector('[data-action="zoom-in"]').addEventListener('click', () => zoomView(1.25));
         root.querySelector('[data-action="zoom-out"]').addEventListener('click', () => zoomView(0.8));
@@ -362,9 +369,31 @@
                 render();
             });
             media.addEventListener('seeked', () => releaseSeekFrameWhenReady());
-            media.addEventListener('canplay', () => releaseSeekFrameWhenReady());
+            media.addEventListener('loadeddata', () => markMediaHealthy());
+            media.addEventListener('canplay', () => {
+                markMediaHealthy();
+                releaseSeekFrameWhenReady();
+            });
+            if (media.tagName === 'VIDEO') {
+                media.addEventListener('error', () => scheduleMediaRecovery(`error:${media.dataset.role || 'video'}`));
+                media.addEventListener('stalled', () => scheduleMediaRecovery(`stalled:${media.dataset.role || 'video'}`, false, 900));
+            }
             media.addEventListener('ended', onMediaEnded);
         }
+
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                state.wasDocumentHidden = true;
+                return;
+            }
+            if (state.wasDocumentHidden) {
+                state.wasDocumentHidden = false;
+                scheduleMediaRecovery('window-visible', true, 120);
+            }
+        });
+        window.addEventListener('focus', () => {
+            if (!document.hidden) scheduleMediaRecovery('window-focus', false, 120);
+        });
 
         document.addEventListener('keydown', (e) => {
             if (!state.isOpen) return;
@@ -501,6 +530,99 @@
         syncLoopFlags();
         syncMediaToTime(state.pausedAt || 0);
         render();
+    }
+
+    function mediaHasDecodedFrame(media) {
+        return !!(media && media.src && media.readyState >= 2 && media.videoWidth > 0 && media.videoHeight > 0);
+    }
+
+    function imageHasDecodedFrame(image) {
+        return !!(image && image.complete && image.naturalWidth > 0 && image.naturalHeight > 0);
+    }
+
+    function currentVisualIsReady() {
+        const task = getTask();
+        if (!task) return true;
+        const phase = getPhaseInfo(getCurrentTime(), task);
+        const coverPath = task.cover && task.cover.enabled ? task.cover.bgPath : '';
+        if (phase.inCover && coverPath) {
+            return isImagePath(coverPath) ? imageHasDecodedFrame(state.coverImage) : mediaHasDecodedFrame(state.coverVideo);
+        }
+        const hookPath = getHookPath(task);
+        if (phase.inHook && hookPath) return mediaHasDecodedFrame(state.hookVideo);
+
+        const bgPath = getBackgroundPath(task);
+        if (bgPath) {
+            if (isImagePath(bgPath)) return imageHasDecodedFrame(state.bgImage);
+            if (isMultiBackgroundTask(task)) {
+                if (mediaHasDecodedFrame(state.bgVideo) || mediaHasDecodedFrame(state.bgFadeVideo)) return true;
+                for (const image of state.multiBgImages.values()) {
+                    if (imageHasDecodedFrame(image)) return true;
+                }
+                return false;
+            }
+            return mediaHasDecodedFrame(state.bgVideo);
+        }
+
+        const contentPath = task.contentVideoPath || '';
+        if (contentPath) {
+            return isImagePath(contentPath)
+                ? imageHasDecodedFrame(state.contentImage)
+                : mediaHasDecodedFrame(state.contentVideo);
+        }
+        return true;
+    }
+
+    function markMediaHealthy() {
+        if (!currentVisualIsReady()) return;
+        state.recoveryAttempts = 0;
+        state.recoveryInProgress = false;
+        if (state.recoveryTimer) clearTimeout(state.recoveryTimer);
+        state.recoveryTimer = null;
+        updateTitle(getTask());
+        render();
+    }
+
+    function scheduleMediaRecovery(reason, force = false, delay = 250) {
+        if (!state.isOpen || !getTask() || document.hidden) return;
+        if (!force && currentVisualIsReady()) return;
+        // A manual refresh, completed import, or foreground restore starts a
+        // fresh bounded recovery cycle. Verification retries use force=false.
+        if (force && !state.recoveryInProgress) state.recoveryAttempts = 0;
+        if (state.recoveryTimer) clearTimeout(state.recoveryTimer);
+        state.recoveryTimer = setTimeout(() => {
+            state.recoveryTimer = null;
+            recoverMedia(reason, force);
+        }, delay);
+    }
+
+    function recoverMedia(reason, force = false) {
+        if (!state.isOpen || !getTask() || document.hidden || state.recoveryInProgress) return;
+        if (!force && currentVisualIsReady()) return;
+        if (state.recoveryAttempts >= 3) {
+            console.error(`[PreviewV2] media recovery stopped after 3 attempts (${reason})`);
+            return;
+        }
+
+        const resumeAt = getCurrentTime();
+        const wasPlaying = state.isPlaying;
+        state.recoveryAttempts += 1;
+        state.recoveryInProgress = true;
+        const title = state.root?.querySelector('[data-role="title"]');
+        if (title) title.textContent = `正在恢复视频… (${state.recoveryAttempts}/3)`;
+        console.warn(`[PreviewV2] reloading media (${reason}), attempt ${state.recoveryAttempts}`);
+
+        loadCurrentTask(true);
+        state.pausedAt = resumeAt;
+        if (wasPlaying) state.startedAt = performance.now() / 1000 - resumeAt;
+        syncMediaToTime(resumeAt);
+        state.recoveryInProgress = false;
+
+        state.recoveryTimer = setTimeout(() => {
+            state.recoveryTimer = null;
+            if (currentVisualIsReady()) markMediaHealthy();
+            else recoverMedia(`${reason}:verify`, false);
+        }, 1400);
     }
 
     function resizeCanvas() {
@@ -1376,14 +1498,17 @@
 
     function drawSubtitles(ctx, task, time, w, h, phase = getPhaseInfo(getCurrentTime(), task)) {
         const show = state.root?.querySelector('[data-role="subs"]')?.checked !== false;
-        if (!show || !state.renderer || !task || phase.inCover || phase.inHook) return;
-
+        if (!state.renderer || !task) return;
         const style = getResolvedStyle(task);
-        const segment = findActiveSegment(task, time, style);
-        if (!style || !segment) return;
+        if (!style) return;
 
         try {
+            // This is an editing guide, not subtitle content. Keep it visible
+            // through subtitle gaps (and cover/hook phases) whenever enabled.
             drawSubtitleRange(ctx, style, w, h);
+            if (!show || phase.inCover || phase.inHook) return;
+            const segment = findActiveSegment(task, time, style);
+            if (!segment) return;
             if (typeof state.renderer.setContextSegments === 'function') {
                 state.renderer.setContextSegments(task.segments || [segment]);
             }
@@ -1407,8 +1532,14 @@
             // 滚动覆层到达结束时间后保留最终位置。
             if (time < start || (ov.type !== 'scroll' && time > end)) continue;
             try {
-                ov._allOverlays = overlays;
-                window.ReelsOverlay.drawOverlay(ctx, ov, time, w, h);
+                // Preview must never inherit a stale/concurrent export marker,
+                // otherwise ReelsOverlay intentionally suppresses guide boxes.
+                const previewOv = { ...ov, _allOverlays: overlays, _exporting: false };
+                window.ReelsOverlay.drawOverlay(ctx, previewOv, time, w, h);
+                // Keep computed bounds available to hit-testing/property UI.
+                for (const key of ['_renderedX', '_renderedY', '_renderedW', '_renderedH']) {
+                    if (previewOv[key] != null) ov[key] = previewOv[key];
+                }
             } catch (err) {
                 console.warn('[PreviewV2] overlay render failed', err);
             }
@@ -1493,6 +1624,10 @@
     function drawSubtitleRange(ctx, style, w, h) {
         const rangeToggle = document.getElementById('reels-show-subtitle-range');
         if (rangeToggle && !rangeToggle.checked) return;
+        if (typeof window._drawSubtitlePreviewRange === 'function') {
+            window._drawSubtitlePreviewRange(ctx, style, w, h);
+            return;
+        }
         const x = Number.isFinite(parseFloat(style.range_x)) ? parseFloat(style.range_x) : 0;
         const y = Number.isFinite(parseFloat(style.range_y)) ? parseFloat(style.range_y) : 0;
         const rw = Number.isFinite(parseFloat(style.range_w)) ? parseFloat(style.range_w) : 100;
@@ -2688,6 +2823,7 @@
         close,
         render,
         reload: () => loadCurrentTask(true),
+        recover: (reason = 'external-refresh') => scheduleMediaRecovery(reason, true, 0),
         isOpen: () => state.isOpen,
         getCanvas: () => state.isOpen ? state.canvas : null,
         getViewportElement: () => state.isOpen

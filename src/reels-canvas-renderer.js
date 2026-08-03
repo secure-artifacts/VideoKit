@@ -569,13 +569,18 @@ class ReelsCanvasRenderer {
 
         // ── Typewriter ──
         const isTypewriter = animInType === 'typewriter';
+        const typewriterRevealType = s.typewriter_reveal_type || 'word';
+        // Older saved styles use 0–255 while the current UI stores 0–1.
+        const twUnreadOpacity = s.tw_unrevealed_opacity === undefined ? (100 / 255)
+            : Math.max(0, Math.min(1, s.tw_unrevealed_opacity > 1
+                ? s.tw_unrevealed_opacity / 255 : s.tw_unrevealed_opacity));
         let twRevealedCount = -1;
         if (isTypewriter && anim) {
-            let totalChars = 0;
-            for (const w of words) totalChars += w.length;
-            totalChars += Math.max(0, words.length - 1);
+            const totalUnits = typewriterRevealType === 'char'
+                ? words.reduce((count, word) => count + Array.from(word).length, 0)
+                : words.length;
             twRevealedCount = anim.computeTypewriterProgress(
-                currentTime, segStart, segEnd, totalChars
+                currentTime, segStart, segEnd, totalUnits
             );
         }
 
@@ -765,7 +770,10 @@ class ReelsCanvasRenderer {
         }
 
         // ── Multi-layer stroke expand (pre-pass) ──
-        if (s.stroke_expand_enabled && !s.only_show_active_word) {
+        // A whole-line pre-pass would reveal every character before the
+        // typewriter animation gets to it.  Render expansion per visible word
+        // below in that mode instead.
+        if (s.stroke_expand_enabled && !s.only_show_active_word && !isTypewriter) {
             this._renderStrokeExpand(ctx, s, visibleLines, lineWidths, cx, advEnabled, advAlign, advX, advW,
                 cy, totalH, lineStep, fontStr, fontSize, letterSpacing, advY, advH);
         }
@@ -945,21 +953,32 @@ class ReelsCanvasRenderer {
                 }
                 let wordColor = isHighlight ? highColor : textColor;
                 let wordStrokeColor = outlineColor;
+                let typewriterPartial = null;
 
                 if (isTypewriter) {
-                    const wordLen = wordStr.length;
-                    const charEnd = twCharCounter + wordLen;
+                    const chars = Array.from(wordStr);
+                    const wordUnits = typewriterRevealType === 'char' ? chars.length : 1;
+                    const revealedUnits = twRevealedCount < 0 ? wordUnits
+                        : Math.max(0, Math.min(wordUnits, twRevealedCount - twCharCounter));
                     if (twRevealedCount >= 0) {
-                        if (twCharCounter >= twRevealedCount) {
+                        if (revealedUnits === 0) {
                             wordColor = s.tw_unrevealed_color || '#808080';
                             wordStrokeColor = s.tw_unrevealed_stroke_color || '#404040';
-                            wordOpacity *= (s.tw_unrevealed_opacity || 100) / 255;
+                            wordOpacity *= twUnreadOpacity;
                         } else {
+                            // Do not override the user's normal text/stroke
+                            // settings with the legacy typewriter defaults.
                             wordColor = s.tw_revealed_color || textColor;
                             wordStrokeColor = s.tw_revealed_stroke_color || outlineColor;
                         }
+                        if (typewriterRevealType === 'char' && revealedUnits > 0 && revealedUnits < wordUnits) {
+                            typewriterPartial = {
+                                revealed: chars.slice(0, revealedUnits).join(''),
+                                unrevealed: chars.slice(revealedUnits).join(''),
+                            };
+                        }
                     }
-                    twCharCounter = charEnd + 1;
+                    twCharCounter += wordUnits;
                 }
 
                 if (isMetronome) {
@@ -1039,8 +1058,14 @@ class ReelsCanvasRenderer {
                 // ── Render word ──
                 if (isWordActive) {
                     // ── Local multi-layer stroke expand ──
-                    if (s.stroke_expand_enabled && s.only_show_active_word) {
-                        this._renderWordStrokeExpand(ctx, s, wordStr, drawX, wordY, fontStr, letterSpacing);
+                    if (s.stroke_expand_enabled && (s.only_show_active_word || isTypewriter)) {
+                        if (typewriterPartial) {
+                            this._renderWordStrokeExpand(ctx, s, typewriterPartial.revealed, drawX, wordY, fontStr, letterSpacing);
+                            const revealedW = this._measureTextWithSpacing(ctx, typewriterPartial.revealed, letterSpacing);
+                            this._renderWordStrokeExpand(ctx, s, typewriterPartial.unrevealed, drawX + revealedW, wordY, fontStr, letterSpacing);
+                        } else {
+                            this._renderWordStrokeExpand(ctx, s, wordStr, drawX, wordY, fontStr, letterSpacing);
+                        }
                     }
 
                     ctx.save();
@@ -1064,9 +1089,24 @@ class ReelsCanvasRenderer {
                         currentShadowColor = isHighlight ? (shadowColors[1] || shadowColors[0]) : shadowColors[0];
                     }
 
-                    this._drawWord(ctx, wordStr, drawX, wordY, wordColor,
-                        useStroke && !s.stroke_expand_enabled, wordStrokeColor, borderW, outlineAlpha,
-                        shadowBlur, shadowOffX, shadowOffY, currentShadowColor, shadowAlpha, letterSpacing, s);
+                    if (typewriterPartial) {
+                        const revealedColor = s.tw_revealed_color || textColor;
+                        const revealedStroke = s.tw_revealed_stroke_color || outlineColor;
+                        const unrevealedColor = s.tw_unrevealed_color || '#808080';
+                        const unrevealedStroke = s.tw_unrevealed_stroke_color || '#404040';
+                        const revealedW = this._measureTextWithSpacing(ctx, typewriterPartial.revealed, letterSpacing);
+                        this._drawWord(ctx, typewriterPartial.revealed, drawX, wordY, revealedColor,
+                            useStroke && !s.stroke_expand_enabled, revealedStroke, borderW, outlineAlpha,
+                            shadowBlur, shadowOffX, shadowOffY, currentShadowColor, shadowAlpha, letterSpacing, s);
+                        ctx.globalAlpha = globalAlpha * wordOpacity * twUnreadOpacity;
+                        this._drawWord(ctx, typewriterPartial.unrevealed, drawX + revealedW, wordY, unrevealedColor,
+                            useStroke && !s.stroke_expand_enabled, unrevealedStroke, borderW, outlineAlpha,
+                            shadowBlur, shadowOffX, shadowOffY, currentShadowColor, shadowAlpha, letterSpacing, s);
+                    } else {
+                        this._drawWord(ctx, wordStr, drawX, wordY, wordColor,
+                            useStroke && !s.stroke_expand_enabled, wordStrokeColor, borderW, outlineAlpha,
+                            shadowBlur, shadowOffX, shadowOffY, currentShadowColor, shadowAlpha, letterSpacing, s);
+                    }
                     ctx.restore();
                 }
 
@@ -2350,6 +2390,12 @@ class ReelsCanvasRenderer {
                     if (shadowColor && shadowColor.includes(',')) {
                         const shadowColors = shadowColor.split(',').map(c => c.trim());
                         currentShadowColor = isHighlight ? (shadowColors[1] || shadowColors[0]) : shadowColors[0];
+                    }
+                    // Full-page typewriter has no whole-line expansion pass:
+                    // draw it token-by-token so it remains in sync with reveal.
+                    if (s.stroke_expand_enabled) {
+                        this._renderWordStrokeExpand(ctx, s, tok.text, tokenX, y,
+                            getLineFontStr(li), letterSpacing);
                     }
                     this._drawWord(ctx, tok.text, tokenX, y, color,
                         useStroke && !s.stroke_expand_enabled, outlineColor, borderW, outlineAlpha,

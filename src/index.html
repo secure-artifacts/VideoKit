@@ -4425,6 +4425,14 @@
                       </div>
                       <div class="param-row" style="flex-wrap: wrap; gap: 8px; margin-bottom: 6px;">
                         <div style="display: flex; align-items: center; gap: 3px;">
+                          <label>打字机:</label>
+                          <select id="reels-typewriter-reveal-type" class="select" style="width:78px;"
+                            onchange="reelsUpdatePreview()">
+                            <option value="word" selected>按单词</option>
+                            <option value="char">按字符</option>
+                          </select>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 3px;">
                           <label>弹跳高度:</label>
                           <input type="range" id="reels-bounce-height-range" min="5" max="60" value="20" style="width: 50px;" oninput="document.getElementById('reels-bounce-height').value=this.value; reelsUpdatePreview()">
                           <input type="number" id="reels-bounce-height" class="input input-small" value="20" min="5"
