@@ -11,11 +11,107 @@ const settingsService = require('./settings');
 const subtitleUtils = require('./subtitleUtils');
 const autoEditMatcherV2 = require('./autoEditMatcherV2');
 
+const ENGLISH_NUMBER_VALUES = Object.freeze({
+    zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9,
+    ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16,
+    seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, thirty: 30, forty: 40, fifty: 50,
+    sixty: 60, seventy: 70, eighty: 80, ninety: 90,
+});
+const ENGLISH_ORDINAL_VALUES = Object.freeze({
+    first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6, seventh: 7, eighth: 8,
+    ninth: 9, tenth: 10, eleventh: 11, twelfth: 12, thirteenth: 13, fourteenth: 14,
+    fifteenth: 15, sixteenth: 16, seventeenth: 17, eighteenth: 18, nineteenth: 19,
+    twentieth: 20, thirtieth: 30, fortieth: 40, fiftieth: 50, sixtieth: 60, seventieth: 70,
+    eightieth: 80, ninetieth: 90, hundredth: 100, thousandth: 1000,
+});
+const ENGLISH_MONTH_VALUES = Object.freeze({
+    january: 1, jan: 1, february: 2, feb: 2, march: 3, mar: 3, april: 4, apr: 4,
+    may: 5, june: 6, jun: 6, july: 7, jul: 7, august: 8, aug: 8, september: 9,
+    sept: 9, sep: 9, october: 10, oct: 10, november: 11, nov: 11, december: 12, dec: 12,
+});
+
+function numericTokenValue(token) {
+    const ordinal = String(token || '').match(/^(\d+)(?:st|nd|rd|th)$/);
+    if (ordinal) return Number(ordinal[1]);
+    if (/^\d+$/.test(token)) return Number(token);
+    return ENGLISH_NUMBER_VALUES[token] ?? ENGLISH_ORDINAL_VALUES[token] ?? null;
+}
+
+// ASR often writes "two" / "third", while scripts use "2" / "3rd".  Canonicalize
+// the common English cardinal and ordinal forms before all matching calculations.
+function normalizeEnglishNumbers(text) {
+    const tokens = String(text || '').normalize('NFKC').toLowerCase()
+        .replace(/[‐‑‒–—-]/g, ' ')
+        .match(/[a-z]+|\d+(?:st|nd|rd|th)?|[^\s]/g) || [];
+    const output = [];
+    for (let index = 0; index < tokens.length;) {
+        const token = tokens[index];
+        // Only interpret a month as a date component beside a numeric day. This
+        // preserves ordinary text such as "may be".
+        if (token in ENGLISH_MONTH_VALUES) {
+            const nextDay = numericTokenValue(tokens[index + 1]);
+            const previousDay = numericTokenValue(tokens[index - 1]);
+            if (Number.isInteger(nextDay) && nextDay >= 1 && nextDay <= 31) {
+                output.push(String(ENGLISH_MONTH_VALUES[token]), String(nextDay));
+                index += 2;
+                continue;
+            }
+            if (Number.isInteger(previousDay) && previousDay >= 1 && previousDay <= 31) {
+                // Canonicalize spoken day-month dates to the same month-day order.
+                if (output[output.length - 1] === String(previousDay)) output.pop();
+                output.push(String(ENGLISH_MONTH_VALUES[token]), String(previousDay));
+                index++;
+                continue;
+            }
+        }
+        const digitOrdinal = token.match(/^(\d+)(?:st|nd|rd|th)$/);
+        if (digitOrdinal) {
+            output.push(digitOrdinal[1]);
+            index++;
+            continue;
+        }
+        if (!(token in ENGLISH_NUMBER_VALUES) && !(token in ENGLISH_ORDINAL_VALUES)) {
+            output.push(token);
+            index++;
+            continue;
+        }
+        let value = 0;
+        let current = 0;
+        let consumed = 0;
+        let ordinal = false;
+        while (index + consumed < tokens.length) {
+            const part = tokens[index + consumed];
+            if (part === 'and' && consumed > 0) { consumed++; continue; }
+            if (part === 'hundred' || part === 'thousand') {
+                current = (current || 1) * (part === 'hundred' ? 100 : 1000);
+                if (part === 'thousand') { value += current; current = 0; }
+            } else if (part in ENGLISH_NUMBER_VALUES) {
+                current += ENGLISH_NUMBER_VALUES[part];
+            } else if (part in ENGLISH_ORDINAL_VALUES) {
+                current += ENGLISH_ORDINAL_VALUES[part];
+                ordinal = true;
+                consumed++;
+                break;
+            } else {
+                break;
+            }
+            consumed++;
+        }
+        // Do not merge adjacent standalone cardinal words ("one, two") into 3.
+        if (consumed > 1 && !ordinal && !['hundred', 'thousand'].includes(tokens[index + 1])
+            && ENGLISH_NUMBER_VALUES[token] < 20 && ENGLISH_NUMBER_VALUES[tokens[index + 1]] < 20) {
+            output.push(String(ENGLISH_NUMBER_VALUES[token]));
+            index++;
+        } else {
+            output.push(String(value + current));
+            index += consumed || 1;
+        }
+    }
+    return output.join('');
+}
+
 function normalizeText(text) {
-    return String(text || '')
-        .toLowerCase()
-        .normalize('NFKC')
-        .replace(/[^\p{L}\p{N}]/gu, '');
+    return normalizeEnglishNumbers(text).replace(/[^\p{L}\p{N}]/gu, '');
 }
 
 function splitScriptLines(scriptText) {

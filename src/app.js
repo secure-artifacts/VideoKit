@@ -14583,11 +14583,20 @@ function assignAutoEditMissingBlock(button, direction) {
     const endLine = Number(placeholder.dataset.scriptEndLine) || startLine;
     const rows = Array.from(document.querySelectorAll('.autoedit-review-row'));
     let target = null;
+    // The placeholder already records the actual neighboring source clips.  Prefer
+    // those IDs over script-line ranges: a clip can span multiple lines or have an
+    // incomplete match, which otherwise makes "next" skip over the adjacent clip.
+    const adjacentSourceIndex = Number(direction === 'previous'
+        ? placeholder.dataset.previousSourceIndex
+        : placeholder.dataset.nextSourceIndex);
+    if (Number.isFinite(adjacentSourceIndex) && adjacentSourceIndex > 0) {
+        target = rows.find(row => Number(row.dataset.sourceIndex) === adjacentSourceIndex);
+    }
     if (direction === 'previous') {
-        target = rows.filter(row => (Number(row.dataset.scriptEndLine) || 0) < startLine)
+        target = target || rows.filter(row => (Number(row.dataset.scriptEndLine) || 0) < startLine)
             .sort((a, b) => (Number(b.dataset.scriptEndLine) || 0) - (Number(a.dataset.scriptEndLine) || 0))[0];
     } else {
-        target = rows.filter(row => (Number(row.dataset.scriptStartLine) || Infinity) > endLine)
+        target = target || rows.filter(row => (Number(row.dataset.scriptStartLine) || Infinity) > endLine)
             .sort((a, b) => (Number(a.dataset.scriptStartLine) || Infinity) - (Number(b.dataset.scriptStartLine) || Infinity))[0];
     }
     if (!target) return showToast(`没有找到可归入的${direction === 'previous' ? '上一' : '下一'}段`, 'error');

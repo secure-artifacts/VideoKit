@@ -6,6 +6,18 @@ test('normalization ignores punctuation and case', () => {
     assert.equal(autoEdit.normalizeText('Hello，World!'), 'helloworld');
 });
 
+test('normalization matches English number words and ordinal digits', () => {
+    assert.equal(autoEdit.normalizeText('two'), autoEdit.normalizeText('2'));
+    assert.equal(autoEdit.normalizeText('the third step'), autoEdit.normalizeText('the 3rd step'));
+    assert.equal(autoEdit.normalizeText('twenty-one'), autoEdit.normalizeText('21'));
+});
+
+test('normalization matches English month dates and numeric dates', () => {
+    assert.equal(autoEdit.normalizeText('October fifth'), autoEdit.normalizeText('10/5'));
+    assert.equal(autoEdit.normalizeText('5th Oct.'), autoEdit.normalizeText('10-5'));
+    assert.equal(autoEdit.normalizeText('may be ready'), 'maybeready');
+});
+
 test('word score tolerates a missing filler word', () => {
     const score = autoEdit._test.scoreWordCandidate(
         ['today', 'share', 'three', 'simple', 'methods'],
