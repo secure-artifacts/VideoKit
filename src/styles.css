@@ -197,6 +197,13 @@ body {
     gap: 12px;
 }
 
+.file-input-group.is-dragover {
+    outline: 1px dashed var(--accent);
+    outline-offset: 5px;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
 .file-path {
     flex: 1;
 }

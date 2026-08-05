@@ -357,6 +357,7 @@ function _initReelsModule() {
     };
     bindMix(voiceVolumeEl);
     bindMix(bgVolumeEl);
+    _initReelsExportSettingsPersistence();
     _initExportSettingSliders();
     if (bgVolumeEl) {
         const bgVolumeRangeGlobalEl = document.getElementById('reels-bg-volume-range-global');
@@ -5295,6 +5296,99 @@ function _initExportSettingSliders() {
     _bindExportSliderNumber('reels-export-concurrency');
 }
 
+// 导出设置独立保存，重新打开 Reels 时恢复上次使用的组合。
+const REELS_EXPORT_SETTINGS_STORAGE_KEY = 'videokit_reels_export_settings_v1';
+const REELS_EXPORT_SETTING_DEFAULTS = {
+    'reels-quality': 'low',
+    'reels-custom-bitrate': '5',
+    'reels-custom-max-bitrate': '7',
+    'reels-export-engine': 'precise',
+    'reels-suffix': '_subtitled',
+    'reels-custom-duration': '',
+    'reels-use-gpu': true,
+    'reels-use-memory-decoder': true,
+    'reels-voice-volume': '100',
+    'reels-bg-volume': '100',
+    'reels-bgm-volume': '30',
+    'reels-reverb-enabled': false,
+    'reels-reverb-preset': 'hall',
+    'reels-reverb-mix': '15',
+    'reels-stereo-width': '100',
+    'reels-audio-fx-target': 'all',
+    'reels-multi-preset-enabled': false,
+    'reels-mp-naming': 'flat',
+    'reels-loop-fade': true,
+    'reels-fast-alpha-mode': true,
+    'reels-loop-fade-dur': '1',
+    'reels-resolution-select': '1080x1920',
+};
+const REELS_EXPORT_SETTING_LABELS = {
+    'reels-quality': '画质', 'reels-custom-bitrate': '目标码率', 'reels-custom-max-bitrate': '最大码率',
+    'reels-export-engine': '输出引擎', 'reels-suffix': '文件后缀', 'reels-custom-duration': '输出时长',
+    'reels-use-gpu': 'GPU 编码', 'reels-use-memory-decoder': '极速内存渲染',
+    'reels-voice-volume': '人声音量', 'reels-bg-volume': '背景音量', 'reels-bgm-volume': '配乐音量',
+    'reels-reverb-enabled': '混响', 'reels-reverb-preset': '混响预设', 'reels-reverb-mix': '混响量',
+    'reels-stereo-width': '立体声宽度', 'reels-audio-fx-target': '特效目标',
+    'reels-multi-preset-enabled': '多模板矩阵导出', 'reels-mp-naming': '矩阵命名方式',
+    'reels-loop-fade': '循环透明过渡', 'reels-fast-alpha-mode': '极速贴合模式',
+    'reels-loop-fade-dur': '过渡时长', 'reels-resolution-select': '分辨率',
+};
+
+function _readReelsExportSettings() {
+    const settings = {};
+    Object.keys(REELS_EXPORT_SETTING_DEFAULTS).forEach(id => {
+        const el = document.getElementById(id);
+        if (el) settings[id] = el.type === 'checkbox' ? el.checked : el.value;
+    });
+    return settings;
+}
+
+function _saveReelsExportSettings() {
+    try {
+        localStorage.setItem(REELS_EXPORT_SETTINGS_STORAGE_KEY, JSON.stringify(_readReelsExportSettings()));
+    } catch (error) {
+        console.warn('[Reels] 保存导出设置失败:', error);
+    }
+}
+
+function _initReelsExportSettingsPersistence() {
+    if (window._reelsExportSettingsPersistenceReady) return;
+    window._reelsExportSettingsPersistenceReady = true;
+    let saved = {};
+    try { saved = JSON.parse(localStorage.getItem(REELS_EXPORT_SETTINGS_STORAGE_KEY) || '{}') || {}; } catch (_) { }
+    Object.entries(saved).forEach(([id, value]) => {
+        const el = document.getElementById(id);
+        if (!el || !(id in REELS_EXPORT_SETTING_DEFAULTS)) return;
+        if (el.type === 'checkbox') el.checked = Boolean(value);
+        else el.value = String(value ?? '');
+    });
+    // 还原后同步关联 UI（码率、引擎说明、分辨率与滑块）。
+    reelsUpdateCustomBitrateUI();
+    reelsUpdateExportEngineUI();
+    if (typeof reelsHandleResolutionChange === 'function') {
+        reelsHandleResolutionChange((document.getElementById('reels-resolution-select') || {}).value);
+    }
+    let saveTimer;
+    Object.keys(REELS_EXPORT_SETTING_DEFAULTS).forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const scheduleSave = () => {
+            clearTimeout(saveTimer);
+            saveTimer = setTimeout(_saveReelsExportSettings, 120);
+        };
+        el.addEventListener('input', scheduleSave);
+        el.addEventListener('change', scheduleSave);
+    });
+}
+
+function _getReelsExportCustomSettingsSummary() {
+    const settings = _readReelsExportSettings();
+    return Object.keys(REELS_EXPORT_SETTING_DEFAULTS).filter(id => {
+        if (!(id in settings)) return false;
+        return String(settings[id]) !== String(REELS_EXPORT_SETTING_DEFAULTS[id]);
+    }).map(id => REELS_EXPORT_SETTING_LABELS[id] || id);
+}
+
 function _getPreviewAudioMixConfig() {
     let voiceVolume = parseFloat((document.getElementById('reels-voice-volume') || {}).value || '100');
     let bgVolume = _getGlobalBgVolumePercent();
@@ -9505,6 +9599,15 @@ async function reelsStartExport() {
         const proceed = confirm("【画质选择提醒】\\n\\n画质档位会显示目标码率和最大码率：\\n\\n• 口播低质量（默认 2/3 Mbps）：固定机位、人物和背景运动少\\n• 口播高质量（8/11 Mbps）：绿幕、细节多或人物动作较多\\n• Reels高质量（12 Mbps）：动态背景、转场和运动镜头\\n• 自定义码率：按需要手动设置\\n\\n建议先导出一个片段确认画质。您要继续当前导出吗？（本提示仅显示一次）");
         if (!proceed) return;
         localStorage.setItem('reelsQualityReminderShown', 'true');
+    }
+
+    // 明确告知导出会沿用哪些非默认设置，避免用户忘记上次保存过的参数。
+    const customSettings = _getReelsExportCustomSettingsSummary();
+    if (customSettings.length > 0) {
+        const preview = customSettings.slice(0, 12).join('、');
+        const remaining = customSettings.length > 12 ? ` 等 ${customSettings.length} 项` : '';
+        const proceed = confirm(`本次导出将使用已修改并保存的设置：\n\n${preview}${remaining}\n\n确认继续导出？`);
+        if (!proceed) return;
     }
 
     // ── 导出前同步当前任务的覆层（用户可能删除/修改了覆层但尚未切换任务） ──

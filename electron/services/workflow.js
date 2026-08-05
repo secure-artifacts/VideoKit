@@ -138,7 +138,9 @@ async function generateWorkflowSubtitles({ sourcePath, subtitleText, outputDir, 
     return {
         srt_path: targetSrtPath,
         subtitle_txt_path: exportSubtitleTxt ? subtitleTxtPath : null,
-        fcpxml_path: targetFcpxmlPath
+        fcpxml_path: targetFcpxmlPath,
+        // 供前端展示实际识别内容，方便判断如 "fourth" 被识别成 "4th" 的差异。
+        recognized_text: result.fullText || ''
     };
 }
 
@@ -297,9 +299,10 @@ async function ttsWorkflow(data) {
     let srtPath = null;
     let subtitleTxtPath = null;
     let subtitleError = null;
+    let subtitleResult = null;
     if (subtitle_text) {
         try {
-            const subtitleResult = await generateWorkflowSubtitles({
+            subtitleResult = await generateWorkflowSubtitles({
                 sourcePath, subtitleText: subtitle_text, outputDir, taskPrefix,
                 groupName: safeGroupName,
                 gladiaKeys: gladia_keys, language, exportFcpxml: export_fcpxml,
@@ -335,6 +338,7 @@ async function ttsWorkflow(data) {
         used_key: usedKey,
         partial_success: Boolean(subtitleError),
         subtitle_error: subtitleError,
+        recognized_text: subtitleError ? '' : (subtitleResult?.recognized_text || ''),
     };
 }
 

@@ -8,6 +8,19 @@ let vwWorkflowPauseRequested = false;
 let vwWorkflowBatchOutputDir = '';
 const VW_RESUME_STORAGE_KEY = 'videokit_voiceover_resume_v1';
 
+// 从字幕服务返回的错误中提取识别文本。TEXT_MISMATCH 会把实际听写结果放在 JSON 中，
+// 单独保存后，用户无需在一长串错误信息里查找它。
+function vwGetRecognizedTextFromError(errorMessage) {
+    const message = String(errorMessage || '');
+    const match = message.match(/\{\s*"code"\s*:\s*"(?:TEXT_MISMATCH|AUTO_SOURCE_MATCH_NOT_FOUND)"[\s\S]*\}/);
+    if (!match) return '';
+    try {
+        return String(JSON.parse(match[0]).recognized_text || '').trim();
+    } catch (_) {
+        return '';
+    }
+}
+
 function saveVWResumeState() {
     try {
         localStorage.setItem(VW_RESUME_STORAGE_KEY, JSON.stringify({
@@ -282,6 +295,7 @@ async function vwPasteFromClipboard() {
             subtitleTxtPath: null,
             mp4Path: null,
             segments: null,
+            recognizedText: '',
             outputGroupName: null
         }));
         // 新粘贴的数据属于新批次；只有同一批任务暂停后继续时才复用输出目录。
@@ -345,6 +359,10 @@ function renderVWTasks() {
                 ${task.bgmPath ? `<button class="btn btn-secondary" style="padding:1px 6px;font-size:10px;" onclick="vwClearTaskBgm(${task.id})">清空</button>` : ''}
             </div>
             ${task.error ? `<div style="font-size: 10px; color: #ff6b6b; margin-top: 4px;">❌ ${escapeHtml(task.error)}</div>` : ''}
+            ${task.recognizedText ? `<div style="font-size: 10px; color: #74c0fc; margin-top: 4px; white-space: pre-wrap; word-break: break-word;"><strong>🎙️ 识别结果：</strong>${escapeHtml(task.recognizedText)}</div>` : ''}
+            <div style="margin-top:6px;">
+                <button class="btn btn-secondary" onclick="vwEditAndRerunTask(${task.id})" style="padding:3px 9px;font-size:11px;">✏️ 编辑并重新执行</button>
+            </div>
             ${task.status === 'partial' ? `<button class="btn btn-primary" onclick="retryVWSubtitles(${task.id})" style="padding:3px 9px;font-size:11px;margin-top:6px;">🔄 只重新生成字幕</button><span style="font-size:10px;color:#51cf66;margin-left:7px;">配音MP3已保留，不会重新配音</span>` : ''}
             ${task.mp4Path ? `<div style="font-size: 10px; color: #51cf66; margin-top: 4px;">🎬 MP4: ${escapeHtml(task.mp4Path)}</div>` : ''}
             ${task.segments ? `<div style="font-size: 10px; color: #51cf66; margin-top: 4px;">✅ ${task.segments.length} 个片段</div>` : ''}
@@ -711,7 +729,10 @@ function updateVWTaskCount() {
         const selectedCount = vwTasks.filter(t => t.selected).length;
         const bgmCount = vwTasks.filter(t => !!t.bgmPath).length;
         const folderCount = new Set(vwTasks.map(t => String(t.folderName || '').trim()).filter(Boolean)).size;
-        countEl.textContent = `共 ${vwTasks.length} 条，${folderCount} 个账号文件夹，已选 ${selectedCount} 条，${splitCount} 条拆分，${mp4Count} 条黑屏MP4，${bgmCount} 条配乐`;
+        const alignedCount = vwTasks.filter(t => t.status === 'done' && t.srtPath).length;
+        const mismatchCount = vwTasks.filter(t => Boolean(t.recognizedText)).length;
+        const pendingRecognitionCount = vwTasks.filter(t => !t.recognizedText && !t.srtPath && ['pending', 'generating', 'aligning'].includes(t.status)).length;
+        countEl.textContent = `共 ${vwTasks.length} 条，${folderCount} 个账号文件夹，已选 ${selectedCount} 条，${splitCount} 条拆分，${mp4Count} 条黑屏MP4，${bgmCount} 条配乐；字幕：已对齐 ${alignedCount}，文本不匹配 ${mismatchCount}，待识别 ${pendingRecognitionCount}`;
     }
 }
 
@@ -756,6 +777,7 @@ async function restartAllVoiceoverWorkflow() {
     vwTasks.forEach(task => {
         task.status = 'pending';
         task.error = null;
+        task.recognizedText = '';
         task.audioPath = null;
         task.srtPath = null;
         task.subtitleTxtPath = null;
@@ -771,7 +793,7 @@ async function restartAllVoiceoverWorkflow() {
     await startVoiceoverWorkflow(true);
 }
 
-async function startVoiceoverWorkflow(forceAll = false) {
+async function startVoiceoverWorkflow(forceAll = false, singleTaskId = null) {
     if (vwWorkflowRunning) {
         showToast('任务正在执行中', 'warning');
         return;
@@ -783,7 +805,9 @@ async function startVoiceoverWorkflow(forceAll = false) {
 
     const runnableIndices = [];
     vwTasks.forEach((task, index) => {
-        if (forceAll || task.status === 'pending' || task.status === 'error' || task.status === 'generating') {
+        if (singleTaskId !== null
+            ? task.id === singleTaskId
+            : (forceAll || task.status === 'pending' || task.status === 'error' || task.status === 'generating')) {
             runnableIndices.push(index);
         }
     });
@@ -867,6 +891,7 @@ async function startVoiceoverWorkflow(forceAll = false) {
             const voiceId = task.voiceId || defaultVoice;
 
             task.status = 'generating';
+            task.recognizedText = '';
             renderVWTasks();
             updateVWProgress(current, total, `并发 ${workerCount} · Worker ${workerIndex + 1} 正在处理 #${i + 1}`);
 
@@ -924,6 +949,7 @@ async function startVoiceoverWorkflow(forceAll = false) {
                 task.segments = ttsData.segments;
                 task.status = ttsData.partial_success ? 'partial' : 'done';
                 task.error = ttsData.subtitle_error ? `字幕生成失败：${ttsData.subtitle_error}` : null;
+                task.recognizedText = ttsData.recognized_text || vwGetRecognizedTextFromError(ttsData.subtitle_error);
 
             } catch (err) {
                 task.status = 'error';
@@ -980,6 +1006,79 @@ async function startVoiceoverWorkflow(forceAll = false) {
     }
 }
 
+// 编辑单条任务后重新执行；使用当前批次输出目录，避免意外重新跑其余任务。
+function vwEditAndRerunTask(id) {
+    if (vwWorkflowRunning) {
+        showToast('当前有任务正在执行，请完成或暂停后再重新执行单条任务', 'warning');
+        return;
+    }
+    const task = vwTasks.find(item => item.id === id);
+    if (!task) return;
+
+    document.getElementById('vw-task-editor-modal')?.remove();
+    const voiceSelect = document.getElementById('vw-default-voice');
+    const voices = Array.from(voiceSelect?.options || []).filter(option => option.value);
+    const selectedVoiceId = task.voiceId || voiceSelect?.value || '';
+    if (selectedVoiceId && !voices.some(option => option.value === selectedVoiceId)) {
+        voices.unshift({ value: selectedVoiceId, textContent: `当前音色 (${selectedVoiceId})` });
+    }
+
+    const modal = document.createElement('div');
+    modal.id = 'vw-task-editor-modal';
+    modal.style.cssText = 'position:fixed;inset:0;z-index:10001;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.62);padding:20px;';
+    modal.innerHTML = `
+        <div role="dialog" aria-modal="true" aria-label="编辑并重新执行任务" style="width:min(760px,100%);max-height:90vh;overflow:auto;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:10px;padding:18px;box-shadow:0 16px 48px rgba(0,0,0,.45);">
+            <h3 style="margin:0 0 14px;">编辑并重新执行 #${vwTasks.indexOf(task) + 1}</h3>
+            <label style="display:block;font-size:12px;margin-bottom:5px;">人声配音文案</label>
+            <textarea id="vw-edit-tts-text" class="textarea" rows="5" style="width:100%;box-sizing:border-box;"></textarea>
+            <label style="display:block;font-size:12px;margin:12px 0 5px;">字幕断行文本</label>
+            <textarea id="vw-edit-subtitle-text" class="textarea" rows="6" style="width:100%;box-sizing:border-box;"></textarea>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;">
+                <label style="font-size:12px;">音色<select id="vw-edit-voice" class="select" style="display:block;width:100%;margin-top:5px;"></select></label>
+                <label style="font-size:12px;">账号/文件夹命名<input id="vw-edit-folder" class="input" style="display:block;width:100%;box-sizing:border-box;margin-top:5px;" placeholder="留空则不分账号文件夹"></label>
+            </div>
+            <p style="font-size:11px;color:var(--text-muted);margin:12px 0;">保存后仅重新执行这一条的配音、字幕和当前勾选的拆分/MP4设置；其他任务不会执行。</p>
+            <div style="display:flex;justify-content:flex-end;gap:8px;"><button type="button" class="btn btn-secondary" id="vw-edit-cancel">取消</button><button type="button" class="btn btn-primary" id="vw-edit-submit">🚀 保存并重新执行</button></div>
+        </div>`;
+    document.body.appendChild(modal);
+    const ttsInput = modal.querySelector('#vw-edit-tts-text');
+    const subtitleInput = modal.querySelector('#vw-edit-subtitle-text');
+    const voiceInput = modal.querySelector('#vw-edit-voice');
+    const folderInput = modal.querySelector('#vw-edit-folder');
+    ttsInput.value = task.ttsText || '';
+    subtitleInput.value = task.subtitleText || '';
+    voices.forEach(option => {
+        const item = document.createElement('option');
+        item.value = option.value;
+        item.textContent = option.textContent || option.value;
+        item.selected = option.value === selectedVoiceId;
+        voiceInput.appendChild(item);
+    });
+    folderInput.value = task.folderName || '';
+    modal.querySelector('#vw-edit-cancel').onclick = () => modal.remove();
+    modal.addEventListener('click', (event) => { if (event.target === modal) modal.remove(); });
+    modal.querySelector('#vw-edit-submit').onclick = async () => {
+        const ttsText = ttsInput.value.trim();
+        const subtitleText = subtitleInput.value.trim();
+        const voiceId = voiceInput.value;
+        if (!ttsText || !subtitleText || !voiceId) {
+            showToast('请填写人声配音文案、字幕断行文本并选择音色', 'warning');
+            return;
+        }
+        task.ttsText = ttsText;
+        task.subtitleText = subtitleText;
+        task.voiceId = voiceId;
+        task.folderName = folderInput.value.trim();
+        task.error = null;
+        task.recognizedText = '';
+        modal.remove();
+        renderVWTasks();
+        updateVWTaskCount();
+        await startVoiceoverWorkflow(false, task.id);
+    };
+    ttsInput.focus();
+}
+
 async function retryVWSubtitles(id) {
     const task = vwTasks.find(item => item.id === id);
     if (!task?.audioPath || !task?.outputFolder || !task?.taskPrefix) {
@@ -988,6 +1087,7 @@ async function retryVWSubtitles(id) {
     }
     task.status = 'aligning';
     task.error = null;
+    task.recognizedText = '';
     renderVWTasks();
     try {
         const gladiaKeys = String(document.getElementById('gladia-keys')?.value || '').split('\n').map(key => key.trim()).filter(Boolean);
@@ -997,6 +1097,7 @@ async function retryVWSubtitles(id) {
     } catch (error) {
         task.status = 'partial';
         task.error = `字幕重试失败：${error.message}`;
+        task.recognizedText = vwGetRecognizedTextFromError(error.message);
         showToast(task.error, 'error');
     }
     renderVWTasks();
@@ -1026,6 +1127,7 @@ async function retryVWSubtitleTask(task, gladiaKeys) {
     task.subtitleTxtPath = data.subtitle_txt_path;
     task.status = 'done';
     task.error = null;
+    task.recognizedText = data.recognized_text || '';
     return data;
 }
 
@@ -1068,6 +1170,7 @@ async function retryAllVWSubtitles() {
             const task = retryTasks[index];
             task.status = 'aligning';
             task.error = null;
+            task.recognizedText = '';
             renderVWTasks();
             try {
                 await retryVWSubtitleTask(task, workerKeys);
@@ -1075,6 +1178,7 @@ async function retryAllVWSubtitles() {
             } catch (error) {
                 task.status = 'partial';
                 task.error = `字幕重试失败：${error.message}`;
+                task.recognizedText = vwGetRecognizedTextFromError(error.message);
             }
             completed++;
             renderVWTasks();

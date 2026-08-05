@@ -173,10 +173,20 @@ class ReelsCanvasRenderer {
         if (!_isSubCall && (currentTime < segStart || currentTime > segEnd)) return;
 
         // 【拦截】如果包含富文本样式范围，或启用了自动着色规则，则进入独立的富文本渲染循环，以此保证旧版 0 损耗
-        let finalStyledRanges = segment.styled_ranges || [];
+        // 自动着色的字符坐标必须与实际绘制的文本一致。字幕经过编辑后
+        // edited_text 与 text 可能不同；此前仍以 text 建立范围，会让命中词
+        // 后面的富文本切片错位，进而造成该句排版重叠/混乱。
+        const renderedText = segmentText;
+        let finalStyledRanges = Array.isArray(segment.styled_ranges) ? segment.styled_ranges : [];
         if (s.auto_color_rules && s.auto_color_rules.length > 0 && typeof ReelsRichText !== 'undefined') {
-            const autoRanges = ReelsRichText.getCachedAutoColor(segment.text, s.auto_color_rules);
+            const autoRanges = ReelsRichText.getCachedAutoColor(renderedText, s.auto_color_rules);
             finalStyledRanges = ReelsRichText.mergeAutoAndManual(autoRanges, finalStyledRanges);
+        }
+
+        // 兼容旧任务中保存的范围：文本被编辑后，丢弃越界部分，避免影响
+        // splitByRanges 的分段与换行计算。
+        if (finalStyledRanges.length > 0 && typeof ReelsRichText !== 'undefined') {
+            finalStyledRanges = ReelsRichText.validateRanges(finalStyledRanges, renderedText.length);
         }
 
         if (finalStyledRanges && finalStyledRanges.length > 0) {

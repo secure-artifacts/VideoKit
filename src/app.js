@@ -820,15 +820,49 @@ function togglePlayback() {
 
 // 初始化文件输入
 function initFileInputs() {
+    const subtitleAudioExtensions = ['.mp4', '.mov', '.mkv', '.webm', '.3gp', '.wav', '.mp3', '.m4a', '.aac', '.flac', '.ogg', '.opus', '.wma', '.aiff', '.aif', '.amr', '.flv', '.avi', '.wmv', '.json'];
+    const setSubtitleAudioFile = (file) => {
+        if (!file) return;
+        currentAudioPath = getFileNativePath(file);
+        document.getElementById('audio-path').value = file.name;
+        showToast(`已选择: ${file.name}`, 'success');
+    };
+
     // 音频文件
     document.getElementById('audio-file-input').addEventListener('change', (e) => {
         if (e.target.files.length > 0) {
-            const file = e.target.files[0];
-            currentAudioPath = getFileNativePath(file);
-            document.getElementById('audio-path').value = file.name;
-            showToast(`已选择: ${file.name}`, 'success');
+            setSubtitleAudioFile(e.target.files[0]);
         }
     });
+
+    // 字幕对齐：支持直接拖入单个音视频或 JSON 文件。
+    const subtitleDropZone = document.getElementById('subtitle-audio-drop-zone');
+    if (subtitleDropZone) {
+        const resetDropStyle = () => subtitleDropZone.classList.remove('is-dragover');
+        ['dragenter', 'dragover'].forEach(eventName => {
+            subtitleDropZone.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'copy';
+                subtitleDropZone.classList.add('is-dragover');
+            });
+        });
+        subtitleDropZone.addEventListener('dragleave', (e) => {
+            if (!subtitleDropZone.contains(e.relatedTarget)) resetDropStyle();
+        });
+        subtitleDropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            resetDropStyle();
+            const file = Array.from(e.dataTransfer.files || []).find(item => {
+                const name = String(item.name || '').toLowerCase();
+                return subtitleAudioExtensions.some(ext => name.endsWith(ext));
+            });
+            if (file) {
+                setSubtitleAudioFile(file);
+            } else {
+                showToast('请拖入 MP4、MP3、WAV、JSON 等支持的音视频文件', 'warning');
+            }
+        });
+    }
 
     // 原文本文件
     document.getElementById('source-file-input').addEventListener('change', (e) => {
@@ -13809,6 +13843,9 @@ async function startAutoEditByScript(isRetry = false, options = {}) {
                 script_text: scriptText,
                 output_dir: outputDir,
                 ...requestSettings,
+                // 从批量审核面板进入时，沿用该批量任务指定的最终文件名。
+                // 放在 settings 后，避免旧设置中的 output_path 覆盖它。
+                output_path: options.outputPathOverride || undefined,
                 manual_subtitle_map: autoEditFiles.reduce((map, f) => {
                     if (f.manualSubtitlePath) {
                         map[f.path] = f.manualSubtitlePath;
@@ -13870,7 +13907,15 @@ async function startAutoEditByScript(isRetry = false, options = {}) {
         if (sendBtn) sendBtn.style.display = '';
         if (!data.analysis_only && document.getElementById('autoedit-send-reels')?.checked) {
             try {
-                await sendAutoEditResultToReels(data, { silent: true });
+                // 审核面板可从批量任务进入。此时必须保留批量配置的
+                // Reels 任务名，否则会退回后端生成的默认文件名。
+                const activeBatchTask = autoEditActiveBatchIndex >= 0
+                    ? autoEditBatchTasks[autoEditActiveBatchIndex]
+                    : null;
+                await sendAutoEditResultToReels(data, {
+                    silent: true,
+                    baseName: activeBatchTask?.outputName || activeBatchTask?.name,
+                });
             } catch (sendError) {
                 console.warn('[AutoEdit] send to Reels failed:', sendError);
             }
@@ -14424,6 +14469,39 @@ function previewAutoEditComparisonCut(button, engine) {
         Number(row.querySelector('.ae-review-speed')?.value) || 1
     );
 }
+function collectAutoEditReviewSegments() {
+    if (!autoEditLastResult?.analysis_only) return [];
+    return Array.from(document.querySelectorAll('.autoedit-review-row')).map((row, index) => {
+        const original = autoEditLastResult.segments?.[index] || {};
+        return {
+            segment_id: original.segment_id,
+            source: original.source,
+            enabled: row.querySelector('.ae-review-enabled')?.checked !== false,
+            script: row.querySelector('.ae-review-script')?.value || original.script || '',
+            start: Number(row.querySelector('.ae-review-start')?.value),
+            end: Number(row.querySelector('.ae-review-end')?.value),
+            cut_selection: row.dataset.cutSelection || original.cut_selection || 'manual',
+            classic_start: Number(row.dataset.classicStart),
+            classic_end: Number(row.dataset.classicEnd),
+            v2_start: Number(row.dataset.v2Start),
+            v2_end: Number(row.dataset.v2End),
+            speed: Number(row.querySelector('.ae-review-speed')?.value || 1),
+        };
+    });
+}
+
+// 批量审核中的编辑应立即回写。这样返回批量列表后无需再按“保存”或
+// “正式导出”，批量导出会直接使用当前审核结果。
+function persistAutoEditBatchReview() {
+    const task = autoEditActiveBatchIndex >= 0 ? autoEditBatchTasks[autoEditActiveBatchIndex] : null;
+    if (!task) return;
+    task.reviewSegments = collectAutoEditReviewSegments().map(segment => ({ ...segment }));
+    if (task.reviewSegments.length) {
+        task.status = 'warning';
+        task.message = '审核修改已自动保存，等待导出';
+    }
+}
+
 function updateAutoEditCutSelection(row, selection) {
     if (!row) return;
     row.dataset.cutSelection = selection;
@@ -14439,6 +14517,7 @@ function updateAutoEditCutSelection(row, selection) {
         segment.end = Number(row.querySelector('.ae-review-end')?.value);
         segment.cut_selection = selection;
     }
+    persistAutoEditBatchReview();
 }
 function selectAutoEditComparisonCut(button, engine, options = {}) {
     const row = button?.closest?.('.autoedit-review-row') || button;
@@ -14486,6 +14565,7 @@ function handleAutoEditReviewSpeedChanged(input) {
     const safeSpeed = Number.isFinite(speed) && speed >= 0.25 && speed <= 4 ? speed : 1;
     input.value = String(safeSpeed);
     if (autoEditLastResult?.segments?.[index]) autoEditLastResult.segments[index].speed = safeSpeed;
+    persistAutoEditBatchReview();
 }
 function retranscribeAutoEditReviewRow(button, reviewIndex) {
     const source = getAutoEditReviewRowSource(button);
@@ -14749,6 +14829,7 @@ function moveAutoEditReviewRow(index, delta) {
     if (next < 0 || next >= list.length) return;
     [list[index], list[next]] = [list[next], list[index]];
     renderAutoEditResult(autoEditLastResult);
+    persistAutoEditBatchReview();
 }
 
 function autoEditWords(text) {
@@ -14806,6 +14887,7 @@ function handleAutoEditScriptChanged(textarea) {
     row.dataset.missingConfirmedFor = '';
     updateAutoEditMissingWords(row);
     refreshAutoEditDuplicateMarks();
+    persistAutoEditBatchReview();
 }
 
 function confirmAutoEditMissingWords(button) {
@@ -14949,6 +15031,7 @@ function handleAutoEditReviewEnabled(checkbox) {
         showToast('已重新启用此片段', 'success');
     }
     refreshAutoEditDuplicateMarks();
+    persistAutoEditBatchReview();
 }
 
 function toggleAutoEditReviewDetails(button) {
@@ -15114,6 +15197,7 @@ function autoEditReviewDrop(event, index) {
     autoEditLastResult.segments.splice(index, 0, item);
     autoEditReviewDragIndex = -1;
     renderAutoEditResult(autoEditLastResult);
+    persistAutoEditBatchReview();
 }
 function nudgeAutoEditTime(button, selector, delta) {
     const input = button.closest('.autoedit-review-row')?.querySelector(selector);
@@ -15125,23 +15209,7 @@ function nudgeAutoEditTime(button, selector, delta) {
 async function exportReviewedAutoEdit() {
     if (!autoEditLastResult?.analysis_only) return;
     const rows = Array.from(document.querySelectorAll('.autoedit-review-row'));
-    const reviewSegments = rows.map((row, index) => {
-        const original = autoEditLastResult.segments[index];
-        return {
-            segment_id: original.segment_id,
-            source: original.source,
-            enabled: row.querySelector('.ae-review-enabled')?.checked !== false,
-            script: row.querySelector('.ae-review-script')?.value || original.script,
-            start: Number(row.querySelector('.ae-review-start')?.value),
-            end: Number(row.querySelector('.ae-review-end')?.value),
-            cut_selection: row.dataset.cutSelection || original.cut_selection || 'manual',
-            classic_start: Number(row.dataset.classicStart),
-            classic_end: Number(row.dataset.classicEnd),
-            v2_start: Number(row.dataset.v2Start),
-            v2_end: Number(row.dataset.v2End),
-            speed: Number(row.querySelector('.ae-review-speed')?.value || 1),
-        };
-    });
+    const reviewSegments = collectAutoEditReviewSegments();
     const enabledRows = rows.filter(row => row.querySelector('.ae-review-enabled')?.checked !== false);
     const excludedCount = rows.length - enabledRows.length;
     const duplicateCount = enabledRows.filter(row => row.dataset.duplicate === 'true').length;
@@ -15182,6 +15250,13 @@ async function exportReviewedAutoEdit() {
     await startAutoEditByScript(false, {
         reviewSegments,
         outputDirOverride: batchTask ? window.electronAPI.pathJoin(batchTask.folder, '_auto_edit') : undefined,
+        outputPathOverride: batchTask
+            ? window.electronAPI.pathJoin(
+                batchTask.folder,
+                '_auto_edit',
+                `${sanitizeAutoEditBatchOutputName(batchTask.outputName, batchTask.name || 'auto_edit')}.mp4`
+            )
+            : undefined,
         requestSettingsOverride: { ...(batchTask?.settings || getAutoEditRequestSettings()), force_transcribe: false },
     });
 }
