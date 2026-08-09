@@ -53,6 +53,8 @@ const _reelsState = {
 window._reelsState = _reelsState;
 
 const REELS_DEFAULT_PRESET_KEY = 'reels_default_preset_name';
+const REELS_EXPORT_RESUME_KEY = 'videokit_reels_export_resume_v1';
+const REELS_EXPORT_RECYCLE_EVERY = 6;
 const REELS_WATERMARK_STORAGE_KEY = 'reels_watermarks';
 const REELS_BACKGROUND_EXTS = new Set(['mp4', 'mov', 'mkv', 'avi', 'wmv', 'flv', 'webm', 'jpg', 'jpeg', 'png', 'webp']);
 const REELS_AUDIO_EXTS = new Set(['mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg']);
@@ -1223,6 +1225,25 @@ function _bindReelsHotkeys() {
             }
         }
     });
+
+    // 任务快速切换：避免在编辑表格/文案时误触方向键。
+    document.addEventListener('keydown', (e) => {
+        if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) return;
+        if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+        const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : '';
+        if (tag === 'input' || tag === 'textarea' || tag === 'select' || (e.target && e.target.isContentEditable)) return;
+        if (!_isReelsPanelActive() || _reelsState.tasks.length === 0) return;
+
+        const previous = e.code === 'ArrowUp' || e.code === 'ArrowLeft';
+        const current = _reelsState.selectedIdx >= 0 ? _reelsState.selectedIdx : 0;
+        const target = Math.max(0, Math.min(
+            current + (previous ? -1 : 1),
+            _reelsState.tasks.length - 1
+        ));
+        if (target === current) return;
+        e.preventDefault();
+        reelsSelectTask(target);
+    });
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1974,11 +1995,13 @@ function _getSubtitleStyleScope() {
 function _getCurrentReelsGroupTasks() {
     const task = _getSelectedTask();
     if (!task) return [];
-    if (task._batchTabId) {
-        return (_reelsState.tasks || []).filter(t => t._batchTabId === task._batchTabId);
-    }
+    // folder 作用域必须优先按真实队列分组。恢复后所有队列都可能
+    // 共享同一个“批量导入任务”标签 ID；先按 batchTabId 会把修改误应用到 108 条。
     if (task._folderQueueId) {
         return (_reelsState.tasks || []).filter(t => t._folderQueueId === task._folderQueueId);
+    }
+    if (task._batchTabId) {
+        return (_reelsState.tasks || []).filter(t => t._batchTabId === task._batchTabId);
     }
     return [task];
 }
@@ -2004,6 +2027,11 @@ function _resolveSubtitleStyleForTask(task) {
     }
     if (task && task.subtitleStyle && typeof task.subtitleStyle === 'object') {
         return _cloneSubtitleStyle(task.subtitleStyle);
+    }
+    // 旧工程/旧队列模板把完整字幕样式保存在 task.style。
+    // 恢复后不能因为没有新字段 subtitleStyle 就回退成默认样式。
+    if (task && task.style && typeof task.style === 'object' && Object.keys(task.style).length > 0) {
+        return _cloneSubtitleStyle(task.style);
     }
     return _cloneSubtitleStyle(globalStyle) || _readStyleFromUI();
 }
@@ -6726,6 +6754,7 @@ function _importDroppedReelsTaskFolders(dirPaths) {
     let unmatched = 0;
     let replaced = 0;
     let firstImportedIndex = -1;
+    const workMode = _getWorkMode();
 
     for (const dirPath of dirPaths || []) {
         const paths = _scanDroppedReelsTaskFolder(dirPath);
@@ -6733,7 +6762,10 @@ function _importDroppedReelsTaskFolders(dirPaths) {
         const audios = paths.filter(p => REELS_AUDIO_EXTS.has(_fileExt(p)));
         const srts = paths.filter(p => _fileExt(p) === 'srt');
         const txts = paths.filter(p => _fileExt(p) === 'txt');
-        if (videos.length === 0) {
+        // 人声模式允许只拖入 MP3：背景视频、SRT 和 TXT 都可在批量表格中后补。
+        // 带声视频模式则必须至少有一个视频作为音频识别源。
+        const requiresVideo = workMode === 'voiced_bg';
+        if ((requiresVideo && videos.length === 0) || (!requiresVideo && audios.length === 0)) {
             skipped++;
             continue;
         }
@@ -6753,21 +6785,42 @@ function _importDroppedReelsTaskFolders(dirPaths) {
         const srtMap = byMatchKey(srts);
         const txtMap = byMatchKey(txts);
         const pairs = [];
-        for (const [matchKey, audioGroup] of audioMap.entries()) {
-            const srtGroup = srtMap.get(matchKey) || [];
-            const pairCount = Math.min(audioGroup.length, srtGroup.length);
-            for (let i = 0; i < pairCount; i++) {
+        if (workMode === 'voiced_bg') {
+            // 带声视频模式不需要独立配音；一个视频对应同名 TXT（TXT 可缺失，后续也可手动输入）。
+            for (let i = 0; i < videos.length; i++) {
+                const videoPath = videos[i];
+                const matchKey = _buildAudioSubtitleMatchKey(api.pathBasename?.(videoPath) || videoPath);
                 pairs.push({
                     matchKey,
-                    audioPath: audioGroup[i],
-                    srtPath: srtGroup[i],
-                    txtPath: (txtMap.get(matchKey) || [])[i] || (txtMap.get(matchKey) || [])[0] || null,
+                    videoPath,
+                    audioPath: null,
+                    srtPath: (srtMap.get(matchKey) || [])[0] || null,
+                    txtPath: (txtMap.get(matchKey) || [])[0] || null,
                 });
             }
-            unmatched += Math.max(0, audioGroup.length - pairCount);
-        }
-        for (const [matchKey, srtGroup] of srtMap.entries()) {
-            unmatched += Math.max(0, srtGroup.length - (audioMap.get(matchKey) || []).length);
+        } else {
+            const captionMap = workMode === 'srt' ? srtMap : txtMap;
+            for (const [matchKey, audioGroup] of audioMap.entries()) {
+                const captionGroup = captionMap.get(matchKey) || [];
+                // 字幕文本和背景都可以后补：先为每个 MP3 建立任务，方便在表格中
+                // 一次粘贴文案后批量对齐。已有同名 SRT/TXT 时仍自动关联。
+                const pairCount = audioGroup.length;
+                for (let i = 0; i < pairCount; i++) {
+                    pairs.push({
+                        matchKey,
+                        audioPath: audioGroup[i],
+                        srtPath: workMode === 'srt' ? captionGroup[i] : (srtMap.get(matchKey) || [])[i] || null,
+                        txtPath: workMode === 'srt'
+                            ? (txtMap.get(matchKey) || [])[i] || (txtMap.get(matchKey) || [])[0] || null
+                            : captionGroup[i],
+                    });
+                }
+                unmatched += Math.max(0, audioGroup.length - pairCount);
+            }
+            // 只统计多余的字幕文件；缺失 SRT 不应阻断任务导入。
+            for (const [matchKey, captionGroup] of captionMap.entries()) {
+                unmatched += Math.max(0, captionGroup.length - (audioMap.get(matchKey) || []).length);
+            }
         }
         if (pairs.length === 0) {
             skipped++;
@@ -6797,10 +6850,11 @@ function _importDroppedReelsTaskFolders(dirPaths) {
         const assignMode = _getBgAssignMode();
         for (let pairIndex = 0; pairIndex < pairs.length; pairIndex++) {
             const { matchKey, audioPath, srtPath, txtPath } = pairs[pairIndex];
-            const videoPath = assignMode === 'single'
-                ? videos[0]
-                : videos[pairIndex % videos.length];
-            const audioName = api.pathBasename?.(audioPath) || String(audioPath).split(/[\\/]/).pop();
+            const videoPath = pairs[pairIndex].videoPath || (videos.length > 0
+                ? (assignMode === 'single' ? videos[0] : videos[pairIndex % videos.length])
+                : null);
+            const sourceName = audioPath || videoPath;
+            const audioName = api.pathBasename?.(sourceName) || String(sourceName).split(/[\\/]/).pop();
             const srcUrl = api.toFileUrl?.(videoPath) || null;
             const task = {
                 id: 'task_' + Math.random().toString(36).slice(2, 11) + '_' + Date.now() + '_' + imported,
@@ -6856,6 +6910,30 @@ function _importDroppedReelsTaskFolders(dirPaths) {
 
 function reelsToggleFolderQueue(queueId) {
     if (!queueId) return;
+    const queueTask = (_reelsState.tasks || []).find(task => task._folderQueueId === queueId);
+    const parentGroupId = queueTask
+        ? (queueTask._batchTabId || '__reels_existing_tasks__')
+        : '';
+
+    // 外层批量组折叠时，单击某个文件夹应直接展开它，
+    // 不能只翻转内层箭头却仍被外层 display:none 压住。
+    if (parentGroupId && _reelsState.batchGroupCollapsed?.[parentGroupId]) {
+        _reelsState.batchGroupCollapsed[parentGroupId] = false;
+        // 外层打开后，其他内层队列原本也是“展开”状态，会造成
+        // 点一个却全部展开。先收起同组其他队列，只保留本次点击的队列。
+        const siblingQueueIds = new Set(
+            (_reelsState.tasks || [])
+                .filter(task => (task._batchTabId || '__reels_existing_tasks__') === parentGroupId)
+                .map(task => task._folderQueueId)
+                .filter(Boolean)
+        );
+        siblingQueueIds.forEach(id => {
+            _reelsState.folderQueueCollapsed[id] = id !== queueId;
+        });
+        _reelsState.folderQueueCollapsed[queueId] = false;
+        _renderTaskList();
+        return;
+    }
     _reelsState.folderQueueCollapsed[queueId] = !_reelsState.folderQueueCollapsed[queueId];
     _renderTaskList();
 }
@@ -6895,7 +6973,10 @@ function _onTaskListDrop(e) {
                     7000
                 );
             } else {
-                showToast('未导入任务：每个文件夹至少需要包含一个视频文件', 'warning', 6000);
+                const requirement = _getWorkMode() === 'voiced_bg'
+                    ? '至少一个带声视频文件'
+                    : '至少一个配音文件（MP3 等）';
+                showToast(`未导入任务：文件夹需包含${requirement}`, 'warning', 6000);
             }
         }
     }
@@ -7140,6 +7221,16 @@ function reelsClearTasks() {
     _renderTaskList();
 }
 
+function _reelsQueueShortId(value) {
+    const input = String(value || 'queue').trim().toLowerCase().replace(/\\/g, '/');
+    let hash = 2166136261;
+    for (let i = 0; i < input.length; i++) {
+        hash ^= input.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(36).toUpperCase().padStart(7, '0').slice(-7);
+}
+
 function _renderTaskList() {
     const container = document.getElementById('reels-task-list');
     const countEl = document.getElementById('reels-task-count');
@@ -7211,8 +7302,11 @@ function _renderTaskList() {
             ];
         }
         const statusText = statusParts.join(' ');
-        // Shorten filename for compact display
-        const baseName = String(task.fileName || '').replace(/\.[^.]+$/, '');
+        // 左侧任务列表应优先回显用户在批量表格中设置的“导出命名”。
+        // fileName 是任务的内部/素材名称（例如 card_001.mp4），不能用它覆盖
+        // 用户对最终文件名的认知；没有自定义名称时才回退到默认文件名。
+        const displayName = String(task.exportName || task.fileName || task.baseName || '未命名任务');
+        const baseName = displayName.replace(/\.[^.]+$/, '');
         const shortName = baseName.length > 18 ? baseName.substring(0, 16) + '…' : baseName;
         const escapeTaskText = (value) => String(value || '')
             .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -7292,6 +7386,7 @@ function _renderTaskList() {
         const queueCollapsed = queueId ? !!_reelsState.folderQueueCollapsed[queueId] : false;
         if (queueId && queueId !== lastFolderQueueId) {
             const queueName = escapeTaskText(task._folderQueueName || '文件夹队列');
+            const queueShortId = _reelsQueueShortId(`folder:${queueId}`);
             const queueTasks = tasks.filter(item => item._folderQueueId === queueId);
             const queueCount = queueTasks.length;
             const queueSelected = queueTasks.filter(item => item._exportSelected !== false).length;
@@ -7307,7 +7402,8 @@ function _renderTaskList() {
                         onclick="event.stopPropagation()"
                         style="accent-color:var(--accent-color,#7b8bef);margin:0;transform:scale(1.08);cursor:pointer;"
                         title="本账号总开关：勾选则该账号全部任务参与导出，取消则全部不导出">
-                    <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${queueName}">📁 ${queueName}</span>
+                    <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${queueName} · 队列唯一编号 Q-${queueShortId}">📁 ${queueName}</span>
+                    <span style="flex:0 0 auto;padding:1px 5px;border-radius:999px;background:rgba(76,158,255,.2);border:1px solid rgba(156,202,255,.35);color:#dbeafe;font-size:9px;font-weight:800;" title="队列唯一编号">Q-${queueShortId}</span>
                     <span style="margin-left:auto;color:#789;font-weight:400;">${queueSelected}/${queueCount}</span>
                 </div>`;
         }
@@ -7316,7 +7412,7 @@ function _renderTaskList() {
         return `${batchGroupHeader}${folderHeader}
             <div class="reels-task-item ${selected ? 'reels-task-selected' : ''}"
                  onclick="reelsSelectTask(${i})"
-                 title="${escapeTaskText(task.fileName)}"
+                 title="${escapeTaskText(displayName)}${task.exportName && task.fileName ? `\n内部任务名：${escapeTaskText(task.fileName)}` : ''}"
                  style="display:flex; align-items:center; gap:4px; padding:5px 6px; margin-bottom:2px;
                         border-radius:5px; cursor:pointer; transition:background .12s, opacity .15s;
                         background: ${selected ? 'rgba(0,212,255,0.15)' : 'transparent'};
@@ -7526,8 +7622,16 @@ function reelsSelectTask(idx) {
         } else {
             bgmAudio.removeAttribute('src');
         }
+        // 切换任务时，BGM 回到该任务时间轴的起点（不是沿用上一任务的播放位置）。
+        try { bgmAudio.currentTime = _getTaskBgmStart(task); } catch (e) { }
     }
     _applyPreviewAudioMix();
+    // 同一个 MP3 被多个任务复用时，src 不会变化，浏览器会保留 currentTime。
+    // 因此显式归零，保证每次切换任务都从时间轴 0:00 预览。
+    if (audio) {
+        try { audio.currentTime = 0; } catch (e) { }
+    }
+    _clearPreviewSeekLock();
 
     if (video && bgPath && !_reelsFileExists(bgPath)) {
         _reelsState._previewBgImage = null;
@@ -7757,6 +7861,8 @@ function reelsSelectTask(idx) {
     _reelsState.mockPlaying = false;
     _reelsState.mockPausedTime = 0;
     _updatePreviewTimeUI(0, _getPreviewDuration());
+    // V2 预览有独立时钟；播放中切换任务时也必须清掉旧任务进度。
+    window.ReelsPreviewV2?.resetForTaskSwitch?.();
     if (playBtn) playBtn.textContent = '▶️';
 }
 
@@ -8492,18 +8598,16 @@ function reelsOpenSubtitlePresetPicker(anchorEl) {
     window._openStyledPresetPicker(anchorEl, currentVal, (selectedVal) => {
         if (hiddenInput) {
             hiddenInput.value = selectedVal || '';
-            
-            // Sync the selected preset to the task objects
-            const applyAll = typeof _isStyleApplyAllEnabled === 'function' ? _isStyleApplyAllEnabled() : true;
-            if (applyAll && _reelsState.tasks) {
-                _reelsState.tasks.forEach(t => t._subtitlePreset = selectedVal || '');
-            } else {
-                const scope = typeof _getSubtitleStyleScope === 'function' ? _getSubtitleStyleScope() : 'task';
-                const targets = scope === 'folder' ? _getCurrentReelsGroupTasks() : [_getSelectedTask()].filter(Boolean);
-                targets.forEach(t => { t._subtitlePreset = selectedVal || ''; });
-            }
 
-            // Trigger the same logic as the old onchange event if necessary
+            // 从字幕面板选择预设应当“落地”为当前样式，而不是给任务留下
+            // 高优先级的 _subtitlePreset 引用。后者会覆盖随后在面板中做的
+            // 颜色/色块调整，造成必须手动再改一次才显示的假象。
+            const scope = typeof _getSubtitleStyleScope === 'function' ? _getSubtitleStyleScope() : 'task';
+            const targets = scope === 'all'
+                ? (_reelsState.tasks || [])
+                : (scope === 'folder' ? _getCurrentReelsGroupTasks() : [_getSelectedTask()].filter(Boolean));
+            targets.forEach(t => { t._subtitlePreset = ''; });
+
             if (typeof reelsLoadPresetQuick === 'function') {
                 reelsLoadPresetQuick();
             } else if (typeof reelsLoadPreset === 'function') {
@@ -8789,6 +8893,8 @@ function reelsLoadPreset(silent = false) {
         }
         _reelsState.style = Object.assign({}, _reelsState.style || {}, style);
         _writeStyleToUI(style);
+        // 选择预设后立即回写目标任务；不能依赖后续手动改控件才能生效。
+        _persistSubtitleStyleByScope(_readStyleFromUI());
         reelsUpdatePreview();
     }
 }
@@ -9125,6 +9231,7 @@ function reelsSelectIntro() {
 }
 
 function reelsCancelExport() {
+    try { localStorage.removeItem(REELS_EXPORT_RESUME_KEY); } catch (_) { }
     if (_reelsState.isExporting) {
         _reelsState.isExporting = false;
         _reelsCancelUnfinishedJobProgressUI();
@@ -9493,6 +9600,16 @@ function _updateMultiPresetSummary() {
     }
 }
 
+function _resolveSafeReelsExportConcurrency(requested, totalJobs, options = {}) {
+    const wanted = Math.max(1, Math.min(4, parseInt(requested, 10) || 1));
+    if (options.doFcpxml) return Math.min(wanted, 4);
+
+    // 长队列的累计内存由“分段重建渲染进程”解决，不应强制取消用户选择的并发 2。
+    // 内存解码模式本身会同时保留大量原始帧，仍保守限制为 1。
+    if (options.useMemoryDecoder) return 1;
+    return Math.min(wanted, 2);
+}
+
 function _getSelectedMultiPresets() {
     const cbs = document.querySelectorAll('.reels-mp-cb:checked');
     return Array.from(cbs).map(cb => cb.getAttribute('data-preset-name')).filter(Boolean);
@@ -9592,10 +9709,11 @@ function _cloneTaskWithPreset(task, presetName) {
 // 初始化（需要在 DOM 就绪后调用）
 setTimeout(() => _initMultiPresetUI(), 200);
 
-async function reelsStartExport() {
+async function reelsStartExport(options = {}) {
+    const resumeState = options && options.resumeState ? options.resumeState : null;
     const workMode = _getWorkMode();
     
-    if (!localStorage.getItem('reelsQualityReminderShown')) {
+    if (!resumeState && !localStorage.getItem('reelsQualityReminderShown')) {
         const proceed = confirm("【画质选择提醒】\\n\\n画质档位会显示目标码率和最大码率：\\n\\n• 口播低质量（默认 2/3 Mbps）：固定机位、人物和背景运动少\\n• 口播高质量（8/11 Mbps）：绿幕、细节多或人物动作较多\\n• Reels高质量（12 Mbps）：动态背景、转场和运动镜头\\n• 自定义码率：按需要手动设置\\n\\n建议先导出一个片段确认画质。您要继续当前导出吗？（本提示仅显示一次）");
         if (!proceed) return;
         localStorage.setItem('reelsQualityReminderShown', 'true');
@@ -9603,7 +9721,7 @@ async function reelsStartExport() {
 
     // 明确告知导出会沿用哪些非默认设置，避免用户忘记上次保存过的参数。
     const customSettings = _getReelsExportCustomSettingsSummary();
-    if (customSettings.length > 0) {
+    if (!resumeState && customSettings.length > 0) {
         const preview = customSettings.slice(0, 12).join('、');
         const remaining = customSettings.length > 12 ? ` 等 ${customSettings.length} 项` : '';
         const proceed = confirm(`本次导出将使用已修改并保存的设置：\n\n${preview}${remaining}\n\n确认继续导出？`);
@@ -9819,13 +9937,17 @@ async function reelsStartExport() {
     const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     const timeStr = `${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
     const subFolderName = `${dateStr}_${timeStr}_批量Reels`;
-    const outputDirTrimmed = `${outputDirBase}${outputJoinSep}${subFolderName}`;
+    const outputDirTrimmed = resumeState?.outputDirTrimmed
+        ? String(resumeState.outputDirTrimmed)
+        : `${outputDirBase}${outputJoinSep}${subFolderName}`;
 
     const concurrencyInput = document.getElementById('reels-export-concurrency');
-    const concurrency = concurrencyInput ? Math.max(1, parseInt(concurrencyInput.value) || 1) : 1;
+    const requestedConcurrency = resumeState?.requestedConcurrency
+        ? Math.max(1, parseInt(resumeState.requestedConcurrency) || 1)
+        : (concurrencyInput ? Math.max(1, parseInt(concurrencyInput.value) || 1) : 1);
 
     // ═══ 多模板矩阵展开 ═══
-    const multiPresetCfg = _getMultiPresetConfig();
+    const multiPresetCfg = resumeState?.multiPresetCfg || _getMultiPresetConfig();
     const exportJobs = [];
     if (multiPresetCfg) {
         // 矩阵模式：tasks × presets
@@ -9842,6 +9964,58 @@ async function reelsStartExport() {
         }
     }
     const totalJobs = exportJobs.length;
+    const exportJobKeys = exportJobs.map((job, index) => {
+        const task = job.task || {};
+        return [
+            task.id || '', task._folderQueueId || '', task.audioPath || '',
+            task.videoPath || task.bgPath || '', task.baseName || task.fileName || '',
+            job.presetName || '', index,
+        ].join('|');
+    });
+    if (resumeState) {
+        const sameJobs = resumeState.totalJobs === totalJobs
+            && JSON.stringify(resumeState.jobKeys || []) === JSON.stringify(exportJobKeys);
+        if (!sameJobs) {
+            try { localStorage.removeItem(REELS_EXPORT_RESUME_KEY); } catch (_) { }
+            _reelsState.isExporting = false;
+            if (exportBtn) { exportBtn.disabled = false; exportBtn.innerHTML = '🚀 开始导出'; }
+            alert('导出队列在释放内存期间发生了变化，已停止自动续传。请重新点击导出。');
+            return;
+        }
+    }
+    const concurrency = _resolveSafeReelsExportConcurrency(requestedConcurrency, totalJobs, {
+        doFcpxml,
+        useMemoryDecoder: memoryDecoderEnabled,
+        width: _reelsState.targetWidth || 1080,
+        height: _reelsState.targetHeight || 1920,
+    });
+    if (concurrencyInput) concurrencyInput.value = String(concurrency);
+    const concurrencyRange = document.getElementById('reels-export-concurrency-range');
+    if (concurrencyRange) concurrencyRange.value = String(concurrency);
+    if (concurrency < requestedConcurrency) {
+        const safeMessage = `已为 ${totalJobs} 个导出任务自动将并发数 ${requestedConcurrency} 降为 ${concurrency}，避免瞬时内存溢出`;
+        console.warn(`[Reels] ${safeMessage}`);
+        if (typeof showToast === 'function') showToast(safeMessage, 'warning', 7000);
+    }
+    if (!resumeState && !doFcpxml && totalJobs >= 12 && typeof showToast === 'function') {
+        showToast(`长队列分段模式：段内并发 ${concurrency}，每 ${REELS_EXPORT_RECYCLE_EVERY} 条释放内存后自动续传`, 'info', 7000);
+    }
+    const resumeManifest = {
+        version: 1,
+        active: true,
+        reloadPending: false,
+        startedAt: resumeState?.startedAt || Date.now(),
+        outputDirTrimmed,
+        requestedConcurrency,
+        multiPresetCfg,
+        totalJobs,
+        jobKeys: exportJobKeys,
+        nextIndex: Math.max(0, Math.min(totalJobs, Number(resumeState?.nextIndex) || 0)),
+        okCount: Math.max(0, Number(resumeState?.okCount) || 0),
+        failCount: Math.max(0, Number(resumeState?.failCount) || 0),
+        failDetails: Array.isArray(resumeState?.failDetails) ? resumeState.failDetails.slice(-30) : [],
+    };
+    try { localStorage.setItem(REELS_EXPORT_RESUME_KEY, JSON.stringify(resumeManifest)); } catch (_) { }
     // 并发任务各自上报进度。汇总时必须按每个任务的最新进度相加，
     // 不能用“任务序号 + 当前百分比”，否则回调交错会让总进度条来回跳。
     const jobProgress = new Array(totalJobs).fill(0);
@@ -9858,9 +10032,11 @@ async function reelsStartExport() {
     };
 
     // ── 矩阵模式确认 ──
-    if (multiPresetCfg && totalJobs > tasks.length) {
+    // 分段重启后是同一批导出的自动续传，不能每 6 条重复询问。
+    if (!resumeState && multiPresetCfg && totalJobs > tasks.length) {
         const ok = confirm(`🎭 多模板矩阵导出\n\n${tasks.length} 个任务 × ${multiPresetCfg.presets.length} 个覆层预设 = ${totalJobs} 个视频\n\n已选模板: ${multiPresetCfg.presets.join(', ')}\n命名方式: ${multiPresetCfg.naming === 'folder' ? '按模板分目录' : '平铺命名'}\n\n确认开始导出？`);
         if (!ok) {
+            try { localStorage.removeItem(REELS_EXPORT_RESUME_KEY); } catch (_) { }
             if (exportBtn) { exportBtn.disabled = false; exportBtn.innerHTML = '🚀 开始导出'; }
             _reelsState.isExporting = false;
             return;
@@ -9868,7 +10044,12 @@ async function reelsStartExport() {
     }
 
     _reelsInitJobProgressUI(exportJobs);
-    _reelsUpdateExportProgressUI(0, totalJobs);
+    for (let completedIndex = 0; completedIndex < resumeManifest.nextIndex; completedIndex++) {
+        jobProgress[completedIndex] = 100;
+        _reelsUpdateJobProgressUI(completedIndex, 100, '已完成（续传）', 'success');
+    }
+    lastOverallProgress = Math.round((resumeManifest.nextIndex / Math.max(1, totalJobs)) * 100);
+    _reelsUpdateExportProgressUI(resumeManifest.nextIndex, totalJobs);
 
     // ═══ 文件名去重：行号 + 冲突检测 ═══
     const _exportResolvedNames = {};
@@ -9930,9 +10111,21 @@ async function reelsStartExport() {
         });
     }
 
-    let currentIndex = 0;
+    failCount = resumeManifest.failCount;
+    okCount = resumeManifest.okCount;
+    failDetails.splice(0, failDetails.length, ...resumeManifest.failDetails);
+    let currentIndex = resumeManifest.nextIndex;
+    let contiguousCompletedIndex = resumeManifest.nextIndex;
+    const completedOutOfOrder = new Set();
+    const segmentedExport = !doFcpxml && totalJobs >= 12;
+    // 每个分段内仍使用用户选择的并发数。只有整段全部结束后
+    // 才重建渲染进程，避免正在并发编码的另一条被中断。
+    const segmentEnd = segmentedExport
+        ? Math.min(totalJobs, resumeManifest.nextIndex + REELS_EXPORT_RECYCLE_EVERY)
+        : totalJobs;
+    let reloadingForMemoryRecycle = false;
     const processNext = async () => {
-        while (currentIndex < totalJobs) {
+        while (currentIndex < segmentEnd) {
             if (!_reelsState.isExporting) {
                 canceled = true;
                 break;
@@ -10861,6 +11054,23 @@ async function reelsStartExport() {
             task.overlays = originalOverlays;
         }
         updateConcurrentOverallProgress(i, 100);
+        completedOutOfOrder.add(i);
+        while (completedOutOfOrder.has(contiguousCompletedIndex)) {
+            completedOutOfOrder.delete(contiguousCompletedIndex);
+            contiguousCompletedIndex += 1;
+        }
+        // 并发 2 时任务可能倒序完成。断点只能前进到“连续已完成”的位置，
+        // 不能因为第 2 条先完成就跳过仍在处理的第 1 条。
+        resumeManifest.nextIndex = contiguousCompletedIndex;
+        resumeManifest.okCount = okCount;
+        resumeManifest.failCount = failCount;
+        resumeManifest.failDetails = failDetails.slice(-30);
+        try { localStorage.setItem(REELS_EXPORT_RESUME_KEY, JSON.stringify(resumeManifest)); } catch (_) { }
+
+        // 给 Chromium 一个释放上个任务 Canvas/解码图像的时机。长队列不连续
+        // 无间隙启动下一条，否则已清空的底层像素内存仍可能延迟回收。
+        await new Promise(resolve => setTimeout(resolve, totalJobs >= 24 ? 180 : 30));
+
     }
     };
 
@@ -10869,6 +11079,27 @@ async function reelsStartExport() {
         workers.push(processNext());
     }
     await Promise.all(workers);
+    const shouldRecycleRenderer = segmentedExport
+        && !canceled
+        && resumeManifest.nextIndex >= segmentEnd
+        && resumeManifest.nextIndex < totalJobs;
+    if (shouldRecycleRenderer) {
+        reloadingForMemoryRecycle = true;
+        resumeManifest.reloadPending = true;
+        resumeManifest.reloadRequestedAt = Date.now();
+        try { localStorage.setItem(REELS_EXPORT_RESUME_KEY, JSON.stringify(resumeManifest)); } catch (_) { }
+        _reelsState.isExporting = false;
+        if (statusEl) {
+            statusEl.textContent = `已完成 ${resumeManifest.nextIndex}/${totalJobs}，正在释放内存并自动续传…`;
+        }
+        // Electron 下结束当前 Chromium 渲染进程，才能真正归还
+        // Canvas/视频解码器内存。普通 location.reload 仅作为浏览器降级方案。
+        setTimeout(() => {
+            if (window.electronAPI?.recycleRenderer) window.electronAPI.recycleRenderer();
+            else window.location.reload();
+        }, 500);
+    }
+    if (reloadingForMemoryRecycle) return;
     if (canceled) _reelsCancelUnfinishedJobProgressUI();
 
     // ── 按标签分组输出 FCPXML；未分组任务仍输出一个总时间线 ──
@@ -10943,7 +11174,30 @@ async function reelsStartExport() {
         exportBtn.innerHTML = '🚀 开始导出';
     }
     _reelsState.isExporting = false;
+    try { localStorage.removeItem(REELS_EXPORT_RESUME_KEY); } catch (_) { }
 }
+
+// 分段释放内存后自动续传。仅接受 2 分钟内由程序主动发起的重载，
+// 避免用户隔天打开应用时意外继续旧导出。
+document.addEventListener('DOMContentLoaded', () => {
+    setTimeout(() => {
+        if (_reelsState.isExporting) return;
+        let manifest = null;
+        try { manifest = JSON.parse(localStorage.getItem(REELS_EXPORT_RESUME_KEY) || 'null'); } catch (_) { }
+        if (!manifest?.active || !manifest.reloadPending) return;
+        const age = Date.now() - (Number(manifest.reloadRequestedAt) || 0);
+        if (!(age >= 0 && age < 120000)) {
+            try { localStorage.removeItem(REELS_EXPORT_RESUME_KEY); } catch (_) { }
+            return;
+        }
+        manifest.reloadPending = false;
+        try { localStorage.setItem(REELS_EXPORT_RESUME_KEY, JSON.stringify(manifest)); } catch (_) { }
+        reelsStartExport({ resumeState: manifest }).catch(error => {
+            console.error('[Reels] 分段导出自动续传失败:', error);
+            try { localStorage.removeItem(REELS_EXPORT_RESUME_KEY); } catch (_) { }
+        });
+    }, 2200);
+});
 
 // ═══════════════════════════════════════════════════════
 // Smart Subtitle Processing (智能字幕处理)

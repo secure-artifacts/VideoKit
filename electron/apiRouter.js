@@ -31,7 +31,33 @@ const autoEditService = require('./services/autoEdit');
 function normalizeNumbers(text) {
     if (!text) return '';
     let res = String(text);
-    // English number words
+    // English compound number words must be converted before single words.
+    // Example: "twenty two twenty eight" -> "22 28", so Bible references such
+    // as "Job 22.28" and "Job twenty two twenty eight" compare as the same text.
+    const engUnits = {
+        'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5,
+        'six': 6, 'seven': 7, 'eight': 8, 'nine': 9
+    };
+    const engTens = {
+        'twenty': 20, 'thirty': 30, 'forty': 40, 'fifty': 50,
+        'sixty': 60, 'seventy': 70, 'eighty': 80, 'ninety': 90
+    };
+    for (const [tensWord, tensValue] of Object.entries(engTens)) {
+        for (const [unitWord, unitValue] of Object.entries(engUnits)) {
+            res = res.replace(new RegExp(`\\b${tensWord}[ -]+${unitWord}\\b`, 'gi'), String(tensValue + unitValue));
+        }
+    }
+    const engTeens = {
+        'eleven': '11', 'twelve': '12', 'thirteen': '13', 'fourteen': '14',
+        'fifteen': '15', 'sixteen': '16', 'seventeen': '17', 'eighteen': '18', 'nineteen': '19'
+    };
+    for (const [word, num] of Object.entries(engTeens)) {
+        res = res.replace(new RegExp(`\\b${word}\\b`, 'gi'), num);
+    }
+    for (const [word, num] of Object.entries(engTens)) {
+        res = res.replace(new RegExp(`\\b${word}\\b`, 'gi'), String(num));
+    }
+    // English single number words
     const engNums = {
         'zero': '0', 'one': '1', 'two': '2', 'three': '3', 'four': '4',
         'five': '5', 'six': '6', 'seven': '7', 'eight': '8', 'nine': '9', 'ten': '10'

@@ -1195,6 +1195,7 @@ function _renderBatchTable() {
                             <input type="hidden" id="rbt-align-lang" value="英语">
                         </div>
                         <button class="rbt-btn" id="rbt-align-all-btn" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;">一键对齐字幕</button>
+                        <button class="rbt-btn" id="rbt-align-multikey-btn" style="padding:2px 8px;font-size:11px;background:rgba(34,197,94,0.12);border:1px solid rgba(74,222,128,0.35);color:#86efac;" title="按可用 Gladia Key 数量并行对齐；每条任务优先使用不同 Key">多 Key 并行对齐</button>
                         <button class="rbt-btn" id="rbt-clear-all-cache-btn" style="padding:2px 8px;font-size:11px;background:rgba(255,100,100,0.1);border:1px solid rgba(255,100,100,0.3);color:#f88;" title="清除当前表格所有媒体文件的音频识别缓存">全局清缓存</button>
                         <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#999;cursor:pointer;" title="即使已有 SRT/已对齐，也重新从候选文案里查找匹配并重新生成 SRT；会复用已有语音识别缓存"><input type="checkbox" id="rbt-force-realign" style="margin:0;transform:scale(0.8);"> 强制重新查找/对齐</label>
                         <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#999;cursor:pointer;" title="删除该音频的语音识别缓存，重新调用 Gladia 转录，再重新查找文案并生成 SRT"><input type="checkbox" id="rbt-force-transcribe" style="margin:0;transform:scale(0.8);"> 强制重新转录</label>
@@ -1893,6 +1894,11 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates, textcards, s
     const srtName = _shortName(task.srtPath || '');
     const txtName = _shortName(task.txtPath || '');
     const txtStatus = task.txtContent ? ((task.aligned || !!task.srtPath) ? '✅' : '⏳') : '';
+    const matchedDifferentRow = Number.isInteger(task.autoMatchedSourceRow)
+        && task.autoMatchedSourceRow !== idx;
+    const matchBadgeStyle = matchedDifferentRow
+        ? 'color:#1c1917;background:#f59e0b;border:1px solid #fcd34d;padding:2px 6px;border-radius:999px;font-size:10px;font-weight:800;box-shadow:0 0 8px rgba(245,158,11,.5);'
+        : 'color:#052e16;background:#4ade80;border:1px solid #86efac;padding:2px 6px;border-radius:999px;font-size:10px;font-weight:800;';
     const bgmName = _shortName(task.bgmPath || '');
     const bgmMode = task.bgmMode || 'single';
     const bgmClipPool = task.bgmClipPool || [];
@@ -2322,7 +2328,7 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates, textcards, s
                     ${task.txtContent && !task.srtPath ? `<button class="rbt-field-clear" data-idx="${idx}" data-field="txt" title="清除文案" style="position:absolute;top:2px;right:2px;">✕</button>` : ''}
                 </div>
                 <div style="display:flex;align-items:center;gap:4px;margin-top:2px;min-height:14px;">
-                    <span style="font-size:10px;color:${(task.aligned || !!task.srtPath) ? '#4ade80' : task.txtContent && !task.srtPath ? '#facc15' : '#666'};" title="${task.alignedAt ? '对齐时间: ' + task.alignedAt + (task.alignSource === 'gladia_fresh' ? ' (重新转录)' : task.alignSource === 'gladia_cache' ? ' (缓存转录)' : '') + (task.alignMatchedText ? ' | 匹配: ' + task.alignMatchedText : '') : ''}">${(task.aligned || !!task.srtPath) ? ('✅ 已对齐' + (task.alignSource === 'gladia_fresh' ? ' 🎙️' : task.alignSource === 'gladia_cache' ? ' 📦' : '') + (task.alignMatchedText ? ' <span style="color:#9fd0ff;font-size:9px;">' + _escHtml(task.alignMatchedText) + '</span>' : '') + (task.alignedAt ? ' <span style="color:#888;font-size:9px;">' + task.alignedAt + '</span>' : '')) : task.txtContent && !task.srtPath ? '⏳ 待对齐' : ''}</span>
+                    <span style="font-size:10px;color:${(task.aligned || !!task.srtPath) ? '#4ade80' : task.txtContent && !task.srtPath ? '#facc15' : '#666'};" title="${task.alignedAt ? '对齐时间: ' + task.alignedAt + (task.alignSource === 'gladia_fresh' ? ' (重新转录)' : task.alignSource === 'gladia_cache' ? ' (缓存转录)' : '') + (task.alignMatchedText ? ' | 匹配: ' + task.alignMatchedText : '') : ''}">${(task.aligned || !!task.srtPath) ? ('✅ 已对齐' + (task.alignSource === 'gladia_fresh' ? ' 🎙️' : task.alignSource === 'gladia_cache' ? ' 📦' : '') + (task.alignMatchedText ? ' <span style="' + matchBadgeStyle + '">' + _escHtml(task.alignMatchedText) + '</span>' : '') + (task.alignedAt ? ' <span style="color:#888;font-size:9px;">' + task.alignedAt + '</span>' : '')) : task.txtContent && !task.srtPath ? '⏳ 待对齐' : ''}</span>
                     <button class="rbt-row-realign-btn" data-idx="${idx}" data-force="0" title="单独重新查找文案并生成SRT" style="padding:1px 4px;font-size:9px;background:#243447;border:1px solid #36506b;color:#9fd0ff;border-radius:3px;cursor:pointer;">重找</button>
                     <button class="rbt-row-realign-btn" data-idx="${idx}" data-force="1" title="单独强制重新转录，然后重新查找文案并生成SRT" style="padding:1px 4px;font-size:9px;background:#3a2d1d;border:1px solid #6b4d22;color:#ffd08a;border-radius:3px;cursor:pointer;">强重找</button>
                     <button class="rbt-row-clear-cache-btn" data-idx="${idx}" title="单独清除该任务的识别缓存" style="padding:1px 4px;font-size:9px;background:#3d2424;border:1px solid #6b3636;color:#fca5a5;border-radius:3px;cursor:pointer;">🧹清缓存</button>
@@ -4020,6 +4026,9 @@ function _bindBatchTableEvents() {
 
     container.querySelector('#rbt-align-all-btn')?.addEventListener('click', () => {
         _batchAlignAllTasks();
+    });
+    container.querySelector('#rbt-align-multikey-btn')?.addEventListener('click', () => {
+        _batchAlignWithMultipleKeys();
     });
     container.querySelector('#rbt-clear-all-cache-btn')?.addEventListener('click', () => {
         _batchClearAllCache();
@@ -11046,6 +11055,10 @@ async function _runWorkflowAcrossAllTabs(modeBtnId) {
 }
 
 async function _runGeminiBatchProcessing() {
+    if (typeof window.hasUnsavedGeminiSettings === 'function' && window.hasUnsavedGeminiSettings()) {
+        showToast('Gemini 设置有未保存的修改。请先到“设置”点击“保存 Gemini 配置”，否则 AI 会继续使用旧配置。', 'warning', 7000);
+        return false;
+    }
     // 先同步 DOM 输入框的值到 state，确保能读到用户填入的数据
     try { _applyBatchTableChanges(); } catch (e) { }
     const indices = _getSelectedIndices();
@@ -11956,57 +11969,72 @@ async function _importFoldersAsFileTaskTabs(dirs) {
 window.reelsImportFoldersAsTaskTabs = _importFoldersAsFileTaskTabs;
 
 /**
- * 将外部任务列表按“文件夹/账号队列”自动镜像为批量表格标签页。
- * 不切换当前标签，避免外部正在显示的合并任务列表被打断；重复导入同一文件夹时更新原标签。
+ * 将外部拖入的文件夹任务镜像到一个统一的批量表格标签页。
+ * 每条任务仍保留 _folderQueueId/_sourceFolder，导出时可继续按原文件夹归属处理；
+ * 统一标签页则让用户可以一次粘贴整列文案并一键对齐全部任务。
  */
 function _syncExternalFolderQueuesToTabs() {
     const queueMap = new Map();
-    for (const task of (window._reelsState?.tasks || [])) {
-        if (!task?._folderQueueId) continue;
-        if (!queueMap.has(task._folderQueueId)) queueMap.set(task._folderQueueId, []);
-        queueMap.get(task._folderQueueId).push(task);
+    const addTasks = (tasks, replace = false) => {
+        const grouped = new Map();
+        for (const task of tasks || []) {
+            if (!task?._folderQueueId) continue;
+            if (!grouped.has(task._folderQueueId)) grouped.set(task._folderQueueId, []);
+            grouped.get(task._folderQueueId).push(task);
+        }
+        for (const [queueId, groupedTasks] of grouped) {
+            if (replace || !queueMap.has(queueId)) queueMap.set(queueId, groupedTasks);
+        }
+    };
+
+    // 兼容已存在的旧版“每文件夹一个标签”数据，并将新拖入任务覆盖同队列旧内容。
+    for (const tab of _batchTableState.tabs || []) {
+        if (tab?._folderQueueId) addTasks(tab.tasks);
+        if (tab?._externalFolderQueuesCombined) addTasks(tab.tasks);
     }
+    addTasks(window._reelsState?.tasks, true);
     if (!queueMap.size) return { created: 0, updated: 0 };
 
-    let created = 0;
-    let updated = 0;
-    for (const [queueId, tasks] of queueMap) {
-        const firstTask = tasks[0] || {};
-        const name = String(firstTask._folderQueueName || '文件夹队列').trim() || '文件夹队列';
-        const sourceDir = firstTask._sourceFolder || '';
-        let tab = _batchTableState.tabs.find(item =>
-            item._folderQueueId === queueId || (sourceDir && item.materialDir === sourceDir)
-        );
-        if (tab) {
-            tab.name = name;
-            tab.tasks = _cloneBatchTasks(tasks);
-            tab._folderQueueId = queueId;
-            if (sourceDir) tab.materialDir = sourceDir;
-            updated++;
-            continue;
-        }
-
-        const usedNames = new Set(_batchTableState.tabs.map(item => item.name));
-        let tabName = name;
-        let suffix = 2;
-        while (usedNames.has(tabName)) tabName = `${name} (${suffix++})`;
+    // 统一标签页按来源文件夹名的自然数字顺序排列（1、2、10，而非 1、10、2）。
+    // 同一文件夹内的任务顺序由拖入扫描时的自然排序保留。
+    const tasks = Array.from(queueMap.entries())
+        .sort(([queueIdA, tasksA], [queueIdB, tasksB]) => {
+            const nameA = String(tasksA[0]?._folderQueueName || queueIdA);
+            const nameB = String(tasksB[0]?._folderQueueName || queueIdB);
+            return nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
+        })
+        .flatMap(([, queueTasks]) => queueTasks);
+    let tab = _batchTableState.tabs.find(item => item?._externalFolderQueuesCombined);
+    const wasCreated = !tab;
+    if (!tab) {
         tab = {
             id: 'tab_' + _batchTableState.nextTabId++,
-            name: tabName,
-            materialDir: sourceDir,
+            name: '批量导入任务',
+            materialDir: '',
             lastRefreshTime: null,
-            _folderQueueId: queueId,
-            tasks: _cloneBatchTasks(tasks),
+            _externalFolderQueuesCombined: true,
+            tasks: [],
         };
         _batchTableState.tabs.push(tab);
-        created++;
+    }
+    tab.name = '批量导入任务';
+    tab.tasks = _cloneBatchTasks(tasks);
+
+    // 删除旧版自动生成的单文件夹标签，避免用户仍看到几十个重复标签。
+    const oldQueueTabIds = new Set((_batchTableState.tabs || [])
+        .filter(item => item && item !== tab && item._folderQueueId)
+        .map(item => item.id));
+    _batchTableState.tabs = _batchTableState.tabs.filter(item => !oldQueueTabIds.has(item.id));
+    if (oldQueueTabIds.has(_batchTableState.activeTabId)) {
+        _batchTableState.activeTabId = tab.id;
+        _loadTabTasks(tab);
     }
 
     _normalizeBatchTabState();
     _skipNextApply = true;
     _renderBatchTable();
     _batchAutoSave({ skipSync: true });
-    return { created, updated };
+    return { created: wasCreated ? 1 : 0, updated: wasCreated ? 0 : 1 };
 }
 window.reelsSyncExternalFolderQueuesToTabs = _syncExternalFolderQueuesToTabs;
 
@@ -12876,6 +12904,17 @@ function _renderWordDiffHtml(recognizedText, candidateText) {
  * @returns {Promise<{action:'USE_CANDIDATE'|'USE_RECOGNIZED'|'SKIP', candidate?:object}>}
  */
 function _showCandidateDiffDialog(taskName, recognizedText, candidates, currentSourceText) {
+    // 最终保护：调用方即使因旧流程进入这里，也要先重新执行当前版本的
+    // 数字归一化和高置信匹配。可靠候选直接采用，不再打断批量任务。
+    const automaticMatch = _findBestBatchAlignCandidate(recognizedText, candidates);
+    if (automaticMatch?.candidate) {
+        console.log(
+            `[BatchAlign] 候选弹窗前自动采用: ${taskName} -> ` +
+            `第 ${automaticMatch.candidate.rowIndex + 1} 行 ` +
+            `(${(automaticMatch.similarity * 100).toFixed(1)}%)`
+        );
+        return Promise.resolve({ action: 'USE_CANDIDATE', candidate: automaticMatch.candidate });
+    }
     return new Promise((resolve) => {
         const esc = (s) => String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
         const scored = (candidates || []).map((c, i) => ({
@@ -12916,7 +12955,7 @@ function _showCandidateDiffDialog(taskName, recognizedText, candidates, currentS
                             background:linear-gradient(135deg,#4f46e5,#3730a3);color:#fff;
                             font-size:12px;cursor:pointer;font-weight:600;
                             transition:all 0.15s;white-space:nowrap;
-                        ">选择</button>
+                        ">用第 ${rowNo} 行</button>
                     </td>
                 </tr>`;
         }).join('');
@@ -12928,25 +12967,25 @@ function _showCandidateDiffDialog(taskName, recognizedText, candidates, currentS
             <div style="padding:16px 20px;border-bottom:1px solid rgba(255,255,255,0.06);display:flex;align-items:center;gap:10px;flex-shrink:0;">
                 <span style="font-size:22px;">🔍</span>
                 <div style="flex:1;">
-                    <h3 style="margin:0;color:#e8ecff;font-size:16px;font-weight:700;">文案匹配对比</h3>
-                    <div style="font-size:12px;color:#667;margin-top:2px;">任务: ${esc(taskName)}</div>
+                    <h3 style="margin:0;color:#e8ecff;font-size:16px;font-weight:700;">请选择这条音频对应的正确文案</h3>
+                    <div style="font-size:12px;color:#8b95c0;margin-top:4px;">当前任务：${esc(taskName)} · 选择后将使用该行原文重新生成 SRT</div>
                 </div>
                 <button data-action="SKIP" style="border:none;background:rgba(255,255,255,0.06);color:#999;border-radius:8px;padding:6px 12px;font-size:18px;cursor:pointer;line-height:1;" title="关闭">✕</button>
             </div>
             <div style="padding:12px 20px;background:rgba(59,130,246,0.06);border-bottom:1px solid rgba(255,255,255,0.04);flex-shrink:0;display:flex;gap:20px;">
                 <div style="flex:1;">
-                    <div style="font-size:12px;color:#60a5fa;font-weight:700;margin-bottom:6px;">🎙️ AI 识别到的文案</div>
+                    <div style="font-size:12px;color:#60a5fa;font-weight:700;margin-bottom:6px;">🎙️ 这条音频实际说了什么（AI 听写，仅用于查找）</div>
                     <div style="font-size:12px;color:#d0d8ff;line-height:1.55;max-height:120px;overflow-y:auto;white-space:pre-wrap;word-break:break-word;">${esc(recognizedText || '[无识别文案]')}</div>
                 </div>
                 <div style="width:1px;background:rgba(255,255,255,0.08);"></div>
                 <div style="flex:1;">
-                    <div style="font-size:12px;color:#a78bfa;font-weight:700;margin-bottom:6px;">📝 提供的输入文案</div>
+                    <div style="font-size:12px;color:#a78bfa;font-weight:700;margin-bottom:6px;">📝 当前行原文（顺序混乱时可能不是这条音频）</div>
                     <div style="font-size:12px;color:#e9d5ff;line-height:1.55;max-height:120px;overflow-y:auto;white-space:pre-wrap;word-break:break-word;">${esc(currentSourceText || '[无输入文案]')}</div>
                 </div>
             </div>
             <div style="padding:12px 20px 4px;flex:1;overflow:auto;min-height:0;">
                 <div style="font-size:12px;color:#8b95c0;font-weight:700;margin-bottom:8px;">
-                    📋 候选文案对比（按相似度排序，共 ${scored.length} 条）
+                    📋 从整张批量表格找到的相似文案（最可能的排在最前，共 ${scored.length} 条）
                     <span style="margin-left:12px;font-weight:400;color:#556;">
                         高亮: <span style="background:#fecaca;color:#991b1b;padding:1px 4px;border-radius:2px;font-size:11px;">识别多出</span>
                         <span style="background:#bbf7d0;color:#166534;padding:1px 4px;border-radius:2px;font-size:11px;margin-left:4px;">候选多出</span>
@@ -12956,10 +12995,10 @@ function _showCandidateDiffDialog(taskName, recognizedText, candidates, currentS
                     <thead>
                         <tr style="background:rgba(255,255,255,0.03);">
                             <th style="padding:8px;color:#778;font-size:11px;text-align:center;border-bottom:1px solid #2a2a4a;width:36px;">#</th>
-                            <th style="padding:8px;color:#778;font-size:11px;text-align:left;border-bottom:1px solid #2a2a4a;width:110px;">来源</th>
-                            <th style="padding:8px;color:#778;font-size:11px;text-align:center;border-bottom:1px solid #2a2a4a;width:70px;">相似度</th>
-                            <th style="padding:8px;color:#778;font-size:11px;text-align:left;border-bottom:1px solid #2a2a4a;">差异对比</th>
-                            <th style="padding:8px;color:#778;font-size:11px;text-align:center;border-bottom:1px solid #2a2a4a;width:70px;">操作</th>
+                            <th style="padding:8px;color:#778;font-size:11px;text-align:left;border-bottom:1px solid #2a2a4a;width:110px;">文案所在行</th>
+                            <th style="padding:8px;color:#778;font-size:11px;text-align:center;border-bottom:1px solid #2a2a4a;width:70px;">匹配程度</th>
+                            <th style="padding:8px;color:#778;font-size:11px;text-align:left;border-bottom:1px solid #2a2a4a;">该行原文与音频听写的差异</th>
+                            <th style="padding:8px;color:#778;font-size:11px;text-align:center;border-bottom:1px solid #2a2a4a;width:100px;">确认使用</th>
                         </tr>
                     </thead>
                     <tbody>${candidateRows}</tbody>
@@ -12967,14 +13006,13 @@ function _showCandidateDiffDialog(taskName, recognizedText, candidates, currentS
                 ${moreText}
             </div>
             <div style="font-size:12px;color:#8b95c0;background:rgba(255,255,255,0.02);padding:10px 16px;border-top:1px solid rgba(255,255,255,0.04);line-height:1.45;">
-                💡 <b>对齐选择说明:</b><br/>
-                • <b>使用提供的原输入文案</b>: 字幕将显示为你原本输入的文字。如果两者只有标点、虚词等微小差异，推荐选此项，以保持文案严谨。<br/>
-                • <b>使用 AI 识别到的听写文案</b>: 字幕将直接显示为 AI 听写出来的文本（包含听写出的语气词、读音）。
+                💡 <b>怎么选：</b>先听当前音频，再在上方候选中找到内容相同的文案，点击“用第 N 行”。系统会把该行原文分配给当前任务并重新生成 SRT。<br/>
+                红色表示音频听写中有、候选原文中没有；绿色表示候选原文中有、音频听写中没有。
             </div>
             <div style="padding:12px 20px;border-top:1px solid rgba(255,255,255,0.06);display:flex;gap:10px;justify-content:flex-end;background:rgba(0,0,0,0.15);flex-shrink:0;">
-                <button data-action="SKIP" style="padding:8px 18px;border-radius:8px;border:1px solid #333;background:#1e1e38;color:#aaa;font-size:13px;cursor:pointer;transition:all .15s;">⏭️ 跳过当前任务</button>
-                <button data-action="USE_CURRENT_SOURCE" style="padding:8px 22px;border-radius:8px;border:1px solid #4f46e5;background:linear-gradient(135deg,#6366f1,#4f46e5);color:#fff;font-size:13px;cursor:pointer;font-weight:600;transition:all .15s;">📝 使用我提供的原输入文案对齐</button>
-                <button data-action="USE_RECOGNIZED" style="padding:8px 22px;border-radius:8px;border:none;background:linear-gradient(135deg,#059669,#047857);color:#fff;font-size:13px;cursor:pointer;font-weight:600;transition:all .15s;">🚀 直接用 AI 识别到的听写文案对齐</button>
+                <button data-action="SKIP" style="padding:8px 18px;border-radius:8px;border:1px solid #333;background:#1e1e38;color:#aaa;font-size:13px;cursor:pointer;transition:all .15s;">暂时找不到，跳过</button>
+                <button data-action="USE_CURRENT_SOURCE" style="padding:8px 22px;border-radius:8px;border:1px solid #4f46e5;background:linear-gradient(135deg,#6366f1,#4f46e5);color:#fff;font-size:13px;cursor:pointer;font-weight:600;transition:all .15s;">当前行原文就是正确的</button>
+                <button data-action="USE_RECOGNIZED" style="padding:8px 22px;border-radius:8px;border:none;background:linear-gradient(135deg,#059669,#047857);color:#fff;font-size:13px;cursor:pointer;font-weight:600;transition:all .15s;">表格里没有，改用 AI 听写</button>
             </div>
         `;
 
@@ -13082,13 +13120,41 @@ function _buildBatchAlignSourceTextCandidates(tasks, lbMaxChars) {
 }
 
 function _normalizeStrictSubtitleMatch(text) {
+    const normalizeEnglishNumbers = (value) => {
+        let result = String(value || '');
+        const units = {
+            one: 1, two: 2, three: 3, four: 4, five: 5,
+            six: 6, seven: 7, eight: 8, nine: 9,
+        };
+        const tens = {
+            twenty: 20, thirty: 30, forty: 40, fifty: 50,
+            sixty: 60, seventy: 70, eighty: 80, ninety: 90,
+        };
+        for (const [tensWord, tensValue] of Object.entries(tens)) {
+            for (const [unitWord, unitValue] of Object.entries(units)) {
+                result = result.replace(
+                    new RegExp(`\\b${tensWord}[ -]+${unitWord}\\b`, 'gi'),
+                    String(tensValue + unitValue)
+                );
+            }
+        }
+        const fixed = {
+            eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15,
+            sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19,
+            ...tens, zero: 0, ten: 10, ...units,
+        };
+        for (const [word, number] of Object.entries(fixed)) {
+            result = result.replace(new RegExp(`\\b${word}\\b`, 'gi'), String(number));
+        }
+        return result;
+    };
     try {
-        return String(text || '')
+        return normalizeEnglishNumbers(text)
             .toLowerCase()
             .normalize('NFKC')
             .replace(/[^\p{L}\p{N}]/gu, '');
     } catch (_) {
-        return String(text || '')
+        return normalizeEnglishNumbers(text)
             .toLowerCase()
             .replace(/[^a-z0-9\u4e00-\u9fff]/g, '');
     }
@@ -13100,9 +13166,9 @@ function _findExactBatchAlignCandidate(recognizedText, candidates) {
     const matches = (candidates || []).filter(c => _normalizeStrictSubtitleMatch(c.sourceText) === recognized);
     if (matches.length === 0) return null;
     if (matches.length > 1) {
-        const uniqueTexts = new Set(matches.map(c => _normalizeStrictSubtitleMatch(c.sourceText)));
-        if (uniqueTexts.size !== 1) return null;
-        console.warn(`[BatchAlign] 候选池存在 ${matches.length} 条完全相同文案，使用第一条: 第${matches[0].rowIndex + 1}行 ${matches[0].label || matches[0].field || '文案'}`);
+        // 相同文案出现在多行时，选哪一行生成的 SRT 内容都一致；把它们视为同一个候选，
+        // 避免因为重复粘贴的文案而阻断自动匹配。
+        console.warn(`[BatchAlign] 候选池有 ${matches.length} 条完全相同文案，按同一候选处理。`);
     }
     return matches[0];
 }
@@ -13145,7 +13211,17 @@ function _findBestBatchAlignCandidate(recognizedText, candidates) {
     const exact = _findExactBatchAlignCandidate(recognizedText, candidates);
     if (exact) return { candidate: exact, similarity: 1, exact: true };
 
-    const scored = (candidates || [])
+    // 表格中同一份文案可能被粘贴到多行。先按规范化文案去重，
+    // 否则前两名是同一内容时会被误判成“候选太接近”。
+    const uniqueCandidates = [];
+    const seenTexts = new Set();
+    for (const candidate of candidates || []) {
+        const normalized = _normalizeStrictSubtitleMatch(candidate?.sourceText);
+        if (!normalized || seenTexts.has(normalized)) continue;
+        seenTexts.add(normalized);
+        uniqueCandidates.push(candidate);
+    }
+    const scored = uniqueCandidates
         .map(candidate => ({
             candidate,
             similarity: _textSimilarityForBatchAlign(recognizedText, candidate.sourceText),
@@ -13156,13 +13232,15 @@ function _findBestBatchAlignCandidate(recognizedText, candidates) {
     const best = scored[0];
     if (!best) return null;
     const second = scored[1];
-    if (best.similarity === 1 && second?.similarity === 1) {
-        return { ...best, exact: true, duplicateExact: true };
-    }
     const bestNormLen = _normalizeStrictSubtitleMatch(best.candidate.sourceText).length;
-    const threshold = bestNormLen < 40 ? 0.94 : 0.88;
+    // 长文经常因章节号、开头口播或尾部口号被 ASR 多读/漏读，整体编辑距离会偏低。
+    // 对长文允许 80% 的高置信命中，但必须明显领先第二候选，避免相似模板文案误配。
+    const threshold = bestNormLen < 40 ? 0.94 : 0.80;
     const margin = second ? best.similarity - second.similarity : 1;
-    if (best.similarity >= threshold && margin >= 0.025) return best;
+    const requiredMargin = bestNormLen < 40 ? 0.06 : 0.10;
+    // 97% 以上通常只剩断行、标点或极少量 ASR 尾词差异，即使相似模板很多，
+    // 也不应再要求人工点选。低于 97% 时仍要求明显领先第二名。
+    if (best.similarity >= 0.97 || (best.similarity >= threshold && margin >= requiredMargin)) return best;
     return null;
 }
 
@@ -13354,6 +13432,7 @@ async function _discardTaskSrtBeforeRefind(task, taskName) {
     task.alignManualConfirmReason = '';
     task.alignReviewPending = false;
     task.autoMatchedSourceIndex = null;
+    task.autoMatchedSourceRow = null;
     task.autoMatchedSourceField = '';
     task.autoMatchedSourceLabel = '';
 
@@ -13474,6 +13553,7 @@ async function _batchClearAllCache() {
 
 async function _batchAlignAllTasks(overrideForce = false) {
     const alignOptions = (overrideForce && typeof overrideForce === 'object') ? overrideForce : {};
+    const silent = !!alignOptions.silent;
     const targetIndexSet = Array.isArray(alignOptions.targetIndices) ? new Set(alignOptions.targetIndices) : null;
     const singleTaskMode = !!targetIndexSet;
     const legacyForce = overrideForce === true || alignOptions.force === true;
@@ -13587,7 +13667,7 @@ async function _batchAlignAllTasks(overrideForce = false) {
 
     const progressEl = document.getElementById('rbt-align-progress');
     const alignBtn = document.getElementById('rbt-align-all-btn');
-    if (alignBtn) { alignBtn.disabled = true; alignBtn.textContent = '⏳ 对齐中...'; }
+    if (!silent && alignBtn) { alignBtn.disabled = true; alignBtn.textContent = '⏳ 对齐中...'; }
 
     let ok = 0, fail = 0;
     const failDetails = [];
@@ -13633,14 +13713,16 @@ async function _batchAlignAllTasks(overrideForce = false) {
 
             // 自动断行文案
             const ownText = _rbtSmartLineBreak(getSourceText(task), lbMaxChars);
-            let sourceText = ownText;
+            // “重新查找”时不能先拿本行文案继续生成。文案顺序可能已经乱了，
+            // 必须把本行当作未知来源，只从整张表的候选池中重新命中。
+            let sourceText = (strictRefind && autoDetect) ? '' : ownText;
 
             let ignoreMismatch = !autoDetect;
             let retryAlign = true;
             let resp = null;
             // Phase 1 核心：如果开启自动查找，先传递候选池给后端直接核对匹配
             let useAutoCandidates = autoDetect;
-            let requireAutoSourceMatch = false;
+            let requireAutoSourceMatch = !!(strictRefind && autoDetect && sourceTextCandidates.length > 0);
             let triedOwnTextFirst = !autoDetect && !!ownText.trim();
             // 当前行没有文案时，直接走候选池
             if (autoDetect && !ownText.trim() && sourceTextCandidates.length > 0) {
@@ -13678,6 +13760,8 @@ async function _batchAlignAllTasks(overrideForce = false) {
                         language: language,
                         audio_cut_length: 5.0,
                         output_dir: audioDir,
+                        // 多 Key 并行时，当前 worker 会把不同 Key 放在首位；后端仍可在失败时轮换备用 Key。
+                        gladia_keys: Array.isArray(alignOptions.gladiaKeys) ? alignOptions.gladiaKeys : undefined,
                         force: forceThisRequest,  // 只有“强制重新转录”才删除识别缓存；重试复用缓存
                         ignore_mismatch: ignoreMismatch
                     }),
@@ -13688,7 +13772,12 @@ async function _batchAlignAllTasks(overrideForce = false) {
                     const err = await resp.json();
                     let errMsg = err.error || '对齐失败';
 
-                    if (errMsg.includes('"code":"TEXT_MISMATCH"')) {
+                    // 候选池精确命中失败时后端会返回 AUTO_SOURCE_MATCH_NOT_FOUND，
+                    // 之前这里只识别 TEXT_MISMATCH，导致前端的高相似度兜底完全没运行，
+                    // 最终错误地直接弹出候选列表。
+                    if (errMsg.includes('"code":"TEXT_MISMATCH"') ||
+                        errMsg.includes('"code":"AUTO_SOURCE_MATCH_NOT_FOUND"') ||
+                        errMsg.includes('"code":"AUTO_SOURCE_MATCH_REQUIRED"')) {
                         try {
                             const mismatchData = JSON.parse(errMsg);
                             // Phase 1: 当前行文案不匹配 → 静默回退到候选池查找
@@ -13704,7 +13793,8 @@ async function _batchAlignAllTasks(overrideForce = false) {
                             if (useAutoCandidates && mismatchData.recognized_text) {
                                 const matched = _findBestBatchAlignCandidate(mismatchData.recognized_text, sourceTextCandidates);
                                 const matchedCandidate = matched?.candidate;
-                                if (matchedCandidate && matched.exact) {
+                                // _findBest 已保证相似候选既达到阈值又领先第二名，安全时可自动采用。
+                                if (matchedCandidate) {
                                     const matchDesc = matched.exact ? '完全匹配' : `高相似匹配 ${(matched.similarity * 100).toFixed(1)}%`;
                                     console.log(`[BatchAlign] 前端兜底匹配成功(${matchDesc}): ${taskName} -> ${matchedCandidate.label || matchedCandidate.field || '文案'} #${matchedCandidate.rowIndex + 1}`);
                                     sourceText = matchedCandidate.sourceText;
@@ -13721,7 +13811,9 @@ async function _batchAlignAllTasks(overrideForce = false) {
                                     console.log(`[BatchAlign] 匹配核对\n${_buildBatchAlignMatchReport(taskName, mismatchData.recognized_text, matchedCandidate, matchDesc)}`);
                                     useAutoCandidates = false;
                                     requireAutoSourceMatch = false;
-                                    ignoreMismatch = false;
+                                    // 这里已经由候选池确认了高相似来源；第二次请求只负责
+                                    // 按选中的文案生成时间轴，不应再落回旧版 TEXT_MISMATCH 弹窗。
+                                    ignoreMismatch = true;
                                     retryAlign = true;
                                     continue;
                                 }
@@ -13806,7 +13898,7 @@ async function _batchAlignAllTasks(overrideForce = false) {
                             if (mismatchData.recognized_text) {
                                 const matched = _findBestBatchAlignCandidate(mismatchData.recognized_text, sourceTextCandidates);
                                 const matchedCandidate = matched?.candidate;
-                                if (matchedCandidate && matched.exact) {
+                                if (matchedCandidate) {
                                     const matchDesc = matched.exact ? '完全匹配' : `高相似匹配 ${(matched.similarity * 100).toFixed(1)}%`;
                                     console.log(`[BatchAlign] 前端自动匹配兜底成功(${matchDesc}): ${taskName} -> ${matchedCandidate.label || matchedCandidate.field || '文案'} #${matchedCandidate.rowIndex + 1}`);
                                     sourceText = matchedCandidate.sourceText;
@@ -13975,7 +14067,7 @@ async function _batchAlignAllTasks(overrideForce = false) {
                 if (!foundExactSourceThisRun && finalMatchText) {
                     const matched = _findBestBatchAlignCandidate(finalMatchText, sourceTextCandidates);
                     const matchedCandidate = matched?.candidate;
-                    if (matchedCandidate && matched.exact) {
+                    if (matchedCandidate) {
                         const matchDesc = matched.exact ? '完全匹配' : `高相似匹配 ${(matched.similarity * 100).toFixed(1)}%`;
                         const currentNorm = _normalizeStrictSubtitleMatch(sourceText);
                         const matchedNorm = _normalizeStrictSubtitleMatch(matchedCandidate.sourceText);
@@ -14203,21 +14295,10 @@ async function _batchAlignAllTasks(overrideForce = false) {
                                 throw new Error(`原文与 SRT 不一致，SRT 已保留，等待人工处理。\n\n${triple.table}`);
                             }
                         } else if (!triple.recognizedExact) {
-                            const acceptRecognizedDifference = window.confirm(
-                                `${taskName}：识别稿与原文有差异，但原文与 SRT 一致。\n\n` +
-                                `说明：可能是语音本身说错、漏读/多读，也可能只是语音识别偏差。请先听音频，再对照原文和 SRT。\n\n` +
-                                `点击“确定”：确认没问题，继续使用。\n` +
-                                `点击“取消”：保留 SRT，标记为待处理；可修改音频/原文，或选择识别稿后重新生成。`
-                            );
-                            if (acceptRecognizedDifference) {
-                                triple.manualConfirmed = true;
-                                task.alignManualConfirmed = true;
-                                task.alignManualConfirmReason = 'recognized_text_difference';
-                            } else {
-                                task.aligned = false;
-                                task.alignReviewPending = true;
-                                throw new Error('识别稿与原文有差异，SRT 已保留，等待人工处理。');
-                            }
+                            // “重找”已明确选择/自动匹配到来源文案，且该来源与 SRT 一致时，
+                            // ASR 稿的轻微听写差异仅作为报告信息，不应阻断或再次要求确认。
+                            task.alignRecognitionDifference = true;
+                            console.warn(`[BatchAlign] 识别稿与来源文案存在差异，但 SRT 已按已确认文案生成: ${taskName}`);
                         }
                     }
                 }
@@ -14226,12 +14307,15 @@ async function _batchAlignAllTasks(overrideForce = false) {
             task.aligned = true;
             task.alignedAt = new Date().toLocaleString('zh-CN');
             task.alignSource = data.transcription_source || 'unknown';
-            if (!task.alignMatchedText && task.autoMatchedSourceLabel) {
-                task.alignMatchedText = task.autoMatchedSourceLabel;
-            }
-            // Phase 2: 当前行文案直接匹配成功时，标记来源
-            if (!task.alignMatchedText && ownText.trim()) {
-                task.alignMatchedText = '当前行文案 ✓';
+            const matchedCandidate = Number.isInteger(task.autoMatchedSourceIndex)
+                ? sourceTextCandidates[task.autoMatchedSourceIndex] : null;
+            if (matchedCandidate) {
+                task.autoMatchedSourceRow = matchedCandidate.rowIndex;
+                task.alignMatchedText = matchedCandidate.rowIndex === state.tasks.indexOf(task)
+                    ? '✅ 本行文案匹配'
+                    : `🔁 匹配第 ${matchedCandidate.rowIndex + 1} 行文案`;
+            } else if (!task.alignMatchedText && ownText.trim()) {
+                task.alignMatchedText = '✅ 本行文案匹配';
             }
             // Phase 3: 为所有成功任务构建报告行
             if (!tripleReportRows.find(r => r.taskName === taskName)) {
@@ -14259,16 +14343,18 @@ async function _batchAlignAllTasks(overrideForce = false) {
     }
 
     // 完成
-    if (alignBtn) { alignBtn.disabled = false; alignBtn.textContent = '🔗 对齐字幕'; }
-    if (progressEl) {
+    if (!silent && alignBtn) { alignBtn.disabled = false; alignBtn.textContent = '🔗 对齐字幕'; }
+    if (!silent && progressEl) {
         progressEl.textContent = fail > 0
             ? `⚠️ 对齐完成 ${ok}/${tasksToAlign.length}，失败 ${fail}`
             : `✅ 全部对齐完成 (${ok}个)`;
         setTimeout(() => { if (progressEl) progressEl.textContent = ''; }, 8000);
     }
 
-    _renderBatchTable();
-    if (typeof _renderTaskList === 'function') _renderTaskList();
+    if (!silent) {
+        _renderBatchTable();
+        if (typeof _renderTaskList === 'function') _renderTaskList();
+    }
 
     // 构建详细报告
     const sourceDesc = [];
@@ -14288,6 +14374,9 @@ async function _batchAlignAllTasks(overrideForce = false) {
         : '';
 
     // Phase 3: 始终弹出可视化报告弹窗
+    if (silent) {
+        return { ok, fail, total: tasksToAlign.length, failDetails };
+    }
     if (tripleReportRows.length > 0 || fail > 0) {
         await _showBatchAlignResultModal({
             title: fail > 0 ? `对齐完成 ${ok}/${tasksToAlign.length}，失败 ${fail}` : `✅ 字幕对齐完成 ${ok} 个任务`,
@@ -14298,6 +14387,96 @@ async function _batchAlignAllTasks(overrideForce = false) {
         });
     } else {
         alert(`✅ 字幕对齐完成 ${ok} 个任务${sourceInfo}\nSRT 文件已自动保存到音频文件所在目录`);
+    }
+}
+
+/** 使用多个 Gladia Key 并行处理不同任务；每个 worker 优先分配不同的 Key。 */
+async function _batchAlignWithMultipleKeys() {
+    _applyBatchTableChanges();
+    const state = window._reelsState;
+    if (!state?.tasks?.length) return;
+
+    let keys = [];
+    try {
+        const resp = await apiFetch(`${API_BASE}/settings/gladia-keys`);
+        const data = await resp.json();
+        keys = (data?.keys || []).filter(key => typeof key === 'string' && key.trim());
+    } catch (error) {
+        console.warn('[BatchAlign] Failed to load Gladia keys for parallel alignment:', error);
+    }
+    if (keys.length < 2) {
+        if (typeof showToast === 'function') showToast('当前只有 1 个可用 Gladia Key，将按顺序对齐。', 'warning', 4500);
+        return _batchAlignAllTasks();
+    }
+
+    const alignSource = document.getElementById('rbt-align-source')?.value || 'video';
+    const textColumn = document.getElementById('rbt-align-txt-col')?.value || 'txtContent';
+    const allowBlind = !!document.getElementById('rbt-allow-blind')?.checked;
+    const forceRealign = !!document.getElementById('rbt-force-realign')?.checked;
+    const forceTranscribe = !!document.getElementById('rbt-force-transcribe')?.checked;
+    const textFor = task => textColumn === 'ttsText' ? task.ttsText :
+        textColumn === 'overlay_title' ? _findBatchTextCardOverlay(task)?.title_text :
+        textColumn === 'overlay_body' ? _findBatchTextCardOverlay(task)?.body_text : task.txtContent;
+    const hasAudio = task => alignSource === 'video'
+        ? !!(task.bgPath || task.videoPath)
+        : !!task.audioPath;
+    const targetIndices = state.tasks
+        .map((task, index) => ({ task, index }))
+        .filter(({ task }) => hasAudio(task) && (allowBlind || String(textFor(task) || '').trim()) &&
+            (forceRealign || forceTranscribe || !task.aligned && !task.srtPath))
+        .map(({ index }) => index);
+    if (!targetIndices.length) return _batchAlignAllTasks();
+
+    const primaryBtn = document.getElementById('rbt-align-all-btn');
+    const parallelBtn = document.getElementById('rbt-align-multikey-btn');
+    const progressEl = document.getElementById('rbt-align-progress');
+    if (primaryBtn) primaryBtn.disabled = true;
+    if (parallelBtn) { parallelBtn.disabled = true; parallelBtn.textContent = `⏳ ${Math.min(keys.length, targetIndices.length)} Key 并行中...`; }
+
+    let next = 0;
+    let completed = 0;
+    let ok = 0;
+    let fail = 0;
+    const failures = [];
+    const workerCount = Math.min(keys.length, targetIndices.length);
+    const workers = Array.from({ length: workerCount }, (_, workerIndex) => (async () => {
+        while (true) {
+            const queueIndex = next++;
+            if (queueIndex >= targetIndices.length) return;
+            const taskIndex = targetIndices[queueIndex];
+            // 不同 worker 的首选 Key 不同；其余 Key 仍作为同一请求的故障切换备选。
+            const orderedKeys = [...keys.slice(workerIndex), ...keys.slice(0, workerIndex)];
+            const result = await _batchAlignAllTasks({
+                targetIndices: [taskIndex],
+                silent: true,
+                gladiaKeys: orderedKeys,
+            });
+            completed++;
+            ok += result?.ok || 0;
+            fail += result?.fail || 0;
+            if (result?.failDetails?.length) failures.push(...result.failDetails);
+            if (progressEl) progressEl.textContent = `⚡ 多 Key 并行对齐 ${completed}/${targetIndices.length}（成功 ${ok}，失败 ${fail}）`;
+        }
+    })());
+
+    try {
+        await Promise.all(workers);
+    } finally {
+        if (primaryBtn) primaryBtn.disabled = false;
+        if (parallelBtn) { parallelBtn.disabled = false; parallelBtn.textContent = '多 Key 并行对齐'; }
+    }
+    _renderBatchTable();
+    if (typeof _renderTaskList === 'function') _renderTaskList();
+    if (progressEl) {
+        progressEl.textContent = fail > 0
+            ? `⚠️ 多 Key 对齐完成 ${ok}/${targetIndices.length}，失败 ${fail}`
+            : `✅ 多 Key 对齐完成（${ok} 个）`;
+        setTimeout(() => { if (progressEl) progressEl.textContent = ''; }, 8000);
+    }
+    if (fail > 0) {
+        alert(`多 Key 并行对齐完成：成功 ${ok}/${targetIndices.length}，失败 ${fail}\n\n${failures.slice(0, 8).join('\n')}`);
+    } else {
+        alert(`✅ 多 Key 并行对齐完成：${ok} 个任务\n已按 ${workerCount} 个 Gladia Key 并行处理。`);
     }
 }
 
@@ -15409,6 +15588,9 @@ function _serializeTasks(tasks) {
 /** 自动保存到 localStorage (含所有标签页，如果配置了工程路径则自动写入硬盘) */
 function _batchAutoSave(options = {}) {
     try {
+        // 模板封面截图会短暂把预览任务切换为单个队列。这段时间严禁
+        // 把临时的 6 条任务反写到完整批量工程。
+        if (window._templateThumbnailCaptureActive) return;
         // 外部队列刚被拆成多个标签时，外部列表仍是合并视图；此时不能用它覆盖当前标签。
         if (!options.skipSync) _syncTasksToActiveTab();
         const data = {
@@ -15423,6 +15605,7 @@ function _batchAutoSave(options = {}) {
                 name: tab.name,
                 materialDir: tab.materialDir || '',
                 folderQueueId: tab._folderQueueId || '',
+                externalFolderQueuesCombined: !!tab._externalFolderQueuesCombined,
                 lastRefreshTime: tab.lastRefreshTime || null,
                 tasks: _serializeTasks(tab.tasks),
             })),
@@ -15460,6 +15643,8 @@ function _batchAutoRestore() {
                 name: t.name,
                 materialDir: t.materialDir || '',
                 _folderQueueId: t.folderQueueId || '',
+                // 兼容此前没有持久化该标记的版本。
+                _externalFolderQueuesCombined: !!t.externalFolderQueuesCombined || t.name === '批量导入任务',
                 lastRefreshTime: t.lastRefreshTime || null,
                 tasks: t.tasks || [],
             }));
@@ -15470,12 +15655,45 @@ function _batchAutoRestore() {
             // 其余账号虽然仍在批量表格里，重启后却不会显示在外部列表。
             const restoredTasks = [];
             const restoredTabIds = [];
-            _batchTableState.tabs.forEach((tab, tabOrder) => {
+            const seenTaskKeys = new Set();
+            let migratedLegacyStyleCount = 0;
+            const restoreTaskKey = task => {
+                const queueId = String(task?._folderQueueId || '');
+                const mediaPath = String(task?.audioPath || task?.videoPath || task?.bgPath || '');
+                if (queueId && mediaPath) return `queue-media:${queueId}|${mediaPath}`;
+                if (task?.id) return `id:${task.id}`;
+                return '';
+            };
+
+            // 统一批量导入标签是文件夹队列的权威来源，优先恢复它；旧默认标签里
+            // 若还残留相同任务，会在后续遍历时被去重。
+            const orderedTabs = [..._batchTableState.tabs].sort((a, b) =>
+                Number(!!b._externalFolderQueuesCombined) - Number(!!a._externalFolderQueuesCombined)
+            );
+            let duplicateTaskCount = 0;
+            orderedTabs.forEach((tab) => {
+                const tabOrder = _batchTableState.tabs.indexOf(tab);
                 const tabTasks = tab.tasks || [];
                 if (!tabTasks.length) return;
-                restoredTabIds.push(tab.id);
+                let contributed = false;
+                const uniqueTabTasks = [];
                 tabTasks.forEach((task, taskOrder) => {
+                    const key = restoreTaskKey(task);
+                    if (key && seenTaskKeys.has(key)) {
+                        duplicateTaskCount++;
+                        return;
+                    }
+                    if (key) seenTaskKeys.add(key);
+                    uniqueTabTasks.push(task);
                     const cloned = _cloneBatchTasks([task])[0] || { ...task };
+                    if ((!cloned.subtitleStyle || Object.keys(cloned.subtitleStyle).length === 0)
+                        && cloned.style && typeof cloned.style === 'object'
+                        && Object.keys(cloned.style).length > 0) {
+                        cloned.subtitleStyle = _cloneBatchTasks([cloned.style])[0] || { ...cloned.style };
+                        // 同时回写标签中的源任务，下次启动不再重复迁移。
+                        task.subtitleStyle = _cloneBatchTasks([cloned.style])[0] || { ...cloned.style };
+                        migratedLegacyStyleCount++;
+                    }
                     cloned._batchProjection = true;
                     cloned._batchTabId = tab.id;
                     cloned._batchTabName = tab.name;
@@ -15483,7 +15701,10 @@ function _batchAutoRestore() {
                     cloned._batchTaskOrder = taskOrder;
                     _ensureTaskId(cloned);
                     restoredTasks.push(cloned);
+                    contributed = true;
                 });
+                if (uniqueTabTasks.length !== tabTasks.length) tab.tasks = uniqueTabTasks;
+                if (contributed) restoredTabIds.push(tab.id);
             });
             if (restoredTasks.length > 0) {
                 window._reelsState.tasks = restoredTasks;
@@ -15491,7 +15712,11 @@ function _batchAutoRestore() {
                 _batchTableState.appliedTabIds = restoredTabIds;
                 if (typeof _renderTaskList === 'function') _renderTaskList();
             }
-            console.log(`[BatchTable] Auto-restored ${_batchTableState.tabs.length} tabs from ${data.timestamp}`);
+            console.log(`[BatchTable] Auto-restored ${_batchTableState.tabs.length} tabs, ${restoredTasks.length} unique tasks${duplicateTaskCount ? `, skipped ${duplicateTaskCount} duplicates` : ''}${migratedLegacyStyleCount ? `, migrated ${migratedLegacyStyleCount} legacy styles` : ''} from ${data.timestamp}`);
+            if (duplicateTaskCount > 0 || migratedLegacyStyleCount > 0) {
+                // 立即回写清理后的标签数据，避免下次启动还携带重复副本。
+                _batchAutoSave({ skipSync: true });
+            }
         } else if (data.tasks && data.tasks.length > 0) {
             // v1: legacy single-list format — migrate to tab
             const existing = window._reelsState.tasks || [];
@@ -16036,6 +16261,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 // 关闭/刷新前保存
 window.addEventListener('beforeunload', () => {
+    if (window._skipBatchSaveBeforeUnload) return;
     if (window._reelsState && (window._reelsState.tasks || []).length > 0) {
         _batchAutoSave();
     }

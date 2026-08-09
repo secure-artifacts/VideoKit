@@ -2350,6 +2350,7 @@ async function parallelExport(opts, mainWindow) {
     }
 
     const scriptPaths = {
+        textDirection: path.join(scriptBase, 'reels-text-direction.js'),
         canvasRenderer: path.join(scriptBase, 'reels-canvas-renderer.js'),
         overlay: path.join(scriptBase, 'reels-overlay.js'),
         animEngine: path.join(scriptBase, 'reels-anim-engine.js'),

@@ -42,11 +42,15 @@
     },
     {
       "key": "sk_c83d30b9fa7ca2904e8dcfc40606b67561673a3edb192d8d",
-      "enabled": true
+      "enabled": false,
+      "auto_disabled": true,
+      "auto_disabled_reason": "remaining<200"
     },
     {
       "key": "sk_a64ec84e96bde5c2c011121a949966587d3c04e68fecbcb6",
-      "enabled": true
+      "enabled": false,
+      "auto_disabled": true,
+      "auto_disabled_reason": "auth"
     },
     {
       "key": "sk_b6fb1ed1e0a3ffd65c738f77e1e34725d779bee9501c1eb9",
@@ -80,9 +84,9 @@
     },
     {
       "key": "sk_63c056ad834057cc54e538889e41ebd67f500b89f4a796dd",
-      "enabled": false,
-      "auto_disabled": true,
-      "auto_disabled_reason": "remaining<200"
+      "enabled": true,
+      "auto_disabled": false,
+      "auto_disabled_reason": ""
     },
     {
       "key": "sk_e581af4ad5cd8c238c877d76135235a9ef5ec5f5c6208447",

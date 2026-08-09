@@ -5490,8 +5490,8 @@
                 <label style="display:flex;align-items:center;gap:4px;font-size:11px;white-space:nowrap;">
                   并发数:
 
-                  <input type="range" id="reels-export-concurrency-range" min="1" max="64" step="1" value="1" style="width:80px;">
-                  <input type="number" id="reels-export-concurrency" class="input input-small" min="1" max="64" value="1" style="width:44px;font-size:11px;">
+                  <input type="range" id="reels-export-concurrency-range" min="1" max="4" step="1" value="1" style="width:80px;">
+                  <input type="number" id="reels-export-concurrency" class="input input-small" min="1" max="4" value="1" style="width:44px;font-size:11px;" title="12 条及以上仍按你选择的并发 1/2 导出；每 6 条释放内存并自动续传">
                 </label>
                 <label style="display:flex;align-items:center;gap:4px;font-size:11px;white-space:nowrap;">
                   格式:
@@ -5642,6 +5642,7 @@
             <textarea id="gemini-prompt" class="textarea" rows="12" placeholder="在此输入自定义系统指令..."></textarea>
             
             <button class="btn btn-primary" onclick="saveGeminiKeys()" style="margin-top: 12px;">💾 保存 Gemini 配置</button>
+            <span id="gemini-unsaved-status" style="display:none; margin-left:8px; font-size:12px; color:#fbbf24;">● 有未保存的 Gemini 设置</span>
           </div>
 
           <div class="form-section">

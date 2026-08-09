@@ -181,6 +181,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initBatchTTS();
     initSubtitleBatch();
     initKeyTableManagers();
+    initGeminiUnsavedChangesWarning();
     loadSettings();
     loadWatermarkSettings();  // 加载保存的水印设置
     checkBackendHealth();
@@ -7825,11 +7826,37 @@ async function saveGeminiKeys() {
         });
 
         if (response.ok) {
+            setGeminiSettingsDirty(false);
             showToast('Gemini 设置已保存！', 'success');
         }
     } catch (error) {
         showToast('保存失败: ' + error.message, 'error');
     }
+}
+
+// 主设置页的测试使用当前输入值，但 AI 处理读取已保存的配置。
+// 因此编辑后必须明确提示，避免用户误以为测试通过的 Key 已投入使用。
+let geminiSettingsDirty = false;
+
+function setGeminiSettingsDirty(isDirty) {
+    geminiSettingsDirty = Boolean(isDirty);
+    const status = document.getElementById('gemini-unsaved-status');
+    if (status) status.style.display = geminiSettingsDirty ? 'inline' : 'none';
+}
+
+function hasUnsavedGeminiSettings() {
+    return geminiSettingsDirty;
+}
+
+window.hasUnsavedGeminiSettings = hasUnsavedGeminiSettings;
+
+function initGeminiUnsavedChangesWarning() {
+    ['gemini-keys', 'gemini-model', 'gemini-prompt'].forEach(id => {
+        const field = document.getElementById(id);
+        if (!field) return;
+        field.addEventListener('input', () => setGeminiSettingsDirty(true));
+        field.addEventListener('change', () => setGeminiSettingsDirty(true));
+    });
 }
 
 async function testGeminiKeys() {
@@ -7842,6 +7869,10 @@ async function testGeminiKeys() {
     if (keysRaw.length === 0) {
         showToast('请先输入至少一个 API Key', 'warning');
         return;
+    }
+
+    if (hasUnsavedGeminiSettings()) {
+        showToast('当前 Key/模型尚未保存；测试通过后请点击“保存 Gemini 配置”，AI 处理才会使用它。', 'warning', 6000);
     }
 
     resultsDiv.style.display = 'block';
@@ -12151,7 +12182,7 @@ async function selectAutoEditBatchFolders() {
         const index = autoEditBatchTasks.length;
         const script = autoEditBatchScriptCells[index] || '';
         const name = window.electronAPI.pathBasename(folder);
-        autoEditBatchTasks.push({ taskOrder: index, folder, name, outputName: name, clips, script, thumbnail: '', status: clips.length ? 'waiting' : 'error', message: clips.length ? (script ? '文案已配对' : '等待文案') : '没有视频', result: null });
+        autoEditBatchTasks.push({ taskOrder: index, folder, name, outputName: name, clips, script, thumbnail: '', manualSubtitleMap: {}, status: clips.length ? 'waiting' : 'error', message: clips.length ? (script ? '文案已配对' : '等待文案') : '没有视频', result: null });
     }
     syncAutoEditBatchParallelLists();
     renderAutoEditBatchTasks();
@@ -12288,7 +12319,7 @@ async function analyzeAutoEditBatchTask(task, settings = task.settings || getAut
     });
     try {
         task.settings={...settings};
-        const response = await apiFetch(`${API_BASE}/media/convert`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ files:task.clips, clips:task.clips, mode:'auto_edit', request_id:requestId, analysis_only:true, script_text:task.script, output_dir:window.electronAPI.pathJoin(task.folder,'_auto_edit'), ...task.settings }) });
+        const response = await apiFetch(`${API_BASE}/media/convert`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ files:task.clips, clips:task.clips, mode:'auto_edit', request_id:requestId, analysis_only:true, script_text:task.script, output_dir:window.electronAPI.pathJoin(task.folder,'_auto_edit'), manual_subtitle_map: task.manualSubtitleMap || {}, ...task.settings }) });
         const data = await response.json(); if (!response.ok) throw new Error(data.error || '分析失败');
         task.result=data;
         const match = getAutoEditBatchMatchSummary(data);
@@ -12461,7 +12492,7 @@ async function retryAutoEditBatchTaskToReels(index) {
 }
 function openAutoEditBatchReview(index) {
     const task=autoEditBatchTasks[index]; if(!task?.result)return;
-    autoEditFiles=task.clips.map(path=>({path,name:path.split(/[/\\]/).pop(),status:'transcribed'}));
+    autoEditFiles=task.clips.map(path=>({path,name:path.split(/[/\\]/).pop(),status:'transcribed',manualSubtitlePath:task.manualSubtitleMap?.[path] || null}));
     document.getElementById('autoedit-script').value=task.script; updateAutoEditScriptCount(); renderAutoEditFiles();
     const savedReviews = Array.isArray(task.reviewSegments) ? task.reviewSegments : [];
     const originals = Array.isArray(task.result.segments) ? task.result.segments : [];
@@ -12714,8 +12745,44 @@ function clearAutoEditManualSubtitle(index, event) {
     showToast('已清除手动指定的字幕', 'info');
 }
 
+// 审核详情中的快捷入口：API 识别有误时，可直接为当前原片段指定人工校正的 SRT。
+// 选择后立刻重新分析整套素材，使新的词级时间线、匹配结果和切点保持一致。
+async function selectAutoEditReviewSrt(button) {
+    const source = getAutoEditReviewRowSource(button);
+    const index = autoEditFiles.findIndex(file => file.path === source);
+    if (index < 0) return showToast('未找到当前片段，无法替换字幕', 'error');
+    try {
+        const result = await window.electronAPI?.selectFiles?.({
+            multiple: false,
+            title: '为当前片段选择手动校正的 SRT 字幕',
+            filters: [{ name: 'SRT 字幕文件 (*.srt)', extensions: ['srt'] }]
+        });
+        if (!result?.[0]) return;
+        const srtPath = result[0];
+        autoEditFiles[index].manualSubtitlePath = srtPath;
+        autoEditFiles[index].status = '';
+        autoEditFiles[index].error = null;
+        const batchTask = autoEditActiveBatchIndex >= 0 ? autoEditBatchTasks[autoEditActiveBatchIndex] : null;
+        if (batchTask) {
+            batchTask.manualSubtitleMap = batchTask.manualSubtitleMap || {};
+            batchTask.manualSubtitleMap[source] = srtPath;
+            batchTask.reviewSegments = null;
+        }
+        renderAutoEditFiles();
+        showToast(`已替换为 ${srtPath.split(/[/\\]/).pop()}，正在重新分析…`, 'info', 3500);
+        await startAutoEditByScript(false, {
+            analysisOnly: true,
+            outputDirOverride: batchTask ? window.electronAPI.pathJoin(batchTask.folder, '_auto_edit') : undefined,
+            requestSettingsOverride: batchTask?.settings || undefined,
+        });
+    } catch (error) {
+        showToast(`选择 SRT 失败: ${error.message}`, 'error');
+    }
+}
+
 window.selectAutoEditManualSubtitle = selectAutoEditManualSubtitle;
 window.clearAutoEditManualSubtitle = clearAutoEditManualSubtitle;
+window.selectAutoEditReviewSrt = selectAutoEditReviewSrt;
 
 async function clearAutoEditFileCache(index) {
     if (index < 0 || index >= autoEditFiles.length) return;
@@ -14317,6 +14384,9 @@ function renderAutoEditResult(data) {
                         ? `<strong style="color:#fcd34d;">V2 切点 ${Math.round((Number(seg.cut_score) || 0) * 100)}%</strong>`
                         : '<strong style="color:#74c0fc;">本段回退经典切点</strong>')
                     : '<span>经典切点</span>');
+                const timingBadge = seg.cut_timing_source === 'srt_timecode'
+                    ? '<strong style="color:#86efac;">SRT 原始时间码裁切</strong>'
+                    : '';
                 const reviewUnmatched = !seg.script || !seg.recognized_text;
                 const textDiff = buildAutoEditTextDiffHtml(seg.script || '', seg.recognized_text || '');
                 const detailsOpen = duplicateText || reviewWarning || reviewUnmatched;
@@ -14341,7 +14411,7 @@ function renderAutoEditResult(data) {
                     <div class="autoedit-review-row ${duplicateText ? 'ae-duplicate-row' : ''} ${reviewWarning && !duplicateText ? 'ae-warning-row' : ''} ${isCriticalMatch ? 'ae-critical-match-row' : ''}" data-review-index="${reviewIndex}" data-source-index="${Number(seg.source_index || seg.index) || reviewIndex + 1}" data-source-label="${escapeHtml(formatSegmentSourceLabel(seg.source_index))}" data-script-start-line="${Number(seg.script_start_line) || 0}" data-script-end-line="${Number(seg.script_end_line || seg.script_start_line) || 0}" data-source-duration="${Number(seg.source_duration || 0)}" data-source="${escapeHtml(encodeURIComponent(seg.source || ''))}" data-word-timeline="${escapeHtml(encodeURIComponent(JSON.stringify(seg.word_timeline || [])))}" data-original-text-key="${escapeHtml(reviewTextKey(seg.script))}" data-original-script="${escapeHtml(encodeURIComponent(seg.script || ''))}" data-warning="${reviewWarning}" data-critical-match="${isCriticalMatch}" data-duplicate="${duplicateText}" data-unmatched="${reviewUnmatched}" data-classic-start="${Number(seg.legacy_start ?? seg.start ?? 0)}" data-classic-end="${Number(seg.legacy_end ?? seg.end ?? 0)}" data-v2-start="${Number(seg.v2_start ?? seg.start ?? 0)}" data-v2-end="${Number(seg.v2_end ?? seg.end ?? 0)}" data-v2-available="${seg.v2_cut_available === true}" data-cut-selection="${seg.cut_selection || (isMultilingualV2 ? 'v2' : 'classic')}" draggable="true" ondragstart="autoEditReviewDragStart(event,${reviewIndex})" ondragover="event.preventDefault()" ondrop="autoEditReviewDrop(event,${reviewIndex})" style="display:grid;grid-template-columns:42px 38px 1fr 112px 112px 90px;gap:8px;align-items:center;padding:10px 8px;border-bottom:1px solid ${duplicateText ? '#ff6b6b' : 'var(--border-color)'};cursor:grab;">
                         <input type="checkbox" class="ae-review-enabled" ${seg.enabled === false ? '' : 'checked'} title="是否导出" onchange="handleAutoEditReviewEnabled(this)">
                         <div style="display:flex;flex-direction:column;gap:2px;"><button class="btn btn-secondary" onclick="moveAutoEditReviewRow(${reviewIndex},-1)" style="padding:1px 5px;">↑</button><button class="btn btn-secondary" onclick="moveAutoEditReviewRow(${reviewIndex},1)" style="padding:1px 5px;">↓</button></div>
-                        <div><div style="font-size:11px;color:var(--text-muted);display:flex;gap:6px;align-items:center;flex-wrap:wrap;">${escapeHtml(formatSegmentSourceLabel(seg.source_index))} ${cutBadge} ${matchRiskBadge || `<span>匹配 ${matchPercent}%</span>`}${duplicateText ? ` · <strong class="ae-live-duplicate-badge" style="color:#ff6b6b;">⚠ ${escapeHtml(duplicateMembers.map(formatSegmentSourceLabel).join(' 与 '))} 重复</strong>` : ''}${seg.issue_reason ? ` · <strong style="color:${usesMultilingualV2 ? '#fbbf24' : '#ff6b6b'};">⚠ ${escapeHtml(seg.issue_reason)}</strong>` : (seg.ambiguity ? ` · ⚠️ ${escapeHtml(seg.ambiguity)}` : '')} · 双击放大编辑</div><textarea class="input ae-review-script" rows="2" ondblclick="openAutoEditLargeScriptEditor(this)" oninput="handleAutoEditScriptChanged(this)" style="width:100%;resize:vertical;">${escapeHtml(seg.script || '')}</textarea><div class="ae-missing-words-status"></div></div>
+                        <div><div style="font-size:11px;color:var(--text-muted);display:flex;gap:6px;align-items:center;flex-wrap:wrap;">${escapeHtml(formatSegmentSourceLabel(seg.source_index))} ${cutBadge} ${timingBadge} ${matchRiskBadge || `<span>匹配 ${matchPercent}%</span>`}${duplicateText ? ` · <strong class="ae-live-duplicate-badge" style="color:#ff6b6b;">⚠ ${escapeHtml(duplicateMembers.map(formatSegmentSourceLabel).join(' 与 '))} 重复</strong>` : ''}${seg.issue_reason ? ` · <strong style="color:${usesMultilingualV2 ? '#fbbf24' : '#ff6b6b'};">⚠ ${escapeHtml(seg.issue_reason)}</strong>` : (seg.ambiguity ? ` · ⚠️ ${escapeHtml(seg.ambiguity)}` : '')} · 双击放大编辑</div><textarea class="input ae-review-script" rows="2" ondblclick="openAutoEditLargeScriptEditor(this)" oninput="handleAutoEditScriptChanged(this)" style="width:100%;resize:vertical;">${escapeHtml(seg.script || '')}</textarea><div class="ae-missing-words-status"></div></div>
                         <label style="font-size:11px;">入点<div><button class="btn btn-secondary" onclick="nudgeAutoEditTime(this,'.ae-review-start',-.1)" style="padding:1px 4px;">−</button><input type="number" class="input ae-review-start" value="${Number(seg.start || 0).toFixed(3)}" min="0" step="0.01" onchange="markAutoEditCutManual(this)" style="width:72px;"><button class="btn btn-secondary" onclick="nudgeAutoEditTime(this,'.ae-review-start',.1)" style="padding:1px 4px;">+</button></div></label>
                         <label style="font-size:11px;">出点<div><button class="btn btn-secondary" onclick="nudgeAutoEditTime(this,'.ae-review-end',-.1)" style="padding:1px 4px;">−</button><input type="number" class="input ae-review-end" value="${Number(seg.end || 0).toFixed(3)}" min="0" step="0.01" onchange="markAutoEditCutManual(this)" style="width:72px;"><button class="btn btn-secondary" onclick="nudgeAutoEditTime(this,'.ae-review-end',.1)" style="padding:1px 4px;">+</button></div></label>
                         <div style="display:flex;flex-direction:column;gap:5px;"><button class="btn btn-primary" title="按照当前入点和出点播放裁切后的内容" onclick="playAutoEditReviewSource(this,true)" style="font-size:11px;padding:4px 8px;">▶ 剪后预览</button><button class="btn btn-secondary" title="播放未裁切的完整原始视频" onclick="playAutoEditReviewSource(this,false)" style="font-size:11px;padding:3px 8px;">原片预览</button><button class="btn btn-secondary" onclick="toggleAutoEditReviewDetails(this)" style="font-size:11px;padding:3px 8px;">${detailsOpen ? '收起详情' : '展开详情'}</button></div>
@@ -14356,6 +14426,7 @@ function renderAutoEditResult(data) {
                             <div style="grid-column:1 / -1;display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-top:1px solid rgba(255,255,255,.06);padding-top:8px;">
                                 <span class="hint">更多操作:</span>
                                 <label style="font-size:11px;">速度 <input class="input ae-review-speed" type="number" value="${Math.max(0.25, Math.min(4, Number(seg.speed) || 1))}" min="0.25" max="4" step="0.05" onchange="handleAutoEditReviewSpeedChanged(this)" style="width:65px;"></label>
+                                <button class="btn btn-secondary" onclick="selectAutoEditReviewSrt(this)" title="为当前原片段选择人工校正的 SRT，并立即按该字幕重新匹配" style="font-size:11px;padding:3px 8px;color:#86efac;border-color:rgba(74,222,128,.45);">📄 替换/选择 SRT</button>
                                 <button class="btn btn-secondary" onclick="retranscribeAutoEditReviewRow(this,${reviewIndex})" style="font-size:11px;padding:3px 8px;">重新转录此片段</button>
                                 <button class="btn btn-secondary" onclick="replaceAutoEditReviewRow(this,${seg.source_index || reviewIndex})" style="font-size:11px;padding:3px 8px;color:#fca5a5;border-color:rgba(239,68,68,.35);">替换当前片段</button>
                                 <button class="btn btn-primary" onclick="recalculateAutoEditReviewRow(this)" style="font-size:11px;padding:3px 9px;">按文案重算切点</button>

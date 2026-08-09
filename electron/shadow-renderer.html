@@ -143,7 +143,7 @@ function loadScript(filePath) {
 ipcRenderer.on('render-chunk', async (event, config) => {
     const {
         chunkId,
-        scriptPaths,        // { canvasRenderer, overlay, animEngine }
+        scriptPaths,        // { textDirection, canvasRenderer, overlay, animEngine }
         startFrame,          // 起始帧号（含）
         endFrame,            // 结束帧号（不含）
         totalDuration,       // 全片总时长（不是当前切片时长）
@@ -182,6 +182,7 @@ ipcRenderer.on('render-chunk', async (event, config) => {
         // 1. 加载渲染器脚本
         log('加载渲染脚本...');
         const scripts = [
+            scriptPaths.textDirection,
             scriptPaths.animEngine,
             scriptPaths.canvasRenderer,
             scriptPaths.overlay,

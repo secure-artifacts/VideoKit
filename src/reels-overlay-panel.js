@@ -492,6 +492,10 @@ class ReelsOverlayPanel {
                         <select id="rop-scroll-title-align" class="rop-select">
                             <option value="">跟随正文</option><option value="center">居中</option><option value="left">左对齐</option><option value="right">右对齐</option>
                         </select>
+                        <label>文字方向</label>
+                        <select id="rop-scroll-text-direction" class="rop-select" title="自动识别阿拉伯语、希伯来语等从右向左文字">
+                            <option value="auto">自动（阿拉伯语 RTL）</option><option value="ltr">从左向右</option><option value="rtl">从右向左</option>
+                        </select>
                         <label>标题行距</label><input type="number" id="rop-scroll-title-linespacing" class="rop-input" min="0" max="50" step="1" value="6">
                         <label>标题文本宽度</label>
                         <div class="rop-slider-combo"><input type="range" id="rop-scroll-title-textw" class="rop-range" min="100" max="1920" step="10" value="900"><input type="number" class="rop-num-readout" data-link="rop-scroll-title-textw" min="100" max="1920" step="10" value="900"></div>
@@ -1393,6 +1397,7 @@ class ReelsOverlayPanel {
             'rop-scroll-font', 'rop-scroll-fontsize',
             'rop-scroll-color', 'rop-scroll-bold', 'rop-scroll-weight',
             'rop-scroll-align', 'rop-scroll-linespacing', 'rop-scroll-textw',
+            'rop-scroll-text-direction',
             'rop-scroll-stroke-color', 'rop-scroll-stroke-width',
             'rop-scroll-shadow', 'rop-scroll-shadow-color', 'rop-scroll-shadow-blur',
             'rop-scroll-shadow-x', 'rop-scroll-shadow-y',
@@ -3211,6 +3216,7 @@ class ReelsOverlayPanel {
             this._val('rop-scroll-uppercase', ov.scroll_uppercase !== false);
             this._val('rop-scroll-letterspacing', ov.scroll_letter_spacing || 0);
             this._val('rop-scroll-align', ov.text_align || 'center');
+            this._val('rop-scroll-text-direction', ov.text_direction || 'auto');
             this._val('rop-scroll-linespacing', ov.line_spacing ?? 6);
             this._val('rop-scroll-textw', ov.text_width ?? 900);
             this._val('rop-scroll-stroke-color', ov.stroke_color || '#000000');
@@ -3710,6 +3716,7 @@ class ReelsOverlayPanel {
             ov.scroll_uppercase = this._get('rop-scroll-uppercase');
             ov.scroll_letter_spacing = this._get('rop-scroll-letterspacing');
             ov.text_align = this._get('rop-scroll-align');
+            ov.text_direction = this._get('rop-scroll-text-direction') || 'auto';
             ov.line_spacing = this._get('rop-scroll-linespacing');
             ov.text_width = this._get('rop-scroll-textw');
             ov.stroke_color = this._get('rop-scroll-stroke-color');

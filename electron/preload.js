@@ -147,6 +147,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     pathJoin: (...args) => path.join(...args),
     pathBasename: (p) => path.basename(p),
     getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+    // 长队列导出分段重启：销毁当前渲染进程后由主进程重载，
+    // 比页面普通刷新更能确保 Canvas/媒体解码内存被释放。
+    recycleRenderer: () => ipcRenderer.send('recycle-renderer'),
     writeClipboardText: (text) => {
         clipboard.writeText(String(text || ''));
         return true;

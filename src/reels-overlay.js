@@ -40,6 +40,8 @@ function createTextOverlay(opts = {}) {
         bold: opts.bold || false,
         italic: opts.italic || false,
         color: opts.color || '#FFFFFF',
+        // auto follows the first strong character (Arabic/Hebrew → RTL).
+        text_direction: opts.text_direction || 'auto',
         // 描边
         use_stroke: opts.use_stroke || false,
         stroke_color: opts.stroke_color || '#000000',
@@ -125,6 +127,8 @@ function createTextCardOverlay(opts = {}) {
         opacity: opts.opacity ?? 255,
         start: opts.start ?? 0,
         end: opts.end ?? 9999,
+        // Text-card sections inherit this setting; auto detects each card's content.
+        text_direction: opts.text_direction || 'auto',
         // ── 卡片背景 ──
         card_color: opts.card_color || '#FFFFFF',
         card_opacity: opts.card_opacity ?? 80,    // 0-100 (百分比)
@@ -407,6 +411,8 @@ function createScrollOverlay(opts = {}) {
         italic: opts.italic || false,
         color: opts.color || '#FFFFFF',
         text_align: opts.text_align || 'center',
+        // Applies to both the scrolling body and title; auto resolves each independently.
+        text_direction: opts.text_direction || 'auto',
         line_spacing: opts.line_spacing ?? 6,
         text_width: opts.text_width ?? 900,
         // 描边
@@ -1363,6 +1369,9 @@ function _getMaxFontSizeFromRanges(baseSize, ranges) {
 function _drawTextOverlay(ctx, ov, x, y, w, h, currentTime) {
     const content = ov.content || '';
     if (!content) return;
+    ctx.direction = (typeof ReelsTextDirection !== 'undefined')
+        ? ReelsTextDirection.resolve(ov.text_direction, content)
+        : 'ltr';
 
     const layout = ov.text_layout || {};
     const padL = layout.left_pad || 10;
@@ -1457,6 +1466,10 @@ function _drawTextOverlay(ctx, ov, x, y, w, h, currentTime) {
  * 自动适配：根据文案长短调整蒙版大小和位置
  */
 function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime) {
+    const directionSample = [ov.title_text, ov.body_text, ov.footer_text].filter(Boolean).join('\n');
+    ctx.direction = (typeof ReelsTextDirection !== 'undefined')
+        ? ReelsTextDirection.resolve(ov.text_direction, directionSample)
+        : 'ltr';
     const originalOverlay = ov;
     const guideLineW = Math.max(2, canvasW / 540);
     if (ov.body_follow_title) {
@@ -3091,6 +3104,10 @@ function _drawScrollOverlay(ctx, ov, clipX, clipY, clipW, clipH, currentTime, ca
     let content = ov.content || '';
     if (ov.scroll_uppercase !== false) content = content.toUpperCase();
     if (!content) return;
+    const bodyDirection = (typeof ReelsTextDirection !== 'undefined')
+        ? ReelsTextDirection.resolve(ov.text_direction, content)
+        : 'ltr';
+    ctx.direction = bodyDirection;
 
     const start = parseFloat(ov.start || 0);
     let end = parseFloat(ov.end || 0);
@@ -3407,6 +3424,9 @@ function _drawScrollOverlay(ctx, ov, clipX, clipY, clipW, clipH, currentTime, ca
             const tTextW = parseFloat(ov.scroll_title_text_width || 0) || textW; // 0 = 跟随正文
 
             ctx.save();
+            ctx.direction = (typeof ReelsTextDirection !== 'undefined')
+                ? ReelsTextDirection.resolve(ov.text_direction, titleText)
+                : 'ltr';
             if (tLetterSpacing !== 0 && typeof ctx.letterSpacing !== 'undefined') {
                 ctx.letterSpacing = tLetterSpacing + 'px';
             }
@@ -3875,6 +3895,9 @@ function _drawScrollTextBlock(ctx, ov, lines, textX, textY, textW, lineHeight, f
         const tGap = parseFloat(ov.scroll_title_gap ?? 20);
 
         ctx.save();
+        ctx.direction = (typeof ReelsTextDirection !== 'undefined')
+            ? ReelsTextDirection.resolve(ov.text_direction, titleText)
+            : 'ltr';
         const tLetterSpacing = parseFloat(ov.scroll_title_letter_spacing || 0);
         if (tLetterSpacing !== 0 && typeof ctx.letterSpacing !== 'undefined') {
             ctx.letterSpacing = tLetterSpacing + 'px';
@@ -3946,6 +3969,9 @@ function _drawScrollTextBlock(ctx, ov, lines, textX, textY, textW, lineHeight, f
     }
 
     // ── 正文 ──
+    ctx.direction = (typeof ReelsTextDirection !== 'undefined')
+        ? ReelsTextDirection.resolve(ov.text_direction, ov.content || '')
+        : 'ltr';
     const bLetterSpacing = parseFloat(ov.scroll_letter_spacing || 0);
     if (bLetterSpacing !== 0 && typeof ctx.letterSpacing !== 'undefined') {
         ctx.letterSpacing = bLetterSpacing + 'px';

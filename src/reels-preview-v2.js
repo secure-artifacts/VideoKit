@@ -2833,6 +2833,26 @@
             ? { width: state.canvas.width, height: state.canvas.height }
             : null,
         togglePlay,
+        // 任务切换时不能复用上一任务的 pausedAt。若用户正在播放，保持播放状态，
+        // 但让新任务从自己的 0:00 开始。
+        resetForTaskSwitch: () => {
+            if (!state.isOpen) return;
+            const wasPlaying = state.isPlaying;
+            pauseMedia();
+            state.isPlaying = false;
+            state.pausedAt = 0;
+            state.startedAt = performance.now() / 1000;
+            state.seekFrameLock = null;
+            loadCurrentTask(true);
+            if (wasPlaying) {
+                state.isPlaying = true;
+                state.startedAt = performance.now() / 1000;
+                syncMediaToTime(0);
+                playMedia();
+            }
+            updatePlayButton();
+            render();
+        },
         seek: (time) => {
             if (!state.isOpen) return;
             const duration = computeDuration();

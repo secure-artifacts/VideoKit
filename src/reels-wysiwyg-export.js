@@ -894,8 +894,10 @@ async function reelsWysiwygExport(params) {
     // ═══ 阶段 2.5: 有界背景帧缓存 ═══
     // 禁止将整段视频的解码帧全部留在渲染进程中，避免长视频耗尽内存白屏。
     let _bgFrameCache = null;
-    const frameCacheLimit = Math.max(10, Math.min(90, Math.round(fps * 2)));
-    const framePrefetchSize = Math.max(5, Math.min(30, Math.round(fps)));
+    // 1080×1920 的一张解码图在 Chromium 中约占 8MB。旧上限 60~90 帧
+    // 会让单个任务就占数百 MB，批量队列容易被系统直接终止。
+    const frameCacheLimit = Math.max(8, Math.min(16, Math.round(fps / 2)));
+    const framePrefetchSize = Math.max(4, Math.min(8, Math.round(fps / 4)));
     if (useMemoryDecoder && framesDir && totalBgFrames > 0) {
         _bgFrameCache = new Map();
         log(`阶段2.5: 启用滑动帧缓存（最多 ${frameCacheLimit} 帧）`);

@@ -14,6 +14,366 @@ let powerSaveId = null;
 let isQuitting = false;
 const templateWindows = new Map(); // templateId → BrowserWindow
 
+function _savedBatchTaskCount(raw) {
+    if (!raw) return 0;
+    try {
+        const data = JSON.parse(raw);
+        if (Array.isArray(data.tabs)) {
+            return data.tabs.reduce((sum, tab) => sum + (Array.isArray(tab?.tasks) ? tab.tasks.length : 0), 0);
+        }
+        return Array.isArray(data.tasks) ? data.tasks.length : 0;
+    } catch {
+        return 0;
+    }
+}
+
+/**
+ * 开发版由旧 file:// 页面切到 http://localhost:5173 后，Chromium 会使用另一套
+ * localStorage origin。仅在 localhost 没有有效任务时，把旧 file:// 数据复制过来；
+ * 当前开发数据始终优先，避免覆盖用户刚做的新工程。
+ */
+async function migrateLegacyFileStorageToDevOrigin(targetWindow) {
+    if (app.isPackaged || !targetWindow || targetWindow.isDestroyed()) return false;
+
+    let legacyWindow = null;
+    try {
+        const currentStore = await targetWindow.webContents.executeJavaScript(
+            'Object.fromEntries(Array.from({length:localStorage.length},(_,i)=>{const k=localStorage.key(i);return [k,localStorage.getItem(k)]}))',
+            true
+        );
+        if (currentStore?.videokit_disable_file_origin_migration) {
+            log('[StorageMigration] 已有可靠恢复标记，跳过旧 file:// 自动迁移');
+            return false;
+        }
+        const currentBatchCount = _savedBatchTaskCount(currentStore?.reels_batch_config_autosave);
+
+        legacyWindow = new BrowserWindow({
+            show: false,
+            webPreferences: {
+                nodeIntegration: false,
+                contextIsolation: true,
+                sandbox: true,
+            },
+        });
+        await legacyWindow.loadFile(path.join(__dirname, '../src/storage-bridge.html'));
+        const legacyStore = await legacyWindow.webContents.executeJavaScript(
+            'Object.fromEntries(Array.from({length:localStorage.length},(_,i)=>{const k=localStorage.key(i);return [k,localStorage.getItem(k)]}))',
+            true
+        );
+        const legacyBatchCount = _savedBatchTaskCount(legacyStore?.reels_batch_config_autosave);
+        const merged = { ...(currentStore || {}) };
+        let copied = 0;
+        let restoredLegacyBatch = false;
+
+        for (const [key, value] of Object.entries(legacyStore || {})) {
+            if (merged[key] == null) {
+                merged[key] = value;
+                copied++;
+            }
+        }
+        // 旧 file:// 工程明显更完整时，先备份 localhost 当前工程，再恢复旧工程。
+        // 这样既能找回历史内容，也不会丢掉切换来源后新建的少量任务。
+        if (legacyBatchCount > currentBatchCount) {
+            if (currentStore?.reels_batch_config_autosave) {
+                merged.reels_batch_config_autosave_before_file_migration = currentStore.reels_batch_config_autosave;
+            }
+            merged.reels_batch_config_autosave = legacyStore.reels_batch_config_autosave;
+            merged.reels_batch_file_origin_migrated_at = new Date().toISOString();
+            copied++;
+            restoredLegacyBatch = true;
+        }
+        if (!copied) return false;
+
+        const serialized = JSON.stringify(merged);
+        await targetWindow.webContents.executeJavaScript(
+            `(()=>{const data=${serialized};for(const [k,v] of Object.entries(data)){localStorage.setItem(k,v)};return true})()`,
+            true
+        );
+        const finalBatchCount = restoredLegacyBatch ? legacyBatchCount : currentBatchCount;
+        log(`[StorageMigration] 已从 file:// 迁移 ${copied} 个本地存储项；批量任务 ${currentBatchCount} -> ${finalBatchCount}`);
+
+        // 批量表格恢复函数在首次 DOMContentLoaded 时已经运行过，迁移后刷新一次，
+        // 让所有模块按正常初始化顺序读取迁移后的数据。
+        if (restoredLegacyBatch && !targetWindow.isDestroyed()) {
+            targetWindow.webContents.reloadIgnoringCache();
+        }
+        return true;
+    } catch (error) {
+        log(`[StorageMigration] 旧版数据迁移失败: ${error.message}`);
+        return false;
+    } finally {
+        if (legacyWindow && !legacyWindow.isDestroyed()) legacyWindow.destroy();
+    }
+}
+
+/** 只读导出旧 file:// 批量配置，用于核对跨 origin 丢失的任务样式。 */
+async function snapshotLegacyBatchForStyleAudit(targetWindow) {
+    if (app.isPackaged || !targetWindow || targetWindow.isDestroyed()) return false;
+    const requestPath = path.join(__dirname, '..', '.videokit-style-audit-request.json');
+    if (!fs.existsSync(requestPath)) return false;
+    let legacyWindow = null;
+    try {
+        legacyWindow = new BrowserWindow({
+            show: false,
+            webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true },
+        });
+        await legacyWindow.loadFile(path.join(__dirname, '../src/storage-bridge.html'));
+        const legacyRaw = await legacyWindow.webContents.executeJavaScript(
+            'localStorage.getItem("reels_batch_config_autosave") || ""', true
+        );
+        if (!legacyRaw) throw new Error('旧 file:// 批量配置不存在');
+        const auditDir = path.join(app.getPath('userData'), 'batch-recovery');
+        fs.mkdirSync(auditDir, { recursive: true });
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const outputPath = path.join(auditDir, `legacy-style-audit-${stamp}.json`);
+        fs.writeFileSync(outputPath, legacyRaw, 'utf-8');
+        fs.renameSync(requestPath, path.join(__dirname, '..', '.videokit-style-audit-completed.json'));
+        log(`[StyleAudit] 已只读导出旧批量配置 ${_savedBatchTaskCount(legacyRaw)} 条: ${outputPath}`);
+        return true;
+    } catch (error) {
+        log(`[StyleAudit] 导出失败: ${error.message}`);
+        return false;
+    } finally {
+        if (legacyWindow && !legacyWindow.isDestroyed()) legacyWindow.destroy();
+    }
+}
+
+function _naturalTemplateNameSort(a, b) {
+    return String(a?.name || '').localeCompare(String(b?.name || ''), undefined, {
+        numeric: true,
+        sensitivity: 'base',
+    });
+}
+
+/**
+ * 从用户明确保存过的分队列模板重建批量任务。模板带创建时间和完整 projectData，
+ * 比跨 origin 的“最后一份 localStorage”更适合作为指定日期的恢复来源。
+ */
+async function recoverPendingBatchFromTemplates(targetWindow) {
+    if (app.isPackaged || !targetWindow || targetWindow.isDestroyed()) return false;
+    const requestPath = path.join(__dirname, '..', '.videokit-recovery-request.json');
+    if (!fs.existsSync(requestPath)) return false;
+
+    try {
+        const request = JSON.parse(fs.readFileSync(requestPath, 'utf-8'));
+        const matcher = new RegExp(request.templateNamePattern || '.*');
+        const templatesDir = path.join(app.getPath('userData'), 'videokit-templates');
+        const indexPath = path.join(templatesDir, 'index.json');
+        const index = JSON.parse(fs.readFileSync(indexPath, 'utf-8'));
+        const selected = index
+            .filter(item => matcher.test(String(item.name || '')))
+            .filter(item => !request.createdDate || String(item.createdAt || '').startsWith(request.createdDate))
+            .sort(_naturalTemplateNameSort);
+        if (!selected.length) throw new Error('没有找到符合恢复条件的队列模板');
+
+        const tasks = [];
+        const seenTaskIds = new Set();
+        for (const item of selected) {
+            const full = JSON.parse(fs.readFileSync(path.join(templatesDir, `${item.id}.json`), 'utf-8'));
+            const templateTasks = Array.isArray(full?.projectData?.tasks) ? full.projectData.tasks : [];
+            for (const sourceTask of templateTasks) {
+                const task = JSON.parse(JSON.stringify(sourceTask));
+                const mediaPath = task.audioPath || task.videoPath || task.bgPath || task.srtPath || '';
+                const sourceFolder = mediaPath ? path.dirname(mediaPath) : '';
+                const queueNameMatch = String(item.name || '').match(/_([0-9]+)$/);
+                const queueName = queueNameMatch ? queueNameMatch[1] : (sourceFolder ? path.basename(sourceFolder) : item.name);
+                task._sourceFolder = task._sourceFolder || sourceFolder;
+                // 恢复时以“已保存的模板”作为队列边界。不能沿用模板内旧的
+                // folderQueueId：多个后续任务队列可能循环使用同一批素材，路径一样
+                // 但仍是独立队列。沿用旧 ID 会让启动去重把 18×6 误压成 6 条。
+                task._folderQueueId = `template:${item.id}`;
+                task._folderQueueName = queueName;
+                if (task.id && seenTaskIds.has(task.id)) continue;
+                if (task.id) seenTaskIds.add(task.id);
+                tasks.push(task);
+            }
+        }
+        if (!tasks.length) throw new Error('匹配模板中没有任务数据');
+
+        const now = new Date().toISOString();
+        const recoveryConfig = {
+            timestamp: now,
+            version: '2.0',
+            activeTabId: 'tab_recovered_0806',
+            nextTabId: 2,
+            projectDir: '',
+            projectName: 'Recovered_0806_Project.json',
+            recoverySource: {
+                label: request.label || '队列模板恢复',
+                templateIds: selected.map(item => item.id),
+                templateCreatedAt: selected.map(item => item.createdAt),
+            },
+            tabs: [{
+                id: 'tab_recovered_0806',
+                name: '批量导入任务',
+                materialDir: '',
+                folderQueueId: '',
+                externalFolderQueuesCombined: true,
+                lastRefreshTime: now,
+                tasks,
+            }],
+        };
+
+        const currentRaw = await targetWindow.webContents.executeJavaScript(
+            'localStorage.getItem("reels_batch_config_autosave") || ""',
+            true
+        );
+        const recoveryDir = path.join(app.getPath('userData'), 'batch-recovery');
+        fs.mkdirSync(recoveryDir, { recursive: true });
+        const stamp = now.replace(/[:.]/g, '-');
+        if (currentRaw) fs.writeFileSync(path.join(recoveryDir, `before-${stamp}.json`), currentRaw, 'utf-8');
+        fs.writeFileSync(path.join(recoveryDir, `recovered-${stamp}.json`), JSON.stringify(recoveryConfig, null, 2), 'utf-8');
+
+        const configJson = JSON.stringify(recoveryConfig);
+        const backupKey = `reels_batch_config_backup_${Date.now()}`;
+        await targetWindow.webContents.executeJavaScript(
+            `(()=>{const old=localStorage.getItem('reels_batch_config_autosave');` +
+            `if(old)localStorage.setItem(${JSON.stringify(backupKey)},old);` +
+            // 紧接着的 reload 会触发旧页面 beforeunload。必须先禁止旧页面
+            // 把内存中的旧 6 条任务又覆盖到刚写好的 108 条恢复配置上。
+            `window._skipBatchSaveBeforeUnload=true;` +
+            `localStorage.setItem('reels_batch_config_autosave',${JSON.stringify(configJson)});return true})()`,
+            true
+        );
+
+        const completedPath = path.join(__dirname, '..', '.videokit-recovery-completed.json');
+        fs.renameSync(requestPath, completedPath);
+        log(`[TemplateRecovery] 已从 ${selected.length} 个模板恢复 ${tasks.length} 条任务：${request.label || ''}`);
+        if (!targetWindow.isDestroyed()) targetWindow.webContents.reloadIgnoringCache();
+        return true;
+    } catch (error) {
+        log(`[TemplateRecovery] 恢复失败: ${error.message}`);
+        return false;
+    }
+}
+
+/** 从指定队列模板只恢复字幕样式，不改动当前任务的素材、字幕和对齐结果。 */
+async function recoverPendingStylesFromTemplates(targetWindow) {
+    if (app.isPackaged || !targetWindow || targetWindow.isDestroyed()) return false;
+    const requestPath = path.join(__dirname, '..', '.videokit-style-recovery-request.json');
+    if (!fs.existsSync(requestPath)) return false;
+    try {
+        const request = JSON.parse(fs.readFileSync(requestPath, 'utf-8'));
+        const matcher = new RegExp(request.templateNamePattern || '.*');
+        const templatesDir = path.join(app.getPath('userData'), 'videokit-templates');
+        const index = JSON.parse(fs.readFileSync(path.join(templatesDir, 'index.json'), 'utf-8'));
+        const selected = index
+            .filter(item => matcher.test(String(item.name || '')))
+            .filter(item => !request.createdDate || String(item.createdAt || '').startsWith(request.createdDate))
+            .sort(_naturalTemplateNameSort);
+        if (!selected.length) throw new Error('没有找到指定的队列模板');
+
+        const queueSources = new Map();
+        for (const item of selected) {
+            const full = JSON.parse(fs.readFileSync(path.join(templatesDir, `${item.id}.json`), 'utf-8'));
+            const queueMatch = String(item.name || '').match(/^0806_([0-9]+)/);
+            if (!queueMatch) continue;
+            const sourceTasks = Array.isArray(full?.projectData?.tasks) ? full.projectData.tasks : [];
+            const byId = new Map(sourceTasks.filter(t => t.id).map(t => [String(t.id), t]));
+            const byAudio = new Map(sourceTasks.filter(t => t.audioPath).map(t => [String(t.audioPath), t]));
+            const byName = new Map(sourceTasks.filter(t => t.baseName).map(t => [String(t.baseName).toLowerCase(), t]));
+            queueSources.set(queueMatch[1], { sourceTasks, byId, byAudio, byName });
+        }
+
+        const currentRaw = await targetWindow.webContents.executeJavaScript(
+            'localStorage.getItem("reels_batch_config_autosave") || ""', true
+        );
+        if (!currentRaw) throw new Error('当前批量配置不存在');
+        const config = JSON.parse(currentRaw);
+        let restored = 0;
+        for (const tab of (config.tabs || [])) {
+            for (const task of (tab.tasks || [])) {
+                const queueName = String(task._folderQueueName || '').trim();
+                const source = queueSources.get(queueName);
+                if (!source) continue;
+                const matched = (task.id && source.byId.get(String(task.id)))
+                    || (task.audioPath && source.byAudio.get(String(task.audioPath)))
+                    || (task.baseName && source.byName.get(String(task.baseName).toLowerCase()));
+                if (!matched) continue;
+                // 旧模板的 task.style 是当时真正渲染的队列样式；
+                // subtitleStyle 在部分队列只有单条旧副本，不能用它覆盖整队。
+                const style = matched.style || matched.subtitleStyle;
+                if (!style || typeof style !== 'object' || !Object.keys(style).length) continue;
+                task.style = JSON.parse(JSON.stringify(style));
+                task.subtitleStyle = JSON.parse(JSON.stringify(style));
+                if (matched._subtitlePreset) task._subtitlePreset = matched._subtitlePreset;
+                else delete task._subtitlePreset;
+                restored++;
+            }
+        }
+        if (!restored) throw new Error('当前任务与队列模板没有匹配上');
+
+        const recoveryDir = path.join(app.getPath('userData'), 'batch-recovery');
+        fs.mkdirSync(recoveryDir, { recursive: true });
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        fs.writeFileSync(path.join(recoveryDir, `before-style-recovery-${stamp}.json`), currentRaw, 'utf-8');
+        config.timestamp = new Date().toISOString();
+        config.styleRecovery = { restored, label: request.label || '', at: config.timestamp };
+        const nextRaw = JSON.stringify(config);
+        fs.writeFileSync(path.join(recoveryDir, `after-style-recovery-${stamp}.json`), JSON.stringify(config, null, 2), 'utf-8');
+        await targetWindow.webContents.executeJavaScript(
+            `(()=>{window._skipBatchSaveBeforeUnload=true;localStorage.setItem('reels_batch_config_autosave',${JSON.stringify(nextRaw)});return true})()`,
+            true
+        );
+        fs.renameSync(requestPath, path.join(__dirname, '..', '.videokit-style-recovery-completed.json'));
+        log(`[StyleRecovery] 已从 ${selected.length} 个队列模板恢复 ${restored} 条任务的字幕样式`);
+        if (!targetWindow.isDestroyed()) targetWindow.webContents.reloadIgnoringCache();
+        return true;
+    } catch (error) {
+        log(`[StyleRecovery] 恢复失败: ${error.message}`);
+        return false;
+    }
+}
+
+async function repairPendingTemplateThumbnails(targetWindow) {
+    if (app.isPackaged || !targetWindow || targetWindow.isDestroyed()) return false;
+    const requestPath = path.join(__dirname, '..', '.videokit-thumbnail-repair-request.json');
+    if (!fs.existsSync(requestPath)) return false;
+    try {
+        const request = JSON.parse(fs.readFileSync(requestPath, 'utf-8'));
+        const matcher = new RegExp(request.templateNamePattern || '.*');
+        const templatesDir = path.join(app.getPath('userData'), 'videokit-templates');
+        const index = JSON.parse(fs.readFileSync(path.join(templatesDir, 'index.json'), 'utf-8'));
+        const ids = index
+            .filter(item => matcher.test(String(item.name || '')))
+            .filter(item => !request.createdDate || String(item.createdAt || '').startsWith(request.createdDate))
+            .sort(_naturalTemplateNameSort)
+            .map(item => item.id);
+        if (!ids.length) throw new Error('没有找到需要修复封面的模板');
+
+        const expression = `(async()=>{` +
+            `localStorage.setItem('videokit_disable_file_origin_migration',${JSON.stringify(request.label || 'template-recovery')});` +
+            `if(typeof window._repairTemplateThumbnailsByIds!=='function')throw new Error('封面修复函数未加载');` +
+            `return await window._repairTemplateThumbnailsByIds(${JSON.stringify(ids)},{silent:true})` +
+            `})()`;
+        const result = await targetWindow.webContents.executeJavaScript(expression, true);
+        const completedPath = path.join(__dirname, '..', '.videokit-thumbnail-repair-completed.json');
+        fs.renameSync(requestPath, completedPath);
+        log(`[ThumbnailRepair] ${request.label || ''}：成功 ${result?.repaired || 0}，失败 ${result?.failed || 0}`);
+        return true;
+    } catch (error) {
+        log(`[ThumbnailRepair] 修复失败: ${error.message}`);
+        return false;
+    }
+}
+
+async function logBatchStartupState(targetWindow, label = 'startup') {
+    if (!targetWindow || targetWindow.isDestroyed()) return;
+    try {
+        const state = await targetWindow.webContents.executeJavaScript(
+            `(()=>{let saved=null;try{saved=JSON.parse(localStorage.getItem('reels_batch_config_autosave')||'null')}catch(_){}` +
+            `return {memoryTasks:window._reelsState?.tasks?.length||0,` +
+            `tabs:(window._batchTableState?.tabs||[]).map(t=>({name:t.name,count:t.tasks?.length||0})),` +
+            `savedTabs:(saved?.tabs||[]).map(t=>({name:t.name,count:t.tasks?.length||0})),` +
+            `savedTotal:(saved?.tabs||[]).reduce((n,t)=>n+(t.tasks?.length||0),0)}})()`,
+            true
+        );
+        log(`[BatchStartup:${label}] ${JSON.stringify(state)}`);
+    } catch (error) {
+        log(`[BatchStartup:${label}] 读取失败: ${error.message}`);
+    }
+}
+
 // local-media 用于渲染本地生成的预览图/媒体。必须在 app.ready 前声明权限，
 // 否则 video/img 的 range/fetch 行为在部分 Electron 版本里会不稳定。
 try {
@@ -200,6 +560,15 @@ function createWindow() {
     if (!app.isPackaged) {
         mainWindow.loadURL('http://localhost:5173');
         mainWindow.webContents.openDevTools();
+        mainWindow.webContents.once('did-finish-load', async () => {
+            const recovered = await recoverPendingBatchFromTemplates(mainWindow);
+            const stylesRecovered = recovered ? false : await recoverPendingStylesFromTemplates(mainWindow);
+            const repaired = (recovered || stylesRecovered) ? false : await repairPendingTemplateThumbnails(mainWindow);
+            const audited = (!recovered && !stylesRecovered && !repaired) ? await snapshotLegacyBatchForStyleAudit(mainWindow) : false;
+            if (!recovered && !stylesRecovered && !repaired && !audited) await migrateLegacyFileStorageToDevOrigin(mainWindow);
+            setTimeout(() => logBatchStartupState(mainWindow), 2500);
+            setTimeout(() => logBatchStartupState(mainWindow, 'settled'), 12000);
+        });
 
         // ── 开发者热启动与热重载机制 (Hot Reload / Relaunch) ──
         if (!global._isWatching) {
@@ -366,6 +735,32 @@ app.whenReady().then(async () => {
     // ==================== IPC 处理 - 基本功能 ====================
     ipcMain.handle('get-app-version', () => {
         return app.getVersion();
+    });
+
+    // 批量 Reels 长队列会累积 Chromium Canvas/视频解码器内存。
+    // 渲染端已先持久化续传断点；这里强制结束旧渲染进程，
+    // render-process-gone 后重载同一窗口，新页面再从断点自动继续。
+    ipcMain.on('recycle-renderer', (event) => {
+        const webContents = event.sender;
+        if (!webContents || webContents.isDestroyed()) return;
+        let reloadStarted = false;
+        const reloadAfterExit = () => {
+            if (reloadStarted || webContents.isDestroyed()) return;
+            reloadStarted = true;
+            setTimeout(() => {
+                if (!webContents.isDestroyed()) webContents.reloadIgnoringCache();
+            }, 120);
+        };
+        webContents.once('render-process-gone', reloadAfterExit);
+        setTimeout(() => {
+            if (webContents.isDestroyed()) return;
+            try {
+                webContents.forcefullyCrashRenderer();
+            } catch (error) {
+                log(`[Reels] 重建渲染进程失败，降级为普通重载: ${error.message}`);
+                reloadAfterExit();
+            }
+        }, 80);
     });
 
     ipcMain.handle('select-directory', async () => {

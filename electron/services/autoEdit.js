@@ -239,10 +239,32 @@ function flattenWords(wordTimeInfo) {
             const start = Number(w.start);
             const end = Number(w.end);
             if (!raw || !norm || !Number.isFinite(start) || !Number.isFinite(end) || end < start) continue;
-            words.push({ raw, norm, start, end, score: w.score || 0 });
+            // 手动 SRT 会在每个词上带上所属字幕条目的原始时间码。
+            // 普通 API 词级转录没有这两个字段，仍沿用原有的词级切点。
+            const srtStart = Number(w.srtStart);
+            const srtEnd = Number(w.srtEnd);
+            words.push({
+                raw, norm, start, end, score: w.score || 0,
+                srtStart: Number.isFinite(srtStart) ? srtStart : null,
+                srtEnd: Number.isFinite(srtEnd) ? srtEnd : null,
+            });
         }
     }
     return words;
+}
+
+/**
+ * 手动 SRT 的词内时间是为了匹配而平均分配的，不能拿它作为最终裁点。
+ * 命中手动 SRT 时，以首尾命中词所属字幕条目的原始 timecode 裁切，
+ * 从而保证剪辑边界与用户提供的 SRT 完全一致。
+ */
+function getManualSrtCutRange(words, startIdx, endIdx, duration) {
+    const first = words?.[startIdx];
+    const last = words?.[endIdx];
+    if (!first || !last || !Number.isFinite(first.srtStart) || !Number.isFinite(last.srtEnd)) return null;
+    const start = Math.max(0, first.srtStart);
+    const end = Math.min(Number.isFinite(duration) && duration > 0 ? duration : last.srtEnd, last.srtEnd);
+    return end > start ? { start, end } : null;
 }
 
 function lcsLength(a, b) {
@@ -652,10 +674,12 @@ function extendPlanAtBoundary(plan, targetText, side, leadPad, tailPad) {
 
     if (side === 'previous') {
         plan.wordEndIdx = globalEnd;
-        plan.end = Math.min(plan.duration || Infinity, plan.words[globalEnd].end + tailPad);
+        const srtRange = getManualSrtCutRange(plan.words, plan.wordStartIdx, globalEnd, plan.duration);
+        plan.end = srtRange ? srtRange.end : Math.min(plan.duration || Infinity, plan.words[globalEnd].end + tailPad);
     } else {
         plan.wordStartIdx = globalStart;
-        plan.start = Math.max(0, plan.words[globalStart].start - leadPad);
+        const srtRange = getManualSrtCutRange(plan.words, globalStart, plan.wordEndIdx, plan.duration);
+        plan.start = srtRange ? srtRange.start : Math.max(0, plan.words[globalStart].start - leadPad);
     }
     return { globalStart, globalEnd, score: match.score };
 }
@@ -790,6 +814,8 @@ async function transcribeClip(clipPath, language, gladiaKeys, cacheDir, force, m
                             word: rawWords[j],
                             start: wordStart,
                             end: wordEnd,
+                            srtStart: startSec,
+                            srtEnd: endSec,
                             score: 0.99,
                             confidence: 0.99
                         });
@@ -847,6 +873,8 @@ async function transcribeClip(clipPath, language, gladiaKeys, cacheDir, force, m
                         word: rawWords[j],
                         start: wordStart,
                         end: wordEnd,
+                        srtStart: startSec,
+                        srtEnd: endSec,
                         score: 0.99,
                         confidence: 0.99
                     });
@@ -1155,8 +1183,9 @@ function adjustPlanMatchedRange(plan, newStartLine, newEndLine, lines, minScore,
         plan.wordEndIdx = wordWindow.endIdx;
         plan.matchedText = wordWindow.matchedText;
         plan.matchScore = wordWindow.score;
-        plan.start = Math.max(0, plan.words[wordWindow.startIdx].start - leadPad);
-        plan.end = Math.min(duration || plan.words[wordWindow.endIdx].end + tailPad, plan.words[wordWindow.endIdx].end + tailPad);
+        const srtRange = getManualSrtCutRange(plan.words, wordWindow.startIdx, wordWindow.endIdx, duration);
+        plan.start = srtRange ? srtRange.start : Math.max(0, plan.words[wordWindow.startIdx].start - leadPad);
+        plan.end = srtRange ? srtRange.end : Math.min(duration || plan.words[wordWindow.endIdx].end + tailPad, plan.words[wordWindow.endIdx].end + tailPad);
     } else {
         plan.start = 0;
         plan.end = duration;
@@ -1791,8 +1820,9 @@ async function autoEditByScript(opts = {}) {
                 const isUniqueClip = clipPathCounts[clipPath] === 1;
 
                 if (wordStartIdx !== -1 && wordEndIdx !== -1 && words[wordStartIdx] && words[wordEndIdx]) {
-                    start = Math.max(0, words[wordStartIdx].start - leadPad);
-                    end = Math.min(duration || words[wordEndIdx].end + tailPad, words[wordEndIdx].end + tailPad);
+                    const srtRange = getManualSrtCutRange(words, wordStartIdx, wordEndIdx, duration);
+                    start = srtRange ? srtRange.start : Math.max(0, words[wordStartIdx].start - leadPad);
+                    end = srtRange ? srtRange.end : Math.min(duration || words[wordEndIdx].end + tailPad, words[wordEndIdx].end + tailPad);
                 } else if (isUniqueClip && words.length > 0) {
                     start = Math.max(0, words[0].start - leadPad);
                     end = Math.min(duration || words[words.length - 1].end + tailPad, words[words.length - 1].end + tailPad);
@@ -2555,6 +2585,7 @@ async function autoEditByScript(opts = {}) {
                     duplicate_of_source_index: isDuplicateClip ? plan.duplicateOfSourceIndex + 1 : null,
                     start: plan.start,
                     end: plan.end,
+                    cut_timing_source: getManualSrtCutRange(plan.words, plan.wordStartIdx, plan.wordEndIdx, plan.duration) ? 'srt_timecode' : 'word_timing',
                     cut_engine: plan.cutEngine || 'legacy',
                     cut_score: Math.round((plan.v2CutScore || 0) * 1000) / 1000,
                     cut_reason: plan.v2CutReason || '',
@@ -2706,10 +2737,12 @@ async function autoEditByScript(opts = {}) {
 
             let filterComplex;
             if (hasAudio) {
-                filterComplex = `[0:v]setpts=${vPts}*PTS,${videoFitFilter},fps=${fps},setsar=1[v];[0:a]${atempoFilter},aformat=sample_rates=48000:channel_layouts=stereo[a]`;
+                // 每段在输入寻址后必须清零 PTS。否则首个关键帧前的时间戳可能被
+                // 保留到 concat 输出，未经过字幕滤镜二次编码时播放器会显示开头黑帧。
+                filterComplex = `[0:v]setpts=${vPts}*(PTS-STARTPTS),${videoFitFilter},fps=${fps},setsar=1[v];[0:a]asetpts=PTS-STARTPTS,${atempoFilter},aformat=sample_rates=48000:channel_layouts=stereo[a]`;
             } else {
                 args.push('-f', 'lavfi', '-i', 'anullsrc=cl=stereo:r=48000');
-                filterComplex = `[0:v]setpts=${vPts}*PTS,${videoFitFilter},fps=${fps},setsar=1[v];[1:a]aformat=sample_rates=48000:channel_layouts=stereo[a]`;
+                filterComplex = `[0:v]setpts=${vPts}*(PTS-STARTPTS),${videoFitFilter},fps=${fps},setsar=1[v];[1:a]asetpts=PTS-STARTPTS,aformat=sample_rates=48000:channel_layouts=stereo[a]`;
             }
 
             args.push(
@@ -2870,6 +2903,7 @@ async function autoEditByScript(opts = {}) {
                 match_score: Math.round((plan.matchScore || 0) * 1000) / 1000,
                 start: plan.start,
                 end: plan.end,
+                cut_timing_source: getManualSrtCutRange(plan.words, plan.wordStartIdx, plan.wordEndIdx, plan.duration) ? 'srt_timecode' : 'word_timing',
                 cut_selection: plan.cutSelection || (
                     plan.cutEngine === autoEditMatcherV2.ENGINE_ID ? 'v2' : 'classic'
                 ),

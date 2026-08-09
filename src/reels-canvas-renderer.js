@@ -897,6 +897,27 @@ class ReelsCanvasRenderer {
                     ? (cx - (wordW * lineScale) / 2)
                     : (textDirection === 'rtl' ? currX - wordW * lineScale : currX);
 
+                // Word Pop 会在绘制阶段放大当前词。色块也必须采用相同
+                // 缩放，否则文字回弹时会跑出色块，或看起来整体错位。
+                let dynamicWordScale = 1.0;
+                if (anim && (isWordPopRandom || isWordPopRandomPulse) && currentTime >= wordStart) {
+                    if (isWordPopRandomPulse && typeof anim.computeWordRandomPulseScale === 'function') {
+                        dynamicWordScale = anim.computeWordRandomPulseScale(
+                            currentTime, wordStart, wordEnd, wordIdx, segStart,
+                            Number(s.word_pop_random_pulse_min_scale ?? 1.08),
+                            Number(s.word_pop_random_pulse_max_scale ?? 1.38),
+                            Number(s.word_pop_random_pulse_duration ?? 0.22)
+                        );
+                    } else {
+                        dynamicWordScale = anim.computeWordRandomPopScale(
+                            currentTime, wordStart, wordEnd, wordIdx, segStart,
+                            Number(s.word_pop_random_min_scale ?? 0.7),
+                            Number(s.word_pop_random_max_scale ?? 1.34),
+                            Number(s.word_pop_random_duration ?? 0.22)
+                        );
+                    }
+                }
+
                 // Metronome visibility
                 let metroVisible = true;
                 if (anim && isMetronome && wInfo) {
@@ -911,10 +932,10 @@ class ReelsCanvasRenderer {
                 if (isHighlight && s.dynamic_box && isWordActive) {
                     const dynPad = s.high_padding || 4;
                     const dynOffY = s.high_offset_y || 0;
-                    let boxX = drawX - dynPad;
-                    let boxY = y - dynPad + dynOffY;
-                    let boxW = wordW * lineScale + dynPad * 2;
-                    let boxH = lineHScaled + dynPad * 2;
+                    let boxX = drawX - dynPad * dynamicWordScale;
+                    let boxY = y - dynPad * dynamicWordScale + dynOffY;
+                    let boxW = (wordW * lineScale + dynPad * 2) * dynamicWordScale;
+                    let boxH = (lineHScaled + dynPad * 2) * dynamicWordScale;
 
                     if (s.dyn_box_anim && anim && wInfo) {
                         const dscale = anim.computeDynBoxScale(
@@ -1014,21 +1035,7 @@ class ReelsCanvasRenderer {
                     }
 
                     if (currentTime >= wordStart) {
-                        if (isWordPopRandomPulse && typeof anim.computeWordRandomPulseScale === 'function') {
-                            randomPopScale = anim.computeWordRandomPulseScale(
-                                currentTime, wordStart, wordEnd, wordIdx, segStart,
-                                Number(s.word_pop_random_pulse_min_scale ?? 1.08),
-                                Number(s.word_pop_random_pulse_max_scale ?? 1.38),
-                                Number(s.word_pop_random_pulse_duration ?? 0.22)
-                            );
-                        } else {
-                            randomPopScale = anim.computeWordRandomPopScale(
-                                currentTime, wordStart, wordEnd, wordIdx, segStart,
-                                Number(s.word_pop_random_min_scale ?? 0.7),
-                                Number(s.word_pop_random_max_scale ?? 1.34),
-                                Number(s.word_pop_random_duration ?? 0.22)
-                            );
-                        }
+                        randomPopScale = dynamicWordScale;
                     }
                 }
 

@@ -103,6 +103,7 @@ function openTemplateLibrary(onSelectCallback = null, opts = {}) {
                     ${isPicker ? '' : `
                     <button onclick="saveCurrentAsTemplate()" style="padding:5px 12px;font-size:11px;font-weight:600;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;border:none;border-radius:8px;cursor:pointer;">💾 保存当前工程</button>
                     <button id="tpl-update-current-btn" onclick="updateCurrentTemplate()" style="padding:5px 12px;font-size:11px;font-weight:600;background:rgba(245,158,11,0.16);color:#fbbf24;border:1px solid rgba(245,158,11,0.35);border-radius:8px;cursor:pointer;">♻️ 更新当前模板</button>
+                    <button id="tpl-repair-thumbnails-btn" onclick="repairDuplicateTemplateThumbnails()" style="padding:5px 12px;font-size:11px;font-weight:600;background:rgba(14,165,233,0.15);color:#7dd3fc;border:1px solid rgba(14,165,233,0.35);border-radius:8px;cursor:pointer;">📸 修复重复封面</button>
                     <button onclick="_importTemplate()" style="padding:5px 12px;font-size:11px;font-weight:600;background:rgba(16,185,129,0.15);color:#10b981;border:1px solid rgba(16,185,129,0.3);border-radius:8px;cursor:pointer;">📥 导入</button>
                     <button onclick="_exportAllTemplates()" style="padding:5px 12px;font-size:11px;font-weight:600;background:rgba(236,72,153,0.15);color:#ec4899;border:1px solid rgba(236,72,153,0.3);border-radius:8px;cursor:pointer;">📤 导出全部</button>
                     <span id="tpl-current-template-label" style="max-width:170px;font-size:10px;color:#777;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span>
@@ -287,8 +288,31 @@ async function _refreshTemplateList() {
 // 2. 保存当前工程为模板
 // ═══════════════════════════════════════════════════════
 
-function _captureCurrentTemplatePayload(name) {
-    // 截取当前 Canvas 预览作为缩略图
+/** 为队列生成稳定短编号；同一路径/标签在不同日期保存仍保持一致。 */
+function _templateQueueShortId(value) {
+    const input = String(value || 'queue').trim().toLowerCase().replace(/\\/g, '/');
+    let hash = 2166136261;
+    for (let i = 0; i < input.length; i++) {
+        hash ^= input.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(36).toUpperCase().padStart(7, '0').slice(-7);
+}
+
+function _templateQueueIdentityFromTasks(tasks) {
+    const list = Array.isArray(tasks) ? tasks : [];
+    const folderIds = [...new Set(list.map(t => t?._folderQueueId).filter(Boolean))];
+    if (folderIds.length === 1) return `folder:${folderIds[0]}`;
+    const tabIds = [...new Set(list.map(t => t?._batchTabId).filter(Boolean))];
+    if (tabIds.length === 1) return `tab:${tabIds[0]}`;
+    return '';
+}
+
+function _templateIdForQueue(baseName, queueIdentity) {
+    return `tpl_queue_${_templateQueueShortId(`${baseName}|${queueIdentity}`)}`;
+}
+
+function _captureVisibleTemplateThumbnail() {
     let thumbnail = '';
     try {
         // V2 使用独立 Canvas。优先截取当前正在显示的预览，
@@ -308,6 +332,127 @@ function _captureCurrentTemplatePayload(name) {
     } catch (e) {
         console.warn('[Template] 截图失败:', e);
     }
+    return thumbnail;
+}
+
+async function _captureTemplateThumbnailForTasks(tasks, fallbackThumbnail = '') {
+    const state = window._reelsState;
+    if (!state || !Array.isArray(tasks) || tasks.length === 0) return fallbackThumbnail;
+    const originalTasks = state.tasks;
+    const originalSelectedIdx = state.selectedIdx;
+    window._templateThumbnailCaptureActive = true;
+    try {
+        state.tasks = tasks;
+        state.selectedIdx = -1;
+        if (typeof reelsSelectTask === 'function') reelsSelectTask(0);
+        else {
+            state.selectedIdx = 0;
+            if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
+        }
+        // 等待图片/视频元数据和 Canvas 至少完成一次实际绘制。
+        await new Promise(resolve => setTimeout(resolve, 450));
+        return _captureVisibleTemplateThumbnail() || fallbackThumbnail;
+    } catch (error) {
+        console.warn('[Template] 队列独立截图失败:', error);
+        return fallbackThumbnail;
+    } finally {
+        state.tasks = originalTasks;
+        state.selectedIdx = -1;
+        if (originalSelectedIdx >= 0 && originalSelectedIdx < originalTasks.length && typeof reelsSelectTask === 'function') {
+            reelsSelectTask(originalSelectedIdx);
+        } else {
+            state.selectedIdx = originalSelectedIdx;
+            if (typeof _renderTaskList === 'function') _renderTaskList();
+        }
+        window._templateThumbnailCaptureActive = false;
+    }
+}
+
+async function _repairTemplateThumbnailsByIds(templateIds, options = {}) {
+    const ids = [...new Set((templateIds || []).filter(Boolean))];
+    if (!ids.length) return { repaired: 0, failed: 0 };
+    const button = document.getElementById('tpl-repair-thumbnails-btn');
+    const originalText = button?.textContent || '';
+    if (button) button.disabled = true;
+    let repaired = 0;
+    let failed = 0;
+    try {
+        for (let i = 0; i < ids.length; i++) {
+            if (button) button.textContent = `📸 ${i + 1}/${ids.length}`;
+            try {
+                const getResp = await apiFetch(`${API_BASE}/templates/get`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: ids[i] })
+                });
+                const getResult = await getResp.json();
+                const tpl = getResult.data || getResult;
+                const tasks = tpl?.projectData?.tasks || [];
+                if (!tasks.length) throw new Error('模板没有任务');
+                const thumbnail = await _captureTemplateThumbnailForTasks(tasks, tpl.thumbnail || '');
+                if (!thumbnail) throw new Error('未能生成截图');
+                const saveResp = await apiFetch(`${API_BASE}/templates/save`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        id: tpl.id,
+                        name: tpl.name,
+                        description: tpl.description || '',
+                        tags: tpl.tags || [],
+                        thumbnail,
+                        projectData: tpl.projectData,
+                    }),
+                });
+                const saveResult = await saveResp.json();
+                if (!(saveResult.success || saveResult.data?.success)) throw new Error(saveResult.error || '保存失败');
+                repaired++;
+            } catch (error) {
+                failed++;
+                console.warn(`[Template] 修复模板封面失败 ${ids[i]}:`, error);
+            }
+        }
+    } finally {
+        if (button) {
+            button.disabled = false;
+            button.textContent = originalText || '📸 修复重复封面';
+        }
+        if (document.getElementById('template-library-modal')) _refreshTemplateList();
+    }
+    if (!options.silent && typeof showToast === 'function') {
+        showToast(`已重新生成 ${repaired} 张模板封面${failed ? `，${failed} 张失败` : ''}`, failed ? 'warning' : 'success', 6000);
+    }
+    return { repaired, failed };
+}
+
+async function repairDuplicateTemplateThumbnails() {
+    try {
+        const resp = await apiFetch(`${API_BASE}/templates/list`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+        });
+        const parsed = await resp.json();
+        const templates = parsed.data || parsed || [];
+        const byThumbnail = new Map();
+        templates.forEach(tpl => {
+            const key = String(tpl.thumbnail || '');
+            if (!key) return;
+            if (!byThumbnail.has(key)) byThumbnail.set(key, []);
+            byThumbnail.get(key).push(tpl.id);
+        });
+        const duplicateIds = [...byThumbnail.values()].filter(group => group.length > 1).flat();
+        if (!duplicateIds.length) {
+            if (typeof showToast === 'function') showToast('没有检测到重复模板封面', 'info');
+            return;
+        }
+        if (!confirm(`检测到 ${duplicateIds.length} 个模板共用了重复封面。\n\n是否逐模板重新生成独立截图？`)) return;
+        await _repairTemplateThumbnailsByIds(duplicateIds);
+    } catch (error) {
+        if (typeof showToast === 'function') showToast(`修复模板封面失败：${error.message}`, 'error');
+    }
+}
+window.repairDuplicateTemplateThumbnails = repairDuplicateTemplateThumbnails;
+window._repairTemplateThumbnailsByIds = _repairTemplateThumbnailsByIds;
+
+function _captureCurrentTemplatePayload(name) {
+    // 截取当前 Canvas 预览作为缩略图
+    const thumbnail = _captureVisibleTemplateThumbnail();
 
     // 用 ReelsProject.collectProjectData 序列化工程
     let projectData = {};
@@ -390,7 +535,10 @@ async function saveCurrentAsTemplate() {
                 const seenCount = (usedNames.get(rawGroupName) || 0) + 1;
                 usedNames.set(rawGroupName, seenCount);
                 const groupName = seenCount > 1 ? `${rawGroupName}_${seenCount}` : rawGroupName;
-                const templateName = `${baseName}_${groupName}`;
+                const queueIdentity = group.id || _templateQueueIdentityFromTasks(group.tasks) || `group:${index}`;
+                const queueShortId = _templateQueueShortId(queueIdentity);
+                const templateName = `${baseName}_${groupName} [Q-${queueShortId}]`;
+                const stableTemplateId = _templateIdForQueue(baseName, queueIdentity);
                 const projectData = ReelsProject.collectProjectData({
                     tasks: group.tasks,
                     backgroundLibrary: basePayload.projectData.backgroundLibrary || [],
@@ -400,15 +548,17 @@ async function saveCurrentAsTemplate() {
                 });
 
                 try {
+                    const groupThumbnail = await _captureTemplateThumbnailForTasks(group.tasks, basePayload.thumbnail);
                     const resp = await apiFetch(`${API_BASE}/templates/save`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
+                            id: stableTemplateId,
                             name: templateName,
                             // 账号队列拆分保存时，当前预览画面可作为本次保存的可见缩略图。
                             // 之前只给“激活标签”写缩略图，队列分组 ID 与标签 ID 不同，
                             // 导致所有新模板都显示为空白场记板。
-                            thumbnail: basePayload.thumbnail,
+                            thumbnail: groupThumbnail,
                             projectData,
                         }),
                     });
@@ -436,6 +586,12 @@ async function saveCurrentAsTemplate() {
         }
 
         const payload = basePayload;
+        const singleQueueIdentity = _templateQueueIdentityFromTasks(window._reelsState?.tasks || []);
+        if (singleQueueIdentity) {
+            const queueShortId = _templateQueueShortId(singleQueueIdentity);
+            payload.name = `${baseName} [Q-${queueShortId}]`;
+            payload.id = _templateIdForQueue(baseName, singleQueueIdentity);
+        }
         const resp = await apiFetch(`${API_BASE}/templates/save`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -445,8 +601,8 @@ async function saveCurrentAsTemplate() {
         if (!(result.success || result.data?.success)) throw new Error(result.error || '保存失败');
 
         const savedId = result.id || result.data?.id || '';
-        if (savedId) _setCurrentTemplateContext(savedId, baseName);
-        if (typeof showToast === 'function') showToast(`模板「${baseName}」已保存 ✅`, 'success');
+        if (savedId) _setCurrentTemplateContext(savedId, payload.name || baseName);
+        if (typeof showToast === 'function') showToast(`模板「${payload.name || baseName}」已保存 ✅`, 'success');
         _refreshTemplateList();
     } catch (e) {
         if (typeof showToast === 'function') showToast('保存模板失败: ' + e.message, 'error');
