@@ -695,10 +695,13 @@ function _autoColorize(text, rules) {
         if (sorted.length === 0) continue;
 
         let pattern;
-        if (REGEX_TYPES.has(rule.type)) {
+        if (rule.type === 'english') {
+            // Legacy rule name; match words in every Latin/Unicode language.
+            pattern = new RegExp("[\\p{L}\\p{M}]+(?:[’'\\-][\\p{L}\\p{M}]+)*", 'gu');
+        } else if (REGEX_TYPES.has(rule.type)) {
             // 正则类型：直接拼接为正则，不转义
             try {
-                pattern = new RegExp(sorted.join('|'), 'g');
+                pattern = new RegExp(sorted.join('|'), 'gu');
             } catch (e) {
                 console.warn('[AutoColor] 无效正则:', sorted, e);
                 continue;
@@ -706,7 +709,7 @@ function _autoColorize(text, rules) {
         } else {
             // 关键词类型：转义特殊字符，按长度降序排列（优先匹配长词）
             const escaped = sorted.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-            pattern = new RegExp(escaped.join('|'), 'g');
+            pattern = new RegExp(escaped.join('|'), rule.case_sensitive === true ? 'gu' : 'giu');
         }
 
         let match;
@@ -1366,6 +1369,16 @@ function _getMaxFontSizeFromRanges(baseSize, ranges) {
     return max;
 }
 
+// A bold rich-text fragment is wider than the section's normal font.  Layout
+// must reserve that width, otherwise a colored emphasis word can escape its box.
+function _getMaxFontWeightFromRanges(baseWeight, ranges) {
+    let max = Number(baseWeight) || 400;
+    for (const r of (ranges || [])) {
+        if (r && r.bold) max = Math.max(max, 700);
+    }
+    return max;
+}
+
 function _drawTextOverlay(ctx, ov, x, y, w, h, currentTime) {
     const content = ov.content || '';
     if (!content) return;
@@ -1647,10 +1660,12 @@ function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime
 
     // ── 内部测量函数 ──
     function _measure(tfs, bfs, ffs) {
-        // 先合并自动着色范围，再用最大字号做换行测量（防止字号不同导致布局错位）
+        // 先合并自动着色范围，再用最宽的字号/字重做换行测量。
+        // 自动着色可以把部分词加粗；若仍以普通字重测量，会出现“测量未超宽、实际绘制超宽”。
         const tMergedRanges = _getAutoColorMergedRanges(ov, 'title', measureTitleText) || ov.title_styled_ranges || [];
         const actualTfs = _getMaxFontSizeFromRanges(tfs, tMergedRanges);
-        const tfActual = `${titleItalic} ${titleWeight} ${actualTfs}px "${titleFamily}", ${titleFallback}`;
+        const actualTfw = _getMaxFontWeightFromRanges(titleWeight, tMergedRanges);
+        const tfActual = `${titleItalic} ${actualTfw} ${actualTfs}px "${titleFamily}", ${titleFallback}`;
         ctx.font = tfActual;
         ctx.letterSpacing = `${ov.title_letter_spacing || 0}px`;
         const tLines = measureTitleText ? _wrapText(ctx, measureTitleText, tW) : [];
@@ -1665,7 +1680,8 @@ function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime
 
         const bMergedRanges = _getAutoColorMergedRanges(ov, 'body', measureBodyText) || ov.body_styled_ranges || [];
         const actualBfs = _getMaxFontSizeFromRanges(bfs, bMergedRanges);
-        const bfActual = `${bodyItalic} ${bodyWeight} ${actualBfs}px "${bodyFamily}", ${bodyFallback}`;
+        const actualBfw = _getMaxFontWeightFromRanges(bodyWeight, bMergedRanges);
+        const bfActual = `${bodyItalic} ${actualBfw} ${actualBfs}px "${bodyFamily}", ${bodyFallback}`;
         ctx.font = bfActual;
         ctx.letterSpacing = `${ov.body_letter_spacing || 0}px`;
         const bLines = measureBodyText ? _wrapText(ctx, measureBodyText, bW) : [];
@@ -1680,7 +1696,8 @@ function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime
 
         const fMergedRanges = _getAutoColorMergedRanges(ov, 'footer', measureFooterText) || ov.footer_styled_ranges || [];
         const actualFfs = _getMaxFontSizeFromRanges(ffs, fMergedRanges);
-        const ffActual = `${footerItalic} ${footerWeight} ${actualFfs}px "${footerFamily}", ${footerFallback}`;
+        const actualFfw = _getMaxFontWeightFromRanges(footerWeight, fMergedRanges);
+        const ffActual = `${footerItalic} ${actualFfw} ${actualFfs}px "${footerFamily}", ${footerFallback}`;
         ctx.font = ffActual;
         ctx.letterSpacing = `${ov.footer_letter_spacing || 0}px`;
         const fLines = measureFooterText ? _wrapText(ctx, measureFooterText, fW) : [];
@@ -2217,7 +2234,8 @@ function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime
                 const _titleRanges = _titleMerged || ov.title_styled_ranges;
                 if (_titleRanges && _titleRanges.length > 0 && typeof ReelsRichText !== 'undefined') {
                     _drawRichLine(ctx, line, ov.title_text, _titleRanges, lx, ty,
-                        ov.title_color || '#1A1A1A', titleFontSize, titleFamily, titleFallback, titleWeight, ov.title_letter_spacing || 0);
+                        ov.title_color || '#1A1A1A', titleFontSize, titleFamily, titleFallback, titleWeight, ov.title_letter_spacing || 0,
+                        _sectionX(tW, customX), tW, ov.title_align || 'center');
                 } else {
                     if (!indep && ov.title_color_from_style) {
                         ctx.fillStyle = _resolveTitleColor(ov.title_color_from_style);
@@ -2417,7 +2435,8 @@ function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime
                 const _bodyRanges = _bodyMerged || ov.body_styled_ranges;
                 if (_bodyRanges && _bodyRanges.length > 0 && typeof ReelsRichText !== 'undefined') {
                     _drawRichLine(ctx, line, ov.body_text, _bodyRanges, lx, by,
-                        ov.body_color || '#333333', bodyFontSize, bodyFamily, bodyFallback, bodyWeight, ov.body_letter_spacing || 0);
+                        ov.body_color || '#333333', bodyFontSize, bodyFamily, bodyFallback, bodyWeight, ov.body_letter_spacing || 0,
+                        _sectionX(bW, customX), bW, ov.body_align || 'center');
                 } else {
                     ctx.fillStyle = ov.body_color || '#333333';
                     ctx.fillText(line, lx, by);
@@ -2497,7 +2516,8 @@ function _drawTextCardOverlay(ctx, ov, x, y, w, h, canvasW, canvasH, currentTime
                 const _footerRanges = _footerMerged || ov.footer_styled_ranges;
                 if (_footerRanges && _footerRanges.length > 0 && typeof ReelsRichText !== 'undefined') {
                     _drawRichLine(ctx, line, ov.footer_text, _footerRanges, lx, fy,
-                        ov.footer_color || '#666666', footerFontSize, footerFamily, footerFallback, footerWeight, ov.footer_letter_spacing || 0);
+                        ov.footer_color || '#666666', footerFontSize, footerFamily, footerFallback, footerWeight, ov.footer_letter_spacing || 0,
+                        _sectionX(fW, customX), fW, ov.footer_align || 'center');
                 } else {
                     ctx.fillStyle = ov.footer_color || '#666666';
                     ctx.fillText(line, lx, fy);
@@ -4333,8 +4353,14 @@ function _drawTextLines(ctx, lines, boxX, boxY, boxW, lineHeight, align, color) 
  * @param {string} fallback       字体 fallback
  * @param {number} fontWeight     字重
  * @param {number} letterSpacing  字母间距
+ * @param {number} boxX           可选：文本区左侧，用真实富文本宽度重新对齐
+ * @param {number} boxW           可选：文本区宽度
+ * @param {string} align          可选：left | center | right
  */
-function _drawRichLine(ctx, lineText, fullText, styledRanges, x, y, defaultColor, baseFontSize, fontFamily, fallback, fontWeight, letterSpacing) {
+function _drawRichLine(ctx, lineText, fullText, styledRanges, x, y, defaultColor, baseFontSize, fontFamily, fallback, fontWeight, letterSpacing, boxX, boxW, align) {
+    // Rich chunks may change font size/weight. Keep those changes local so the
+    // next line's alignment is still measured with the section's base font.
+    ctx.save();
     // 定位 lineText 在 fullText 中的字符偏移
     // 使用 _drawRichLine._searchFrom 跟踪当前搜索起点, 避免重复行错位
     const searchFrom = _drawRichLine._searchFrom || 0;
@@ -4351,6 +4377,7 @@ function _drawRichLine(ctx, lineText, fullText, styledRanges, x, y, defaultColor
         } else {
             ctx.fillText(lineText, x, y);
         }
+        ctx.restore();
         return;
     }
     // 推进搜索游标到本行末尾，供下一次同段落调用使用
@@ -4366,6 +4393,30 @@ function _drawRichLine(ctx, lineText, fullText, styledRanges, x, y, defaultColor
 
     // 利用 ReelsRichText.splitByRanges 对整段文字做切片，然后只取落入本行的部分
     const allChunks = ReelsRichText.splitByRanges(fullText, styledRanges, baseStyle);
+
+    // `_alignX` previously measured the whole line using one font.  That is
+    // wrong for a mixed normal/bold line: center/right aligned text drifts and
+    // can run past its section.  Measure the exact chunks before choosing X.
+    if (Number.isFinite(boxX) && Number.isFinite(boxW) && align && align !== 'left') {
+        let richWidth = 0;
+        let previousText = false;
+        for (const chunk of allChunks) {
+            const overlapStart = Math.max(chunk.start, lineStart);
+            const overlapEnd = Math.min(chunk.end, lineEnd);
+            if (overlapStart >= overlapEnd) continue;
+            const segText = fullText.substring(overlapStart, overlapEnd);
+            if (!segText) continue;
+            const tokFs = chunk.style.fontsize || baseFontSize;
+            const tokBold = chunk.style.bold ? 700 : fontWeight;
+            ctx.font = `${tokBold} ${tokFs}px "${fontFamily}", ${fallback}`;
+            richWidth += _measureTextWithLetterSpacing(ctx, segText, letterSpacing);
+            // _measureTextWithLetterSpacing only includes spacing within a
+            // chunk, so add the gap at a style boundary once.
+            if (previousText && letterSpacing) richWidth += parseFloat(letterSpacing);
+            previousText = true;
+        }
+        x = align === 'right' ? boxX + boxW - richWidth : boxX + (boxW - richWidth) / 2;
+    }
     
     let cx = x;
     for (const chunk of allChunks) {
@@ -4391,6 +4442,7 @@ function _drawRichLine(ctx, lineText, fullText, styledRanges, x, y, defaultColor
         }
         cx += _measureTextWithLetterSpacing(ctx, segText, letterSpacing);
     }
+    ctx.restore();
 }
 
 function _alignX(ctx, text, boxX, boxW, align, letterSpacing = 0) {

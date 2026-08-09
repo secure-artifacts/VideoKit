@@ -301,16 +301,21 @@ const ReelsRichText = (() => {
             if (sorted.length === 0) continue;
 
             let pattern;
-            if (REGEX_TYPES.has(rule.type)) {
+            if (rule.type === 'english') {
+                // Historical name kept for saved projects.  This is a
+                // multilingual word rule: \p{L} handles Polish/French letters
+                // and \p{M} keeps decomposed accents with their base letter.
+                pattern = new RegExp("[\\p{L}\\p{M}]+(?:[’'\\-][\\p{L}\\p{M}]+)*", 'gu');
+            } else if (REGEX_TYPES.has(rule.type)) {
                 try {
-                    pattern = new RegExp(sorted.join('|'), 'g');
+                    pattern = new RegExp(sorted.join('|'), 'gu');
                 } catch (e) {
                     console.warn('[AutoColor] Invalid regex:', sorted, e);
                     continue;
                 }
             } else {
                 const escaped = sorted.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-                pattern = new RegExp(escaped.join('|'), 'g');
+                pattern = new RegExp(escaped.join('|'), rule.case_sensitive === true ? 'gu' : 'giu');
             }
 
             let match;
@@ -370,3 +375,4 @@ const ReelsRichText = (() => {
 })();
 
 if (typeof window !== 'undefined') window.ReelsRichText = ReelsRichText;
+if (typeof module !== 'undefined' && module.exports) module.exports = ReelsRichText;

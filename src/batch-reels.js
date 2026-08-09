@@ -2312,7 +2312,7 @@ function reelsAddAutoColorRule(type) {
     
     let defaultKw = [];
     if (type === 'number') defaultKw = ['\d+(\.\d+)?'];
-    else if (type === 'english') defaultKw = ['[a-zA-Z]+'];
+    else if (type === 'english') defaultKw = ["[\\p{L}\\p{M}]+(?:[’'\\-][\\p{L}\\p{M}]+)*"];
     
     _reelsState.style.auto_color_rules.push({
         type: type,
@@ -2350,7 +2350,7 @@ function _renderSubtitleAutoColorRules() {
         const select = document.createElement('select');
         select.className = 'input input-small';
         select.style.cssText = 'padding:2px 4px;font-size:11px;height:auto;flex:1;';
-        const types = { 'keyword': '🏷️ 关键词', 'number': '🔢 数字', 'english': '🔤 英文', 'punctuation': '❗ 标点', 'quoted': '「」 引号', 'emoji': '😀 Emoji' };
+        const types = { 'keyword': '🏷️ 关键词', 'number': '🔢 数字', 'english': '🔤 单词（多语言）', 'punctuation': '❗ 标点', 'quoted': '「」 引号', 'emoji': '😀 Emoji' };
         for (const [v, n] of Object.entries(types)) {
             const opt = document.createElement('option');
             opt.value = v; opt.textContent = n;
@@ -2360,7 +2360,7 @@ function _renderSubtitleAutoColorRules() {
         select.addEventListener('change', () => {
             rule.type = select.value;
             if (rule.type === 'number') rule.keywords = ['\\d+(\\.\\d+)?'];
-            else if (rule.type === 'english') rule.keywords = ['[a-zA-Z]+'];
+            else if (rule.type === 'english') rule.keywords = ["[\\p{L}\\p{M}]+(?:[’'\\-][\\p{L}\\p{M}]+)*"];
             else if (rule.type === 'punctuation') rule.keywords = ['[!?！？❤️⭐✨🔥💪…]+'];
             else if (rule.type === 'quoted') rule.keywords = ['[「」"\'\'][^「」"\'\']*[「」"\'\']'];
             else if (rule.type === 'emoji') rule.keywords = ['\\p{Emoji_Presentation}|\\p{Extended_Pictographic}'];

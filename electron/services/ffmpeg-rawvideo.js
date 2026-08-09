@@ -309,9 +309,9 @@ async function prepareBg(opts) {
     const scaledW = Math.round(targetWidth * scaleFactor);
     const scaledH = Math.round(targetHeight * scaleFactor);
     if (scaleFactor >= 1.0) {
-        scaleCropFilter = `scale=${scaledW}:${scaledH}:force_original_aspect_ratio=increase,crop=${targetWidth}:${targetHeight}:'max(0, min(in_w-out_w, ((in_w-out_w)/2)*(1-(${bgX}/100))))':'max(0, min(in_h-out_h, ((in_h-out_h)/2)*(1-(${bgY}/100))))',setsar=1`;
+        scaleCropFilter = `${normalizeDisplayAspectFilter()},scale=${scaledW}:${scaledH}:force_original_aspect_ratio=increase,crop=${targetWidth}:${targetHeight}:'max(0, min(in_w-out_w, ((in_w-out_w)/2)*(1-(${bgX}/100))))':'max(0, min(in_h-out_h, ((in_h-out_h)/2)*(1-(${bgY}/100))))',setsar=1`;
     } else {
-        scaleCropFilter = `scale=${scaledW}:${scaledH}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:'max(0, min(ow-iw, ((ow-iw)/2)*(1+(${bgX}/100))))':'max(0, min(oh-ih, ((oh-ih)/2)*(1+(${bgY}/100))))':color=black,setsar=1`;
+        scaleCropFilter = `${normalizeDisplayAspectFilter()},scale=${scaledW}:${scaledH}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:'max(0, min(ow-iw, ((ow-iw)/2)*(1+(${bgX}/100))))':'max(0, min(oh-ih, ((oh-ih)/2)*(1+(${bgY}/100))))':color=black,setsar=1`;
     }
     if (bgFlipH) scaleCropFilter += ',hflip';
     if (bgFlipV) scaleCropFilter += ',vflip';
@@ -1063,6 +1063,16 @@ function runFFmpegSync(ffmpeg, args) {
 // 阶段 1.5: 预处理视频/GIF覆层 → 提取原分辨率PNG帧序列 (保留Alpha透明度)
 // ═══════════════════════════════════════════════════════
 
+/**
+ * PNG/JPEG frames do not retain a video's sample-aspect-ratio metadata.
+ * Convert coded pixels to their display geometry before extracting frames so
+ * anamorphic footage (common in camera exports) cannot be stretched later by
+ * the Canvas renderer.
+ */
+function normalizeDisplayAspectFilter() {
+    return 'scale=trunc(iw*sar/2)*2:ih:flags=lanczos,setsar=1';
+}
+
 async function prepareOverlay(opts) {
     let {
         overlayPath,
@@ -1100,7 +1110,9 @@ async function prepareOverlay(opts) {
     let cacheHash = `overlay_${generateId()}`;
     try {
         const stat = fs.statSync(overlayPath);
-        cacheHash = crypto.createHash('md5').update(`${overlayPath}_${stat.size}_${stat.mtimeMs}_${fps}_${duration}_${trimStart}_${trimEnd}`).digest('hex');
+        // Version the cache because older extractions lost SAR metadata when
+        // video frames were written as PNG files.
+        cacheHash = crypto.createHash('md5').update(`${overlayPath}_${stat.size}_${stat.mtimeMs}_${fps}_${duration}_${trimStart}_${trimEnd}_display-aspect-v2`).digest('hex');
     } catch(e) { /* fallback generates unique id */ }
 
     const cacheBase = path.join(settings.getSecureTmpDir(), 'videokit_overlay_cache');
@@ -1155,6 +1167,7 @@ async function prepareOverlay(opts) {
         '-i', overlayPath,
         '-t', String(duration),
         '-r', String(fps),
+        '-vf', normalizeDisplayAspectFilter(),
         '-an',
         `${framesDir}/frame_%06d.png`
     );
@@ -1353,9 +1366,9 @@ async function startSession(opts) {
         const scaledW = Math.round(width * scaleFactor);
         const scaledH = Math.round(height * scaleFactor);
         if (scaleFactor >= 1.0) {
-            scaleCropFilter = `scale=${scaledW}:${scaledH}:force_original_aspect_ratio=increase,crop=${width}:${height}:'max(0, min(in_w-out_w, ((in_w-out_w)/2)*(1-(${bgX}/100))))':'max(0, min(in_h-out_h, ((in_h-out_h)/2)*(1-(${bgY}/100))))',setsar=1`;
+            scaleCropFilter = `${normalizeDisplayAspectFilter()},scale=${scaledW}:${scaledH}:force_original_aspect_ratio=increase,crop=${width}:${height}:'max(0, min(in_w-out_w, ((in_w-out_w)/2)*(1-(${bgX}/100))))':'max(0, min(in_h-out_h, ((in_h-out_h)/2)*(1-(${bgY}/100))))',setsar=1`;
         } else {
-            scaleCropFilter = `scale=${scaledW}:${scaledH}:force_original_aspect_ratio=decrease,pad=${width}:${height}:'max(0, min(ow-iw, ((ow-iw)/2)*(1+(${bgX}/100))))':'max(0, min(oh-ih, ((oh-ih)/2)*(1+(${bgY}/100))))':color=black,setsar=1`;
+            scaleCropFilter = `${normalizeDisplayAspectFilter()},scale=${scaledW}:${scaledH}:force_original_aspect_ratio=decrease,pad=${width}:${height}:'max(0, min(ow-iw, ((ow-iw)/2)*(1+(${bgX}/100))))':'max(0, min(oh-ih, ((oh-ih)/2)*(1+(${bgY}/100))))':color=black,setsar=1`;
         }
         if (opts.bgFlipH) scaleCropFilter += ',hflip';
         if (opts.bgFlipV) scaleCropFilter += ',vflip';
@@ -2731,5 +2744,6 @@ module.exports = {
         expectedFrameCount,
         validateRawFrameSize,
         validateFrameCompletion,
+        normalizeDisplayAspectFilter,
     },
 };

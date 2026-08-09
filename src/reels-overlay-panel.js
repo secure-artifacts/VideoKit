@@ -1303,7 +1303,7 @@ class ReelsOverlayPanel {
                     // 数字 -> 金色
                     ov.auto_color_rules.push({ type: 'number', keywords: ['[+\\\\-]?\\\\d+([.,\\\\- ]\\\\d+)*'], color: '#FFD700', bold: true });
                 } else if (preset === 'brand') {
-                    ov.auto_color_rules.push({ type: 'english', keywords: ['[a-zA-Z]+'], color: '#00D4FF', bold: true });
+                    ov.auto_color_rules.push({ type: 'english', keywords: ["[\\p{L}\\p{M}]+(?:[’'\\-][\\p{L}\\p{M}]+)*"], color: '#00D4FF', bold: true });
                     ov.auto_color_rules.push({ type: 'number', keywords: ['[+\\\\-]?\\\\d+([.,\\\\- ]\\\\d+)*'], color: '#FFD700', bold: true });
                 } else if (preset === 'red_emphasis') {
                     ov.auto_color_rules.push({ type: 'number', keywords: ['[+\\\\-]?\\\\d+([.,\\\\- ]\\\\d+)*'], color: '#FF4444', bold: true });
@@ -3305,6 +3305,16 @@ class ReelsOverlayPanel {
             this._updateFlipperInfo(ov);
         }
 
+        // 自动着色规则属于覆层数据，也会随项目和覆层组预设一起保存。
+        // 之前这里仅同步普通表单字段，漏掉了动态规则列表，导致重启/加载
+        // 后画面仍按规则着色，但设置区错误地显示“暂无规则”。
+        const autoColorProps = this.container.querySelector('#rop-autocolor-props');
+        if (autoColorProps) {
+            const supportsAutoColor = ov.type === 'textcard' || ov.type === 'scroll';
+            autoColorProps.style.display = supportsAutoColor ? '' : 'none';
+            if (supportsAutoColor) this._renderAutoColorRules();
+        }
+
         this._syncAnimTimingFields('mode', false);
     }
 
@@ -4102,7 +4112,7 @@ class ReelsOverlayPanel {
             const types = {
                 'keyword': '🏷️ 自定义关键词',
                 'number': '🔢 数字',
-                'english': '🔤 英文',
+                'english': '🔤 单词（多语言）',
                 'punctuation': '❗ 标点符号',
                 'quoted': '「」 引号内容',
                 'emoji': '😀 Emoji'
@@ -4116,7 +4126,7 @@ class ReelsOverlayPanel {
             select.addEventListener('change', () => {
                 rule.type = select.value;
                 if (rule.type === 'number') rule.keywords = ['[+\\\\-]?\\\\d+([.,\\\\- ]\\\\d+)*'];
-                else if (rule.type === 'english') rule.keywords = ['[a-zA-Z]+'];
+                else if (rule.type === 'english') rule.keywords = ["[\\p{L}\\p{M}]+(?:[’'\\-][\\p{L}\\p{M}]+)*"];
                 else if (rule.type === 'punctuation') rule.keywords = ['[!?！？❤️⭐✨🔥💪…]+'];
                 else if (rule.type === 'quoted') rule.keywords = ['[「」"\'\'][^「」"\'\']*[「」"\'\']'];
                 else if (rule.type === 'emoji') rule.keywords = ['\\p{Emoji_Presentation}|\\p{Extended_Pictographic}'];
@@ -4143,7 +4153,7 @@ class ReelsOverlayPanel {
                 kwInput.className = 'rop-textarea';
                 kwInput.rows = 2;
                 kwInput.style.cssText = 'padding:4px;font-size:11px;min-height:40px;max-height:150px;resize:vertical;background:var(--bg-primary,#111116);border:1px solid var(--border-color,#333);color:var(--text-primary,#eee);border-radius:4px;width:100%;box-sizing:border-box;';
-                kwInput.placeholder = '输入或粘贴词语块\n支持换行和逗号分隔 (区分大小写)';
+                kwInput.placeholder = '一行一个词或短语；支持逗号分隔\n不要粘贴整段文案，否则整段都会被着色';
                 // Display keywords joined by newlines for better visibility
                 kwInput.value = (rule.keywords || []).join('\n');
                 kwInput.addEventListener('input', () => {
@@ -4152,6 +4162,10 @@ class ReelsOverlayPanel {
                     if (this.videoCanvas) this.videoCanvas.render();
                 });
                 ruleDiv.appendChild(kwInput);
+                const kwHint = document.createElement('div');
+                kwHint.textContent = '提示：关键词默认忽略大小写，支持波兰语、法语等变音字母；长短语会按原样整体高亮。';
+                kwHint.style.cssText = 'font-size:10px;line-height:1.35;color:var(--text-secondary,#888);';
+                ruleDiv.appendChild(kwHint);
             }
 
             // Styles
