@@ -233,6 +233,26 @@ function gpuH264EncoderCandidates(
             },
         ];
     }
+// 3. Linux 平台 (支持 NVIDIA、Intel 核显及通用 VA-API 加速)
+	if (platform === 'linux') {
+		return [
+			{
+        		codec: 'h264_nvenc',
+        		label: 'NVIDIA NVENC',
+        		args: ['-c:v', 'h264_nvenc', '-preset', 'p4', ...rateArgs],
+      		},
+      		{
+        		codec: 'h264_qsv',
+		        label: 'Intel QSV',
+		        args: ['-c:v', 'h264_qsv', '-preset', 'medium', ...rateArgs],
+			},
+			{
+		        codec: 'h264_vaapi',
+		        label: 'VA-API (Intel/AMD)',
+		        args: ['-vf', 'format=nv12,hwupload', '-c:v', 'h264_vaapi', ...rateArgs],
+			  }
+		];
+	}   
     return [];
 }
 
