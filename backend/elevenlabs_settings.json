@@ -72,9 +72,9 @@
     },
     {
       "key": "sk_b68eaabec16f1f5225a17f6b9762bf05c0efa17eb8ff3bfe",
-      "enabled": false,
-      "auto_disabled": true,
-      "auto_disabled_reason": "remaining<200"
+      "enabled": true,
+      "auto_disabled": false,
+      "auto_disabled_reason": ""
     },
     {
       "key": "sk_8a5d73854fc79ddbfa922afa121051c08a214b829127afda",

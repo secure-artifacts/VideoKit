@@ -1,0 +1,196 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>VideoKit Isolated Renderer</title></head>
+<body>
+<canvas id="render-canvas" width="1" height="1" style="display:none"></canvas>
+<input id="reels-fast-alpha-mode" type="checkbox" checked style="display:none">
+<script>
+const { ipcRenderer } = require('electron');
+const fs = require('fs');
+const path = require('path');
+const { pathToFileURL, fileURLToPath } = require('url');
+window.require = require;
+
+function localMediaUrlToPath(value) {
+    if (!value || typeof value !== 'string') return value;
+    try {
+        if (/^local-media:\/\//i.test(value)) return fileURLToPath(value.replace(/^local-media:/i, 'file:'));
+        if (/^file:\/\//i.test(value)) return fileURLToPath(value);
+    } catch (_) { }
+    return value;
+}
+
+function toFileUrl(value) {
+    if (!value || typeof value !== 'string') return value;
+    try {
+        const nativePath = localMediaUrlToPath(value);
+        return pathToFileURL(nativePath).href;
+    } catch (_) { return value; }
+}
+
+const framePipelines = new Map();
+const framePipelineRequests = new Map();
+ipcRenderer.on('reels-frame-pipeline-ready', (event, data = {}) => {
+    const pending = framePipelineRequests.get(data.requestId);
+    if (!pending) return;
+    framePipelineRequests.delete(data.requestId);
+    clearTimeout(pending.timer);
+    const port = event.ports && event.ports[0];
+    if (!data.ok || !port) { pending.reject(new Error(data.error || '无法建立帧流水线')); return; }
+    const pipeline = { port, pending: new Map() };
+    port.onmessage = portEvent => {
+        const ack = portEvent.data || {};
+        const waiter = pipeline.pending.get(ack.seq);
+        if (!waiter) return;
+        pipeline.pending.delete(ack.seq);
+        if (ack.ok) waiter.resolve(ack); else waiter.reject(new Error(ack.error || '帧写入失败'));
+    };
+    port.start && port.start();
+    framePipelines.set(data.requestId, pipeline);
+    pending.resolve(data.requestId);
+});
+
+window.electronAPI = {
+    toFileUrl,
+    reelsComposeWysiwyg: (action, data) => ipcRenderer.invoke('reels-compose-wysiwyg', action, data),
+    getMediaDuration: file => ipcRenderer.invoke('get-media-duration', localMediaUrlToPath(file)),
+    getMediaDurationDetail: file => ipcRenderer.invoke('get-media-duration-detail', localMediaUrlToPath(file)),
+    checkFilesExist: async files => {
+        const originals = files || [];
+        const cleaned = originals.map(localMediaUrlToPath);
+        const result = await ipcRenderer.invoke('check-files-exist', cleaned);
+        const mapped = {};
+        originals.forEach((original, index) => { mapped[original] = !!result?.[cleaned[index]]; });
+        return mapped;
+    },
+    searchFilesRecursive: (dir, names, depth) => ipcRenderer.invoke('search-files-recursive', localMediaUrlToPath(dir), names, depth),
+    scanFonts: () => ipcRenderer.invoke('scan-fonts'),
+    fetchGoogleFonts: () => ipcRenderer.invoke('fetch-google-fonts'),
+    createReelsFramePipeline: sessionId => new Promise((resolve, reject) => {
+        const requestId = `isolated-pipe-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const timer = setTimeout(() => { framePipelineRequests.delete(requestId); reject(new Error('建立帧流水线超时')); }, 8000);
+        framePipelineRequests.set(requestId, { resolve, reject, timer });
+        ipcRenderer.send('reels-frame-pipeline-open', { sessionId, requestId });
+    }),
+    sendReelsFramePipeline: (pipelineId, seq, raw) => new Promise((resolve, reject) => {
+        const pipeline = framePipelines.get(pipelineId);
+        if (!pipeline) { reject(new Error('帧流水线不存在')); return; }
+        pipeline.pending.set(seq, { resolve, reject });
+        try { pipeline.port.postMessage({ type: 'frame', seq, raw }, [raw]); }
+        catch (error) { pipeline.pending.delete(seq); reject(error); }
+    }),
+    closeReelsFramePipeline: pipelineId => {
+        const pipeline = framePipelines.get(pipelineId);
+        if (!pipeline) return;
+        framePipelines.delete(pipelineId);
+        try { pipeline.port.close(); } catch (_) { }
+    },
+};
+
+function loadScript(filePath) {
+    return new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = pathToFileURL(filePath).href;
+        script.onload = resolve;
+        script.onerror = () => reject(new Error(`渲染脚本加载失败：${filePath}`));
+        document.body.appendChild(script);
+    });
+}
+
+const watermarkImages = new Map();
+async function prepareWatermarks(watermarks) {
+    for (const wm of watermarks || []) {
+        if (!wm?.enabled || wm.type !== 'image' || !wm.imagePath) continue;
+        const src = toFileUrl(wm.imagePath);
+        const img = new Image();
+        await new Promise(resolve => { img.onload = resolve; img.onerror = resolve; img.src = src; });
+        if (img.naturalWidth > 0) watermarkImages.set(wm.imagePath, img);
+    }
+}
+
+function anchorPoint(position, canvasW, canvasH, boxW = 0, boxH = 0) {
+    const margin = 16;
+    switch (position || 'top-right') {
+        case 'top-left': return [margin, margin];
+        case 'top-center': return [(canvasW - boxW) / 2, margin];
+        case 'top-right': return [canvasW - boxW - margin, margin];
+        case 'center-left': return [margin, (canvasH - boxH) / 2];
+        case 'center': return [(canvasW - boxW) / 2, (canvasH - boxH) / 2];
+        case 'center-right': return [canvasW - boxW - margin, (canvasH - boxH) / 2];
+        case 'bottom-left': return [margin, canvasH - boxH - margin];
+        case 'bottom-center': return [(canvasW - boxW) / 2, canvasH - boxH - margin];
+        case 'bottom-right': return [canvasW - boxW - margin, canvasH - boxH - margin];
+        case 'custom': return [0, 0];
+        default: return [canvasW - boxW - margin, margin];
+    }
+}
+
+let activeWatermarks = [];
+window._drawWatermarks = function(ctx, canvasW, canvasH) {
+    for (const wm of activeWatermarks) {
+        if (!wm?.enabled) continue;
+        if (wm.type === 'image') {
+            const img = watermarkImages.get(wm.imagePath);
+            if (!img) continue;
+            const w = img.naturalWidth * ((wm.imageScale || 100) / 100);
+            const h = img.naturalHeight * ((wm.imageScale || 100) / 100);
+            let [x, y] = anchorPoint(wm.position, canvasW, canvasH, w, h);
+            x += Number(wm.x) || 0; y += Number(wm.y) || 0;
+            ctx.save();
+            ctx.globalAlpha = wm.opacity ?? 1;
+            ctx.translate(x + w / 2, y + h / 2);
+            ctx.scale(wm.flipH ? -1 : 1, wm.flipV ? -1 : 1);
+            ctx.drawImage(img, -w / 2, -h / 2, w, h);
+            ctx.restore();
+            continue;
+        }
+        if (!wm.text) continue;
+        const fontSize = Number(wm.fontSize) || 20;
+        const lines = String(wm.text).split('\n');
+        const padH = Math.round(fontSize * .5), padV = Math.round(fontSize * .35), spacing = 4;
+        ctx.save();
+        ctx.font = `${fontSize}px Arial, sans-serif`;
+        const boxW = Math.max(...lines.map(line => ctx.measureText(line).width), 0) + padH * 2;
+        const boxH = lines.length * fontSize + Math.max(0, lines.length - 1) * spacing + padV * 2;
+        let [x, y] = anchorPoint(wm.position, canvasW, canvasH, boxW, boxH);
+        x += Number(wm.x) || 0; y += Number(wm.y) || 0;
+        ctx.globalAlpha = wm.bgOpacity ?? .5;
+        ctx.fillStyle = wm.bgColor || '#000';
+        ctx.beginPath(); ctx.roundRect(x, y, boxW, boxH, Math.round(fontSize * .2)); ctx.fill();
+        ctx.globalAlpha = wm.textOpacity ?? 1;
+        ctx.fillStyle = wm.color || '#fff'; ctx.textBaseline = 'middle';
+        let lineY = y + padV + fontSize / 2;
+        for (const line of lines) { ctx.fillText(line, x + padH, lineY); lineY += fontSize + spacing; }
+        ctx.restore();
+    }
+};
+
+let cancelled = false;
+ipcRenderer.on('isolated-wysiwyg-cancel', () => { cancelled = true; });
+ipcRenderer.on('isolated-wysiwyg-run', async (_event, payload = {}) => {
+    const requestId = payload.requestId;
+    try {
+        for (const scriptPath of payload.scriptPaths || []) await loadScript(scriptPath);
+        const params = payload.params || {};
+        activeWatermarks = Array.isArray(params.watermarks) ? params.watermarks : [];
+        await prepareWatermarks(activeWatermarks);
+        window._reelsState = { tasks: [{ overlays: params.overlays || [] }], watermarks: activeWatermarks };
+        params.canvas = document.getElementById('render-canvas');
+        params.isCancelled = () => cancelled;
+        params.onProgress = pct => ipcRenderer.send('isolated-wysiwyg-progress', { requestId, pct });
+        params.onLog = message => ipcRenderer.send('isolated-wysiwyg-log', { requestId, message });
+        const result = await window.reelsWysiwygExport(params);
+        ipcRenderer.send('isolated-wysiwyg-result', { requestId, success: true, result });
+    } catch (error) {
+        ipcRenderer.send('isolated-wysiwyg-result', {
+            requestId,
+            success: false,
+            error: error && error.message ? error.message : String(error),
+        });
+    }
+});
+
+ipcRenderer.send('isolated-wysiwyg-ready');
+</script>
+</body>
+</html>

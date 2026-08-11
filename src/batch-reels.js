@@ -54,7 +54,7 @@ window._reelsState = _reelsState;
 
 const REELS_DEFAULT_PRESET_KEY = 'reels_default_preset_name';
 const REELS_EXPORT_RESUME_KEY = 'videokit_reels_export_resume_v1';
-const REELS_EXPORT_RECYCLE_EVERY = 6;
+const REELS_EXPORT_RECYCLE_EVERY_DEFAULT = 0;
 const REELS_WATERMARK_STORAGE_KEY = 'reels_watermarks';
 const REELS_BACKGROUND_EXTS = new Set(['mp4', 'mov', 'mkv', 'avi', 'wmv', 'flv', 'webm', 'jpg', 'jpeg', 'png', 'webp']);
 const REELS_AUDIO_EXTS = new Set(['mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg']);
@@ -662,8 +662,18 @@ function _initReelsModule() {
             const mgr = ReelsOverlayMod ? new ReelsOverlayMod.OverlayManager() : { overlays: [], addOverlay(o) { this.overlays.push(o); return o; }, removeOverlay(id) { this.overlays = this.overlays.filter(o => o.id !== id); }, getOverlay(id) { return this.overlays.find(o => o.id === id) || null; } };
             _reelsState.overlayProxy = {
                 overlayMgr: mgr,
-                addOverlay(ov) { mgr.addOverlay(ov); },
-                removeOverlay(id) { mgr.removeOverlay(id); },
+                // 新增/删除必须立即写回当前任务。此前只改了临时预览管理器，
+                // 任意一次任务/预览刷新都会从 task.overlays 重载旧数据，表现为
+                // 文字覆层和媒体覆层“只能保留一个”。
+                addOverlay(ov) {
+                    const added = mgr.addOverlay(ov);
+                    _syncCurrentOverlayEditorToSelectedTask();
+                    return added;
+                },
+                removeOverlay(id) {
+                    mgr.removeOverlay(id);
+                    _syncCurrentOverlayEditorToSelectedTask();
+                },
                 getSelected() { return null; },
                 render() { /* rAF loop handles rendering */ },
                 // 回调占位
@@ -684,9 +694,11 @@ function _initReelsModule() {
     // ═══ 预览窗口缩放/平移初始化 ═══
     _initPreviewZoomPan();
     _initReelsExportDefaults();
+    _initReelsIntroInput();
     _reelsUpdateLastOutputUI('');
     _reelsUpdateExportProgressUI(0, 0);
     _reelsUpdateLastErrorUI('');
+    _initReelsCrashDiagnostics();
 
     // ═══ 面板拖拽调整宽度 ═══
     _initReelsColumnResize();
@@ -5349,17 +5361,21 @@ const REELS_EXPORT_SETTING_DEFAULTS = {
     'reels-fast-alpha-mode': true,
     'reels-loop-fade-dur': '1',
     'reels-resolution-select': '1080x1920',
+    'reels-export-concurrency': '1',
+    'reels-export-recycle-every': String(REELS_EXPORT_RECYCLE_EVERY_DEFAULT),
 };
 const REELS_EXPORT_SETTING_LABELS = {
     'reels-quality': '画质', 'reels-custom-bitrate': '目标码率', 'reels-custom-max-bitrate': '最大码率',
-    'reels-export-engine': '输出引擎', 'reels-suffix': '文件后缀', 'reels-custom-duration': '输出时长',
+    'reels-export-engine': '渲染引擎', 'reels-suffix': '文件后缀', 'reels-custom-duration': '成片时长',
     'reels-use-gpu': 'GPU 编码', 'reels-use-memory-decoder': '极速内存渲染',
     'reels-voice-volume': '人声音量', 'reels-bg-volume': '背景音量', 'reels-bgm-volume': '配乐音量',
     'reels-reverb-enabled': '混响', 'reels-reverb-preset': '混响预设', 'reels-reverb-mix': '混响量',
-    'reels-stereo-width': '立体声宽度', 'reels-audio-fx-target': '特效目标',
+    'reels-stereo-width': '立体声宽度', 'reels-audio-fx-target': '音效作用音轨',
     'reels-multi-preset-enabled': '多模板矩阵导出', 'reels-mp-naming': '矩阵命名方式',
     'reels-loop-fade': '循环透明过渡', 'reels-fast-alpha-mode': '极速贴合模式',
     'reels-loop-fade-dur': '过渡时长', 'reels-resolution-select': '分辨率',
+    'reels-export-concurrency': '并发数',
+    'reels-export-recycle-every': '队列刷新间隔',
 };
 
 function _readReelsExportSettings() {
@@ -8991,6 +9007,133 @@ function _reelsUpdateLastErrorUI(message) {
     errEl.style.color = text === '无' ? 'var(--text-secondary)' : '#ff8a8a';
 }
 
+function _formatReelsCrashDiagnostic(report = {}) {
+    const reasonNames = {
+        'oom': '内存不足',
+        'crashed': '渲染进程崩溃',
+        'killed': '进程被系统终止',
+        'abnormal-exit': '进程异常退出',
+        'launch-failed': '进程启动失败',
+        'integrity-failure': '进程完整性检查失败',
+    };
+    const rawReason = String(report.reason || 'unknown');
+    const localTime = report.timestamp
+        ? new Date(report.timestamp).toLocaleString('zh-CN', { hour12: false })
+        : '未知';
+    return [
+        'VideoKit 崩溃诊断',
+        `时间：${localTime}`,
+        `版本：${report.appVersion || '未知'}`,
+        `进程：${report.process || 'renderer'}`,
+        `原因：${reasonNames[rawReason] || rawReason} (${rawReason})`,
+        `退出码：${report.exitCode ?? '未知'}`,
+        `系统：${report.platform || '未知'} ${report.arch || ''}`.trim(),
+        `Electron：${report.electron || '未知'}`,
+        `Chrome：${report.chrome || '未知'}`,
+        report.diagnosticFile ? `完整日志：${report.diagnosticFile}` : '',
+    ].filter(Boolean).join('\n');
+}
+
+function _showReelsCrashDiagnostic(report, options = {}) {
+    if (!report || !report.timestamp) return;
+    const panel = document.getElementById('reels-crash-diagnostic');
+    const textEl = document.getElementById('reels-crash-diagnostic-text');
+    if (!panel || !textEl) return;
+    panel.hidden = false;
+    panel.dataset.timestamp = report.timestamp;
+    textEl.textContent = _formatReelsCrashDiagnostic(report);
+    const exportBar = document.querySelector('.nle-export-bar');
+    if (exportBar) exportBar.open = true;
+    if (!options.restored) {
+        _reelsUpdateLastErrorUI(`后台渲染进程异常退出：${report.reason || 'unknown'}（已自动尝试恢复）`);
+        _reelsAppendExportLogUI(textEl.textContent, 'error');
+    }
+}
+
+async function _copyReelsCrashDiagnostic(button) {
+    const text = (document.getElementById('reels-crash-diagnostic-text') || {}).textContent || '';
+    if (!text) return;
+    try {
+        if (window.electronAPI && window.electronAPI.writeClipboardText) {
+            window.electronAPI.writeClipboardText(text);
+        } else {
+            await navigator.clipboard.writeText(text);
+        }
+        button.textContent = '已复制，可直接粘贴反馈';
+        setTimeout(() => { button.textContent = '一键复制诊断'; }, 1800);
+    } catch (_) {
+        button.textContent = '复制失败，请手动选择';
+        setTimeout(() => { button.textContent = '一键复制诊断'; }, 1800);
+    }
+}
+
+function _initReelsCrashDiagnostics() {
+    const panel = document.getElementById('reels-crash-diagnostic');
+    const copyBtn = document.getElementById('reels-crash-diagnostic-copy');
+    const dismissBtn = document.getElementById('reels-crash-diagnostic-dismiss');
+    if (!panel || panel.dataset.bound) return;
+    panel.dataset.bound = '1';
+    if (copyBtn) copyBtn.addEventListener('click', () => _copyReelsCrashDiagnostic(copyBtn));
+    if (dismissBtn) dismissBtn.addEventListener('click', () => {
+        if (panel.dataset.timestamp) localStorage.setItem('reels-dismissed-crash-timestamp', panel.dataset.timestamp);
+        panel.hidden = true;
+    });
+    const api = window.electronAPI;
+    if (!api) return;
+    if (api.onReelsCrashDiagnostic) {
+        api.onReelsCrashDiagnostic(report => _showReelsCrashDiagnostic(report));
+    }
+    if (api.getLatestCrashDiagnostic) {
+        api.getLatestCrashDiagnostic().then(report => {
+            if (!report || report.timestamp === localStorage.getItem('reels-dismissed-crash-timestamp')) return;
+            _showReelsCrashDiagnostic(report, { restored: true });
+        }).catch(() => {});
+    }
+}
+
+function _reelsResetExportLogUI() {
+    const logEl = document.getElementById('reels-export-log');
+    if (logEl) logEl.textContent = '';
+    const detailsEl = document.getElementById('reels-export-log-details');
+    if (detailsEl) detailsEl.open = false;
+    const copyBtn = document.getElementById('reels-export-log-copy');
+    if (copyBtn && !copyBtn.dataset.bound) {
+        copyBtn.dataset.bound = '1';
+        copyBtn.addEventListener('click', async () => {
+            const text = (document.getElementById('reels-export-log') || {}).textContent || '';
+            try {
+                await navigator.clipboard.writeText(text);
+                copyBtn.textContent = '已复制';
+                setTimeout(() => { copyBtn.textContent = '复制日志'; }, 1200);
+            } catch (_) {
+                // Clipboard can be unavailable in older Electron builds.
+                const range = document.createRange();
+                const log = document.getElementById('reels-export-log');
+                if (!log) return;
+                range.selectNodeContents(log);
+                const selection = window.getSelection();
+                selection.removeAllRanges(); selection.addRange(range);
+                document.execCommand('copy'); selection.removeAllRanges();
+            }
+        });
+    }
+}
+
+function _reelsAppendExportLogUI(message, level = 'info') {
+    const logEl = document.getElementById('reels-export-log');
+    if (!logEl || !message) return;
+    const time = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+    const tag = level === 'error' ? '错误' : (level === 'warn' ? '提示' : '信息');
+    const lines = `${logEl.textContent || ''}\n[${time}] ${tag}：${String(message).trim()}`
+        .trim().split('\n').slice(-250);
+    logEl.textContent = lines.join('\n');
+    logEl.scrollTop = logEl.scrollHeight;
+    if (level === 'error') {
+        const detailsEl = document.getElementById('reels-export-log-details');
+        if (detailsEl) detailsEl.open = true;
+    }
+}
+
 function _reelsUpdateExportProgressUI(done, total) {
     const progressInner = document.getElementById('reels-export-progress-inner');
     const progressText = document.getElementById('reels-export-progress-text');
@@ -9219,15 +9362,46 @@ async function _reelsComposeViaBackend(params) {
     throw new Error('缺少后端导出能力（Electron API 不可用）');
 }
 
-function reelsSelectIntro() {
-    if (window.electronAPI && window.electronAPI.selectFile) {
-        window.electronAPI.selectFile({ filters: [{ name: 'Video', extensions: ['mp4', 'mov', 'mkv'] }] })
-            .then(path => {
-                if (path) document.getElementById('reels-intro-path').value = path;
-            });
-    } else {
-        alert('文件选择需要在 Electron 环境中运行');
-    }
+async function reelsSelectIntro() {
+    const filePath = await _pickSingleFile('选择全局前置片段', ['mp4', 'mov', 'mkv', 'webm', 'm4v']);
+    if (filePath) document.getElementById('reels-intro-path').value = filePath;
+}
+
+function _initReelsIntroInput() {
+    const input = document.getElementById('reels-intro-path');
+    if (!input || input.dataset.dropBound === 'true') return;
+    input.dataset.dropBound = 'true';
+    input.title = '点击选择，或把视频文件拖到这里';
+    input.style.cursor = 'pointer';
+    input.addEventListener('click', reelsSelectIntro);
+
+    const reset = () => {
+        input.style.outline = '';
+        input.style.background = '';
+    };
+    ['dragenter', 'dragover'].forEach(type => input.addEventListener(type, event => {
+        event.preventDefault();
+        event.stopPropagation();
+        input.style.outline = '1px solid var(--accent)';
+        input.style.background = 'rgba(76,158,255,.08)';
+    }));
+    ['dragleave', 'drop'].forEach(type => input.addEventListener(type, reset));
+    input.addEventListener('drop', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        const file = Array.from(event.dataTransfer?.files || [])[0];
+        if (!file) return;
+        if (!/\.(mp4|mov|mkv|webm|m4v)$/i.test(file.name || '')) {
+            showToast('前置片段请选择视频文件', 'error');
+            return;
+        }
+        const filePath = window.electronAPI?.getFilePath?.(file) || file.path || '';
+        if (!filePath) {
+            showToast('无法读取拖入文件的本地路径', 'error');
+            return;
+        }
+        input.value = filePath;
+    });
 }
 
 function reelsCancelExport() {
@@ -9602,12 +9776,18 @@ function _updateMultiPresetSummary() {
 
 function _resolveSafeReelsExportConcurrency(requested, totalJobs, options = {}) {
     const wanted = Math.max(1, Math.min(4, parseInt(requested, 10) || 1));
-    if (options.doFcpxml) return Math.min(wanted, 4);
+    // 导出并发由用户选择；不要根据内存解码器或队列长度静默降级。
+    return wanted;
+}
 
-    // 长队列的累计内存由“分段重建渲染进程”解决，不应强制取消用户选择的并发 2。
-    // 内存解码模式本身会同时保留大量原始帧，仍保守限制为 1。
-    if (options.useMemoryDecoder) return 1;
-    return Math.min(wanted, 2);
+function _sanitizeReelsExportRecycleEvery(value) {
+    const parsed = parseInt(value, 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) return REELS_EXPORT_RECYCLE_EVERY_DEFAULT;
+    return Math.min(9999, parsed);
+}
+
+function _getReelsExportRecycleEvery() {
+    return _sanitizeReelsExportRecycleEvery(document.getElementById('reels-export-recycle-every')?.value);
 }
 
 function _getSelectedMultiPresets() {
@@ -9912,6 +10092,8 @@ async function reelsStartExport(options = {}) {
     _reelsState.lastExportOutputPath = '';
     _reelsUpdateLastOutputUI('');
     _reelsUpdateLastErrorUI('');
+    _reelsResetExportLogUI();
+    _reelsAppendExportLogUI(`开始导出：已选 ${tasks.length} 个任务，输出目录：${outputDir}`);
     // Progress UI initialized after multi-preset matrix expansion below
 
     if (progressBar) progressBar.classList.remove('hidden');
@@ -9989,16 +10171,11 @@ async function reelsStartExport(options = {}) {
         width: _reelsState.targetWidth || 1080,
         height: _reelsState.targetHeight || 1920,
     });
-    if (concurrencyInput) concurrencyInput.value = String(concurrency);
-    const concurrencyRange = document.getElementById('reels-export-concurrency-range');
-    if (concurrencyRange) concurrencyRange.value = String(concurrency);
-    if (concurrency < requestedConcurrency) {
-        const safeMessage = `已为 ${totalJobs} 个导出任务自动将并发数 ${requestedConcurrency} 降为 ${concurrency}，避免瞬时内存溢出`;
-        console.warn(`[Reels] ${safeMessage}`);
-        if (typeof showToast === 'function') showToast(safeMessage, 'warning', 7000);
-    }
-    if (!resumeState && !doFcpxml && totalJobs >= 12 && typeof showToast === 'function') {
-        showToast(`长队列分段模式：段内并发 ${concurrency}，每 ${REELS_EXPORT_RECYCLE_EVERY} 条释放内存后自动续传`, 'info', 7000);
+    const recycleEvery = _sanitizeReelsExportRecycleEvery(
+        resumeState?.recycleEvery ?? _getReelsExportRecycleEvery()
+    );
+    if (!resumeState && !doFcpxml && totalJobs > recycleEvery && typeof showToast === 'function') {
+        showToast(`长队列分段模式：段内并发 ${concurrency}，每 ${recycleEvery} 条刷新并自动续传`, 'info', 7000);
     }
     const resumeManifest = {
         version: 1,
@@ -10007,6 +10184,7 @@ async function reelsStartExport(options = {}) {
         startedAt: resumeState?.startedAt || Date.now(),
         outputDirTrimmed,
         requestedConcurrency,
+        recycleEvery,
         multiPresetCfg,
         totalJobs,
         jobKeys: exportJobKeys,
@@ -10117,13 +10295,12 @@ async function reelsStartExport(options = {}) {
     let currentIndex = resumeManifest.nextIndex;
     let contiguousCompletedIndex = resumeManifest.nextIndex;
     const completedOutOfOrder = new Set();
-    const segmentedExport = !doFcpxml && totalJobs >= 12;
-    // 每个分段内仍使用用户选择的并发数。只有整段全部结束后
-    // 才重建渲染进程，避免正在并发编码的另一条被中断。
-    const segmentEnd = segmentedExport
-        ? Math.min(totalJobs, resumeManifest.nextIndex + REELS_EXPORT_RECYCLE_EVERY)
+    const segmentedExport = !doFcpxml && recycleEvery > 0 && totalJobs > recycleEvery;
+    // 按用户设定的条数正常刷新一次，释放累计的 Canvas/解码资源后自动续传。
+    // 刷新前会同步任务、设置和断点；绝不能杀掉 renderer。
+    let segmentEnd = segmentedExport
+        ? Math.min(totalJobs, resumeManifest.nextIndex + recycleEvery)
         : totalJobs;
-    let reloadingForMemoryRecycle = false;
     const processNext = async () => {
         while (currentIndex < segmentEnd) {
             if (!_reelsState.isExporting) {
@@ -10190,6 +10367,7 @@ async function reelsStartExport(options = {}) {
 
         _reelsUpdateJobProgressUI(i, Math.max(1, jobProgress[i] || 0), '准备导出', 'running');
         if (statusEl) statusEl.textContent = `导出中 ${i + 1}/${totalJobs}: ${task.fileName}${presetLabel}`;
+        _reelsAppendExportLogUI(`任务 ${i + 1}/${totalJobs}：开始处理 ${task.fileName}${presetLabel}`);
 
         try {
             let baseName = _exportResolvedNames[i] || _resolveReelsExportBaseName(task, namingMode);
@@ -10415,7 +10593,10 @@ async function reelsStartExport(options = {}) {
                         _reelsUpdateJobProgressUI(i, pct, '分层导出', 'running');
                         updateConcurrentOverallProgress(i, pct);
                     },
-                    onLog: (msg) => console.log(`[Layered] ${task.fileName}: ${msg}`),
+                    onLog: (msg) => {
+                        console.log(`[Layered] ${task.fileName}: ${msg}`);
+                        _reelsAppendExportLogUI(`${task.fileName}：${msg}`);
+                    },
                 });
                 if (layeredResult && layeredResult.cancelled) {
                     canceled = true;
@@ -10833,7 +11014,13 @@ async function reelsStartExport(options = {}) {
 
                 // ═══ V2 单线程 WYSIWYG 导出（兜底 / 常规路径）═══
                 if (!wysiwygDone) {
-                const wysiwygResult = await window.reelsWysiwygExport({
+                const reportWysiwygProgress = (pct) => {
+                    if (statusEl) statusEl.textContent = `导出中 ${i + 1}/${totalJobs}: ${task.fileName}${presetLabel} (${pct}%)`;
+                    const stage = pct < 20 ? '准备素材' : (pct < 88 ? '渲染画面' : '编码混音');
+                    _reelsUpdateJobProgressUI(i, pct, stage, 'running');
+                    updateConcurrentOverallProgress(i, pct);
+                };
+                const wysiwygParams = {
                     canvas: offCanvas,
                     style: taskStyle,
                     segments: task.segments || [],
@@ -10899,14 +11086,46 @@ async function reelsStartExport(options = {}) {
                     maxBitrateMbps,
                     exportEngine,
                     isCancelled: () => !_reelsState.isExporting,
-                    onProgress: (pct) => {
-                        if (statusEl) statusEl.textContent = `导出中 ${i + 1}/${totalJobs}: ${task.fileName}${presetLabel} (${pct}%)`;
-                        const stage = pct < 20 ? '准备素材' : (pct < 88 ? '渲染画面' : '编码混音');
-                        _reelsUpdateJobProgressUI(i, pct, stage, 'running');
-                        updateConcurrentOverallProgress(i, pct);
+                    watermarks: _reelsState.watermarks || [],
+                    onProgress: reportWysiwygProgress,
+                    onLog: (msg) => {
+                        console.log(`[WYSIWYG] ${task.fileName}: ${msg}`);
+                        _reelsAppendExportLogUI(`${task.fileName}：${msg}`);
                     },
-                    onLog: (msg) => console.log(`[WYSIWYG] ${task.fileName}: ${msg}`),
-                });
+                };
+                let wysiwygResult;
+                if (window.electronAPI?.isolatedWysiwygExport) {
+                    const isolatedParams = _cloneProjectDataForSave(wysiwygParams);
+                    delete isolatedParams.canvas;
+                    const runIsolatedOnce = async (attempt) => {
+                        const requestId = `reels-job-${Date.now()}-${i}-${attempt}-${Math.random().toString(36).slice(2, 8)}`;
+                        const unsubscribe = window.electronAPI.onIsolatedWysiwygProgress(
+                            requestId,
+                            data => reportWysiwygProgress(Number(data.pct) || 0),
+                        );
+                        const cancelTimer = setInterval(() => {
+                            if (!_reelsState.isExporting) window.electronAPI.cancelIsolatedWysiwygExport(requestId);
+                        }, 250);
+                        try {
+                        // Canvas 与回调不能跨进程；其余任务数据先移除 DOM/运行时缓存再发送。
+                            return await window.electronAPI.isolatedWysiwygExport({ requestId, params: isolatedParams });
+                        } finally {
+                            clearInterval(cancelTimer);
+                            unsubscribe();
+                        }
+                    };
+                    try {
+                        wysiwygResult = await runIsolatedOnce(1);
+                    } catch (error) {
+                        if (!_reelsState.isExporting || !/后台渲染进程异常退出/.test(String(error?.message || error))) throw error;
+                        console.warn(`[Reels] 后台渲染器异常退出，自动重试一次: ${task.fileName}`);
+                        if (statusEl) statusEl.textContent = `后台渲染器已恢复，正在重试 ${i + 1}/${totalJobs}: ${task.fileName}${presetLabel}`;
+                        await new Promise(resolve => setTimeout(resolve, 800));
+                        wysiwygResult = await runIsolatedOnce(2);
+                    }
+                } else {
+                    wysiwygResult = await window.reelsWysiwygExport(wysiwygParams);
+                }
                 if (wysiwygResult && wysiwygResult.cancelled) {
                     canceled = true;
                     _reelsUpdateJobProgressUI(i, jobProgress[i], '已取消', 'canceled');
@@ -11040,11 +11259,13 @@ async function reelsStartExport(options = {}) {
             _reelsUpdateJobProgressUI(i, 100, '已完成', 'success');
             _reelsState.lastExportOutputPath = finalOutputPath;
             _reelsUpdateLastOutputUI(finalOutputPath);
+            _reelsAppendExportLogUI(`${task.fileName}${presetLabel}：导出完成 → ${finalOutputPath}`);
         } catch (err) {
             console.error('[Reels] Export failed:', task.fileName, err);
             failCount += 1;
             const errMsg = err && err.message ? err.message : String(err || '未知错误');
             failDetails.push(`${task.fileName}${presetLabel}: ${errMsg}`);
+            _reelsAppendExportLogUI(`${task.fileName}${presetLabel} 导出失败：${errMsg}`, 'error');
             _reelsUpdateJobProgressUI(i, jobProgress[i], '失败', 'failed');
             if (statusEl) statusEl.textContent = `❌ 导出失败: ${task.fileName}${presetLabel} - ${errMsg}`;
             _reelsUpdateLastErrorUI(`${task.fileName}${presetLabel}: ${errMsg}`);
@@ -11074,32 +11295,27 @@ async function reelsStartExport(options = {}) {
     }
     };
 
-    const workers = [];
-    for (let w = 0; w < concurrency; w++) {
-        workers.push(processNext());
-    }
-    await Promise.all(workers);
-    const shouldRecycleRenderer = segmentedExport
-        && !canceled
-        && resumeManifest.nextIndex >= segmentEnd
-        && resumeManifest.nextIndex < totalJobs;
-    if (shouldRecycleRenderer) {
-        reloadingForMemoryRecycle = true;
+    const runSegment = async () => {
+        const workers = [];
+        for (let w = 0; w < concurrency; w++) workers.push(processNext());
+        await Promise.all(workers);
+    };
+    await runSegment();
+    const shouldRefreshForRecycle = segmentedExport && !canceled && resumeManifest.nextIndex < totalJobs;
+    if (shouldRefreshForRecycle) {
         resumeManifest.reloadPending = true;
         resumeManifest.reloadRequestedAt = Date.now();
-        try { localStorage.setItem(REELS_EXPORT_RESUME_KEY, JSON.stringify(resumeManifest)); } catch (_) { }
+        try {
+            if (typeof _batchAutoSave === 'function') _batchAutoSave();
+            if (typeof window.reelsSaveHistory === 'function') window.reelsSaveHistory();
+            _saveReelsExportSettings();
+            localStorage.setItem(REELS_EXPORT_RESUME_KEY, JSON.stringify(resumeManifest));
+        } catch (error) { console.warn('[Reels] 分段刷新前保存失败:', error); }
         _reelsState.isExporting = false;
-        if (statusEl) {
-            statusEl.textContent = `已完成 ${resumeManifest.nextIndex}/${totalJobs}，正在释放内存并自动续传…`;
-        }
-        // Electron 下结束当前 Chromium 渲染进程，才能真正归还
-        // Canvas/视频解码器内存。普通 location.reload 仅作为浏览器降级方案。
-        setTimeout(() => {
-            if (window.electronAPI?.recycleRenderer) window.electronAPI.recycleRenderer();
-            else window.location.reload();
-        }, 500);
+        if (statusEl) statusEl.textContent = `已完成 ${resumeManifest.nextIndex}/${totalJobs}，正在刷新并自动续传…`;
+        setTimeout(() => window.location.reload(), 500);
+        return;
     }
-    if (reloadingForMemoryRecycle) return;
     if (canceled) _reelsCancelUnfinishedJobProgressUI();
 
     // ── 按标签分组输出 FCPXML；未分组任务仍输出一个总时间线 ──

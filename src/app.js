@@ -189,10 +189,129 @@ document.addEventListener('DOMContentLoaded', () => {
     initSubtitleLangPicker();
     initAutoEditLangPicker();
     initVoiceoverWorkflowLangPicker();
+    organizeReelsExportLayout();
 
     // 启动心跳检测（每30秒检查一次后端状态）
     startHeartbeat();
 });
+
+function organizeReelsExportLayout() {
+    const exportBtn = document.getElementById('reels-export-btn');
+    const outputDir = document.getElementById('reels-output-dir');
+    if (!exportBtn || !outputDir || document.getElementById('reels-video-output-layout')) return;
+
+    const sourceRenderRow = document.getElementById('reels-quality')?.parentElement;
+    const sourceActionRow = exportBtn.parentElement;
+    const outputDirRow = outputDir.parentElement;
+    if (!sourceRenderRow || !sourceActionRow || !outputDirRow) return;
+
+    const layout = document.createElement('section');
+    layout.id = 'reels-video-output-layout';
+    layout.style.cssText = 'padding:7px 0;border-bottom:1px solid var(--border-color);font-size:12px;';
+    layout.innerHTML = `
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:7px;">视频输出</div>
+        <div data-export-group="picture" class="param-row" style="flex-wrap:wrap;gap:10px;margin-bottom:7px;"></div>
+        <div data-export-group="file" class="param-row" style="flex-wrap:wrap;gap:10px;margin-bottom:7px;"></div>
+        <div data-export-group="engine" class="param-row" style="flex-wrap:wrap;gap:10px;margin-bottom:7px;"></div>
+        <div data-export-group="batch" class="param-row" style="flex-wrap:wrap;gap:10px;margin-bottom:7px;"></div>
+        <div data-export-group="directory" class="param-row" style="flex-wrap:wrap;gap:10px;margin-bottom:7px;"></div>
+        <div data-export-group="actions" class="param-row" style="flex-wrap:wrap;gap:10px;"></div>
+        <div data-export-group="progress" style="margin-top:7px;"></div>
+    `;
+    outputDirRow.insertAdjacentElement('afterend', layout);
+
+    const group = name => layout.querySelector(`[data-export-group="${name}"]`);
+    const move = (target, ...nodes) => nodes.filter(Boolean).forEach(node => target.appendChild(node));
+    const labelBefore = id => document.getElementById(id)?.previousElementSibling;
+    const closestLabel = id => document.getElementById(id)?.closest('label');
+
+    const resolution = closestLabel('reels-resolution-select');
+    const quality = document.getElementById('reels-quality');
+    move(group('picture'), resolution, document.getElementById('reels-custom-res-inputs'), labelBefore('reels-quality'), quality,
+        document.getElementById('reels-quality-bitrate-label'), document.getElementById('reels-custom-bitrate-settings'));
+
+    const format = closestLabel('reels-export-format');
+    const naming = closestLabel('reels-export-naming-mode-outer');
+    const suffix = document.getElementById('reels-suffix');
+    const fileGroup = group('file');
+    const outputDirControls = document.createDocumentFragment();
+    Array.from(outputDirRow.children).forEach(node => outputDirControls.appendChild(node));
+    move(fileGroup, format, naming, labelBefore('reels-suffix'), suffix);
+    group('directory').appendChild(outputDirControls);
+    outputDirRow.remove();
+
+    const engine = document.getElementById('reels-export-engine');
+    move(group('engine'), labelBefore('reels-export-engine'), engine, document.getElementById('reels-export-engine-desc'),
+        closestLabel('reels-use-gpu'), closestLabel('reels-use-memory-decoder'));
+
+    const customDurationLabel = closestLabel('reels-custom-duration-range');
+    const transitionDurationLabel = closestLabel('reels-loop-fade-dur-range');
+    if (customDurationLabel && transitionDurationLabel) {
+        transitionDurationLabel.insertAdjacentElement('afterend', customDurationLabel);
+    }
+
+    move(group('batch'), closestLabel('reels-export-concurrency-range'), closestLabel('reels-export-recycle-every'));
+    move(group('actions'), exportBtn, sourceActionRow.querySelector('button[onclick="reelsCancelExport()"]'));
+    const progressBar = document.getElementById('reels-export-progress');
+    const progressText = document.getElementById('reels-export-progress-text')?.parentElement;
+    const jobProgress = document.getElementById('reels-export-job-progress-list');
+    const latestOutput = document.getElementById('reels-export-last-output')?.parentElement;
+    move(group('progress'), progressBar, progressText, jobProgress, latestOutput);
+
+    // The former render row now contains only decorative separators/help text.
+    sourceRenderRow.style.display = 'none';
+
+    const exportPanel = layout.closest('details');
+    const summary = exportPanel?.querySelector(':scope > summary');
+    const volumeRow = document.getElementById('reels-voice-volume-range')?.parentElement;
+    const volumeHint = document.getElementById('reels-bg-volume-consistency-hint');
+    const audioFxRow = document.getElementById('reels-reverb-enabled')?.closest('div');
+    const multiPresetRow = document.getElementById('reels-multi-preset-section');
+    if (summary && volumeRow && audioFxRow && multiPresetRow) {
+        let cursor = summary;
+        [volumeRow, volumeHint, audioFxRow, sourceActionRow, multiPresetRow, layout]
+            .filter(Boolean)
+            .forEach(row => {
+                cursor.insertAdjacentElement('afterend', row);
+                cursor = row;
+            });
+    }
+
+    const help = {
+        'reels-voice-volume': '调整人声 MP3 / 主音频层的导出音量，100% 为原始音量。',
+        'reels-bg-volume': '调整背景视频原声的导出音量；设为 0 可静音背景原声。',
+        'reels-bgm-volume': '调整配乐音轨的导出音量，避免盖住人声。',
+        'reels-reverb-enabled': '为选定音轨启用混响效果。',
+        'reels-reverb-preset': '选择混响空间类型，例如房间、大厅或教堂。',
+        'reels-reverb-mix': '控制混响湿声比例；数值越大，空间回响越明显。',
+        'reels-stereo-width': '控制立体声宽度；100% 为原始宽度，数值越大声场越宽。',
+        'reels-audio-fx-target': '选择混响和立体声效果应用到哪条音轨；自动模式优先人声 MP3。',
+        'reels-multi-preset-enabled': '一次使用多个覆层模板导出，为每个任务生成多个版本。',
+        'reels-loop-fade': '对循环素材的首尾进行透明淡化，减轻循环接缝。',
+        'reels-fast-alpha-mode': '使用 FFmpeg 快速贴合透明素材；不兼容时会自动回退。',
+        'reels-loop-fade-dur': '设置循环透明过渡的持续时间，单位为秒。',
+        'reels-custom-duration': '指定正片时间轴长度；留空为自动。前置片段会额外增加最终总时长。',
+        'reels-intro-path': '所有任务共用的前置视频，仅 MP4 生效；任务单独 Hook 优先。支持点击或拖入视频。',
+        'reels-resolution-select': '设置导出视频的宽高尺寸。',
+        'reels-quality': '选择视频码率与质量档位；动态画面建议使用更高质量。',
+        'reels-export-format': '选择最终导出类型：MP4、PNG 分层序列或 FCPXML。',
+        'reels-export-naming-mode-outer': '选择输出文件名的生成规则。',
+        'reels-suffix': '附加在输出文件基础名称末尾的文字。',
+        'reels-export-engine': '选择视频渲染方式；兼容模式最稳，流水线和硬件模式更快。',
+        'reels-use-gpu': '使用可用的硬件编码器加速视频编码；不可用时自动回退。',
+        'reels-use-memory-decoder': '尽量在内存中传递帧，减少临时文件读写；不兼容时自动回退。',
+        'reels-export-concurrency': '同时执行的导出任务数；越高越快，但占用更多内存和显存。',
+        'reels-export-recycle-every': '每完成指定数量后刷新并续传，用于长批次释放内存；0 表示不刷新。',
+        'reels-output-dir': '选择所有导出文件保存的位置。'
+    };
+    Object.entries(help).forEach(([id, text]) => {
+        const control = document.getElementById(id);
+        if (!control) return;
+        control.title = text;
+        const label = control.closest('label');
+        if (label) label.title = text;
+    });
+}
 
 // ==================== 字幕面板语言搜索选择器 ====================
 
@@ -12085,6 +12204,8 @@ function getAutoEditRequestSettings() {
         transition_duration: parseFloat(document.getElementById('autoedit-transition-duration')?.value || '0.35'),
         lead_pad: parseFloat(document.getElementById('autoedit-lead-pad')?.value || '0.12'),
         tail_pad: parseFloat(document.getElementById('autoedit-tail-pad')?.value || '0.22'),
+        keep_audience_responses: document.getElementById('autoedit-keep-audience-response')?.checked || false,
+        audience_response_keywords: document.getElementById('autoedit-audience-response-keywords')?.value || 'Amen, 阿们',
         min_score: parseFloat(document.getElementById('autoedit-min-score')?.value || '0.52'),
         burn_subtitles: document.getElementById('autoedit-burn-subtitles')?.checked || false,
         export_mp3: document.getElementById('autoedit-export-mp3')?.checked !== false,

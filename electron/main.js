@@ -13,6 +13,49 @@ let appIsReady = false;
 let powerSaveId = null;
 let isQuitting = false;
 const templateWindows = new Map(); // templateId → BrowserWindow
+const isolatedReelsRenderers = new Map(); // requestId → BrowserWindow
+let latestRendererCrashReport = null;
+
+// 保留不含任务内容的崩溃诊断，用户可将该文件反馈给开发者定位问题。
+function writeRendererCrashReport(details = {}) {
+    try {
+        const dir = path.join(app.getPath('userData'), 'diagnostics');
+        fs.mkdirSync(dir, { recursive: true });
+        const diagnosticFile = path.join(dir, 'renderer-crashes.jsonl');
+        const report = {
+            timestamp: new Date().toISOString(),
+            appVersion: app.getVersion(),
+            electron: process.versions.electron,
+            chrome: process.versions.chrome,
+            platform: process.platform,
+            arch: process.arch,
+            diagnosticFile,
+            ...details,
+        };
+        fs.appendFileSync(diagnosticFile, `${JSON.stringify(report)}\n`, 'utf8');
+        latestRendererCrashReport = report;
+        log(`[CrashReport] ${JSON.stringify(report)}`);
+        return report;
+    } catch (error) {
+        log(`[CrashReport] 写入失败: ${error.message}`);
+        return null;
+    }
+}
+
+function getLatestRendererCrashReport() {
+    if (latestRendererCrashReport) return latestRendererCrashReport;
+    try {
+        const diagnosticFile = path.join(app.getPath('userData'), 'diagnostics', 'renderer-crashes.jsonl');
+        if (!fs.existsSync(diagnosticFile)) return null;
+        const lines = fs.readFileSync(diagnosticFile, 'utf8').trim().split('\n');
+        if (!lines.length || !lines[lines.length - 1]) return null;
+        latestRendererCrashReport = { ...JSON.parse(lines[lines.length - 1]), diagnosticFile };
+        return latestRendererCrashReport;
+    } catch (error) {
+        log(`[CrashReport] 读取失败: ${error.message}`);
+        return null;
+    }
+}
 
 function _savedBatchTaskCount(raw) {
     if (!raw) return 0;
@@ -556,6 +599,14 @@ function createWindow() {
     }
 
     mainWindow = new BrowserWindow(windowOptions);
+    // renderer 异常退出时，beforeunload 不一定会运行；由主进程记录原因。
+    mainWindow.webContents.on('render-process-gone', (_event, details) => {
+        writeRendererCrashReport({
+            process: details?.process || 'renderer',
+            reason: details?.reason || 'unknown',
+            exitCode: Number.isFinite(details?.exitCode) ? details.exitCode : null,
+        });
+    });
 
     if (!app.isPackaged) {
         mainWindow.loadURL('http://localhost:5173');
@@ -735,32 +786,6 @@ app.whenReady().then(async () => {
     // ==================== IPC 处理 - 基本功能 ====================
     ipcMain.handle('get-app-version', () => {
         return app.getVersion();
-    });
-
-    // 批量 Reels 长队列会累积 Chromium Canvas/视频解码器内存。
-    // 渲染端已先持久化续传断点；这里强制结束旧渲染进程，
-    // render-process-gone 后重载同一窗口，新页面再从断点自动继续。
-    ipcMain.on('recycle-renderer', (event) => {
-        const webContents = event.sender;
-        if (!webContents || webContents.isDestroyed()) return;
-        let reloadStarted = false;
-        const reloadAfterExit = () => {
-            if (reloadStarted || webContents.isDestroyed()) return;
-            reloadStarted = true;
-            setTimeout(() => {
-                if (!webContents.isDestroyed()) webContents.reloadIgnoringCache();
-            }, 120);
-        };
-        webContents.once('render-process-gone', reloadAfterExit);
-        setTimeout(() => {
-            if (webContents.isDestroyed()) return;
-            try {
-                webContents.forcefullyCrashRenderer();
-            } catch (error) {
-                log(`[Reels] 重建渲染进程失败，降级为普通重载: ${error.message}`);
-                reloadAfterExit();
-            }
-        }, 80);
     });
 
     ipcMain.handle('select-directory', async () => {
@@ -972,7 +997,15 @@ app.whenReady().then(async () => {
     // IPC: WYSIWYG 逐帧渲染导出（与 Canvas 预览 100% 一致）
     const { handleWysiwygIPC, attachFramePipeline, parallelExport } = require('./services/ffmpeg-rawvideo');
     ipcMain.handle('reels-compose-wysiwyg', async (event, action, data) => {
-        return handleWysiwygIPC(action, data);
+        const result = await handleWysiwygIPC(action, data);
+        // 隐藏 renderer 若被系统终止，确保它启动的 FFmpeg 会话也被回收。
+        if (action === 'start' && typeof result === 'string') {
+            const sessionId = result;
+            event.sender.once('destroyed', () => {
+                handleWysiwygIPC('abort', { sessionId }).catch(() => {});
+            });
+        }
+        return result;
     });
     ipcMain.on('reels-frame-pipeline-open', (event, data = {}) => {
         const { port1, port2 } = new MessageChannelMain();
@@ -991,6 +1024,104 @@ app.whenReady().then(async () => {
     // IPC: 并行影子窗口导出（V3 多切片渲染）
     ipcMain.handle('parallel-wysiwyg-export', async (event, opts) => {
         return parallelExport(opts, mainWindow);
+    });
+    ipcMain.handle('get-latest-crash-diagnostic', () => getLatestRendererCrashReport());
+
+    // 每个队列任务使用一次性隐藏 renderer。任务完成后销毁窗口，Chromium 会把
+    // 该任务的 Canvas、图片与媒体解码缓存整体归还，不再累积到主界面进程。
+    ipcMain.handle('isolated-wysiwyg-export', async (event, opts = {}) => {
+        const requestId = String(opts.requestId || `isolated-${Date.now()}`);
+        if (isolatedReelsRenderers.has(requestId)) throw new Error('后台渲染任务 ID 重复');
+        const owner = event.sender;
+        const htmlPath = path.join(__dirname, 'isolated-wysiwyg-renderer.html');
+        const scriptBase = app.isPackaged
+            ? path.join(__dirname, '..', 'dist')
+            : path.join(__dirname, '..', 'src');
+        const scriptPaths = [
+            'reels-text-direction.js',
+            'reels-anim-engine.js',
+            'reels-rich-text.js',
+            'reels-canvas-renderer.js',
+            'reels-overlay.js',
+            'fonts-metadata.js',
+            'reels-font-manager.js',
+            'reels-wysiwyg-export.js',
+        ].map(name => path.join(scriptBase, name));
+
+        return new Promise((resolve, reject) => {
+            const win = new BrowserWindow({
+                show: false,
+                width: 160,
+                height: 160,
+                webPreferences: {
+                    nodeIntegration: true,
+                    contextIsolation: false,
+                    backgroundThrottling: false,
+                    webSecurity: false,
+                },
+            });
+            isolatedReelsRenderers.set(requestId, win);
+            let settled = false;
+            const timeout = setTimeout(() => finish(new Error('后台渲染任务超时（60 分钟）')), 60 * 60 * 1000);
+
+            const removeListeners = () => {
+                ipcMain.removeListener('isolated-wysiwyg-ready', onReady);
+                ipcMain.removeListener('isolated-wysiwyg-progress', onProgress);
+                ipcMain.removeListener('isolated-wysiwyg-log', onLog);
+                ipcMain.removeListener('isolated-wysiwyg-result', onResult);
+            };
+            const finish = (error, result) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timeout);
+                removeListeners();
+                isolatedReelsRenderers.delete(requestId);
+                if (!win.isDestroyed()) win.destroy();
+                if (error) reject(error);
+                else resolve(result);
+            };
+            const fromThisWindow = ipcEvent => ipcEvent.sender === win.webContents;
+            const onReady = ipcEvent => {
+                if (!fromThisWindow(ipcEvent)) return;
+                win.webContents.send('isolated-wysiwyg-run', {
+                    requestId,
+                    params: opts.params || {},
+                    scriptPaths,
+                });
+            };
+            const onProgress = (ipcEvent, data = {}) => {
+                if (!fromThisWindow(ipcEvent)) return;
+                if (!owner.isDestroyed()) owner.send('isolated-wysiwyg-progress', { requestId, ...data });
+            };
+            const onLog = (ipcEvent, data = {}) => {
+                if (!fromThisWindow(ipcEvent)) return;
+                log(`[IsolatedReels:${requestId}] ${String(data.message || '')}`);
+            };
+            const onResult = (ipcEvent, data = {}) => {
+                if (!fromThisWindow(ipcEvent)) return;
+                if (data.success) finish(null, data.result || {});
+                else finish(new Error(data.error || '后台渲染失败'));
+            };
+            ipcMain.on('isolated-wysiwyg-ready', onReady);
+            ipcMain.on('isolated-wysiwyg-progress', onProgress);
+            ipcMain.on('isolated-wysiwyg-log', onLog);
+            ipcMain.on('isolated-wysiwyg-result', onResult);
+            win.webContents.once('render-process-gone', (_goneEvent, details = {}) => {
+                if (settled) return;
+                const report = writeRendererCrashReport({
+                    process: 'isolated-reels-renderer',
+                    reason: details.reason || 'unknown',
+                    exitCode: Number.isFinite(details.exitCode) ? details.exitCode : null,
+                });
+                if (report && !owner.isDestroyed()) owner.send('reels-crash-diagnostic', report);
+                finish(new Error(`后台渲染进程异常退出：${details.reason || 'unknown'}`));
+            });
+            win.loadFile(htmlPath).catch(error => finish(error));
+        });
+    });
+    ipcMain.on('cancel-isolated-wysiwyg-export', (_event, requestId) => {
+        const win = isolatedReelsRenderers.get(String(requestId || ''));
+        if (win && !win.isDestroyed()) win.webContents.send('isolated-wysiwyg-cancel');
     });
 
     // IPC: 视频首尾拼接 (Hook -> Main)

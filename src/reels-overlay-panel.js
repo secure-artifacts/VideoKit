@@ -116,6 +116,17 @@ class ReelsOverlayPanel {
                         <button class="btn btn-secondary rop-btn" id="rop-card-import-tpl" style="flex:1;">导入</button>
                         <button class="btn btn-secondary rop-btn" id="rop-card-export-tpl" style="flex:1;">导出</button>
                     </div>
+                    <div class="rop-grid" style="margin-top:8px;">
+                        <label>卡片开始(s)</label><input type="number" id="rop-card-start" class="rop-input" step="0.1" min="0" title="卡片文字和它的蒙版同时出现">
+                        <label>卡片结束(s)</label><input type="number" id="rop-card-end" class="rop-input" step="0.1" min="0" title="卡片文字和它的蒙版同时消失">
+                    </div>
+                    <label style="display:flex;align-items:center;gap:6px;margin-top:7px;font-size:11px;cursor:pointer;">
+                        <input type="checkbox" id="rop-card-time-linked" checked> 文字与蒙版共用时间
+                    </label>
+                    <div id="rop-mask-time-fields" class="rop-grid" style="margin-top:6px;display:none;">
+                        <label>蒙版开始(s)</label><input type="number" id="rop-mask-start" class="rop-input" step="0.1" min="0">
+                        <label>蒙版结束(s)</label><input type="number" id="rop-mask-end" class="rop-input" step="0.1" min="0">
+                    </div>
                     <div style="margin-top:6px;">
                         <button class="btn btn-secondary rop-btn rop-reset-all" id="rop-card-reset-all" style="width:100%; border-color:#d75c5c; color:#d75c5c;" title="将整张卡片的排版、样式和特效彻底恢复为新建时的干净状态，保留文字内容与时间。">↺ 恢复卡片初始设置 (Factory Reset)</button>
                     </div>
@@ -1541,6 +1552,51 @@ class ReelsOverlayPanel {
             scrollEndTime.addEventListener('change', () => { mainEnd.value = scrollEndTime.value; });
         }
 
+        // 文字卡片的“变换”面板会被隐藏，因此给它单独提供时间字段。
+        // 同步到通用 start/end 后再写入覆层，确保卡片文字和背后的蒙版使用同一时间范围。
+        const cardStartTime = this.container.querySelector('#rop-card-start');
+        const cardEndTime = this.container.querySelector('#rop-card-end');
+        const cardTimeLinked = this.container.querySelector('#rop-card-time-linked');
+        const maskStartTime = this.container.querySelector('#rop-mask-start');
+        const maskEndTime = this.container.querySelector('#rop-mask-end');
+        const maskTimeFields = this.container.querySelector('#rop-mask-time-fields');
+        const syncMaskTimeVisibility = () => {
+            if (maskTimeFields) maskTimeFields.style.display = cardTimeLinked?.checked ? 'none' : '';
+        };
+        const syncCardTime = () => {
+            if (!this._selectedOv || this._selectedOv.type !== 'textcard') return;
+            if (mainStart && cardStartTime) mainStart.value = cardStartTime.value;
+            if (mainEnd && cardEndTime) mainEnd.value = cardEndTime.value;
+            this._selectedOv.card_time_linked = cardTimeLinked?.checked !== false;
+            if (this._selectedOv.card_time_linked) {
+                if (maskStartTime && cardStartTime) maskStartTime.value = cardStartTime.value;
+                if (maskEndTime && cardEndTime) maskEndTime.value = cardEndTime.value;
+            }
+            this._selectedOv.mask_start = parseFloat(maskStartTime?.value || cardStartTime?.value) || 0;
+            this._selectedOv.mask_end = parseFloat(maskEndTime?.value || cardEndTime?.value) || 9999;
+            syncMaskTimeVisibility();
+            this._syncToOverlay();
+        };
+        if (cardStartTime) {
+            cardStartTime.addEventListener('input', syncCardTime);
+            cardStartTime.addEventListener('change', syncCardTime);
+        }
+        if (cardEndTime) {
+            cardEndTime.addEventListener('input', syncCardTime);
+            cardEndTime.addEventListener('change', syncCardTime);
+        }
+        if (cardTimeLinked) {
+            cardTimeLinked.addEventListener('change', syncCardTime);
+        }
+        if (maskStartTime) {
+            maskStartTime.addEventListener('input', syncCardTime);
+            maskStartTime.addEventListener('change', syncCardTime);
+        }
+        if (maskEndTime) {
+            maskEndTime.addEventListener('input', syncCardTime);
+            maskEndTime.addEventListener('change', syncCardTime);
+        }
+
         // 移除导致死循环的自动修正 "起始偏移" 逻辑（允许独立调节保证顺畅）
         // Live value display for sliders
         const opSlider = this.container.querySelector('#rop-opacity');
@@ -2884,6 +2940,15 @@ class ReelsOverlayPanel {
             displayEnd = ov.end;
         }
         this._val('rop-end', displayEnd);
+        // 卡片的变换区默认隐藏，使用其专属字段显示同一套起止时间。
+        this._val('rop-card-start', ov.start);
+        this._val('rop-card-end', displayEnd);
+        const cardTimeLinked = ov.card_time_linked !== false;
+        this._val('rop-card-time-linked', cardTimeLinked);
+        this._val('rop-mask-start', ov.mask_start ?? ov.start);
+        this._val('rop-mask-end', ov.mask_end ?? displayEnd);
+        const maskTimeFields = this.container.querySelector('#rop-mask-time-fields');
+        if (maskTimeFields) maskTimeFields.style.display = cardTimeLinked ? 'none' : '';
         // 同步到滚动字幕专用的时间字段
         this._val('rop-scroll-start-time', ov.start);
         this._val('rop-scroll-end-time', displayEnd);

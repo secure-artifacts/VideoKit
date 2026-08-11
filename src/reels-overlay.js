@@ -127,6 +127,10 @@ function createTextCardOverlay(opts = {}) {
         opacity: opts.opacity ?? 255,
         start: opts.start ?? 0,
         end: opts.end ?? 9999,
+        // 默认蒙版与文字共用时间；关闭后可分别安排背景蒙版。
+        card_time_linked: opts.card_time_linked !== false,
+        mask_start: opts.mask_start ?? (opts.start ?? 0),
+        mask_end: opts.mask_end ?? (opts.end ?? 9999),
         // Text-card sections inherit this setting; auto detects each card's content.
         text_direction: opts.text_direction || 'auto',
         // ── 卡片背景 ──
@@ -821,6 +825,45 @@ function splitBodyText(text) {
  */
 function drawOverlay(ctx, origOv, currentTime = 0, canvasW = 1920, canvasH = 1080) {
     if (origOv.disabled) return;
+
+    // 文字卡片可选择让蒙版与文字使用不同时间。拆成两个同布局的绘制
+    // 分支：一个只画蒙版/边框/模糊，一个只画文字，避免其中一方结束时
+    // 被另一方的时间范围提前裁掉。
+    if (origOv.type === 'textcard' && origOv.card_time_linked === false && !origOv._cardTimingPart) {
+        const textStart = Number(origOv.start || 0);
+        const textEnd = Number(origOv.end || 9999);
+        const maskStart = Number.isFinite(Number(origOv.mask_start)) ? Number(origOv.mask_start) : textStart;
+        const maskEnd = Number.isFinite(Number(origOv.mask_end)) ? Number(origOv.mask_end) : textEnd;
+        const textActive = currentTime >= textStart && (textEnd >= 9999 || currentTime <= textEnd + 0.001);
+        const maskActive = currentTime >= maskStart && (maskEnd >= 9999 || currentTime <= maskEnd + 0.001);
+        if (!textActive && !maskActive) return;
+
+        if (maskActive) {
+            const maskOv = Object.assign({}, origOv, {
+                _cardTimingPart: true,
+                card_time_linked: true,
+                start: maskStart,
+                end: maskEnd,
+                // 保留原文用于自动高度测量，但不绘制任何文字。
+                _original_title_text: origOv.title_text,
+                _original_body_text: origOv.body_text,
+                _original_footer_text: origOv.footer_text,
+                title_text: '', body_text: '', footer_text: '',
+            });
+            drawOverlay(ctx, maskOv, currentTime, canvasW, canvasH);
+        }
+        if (textActive) {
+            const textOv = Object.assign({}, origOv, {
+                _cardTimingPart: true,
+                card_time_linked: true,
+                card_enabled: false,
+                card_border_enabled: false,
+                card_blur_enabled: false,
+            });
+            drawOverlay(ctx, textOv, currentTime, canvasW, canvasH);
+        }
+        return;
+    }
     
     let ov = origOv;
 

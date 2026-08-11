@@ -197,6 +197,8 @@ async function runAutoEditByScript(data = {}, progressSender = null) {
         gladiaKeys,
         leadPad: data.lead_pad,
         tailPad: data.tail_pad,
+        keepAudienceResponses: data.keep_audience_responses === true || data.keep_audience_responses === 'true',
+        audienceResponseKeywords: data.audience_response_keywords,
         minScore: data.min_score,
         burnSubtitles: data.burn_subtitles,
         exportMp3: data.export_mp3,

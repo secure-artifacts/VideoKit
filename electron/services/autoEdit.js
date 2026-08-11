@@ -114,6 +114,24 @@ function normalizeText(text) {
     return normalizeEnglishNumbers(text).replace(/[^\p{L}\p{N}]/gu, '');
 }
 
+function extendPlanForAudienceResponse(plan, keywords) {
+    if (!plan?.words?.length || !Number.isInteger(plan.wordEndIdx) || plan.wordEndIdx < 0) return null;
+    const matchedWord = plan.words[plan.wordEndIdx];
+    if (!matchedWord || !Number.isFinite(matchedWord.end)) return null;
+    const latestStart = matchedWord.end + 2;
+    for (let index = plan.wordEndIdx + 1; index < plan.words.length; index++) {
+        const word = plan.words[index];
+        if (!word || !Number.isFinite(word.start) || word.start > latestStart) break;
+        if (!keywords.has(normalizeText(word.raw))) continue;
+        const end = Math.min(plan.duration || Infinity, word.end + 0.2);
+        if (end <= plan.end) return null;
+        plan.end = end;
+        plan.audienceResponse = { text: word.raw, start: word.start, end: word.end };
+        return plan.audienceResponse;
+    }
+    return null;
+}
+
 function splitScriptLines(scriptText) {
     return String(scriptText || '')
         .replace(/\r\n/g, '\n')
@@ -1255,6 +1273,9 @@ async function autoEditByScript(opts = {}) {
     // 连续片段容易显得抢拍；用户仍可在界面中手动改回旧值。
     const leadPad = Math.max(0, Number(opts.leadPad ?? opts.lead_pad ?? 0.12));
     const tailPad = Math.max(0, Number(opts.tailPad ?? opts.tail_pad ?? 0.22));
+    const keepAudienceResponses = opts.keepAudienceResponses === true || opts.keep_audience_responses === true;
+    const audienceResponseKeywords = new Set(String(opts.audienceResponseKeywords ?? opts.audience_response_keywords ?? 'Amen,阿们')
+        .split(/[\n,，]+/).map(normalizeText).filter(Boolean));
     const minScore = Math.max(0.1, Math.min(1, Number(opts.minScore ?? opts.min_score ?? 0.52)));
     const forceTranscribe = opts.forceTranscribe === true || opts.force_transcribe === true;
     const burnSubtitles = opts.burnSubtitles === true || opts.burn_subtitles === true;
@@ -2341,6 +2362,10 @@ async function autoEditByScript(opts = {}) {
             })
             : [];
 
+        if (keepAudienceResponses) {
+            plans.forEach(plan => extendPlanForAudienceResponse(plan, audienceResponseKeywords));
+        }
+
         // V2 同时重新解释风险：识别文字不同默认属于待确认，不直接等同于“确定漏读”。
         const v2Assessment = isMultilingualV2
             || isCompareMode
@@ -2921,6 +2946,7 @@ async function autoEditByScript(opts = {}) {
                 v2_end: Number.isFinite(plan.v2End) ? plan.v2End : plan.end,
                 v2_cut_available: plan.v2CutAvailable === true,
                 duration: Math.round((plan.end - plan.start) * 1000) / 1000,
+                audience_response: plan.audienceResponse || null,
                 transcription_source: plan.transcription.source,
                 word_timeline: (plan.words || []).map(word => ({
                     word: word.raw,

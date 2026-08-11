@@ -2300,6 +2300,7 @@
             <div class="form-section">
               <h4 style="margin-bottom: 12px; color: var(--text-secondary);">⚙️ 识别与裁切参数</h4>
               <div class="param-row" style="flex-wrap: wrap; gap: 12px;">
+                <div style="flex-basis:100%;font-size:12px;color:var(--text-muted);">识别与匹配</div>
                 <div style="display: flex; align-items: center; gap: 8px;">
                   <label>语言:</label>
                   <div style="position:relative;display:inline-block;" id="autoedit-lang-picker-wrap">
@@ -2327,6 +2328,7 @@
                     <option value="concat_first">先合后剪 (加速)</option>
                   </select>
                 </div>
+                <div style="flex-basis:100%;font-size:12px;color:var(--text-muted);margin-top:4px;">输出与转场</div>
                 <div style="display:flex;align-items:center;gap:8px;">
                   <label>输出规格:</label>
                   <select id="autoedit-output-mode" class="select" style="width:145px;" onchange="document.getElementById('autoedit-custom-output').style.display=this.value==='custom'?'flex':'none'">
@@ -2370,9 +2372,17 @@
                   <input type="number" id="autoedit-tail-pad" class="input input-small" value="0.22" min="0" max="2" step="0.01" style="width: 72px;">
                   <span style="font-size: 11px; color: var(--text-muted);">秒</span>
                 </div>
+                <div style="flex-basis:100%;font-size:12px;color:var(--text-muted);margin-top:4px;">观众回应与匹配</div>
+                <label class="checkbox-label" style="margin: 0;" title="默认关闭；开启后仅保留主讲结束后 2 秒内的指定回应">
+                  <input type="checkbox" id="autoedit-keep-audience-response"> 保留观众回应
+                </label>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <label>回应词:</label><input id="autoedit-audience-response-keywords" class="input input-small" value="Amen, 阿们" style="width:120px;" title="用逗号或换行分隔">
+                </div>
                 <span style="font-size:11px;color:#86efac;">自然衔接默认值；想更舒缓可把后留白调到 0.30–0.40 秒</span>
+                <div style="flex-basis:100%;font-size:12px;color:var(--text-muted);margin-top:4px;">导出与审核</div>
                 <div style="display: flex; align-items: center; gap: 8px;">
-                  <label>匹配阈值:</label>
+                  <label>字幕匹配阈值:</label>
                   <input type="number" id="autoedit-min-score" class="input input-small" value="0.52" min="0.1" max="1" step="0.01" style="width: 72px;">
                 </div>
                 <label class="checkbox-label" style="margin: 0;">
@@ -2383,43 +2393,19 @@
                   <input type="checkbox" id="autoedit-force-mismatch" checked>
                   对齐后先核对确认 (推荐)
                 </label>
-                <label class="checkbox-label" style="margin: 0;">
-                  <input type="checkbox" id="autoedit-export-mp3" checked>
-                  导出 Voice Changer MP3
-                </label>
-                <label class="checkbox-label" style="margin: 0;">
-                  <input type="checkbox" id="autoedit-voicechanger-enabled">
-                  高级 Voice Changer
-                </label>
-                <div style="display: flex; align-items: center; gap: 8px;">
-                  <label>音色:</label>
-                  <input id="autoedit-voicechanger-voice" class="input input-small" list="autoedit-voicechanger-voices" placeholder="Voice ID" style="width: 180px;">
-                  <datalist id="autoedit-voicechanger-voices"></datalist>
-                  <button class="btn btn-secondary" onclick="loadAutoEditVoiceChangerVoices('main')" style="padding: 4px 10px; font-size: 12px;">加载音色</button>
-                </div>
-                <label class="checkbox-label" style="margin: 0;">
-                  <input type="checkbox" id="autoedit-voicechanger-replace" checked>
-                  替换最终视频声音
-                </label>
-                <label class="checkbox-label" style="margin: 0;">
-                  <input type="checkbox" id="autoedit-voicechanger-noise">
-                  变声前降噪
-                </label>
-                <div style="display: flex; align-items: center; gap: 8px;">
-                  <label>稳定度:</label>
-                  <input type="number" id="autoedit-voicechanger-stability" class="input input-small" value="0.5" min="0" max="1" step="0.05" style="width: 72px;">
-                </div>
-                <div style="display: flex; align-items: center; gap: 8px;">
-                  <label>相似度:</label>
-                  <input type="number" id="autoedit-voicechanger-similarity" class="input input-small" value="0.75" min="0" max="1" step="0.05" style="width: 72px;">
-                </div>
-                <div style="display: flex; align-items: center; gap: 8px; min-width: 420px; flex: 1;">
-                  <input type="file" id="autoedit-manual-audio-input" class="hidden-file-input" accept=".mp3,.wav,.m4a,.aac,.flac,.ogg">
-                  <label>手动变声音频:</label>
-                  <input id="autoedit-manual-audio-path" class="input input-small" placeholder="可选择已生成的新音频，用它替换最终视频声音" style="min-width: 220px; flex: 1;">
-                  <button class="btn btn-secondary" onclick="document.getElementById('autoedit-manual-audio-input').click()" style="padding: 4px 10px; font-size: 12px;">选择音频</button>
-                  <button class="btn btn-secondary" onclick="clearAutoEditManualAudio()" style="padding: 4px 10px; font-size: 12px;">清空</button>
-                </div>
+                <details style="width:100%;margin:2px 0;">
+                  <summary style="cursor:pointer;color:var(--text-muted);font-size:13px;user-select:none;">Voice Changer（可选）</summary>
+                  <div class="param-row" style="margin-top:10px;flex-wrap:wrap;gap:12px;">
+                    <label class="checkbox-label" style="margin:0;"><input type="checkbox" id="autoedit-export-mp3" checked> 导出 Voice Changer MP3</label>
+                    <label class="checkbox-label" style="margin:0;"><input type="checkbox" id="autoedit-voicechanger-enabled"> 启用高级 Voice Changer</label>
+                    <label class="checkbox-label" style="margin:0;"><input type="checkbox" id="autoedit-voicechanger-replace" checked> 替换最终视频声音</label>
+                    <label class="checkbox-label" style="margin:0;"><input type="checkbox" id="autoedit-voicechanger-noise"> 变声前降噪</label>
+                    <div style="display:flex;align-items:center;gap:8px;"><label>音色:</label><input id="autoedit-voicechanger-voice" class="input input-small" list="autoedit-voicechanger-voices" placeholder="Voice ID" style="width:180px;"><datalist id="autoedit-voicechanger-voices"></datalist><button class="btn btn-secondary" onclick="loadAutoEditVoiceChangerVoices('main')" style="padding:4px 10px;font-size:12px;">加载音色</button></div>
+                    <div style="display:flex;align-items:center;gap:8px;"><label>稳定度:</label><input type="number" id="autoedit-voicechanger-stability" class="input input-small" value="0.5" min="0" max="1" step="0.05" style="width:72px;"></div>
+                    <div style="display:flex;align-items:center;gap:8px;"><label>相似度:</label><input type="number" id="autoedit-voicechanger-similarity" class="input input-small" value="0.75" min="0" max="1" step="0.05" style="width:72px;"></div>
+                    <div style="display:flex;align-items:center;gap:8px;min-width:420px;flex:1;"><input type="file" id="autoedit-manual-audio-input" class="hidden-file-input" accept=".mp3,.wav,.m4a,.aac,.flac,.ogg"><label>手动变声音频:</label><input id="autoedit-manual-audio-path" class="input input-small" placeholder="可选择已生成的新音频，用它替换最终视频声音" style="min-width:220px;flex:1;"><button class="btn btn-secondary" onclick="document.getElementById('autoedit-manual-audio-input').click()" style="padding:4px 10px;font-size:12px;">选择音频</button><button class="btn btn-secondary" onclick="clearAutoEditManualAudio()" style="padding:4px 10px;font-size:12px;">清空</button></div>
+                  </div>
+                </details>
                 <label class="checkbox-label" style="margin: 0;">
                   <input type="checkbox" id="autoedit-force-transcribe">
                   重新转录
@@ -5296,7 +5282,7 @@
                   说明：静态口播选低质量 · 细节/动作较多选口播高质量 · 动态Reels选Reels高质量
                 </span>
                 <span style="width:1px;height:16px;background:var(--border-color);margin:0 2px;display:inline-block;"></span>
-                <label>输出:</label>
+                <label>渲染引擎:</label>
                 <select id="reels-export-engine" class="select" style="width:142px;font-size:11px;"
                   onchange="reelsUpdateExportEngineUI()">
                   <option value="precise" selected>精准画布（兼容）</option>
@@ -5311,7 +5297,7 @@
                   style="width:90px;font-size:11px;">
                 <span style="width:1px;height:16px;background:var(--border-color);margin:0 2px;display:inline-block;"></span>
                 <label style="display:flex;align-items:center;gap:4px;">
-                  输出时长:
+                  成片时长:
                   <input type="range" id="reels-custom-duration-range" min="0" max="600" step="0.5"
                     value="0" style="width:92px;" title="0=自动">
                   <input type="number" id="reels-custom-duration" class="input input-small" min="0" max="600" step="0.5"
@@ -5378,12 +5364,12 @@
                 </label>
                 <span style="width:1px;height:16px;background:var(--border-color);display:inline-block;"></span>
                 <label style="display:flex;align-items:center;gap:6px;font-size:11px;white-space:nowrap;">
-                  特效加于:
-                  <select id="reels-audio-fx-target" class="select select-small" style="width:110px; font-size:11px; padding:2px;">
-                    <option value="all">默认(优先原声)</option>
-                    <option value="voice">人声-音频层</option>
-                    <option value="bg">背景层</option>
-                    <option value="bgm">配乐层</option>
+                  音效作用于:
+                  <select id="reels-audio-fx-target" class="select select-small" style="width:150px; font-size:11px; padding:2px;">
+                    <option value="all">自动选择（人声 MP3 优先）</option>
+                    <option value="bg">背景视频原声</option>
+                    <option value="voice">人声 MP3 音轨</option>
+                    <option value="bgm">配乐音轨</option>
                   </select>
                 </label>
               </div>
@@ -5438,9 +5424,9 @@
                 </label>
                 <span style="width:1px;height:16px;background:var(--border-color);display:inline-block;"></span>
                 <!-- 前置 -->
-                <label style="white-space:nowrap;">前置:</label>
+                <label style="white-space:nowrap;" title="拼接到每条 MP4 正片之前，并增加最终总时长；任务单独 Hook 优先">全局前置片段（仅 MP4）:</label>
                 <input type="text" id="reels-intro-path" class="input file-path" placeholder="可选" readonly
-                  style="width:140px;font-size:11px;">
+                  style="width:100px;max-width:100px;flex:0 0 100px;font-size:11px;">
                 <div style="display:flex; gap:4px;">
                   <button class="btn btn-secondary" style="font-size:10px;padding:2px 6px;"
                     onclick="reelsSelectIntro()">选择</button>
@@ -5491,7 +5477,12 @@
                   并发数:
 
                   <input type="range" id="reels-export-concurrency-range" min="1" max="4" step="1" value="1" style="width:80px;">
-                  <input type="number" id="reels-export-concurrency" class="input input-small" min="1" max="4" value="1" style="width:44px;font-size:11px;" title="12 条及以上仍按你选择的并发 1/2 导出；每 6 条释放内存并自动续传">
+                  <input type="number" id="reels-export-concurrency" class="input input-small" min="1" max="4" value="1" style="width:44px;font-size:11px;" title="同时导出的任务数">
+                </label>
+                <label style="display:flex;align-items:center;gap:4px;font-size:11px;white-space:nowrap;">
+                  刷新间隔:
+                  <input type="number" id="reels-export-recycle-every" class="input input-small" min="0" max="9999" value="0" style="width:48px;font-size:11px;" title="0 表示不自动刷新；填入大于 0 的数值后，每完成该数量的任务正常刷新并自动续传">
+                  <span style="color:var(--text-muted);">条</span>
                 </label>
                 <label style="display:flex;align-items:center;gap:4px;font-size:11px;white-space:nowrap;">
                   格式:
@@ -5532,6 +5523,23 @@
                 <span style="color:var(--text-secondary); white-space:nowrap;">最后错误:</span>
                 <span id="reels-export-last-error" style="color:#ff8a8a; word-break:break-all;">无</span>
               </div>
+              <div id="reels-crash-diagnostic" hidden style="margin-top:8px;padding:8px;border:1px solid rgba(255,138,138,.55);border-radius:6px;background:rgba(150,30,30,.12);font-size:11px;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <strong style="color:#ff9b9b;">⚠️ 后台渲染崩溃诊断</strong>
+                  <span style="color:var(--text-secondary);">可直接复制给技术支持</span>
+                  <span style="flex:1;"></span>
+                  <button type="button" id="reels-crash-diagnostic-copy" class="btn btn-secondary" style="font-size:10px;padding:2px 7px;">一键复制诊断</button>
+                  <button type="button" id="reels-crash-diagnostic-dismiss" class="btn btn-secondary" style="font-size:10px;padding:2px 7px;">关闭</button>
+                </div>
+                <pre id="reels-crash-diagnostic-text" style="margin:7px 0 0;max-height:170px;overflow:auto;white-space:pre-wrap;word-break:break-word;color:#ffc1c1;"></pre>
+              </div>
+              <details id="reels-export-log-details" style="margin-top:7px;font-size:11px;">
+                <summary style="cursor:pointer;color:var(--text-secondary);">导出日志（可复制给技术支持）</summary>
+                <div style="display:flex;justify-content:flex-end;margin:4px 0;">
+                  <button type="button" id="reels-export-log-copy" class="btn btn-secondary" style="font-size:10px;padding:2px 7px;">复制日志</button>
+                </div>
+                <pre id="reels-export-log" style="margin:0;max-height:170px;overflow:auto;white-space:pre-wrap;word-break:break-word;padding:7px;border:1px solid var(--border-color);border-radius:5px;background:rgba(0,0,0,.18);color:var(--text-secondary);">暂无导出记录</pre>
+              </details>
             </details>
           </div>
 

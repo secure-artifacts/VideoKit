@@ -147,9 +147,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     pathJoin: (...args) => path.join(...args),
     pathBasename: (p) => path.basename(p),
     getAppVersion: () => ipcRenderer.invoke('get-app-version'),
-    // 长队列导出分段重启：销毁当前渲染进程后由主进程重载，
-    // 比页面普通刷新更能确保 Canvas/媒体解码内存被释放。
-    recycleRenderer: () => ipcRenderer.send('recycle-renderer'),
     writeClipboardText: (text) => {
         clipboard.writeText(String(text || ''));
         return true;
@@ -217,6 +214,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
         const handler = (_, data) => callback(data);
         ipcRenderer.on('parallel-export-progress', handler);
         return () => ipcRenderer.removeListener('parallel-export-progress', handler);
+    },
+    isolatedWysiwygExport: (opts) => ipcRenderer.invoke('isolated-wysiwyg-export', opts),
+    cancelIsolatedWysiwygExport: (requestId) => ipcRenderer.send('cancel-isolated-wysiwyg-export', requestId),
+    getLatestCrashDiagnostic: () => ipcRenderer.invoke('get-latest-crash-diagnostic'),
+    onReelsCrashDiagnostic: (callback) => {
+        const handler = (_, data) => callback(data);
+        ipcRenderer.on('reels-crash-diagnostic', handler);
+        return () => ipcRenderer.removeListener('reels-crash-diagnostic', handler);
+    },
+    onIsolatedWysiwygProgress: (requestId, callback) => {
+        const handler = (_, data) => {
+            if (data && data.requestId === requestId) callback(data);
+        };
+        ipcRenderer.on('isolated-wysiwyg-progress', handler);
+        return () => ipcRenderer.removeListener('isolated-wysiwyg-progress', handler);
     },
 
     // 自动更新
