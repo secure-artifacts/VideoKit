@@ -80,6 +80,9 @@ class ReelsOverlayPanel {
                         <button class="btn btn-secondary rop-btn" id="rop-add-scroll" title="添加滚动字幕" style="background:#FF6B35;color:#fff;">+ 滚动字幕</button>
                     </div>
                 </div>
+                <label style="display:flex;align-items:center;gap:6px;margin:6px 0;font-size:11px;cursor:pointer;color:var(--text-secondary);" title="关闭后，动态字幕会显示在所有覆层上方">
+                    <input type="checkbox" id="rop-overlay-above-subtitle" checked> 覆层显示在动态字幕上方
+                </label>
                 <div id="rop-overlay-list" class="rop-list"></div>
             </div>
 
@@ -1161,6 +1164,15 @@ class ReelsOverlayPanel {
     }
 
     _bindEvents() {
+        const overlayAboveSubtitle = this.container.querySelector('#rop-overlay-above-subtitle');
+        if (overlayAboveSubtitle) {
+            overlayAboveSubtitle.checked = this.videoCanvas?.getOverlayAboveSubtitle?.() !== false;
+            overlayAboveSubtitle.addEventListener('change', () => {
+                this.videoCanvas?.setOverlayAboveSubtitle?.(overlayAboveSubtitle.checked);
+                this._requestRender();
+            });
+        }
+
         // 添加覆层
         this.container.querySelector('#rop-add-text').addEventListener('click', () => this._addTextOverlay());
         this.container.querySelector('#rop-add-textcard').addEventListener('click', () => this._addTextCardOverlay());
@@ -2508,6 +2520,9 @@ class ReelsOverlayPanel {
     _refreshList() {
         const list = this.container.querySelector('#rop-overlay-list');
         if (!list || !this.videoCanvas) return;
+
+        const overlayAboveSubtitle = this.container.querySelector('#rop-overlay-above-subtitle');
+        if (overlayAboveSubtitle) overlayAboveSubtitle.checked = this.videoCanvas.getOverlayAboveSubtitle?.() !== false;
 
         const overlays = this.videoCanvas.overlayMgr.overlays || [];
         if (overlays.length === 0) {

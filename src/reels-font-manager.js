@@ -412,11 +412,22 @@ class ReelsFontManager {
             const encoded = fontFamily.replace(/ /g, '+');
             const link = document.createElement('link');
             link.rel = 'stylesheet';
-            link.href = `https://fonts.googleapis.com/css2?family=${encoded}:wght@300;400;500;600;700&display=swap`;
+            // 导出会按卡片设置使用 100–900 的任意字重。以前这里只请求到 700，
+            // 例如 Anton 900 会先以替代字体/伪粗体绘制，等 CSS 字体随后到达时，
+            // 同一段文字的宽度和换行会在逐帧导出中发生变化。
+            link.href = `https://fonts.googleapis.com/css2?family=${encoded}:wght@100;200;300;400;500;600;700;800;900&display=block`;
+            const stylesheetReady = new Promise((resolve, reject) => {
+                link.onload = resolve;
+                link.onerror = () => reject(new Error(`Google Fonts stylesheet failed: ${fontFamily}`));
+            });
             document.head.appendChild(link);
 
-            // 等待字体加载
-            await document.fonts.load(`16px "${fontFamily}"`);
+            // 先等待 CSS 规则进入 document，再逐个等待 Canvas 可能使用的字重。
+            // 仅 await document.fonts.ready 并不保证刚插入的 stylesheet 已被发现。
+            await stylesheetReady;
+            await Promise.all(['100', '200', '300', '400', '500', '600', '700', '800', '900'].map((weight) =>
+                document.fonts.load(`${weight} 16px "${fontFamily}"`)
+            ));
             this._loadedGoogleFonts.add(fontFamily);
 
             if (!this._allowedFonts.includes(fontFamily)) {

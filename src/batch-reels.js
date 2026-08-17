@@ -676,6 +676,16 @@ function _initReelsModule() {
                 },
                 getSelected() { return null; },
                 render() { /* rAF loop handles rendering */ },
+                getOverlayAboveSubtitle() {
+                    const task = _getSelectedTask();
+                    return task ? task.overlayAboveSubtitle !== false : true;
+                },
+                setOverlayAboveSubtitle(value) {
+                    const task = _getSelectedTask();
+                    if (!task) return;
+                    task.overlayAboveSubtitle = value !== false;
+                    reelsUpdatePreview();
+                },
                 // 回调占位
                 onSelect: null,
                 onDeselect: null,
@@ -3059,19 +3069,9 @@ function reelsUpdatePreview() {
     const rangeToggle = document.getElementById('reels-show-subtitle-range');
     const showSubtitleRange = !rangeToggle || rangeToggle.checked;
 
-    if (showSubtitleRange) {
-        _drawSubtitlePreviewRange(ctx, style, w, h);
-    }
-
-    if (activeSegment && showSubtitle) {
-        if (typeof _selectedTask !== 'undefined' && _selectedTask && _selectedTask.segments) {
-            renderer.setContextSegments(_selectedTask.segments);
-        } else {
-            renderer.setContextSegments([activeSegment]);
-        }
-        renderer.renderSubtitle(style, activeSegment, audioCycleTime, w, h);
-    }
-
+    // 可按任务决定覆层与动态字幕的前后关系；默认保持旧项目的“覆层在上”。
+    const overlayAboveSubtitle = taskForAudio?.overlayAboveSubtitle !== false;
+    const renderOverlays = () => {
     // ── 渲染覆层 (文字卡片等) ──
     if (!inCoverEditMode && _inCoverPhase) {
         // Normal mode > Cover phase -> ONLY render Cover overlays
@@ -3110,6 +3110,26 @@ function reelsUpdatePreview() {
         // ── 选中框 + 拖拽手柄 ──
         _drawOverlaySelectionUI(ctx, w, h);
     }
+    };
+
+    // “覆层在字幕下方”时先画覆层；否则等字幕完成后再画。
+    if (!overlayAboveSubtitle) renderOverlays();
+
+    // ── 渲染动态字幕 ──
+    if (showSubtitleRange) {
+        _drawSubtitlePreviewRange(ctx, style, w, h);
+    }
+
+    if (activeSegment && showSubtitle) {
+        if (typeof _selectedTask !== 'undefined' && _selectedTask && _selectedTask.segments) {
+            renderer.setContextSegments(_selectedTask.segments);
+        } else {
+            renderer.setContextSegments([activeSegment]);
+        }
+        renderer.renderSubtitle(style, activeSegment, audioCycleTime, w, h);
+    }
+
+    if (overlayAboveSubtitle) renderOverlays();
 
     // ── AI 水印 ──
     _drawWatermarks(ctx, w, h);
@@ -10541,6 +10561,7 @@ async function reelsStartExport(options = {}) {
                     originalScript: task.ttsText || task.aiScript || task.txtContent || "",
                     showSubtitle: showSubtitle,
                     overlays: task.overlays || [],
+                    overlayAboveSubtitle: task.overlayAboveSubtitle !== false,
                     backgroundPath: bgPath,
                     bgMode: task.bgMode || 'single',
                     bgClipPool: _getEffectiveBgClipPool(task),

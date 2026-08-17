@@ -360,6 +360,7 @@ async function reelsWysiwygExport(params) {
         bgTransition = 'crossfade', // 多素材转场类型
         bgTransDur = 0.5,        // 多素材转场时长(秒)
         showSubtitle = true,
+        overlayAboveSubtitle = true,
         voicePath,
         outputPath,
         targetWidth = 1080,
@@ -1115,8 +1116,9 @@ async function reelsWysiwygExport(params) {
                 _drawImageFlipped(ctx, currentCvImg, sx, sy, sWidth, sHeight, drawX, drawY, drawW, drawH, contentVideoFlipH, contentVideoFlipV);
             }
 
-            // ── 字幕：与 V2/旧预览一致，先画字幕，再画文字卡片/覆层 ──
-            if (showSubtitle) {
+            // ── 动态字幕 ──
+            const renderSubtitle = () => {
+                if (!showSubtitle) return;
                 let activeSeg = segments.find(seg => t >= (seg.start || 0) && t <= (seg.end || 0));
                 // Scrolling/typewriter mode: find nearest segment during gaps (same as preview logic)
                 if (!activeSeg && (style.scrolling_mode || style.fullpage_typewriter) && segments.length > 0) {
@@ -1130,7 +1132,10 @@ async function reelsWysiwygExport(params) {
                     renderer.setContextSegments(segments);
                     renderer.renderSubtitle(style, activeSeg, t, targetWidth, targetHeight);
                 }
-            }
+            };
+
+            // 默认沿用旧项目：覆层在动态字幕上方。
+            if (overlayAboveSubtitle) renderSubtitle();
 
             // ── 覆盖层（文字卡片等）──
             if (taskOverlays && taskOverlays.length > 0 && window.ReelsOverlay) {
@@ -1155,6 +1160,8 @@ async function reelsWysiwygExport(params) {
                     }
                 }
             }
+
+            if (!overlayAboveSubtitle) renderSubtitle();
 
             // ── AI 水印 ──
             if (typeof _drawWatermarks === 'function') {
