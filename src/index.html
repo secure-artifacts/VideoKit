@@ -2231,11 +2231,11 @@
             <div class="form-section" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;border:1px solid rgba(245,158,11,.45);background:rgba(245,158,11,.08);">
               <strong style="color:#fcd34d;">🧪 文案检测版本:</strong>
               <select id="autoedit-matching-engine" class="select" style="width:190px;">
-                <option value="legacy" selected>经典版（稳定）</option>
-                <option value="multilingual_v2">智能版 V2（独立切点）</option>
+                <option value="legacy">经典版（稳定）</option>
+                <option value="multilingual_v2" selected>智能版 V2（独立切点）</option>
                 <option value="compare_v2">经典版 vs V2（逐段对比）</option>
               </select>
-              <span id="autoedit-matching-engine-hint" class="hint" style="margin:0;flex:1;min-width:300px;">经典版保持原有匹配和报错逻辑。</span>
+              <span id="autoedit-matching-engine-hint" class="hint" style="margin:0;flex:1;min-width:300px;">智能版 V2 默认使用多语言词级匹配计算切点。</span>
             </div>
             <div id="autoedit-batch-panel" class="form-section" style="display:none;">
               <h4 style="margin-bottom:10px;color:var(--text-secondary);">📚 批量自动剪辑</h4>
@@ -2446,7 +2446,10 @@
             <div id="autoedit-result-section" class="form-section hidden">
               <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;">
                 <h4 style="margin:0;color:var(--text-secondary);">📊 自动剪辑结果</h4>
-                <button id="autoedit-expand-review-btn" class="btn btn-secondary" onclick="toggleAutoEditReviewFullscreen()" style="padding:5px 11px;font-size:12px;">⛶ 放大审核</button>
+                <div style="display:flex;gap:7px;">
+                  <button class="btn btn-primary" onclick="openAutoEditTimelineReview()" style="padding:5px 11px;font-size:12px;">⏱ 时间线审核</button>
+                  <button id="autoedit-expand-review-btn" class="btn btn-secondary" onclick="toggleAutoEditReviewFullscreen()" style="padding:5px 11px;font-size:12px;">⛶ 放大审核</button>
+                </div>
               </div>
               <div id="autoedit-result-list"
                 style="padding: 12px; background: var(--bg-tertiary); border-radius: 8px; max-height: none; overflow: visible;">
@@ -3783,54 +3786,55 @@
                         <div style="padding: 8px; background: var(--bg-secondary); border-radius: 6px; margin-top: 4px; border: 1px solid var(--border-color);">
                           <div style="display:grid; grid-template-columns:64px 1fr; gap:8px 8px; align-items:center;">
                             <label style="margin:0;">描边:</label>
-                      <div style="display:flex; gap:10px; align-items:center; min-width:0; flex-wrap:wrap;">
-                        <label class="checkbox-label"><input type="checkbox" id="reels-use-stroke" checked
-                            onchange="reelsUpdatePreview()"><span>启用</span></label>
-                        <input type="color" id="reels-stroke-color" value="#3E2723"
-                          style="width: 36px; height: 28px; border: none; cursor: pointer;"
-                          oninput="reelsUpdatePreview()"
-                          onchange="reelsUpdatePreview()">
-                        <label style="margin:0;">宽度:</label>
-                        <input type="range" id="reels-stroke-width-range" min="0" max="10" value="3" style="flex:1; min-width:80px;"
-                          oninput="document.getElementById('reels-stroke-width').value=this.value; reelsUpdatePreview()">
-                        <input type="number" id="reels-stroke-width" class="input input-small" value="3" min="0" max="10" step="0.5" style="width: 45px;"
-                          oninput="document.getElementById('reels-stroke-width-range').value=this.value; reelsUpdatePreview()">
-                        <span id="reels-stroke-width-label" style="font-size: 11px; width: 20px; display: none;">3</span>
+                      <div style="display:flex; flex-direction:column; gap:6px; min-width:0;">
+                        <div style="display:flex; gap:8px; align-items:center;">
+                          <label class="checkbox-label"><input type="checkbox" id="reels-use-stroke" checked onchange="reelsUpdatePreview()"><span>启用</span></label>
+                          <label style="margin:0;">颜色:</label><input type="color" id="reels-stroke-color" value="#3E2723" style="width:36px;height:28px;border:none;cursor:pointer;" oninput="reelsUpdatePreview()" onchange="reelsUpdatePreview()">
+                        </div>
+                        <div style="display:grid; grid-template-columns:42px minmax(0,1fr) 58px; gap:8px; align-items:center;">
+                          <label style="margin:0;">宽度:</label>
+                          <input type="range" id="reels-stroke-width-range" min="0" max="10" value="3" style="width:100%;" oninput="document.getElementById('reels-stroke-width').value=this.value; reelsUpdatePreview()">
+                          <input type="number" id="reels-stroke-width" class="input input-small" value="3" min="0" max="10" step="0.5" style="width:58px;" oninput="document.getElementById('reels-stroke-width-range').value=this.value; reelsUpdatePreview()">
+                          <span id="reels-stroke-width-label" style="display:none;">3</span>
+                        </div>
                       </div>
 
                       <label style="margin:0;">阴影:</label>
                       <div style="display:flex; flex-direction:column; gap:6px; min-width:0;">
-                        <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; min-width:0;">
+                        <div style="display:flex; gap:8px; align-items:center; min-width:0;">
                           <label class="checkbox-label" style="margin:0;"><input type="checkbox" id="reels-shadow" checked
                               onchange="reelsUpdatePreview()"><span>启用</span></label>
-                          <input type="color" id="reels-shadow-color" value="#000000"
+                          <label style="margin:0;">颜色:</label><input type="color" id="reels-shadow-color" value="#000000"
                             style="width: 36px; height: 28px; border: none; cursor: pointer;"
                             onchange="reelsUpdatePreview()">
-                          <label style="margin:0; margin-left:4px;">模糊:</label>
-                          <input type="range" id="reels-shadow-blur-range" min="0" max="80" value="4" style="flex:1; min-width:60px;"
-                            oninput="document.getElementById('reels-shadow-blur').value=this.value; reelsUpdatePreview()">
-                          <input type="number" id="reels-shadow-blur" class="input input-small" value="4" min="0" max="80" style="width: 45px;"
-                            oninput="document.getElementById('reels-shadow-blur-range').value=this.value; reelsUpdatePreview()">
-                          <span id="reels-shadow-blur-label" style="font-size: 11px; width: 24px; display: none;">4</span>
                         </div>
-                        <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; min-width:0;">
-                          <label style="margin:0;">X:</label>
-                          <input type="range" id="reels-shadow-offset-x-range" min="-30" max="30" value="0" style="flex:1; min-width:50px;"
+                        <div style="display:grid; grid-template-columns:42px minmax(0,1fr) 58px; gap:8px; align-items:center;">
+                          <label style="margin:0;">模糊:</label><input type="range" id="reels-shadow-blur-range" min="0" max="80" value="4" style="width:100%;"
+                            oninput="document.getElementById('reels-shadow-blur').value=this.value; reelsUpdatePreview()">
+                          <input type="number" id="reels-shadow-blur" class="input input-small" value="4" min="0" max="80" style="width:58px;"
+                            oninput="document.getElementById('reels-shadow-blur-range').value=this.value; reelsUpdatePreview()">
+                          <span id="reels-shadow-blur-label" style="display:none;">4</span>
+                        </div>
+                        <div style="display:grid; grid-template-columns:42px minmax(0,1fr) 58px; gap:8px; align-items:center;">
+                          <label style="margin:0;">X 偏移:</label><input type="range" id="reels-shadow-offset-x-range" min="-30" max="30" value="0" style="width:100%;"
                             oninput="document.getElementById('reels-shadow-offset-x').value=this.value; reelsUpdatePreview()">
-                          <input type="number" id="reels-shadow-offset-x" class="input input-small" value="0" min="-30" max="30" style="width: 45px;"
+                          <input type="number" id="reels-shadow-offset-x" class="input input-small" value="0" min="-30" max="30" style="width:58px;"
                             oninput="document.getElementById('reels-shadow-offset-x-range').value=this.value; reelsUpdatePreview()">
-                          <span id="reels-shadow-offset-x-label" style="font-size: 11px; width: 24px; display: none;">0</span>
-                          <label style="margin:0; margin-left:4px;">Y:</label>
-                          <input type="range" id="reels-shadow-offset-y-range" min="-30" max="30" value="2" style="flex:1; min-width:50px;"
+                          <span id="reels-shadow-offset-x-label" style="display:none;">0</span>
+                        </div>
+                        <div style="display:grid; grid-template-columns:42px minmax(0,1fr) 58px; gap:8px; align-items:center;">
+                          <label style="margin:0;">Y 偏移:</label><input type="range" id="reels-shadow-offset-y-range" min="-30" max="30" value="2" style="width:100%;"
                             oninput="document.getElementById('reels-shadow-offset-y').value=this.value; reelsUpdatePreview()">
-                          <input type="number" id="reels-shadow-offset-y" class="input input-small" value="2" min="-30" max="30" style="width: 45px;"
+                          <input type="number" id="reels-shadow-offset-y" class="input input-small" value="2" min="-30" max="30" style="width:58px;"
                             oninput="document.getElementById('reels-shadow-offset-y-range').value=this.value; reelsUpdatePreview()">
-                          <span id="reels-shadow-offset-y-label" style="font-size: 11px; width: 24px; display: none;">2</span>
+                          <span id="reels-shadow-offset-y-label" style="display:none;">2</span>
                         </div>
                       
                           </div>
 
-                          <div style="font-size: 12px; color: var(--text-secondary); margin: 14px 0 6px 0; font-weight:600;">多层扩展描边</div>
+                          <label style="margin:0; align-self:start; padding-top:14px;">扩展描边:</label>
+                          <div style="min-width:0;">
+                          <div style="font-size: 12px; color: var(--text-primary); margin: 14px 0 6px 0; font-weight:600;">多层扩展描边</div>
                           <div class="param-row" style="flex-wrap: wrap; gap: 8px; margin-bottom: 6px;">
                         <label class="checkbox-label"><input type="checkbox" id="reels-stroke-expand"
                             onchange="reelsUpdatePreview()"><span>启用</span></label>
@@ -3895,19 +3899,20 @@
                           setTimeout(() => window.reelsSyncSEColorsUI(), 1000);
                         </script>
                       </div>
-                    
+                      </div>
                         </div>
                       </div>
                       </details>
     
                       <!-- 3. 背景与装饰 -->
                       <details style="margin-bottom: 10px;">
-                        <summary style="cursor: pointer; font-size: 13px; font-weight: 600; color: var(--text-color);">3. 背景与装饰</summary>
+                        <summary style="cursor: pointer; font-size: 13px; font-weight: 600; color: var(--text-color);">3. 字幕背景与装饰</summary>
                         <div style="padding: 8px; background: var(--bg-secondary); border-radius: 6px; margin-top: 4px; border: 1px solid var(--border-color);">
-                          <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; font-weight:600;">常规背景框</div>
+                          <div style="font-size: 12px; color: var(--text-primary); margin-bottom: 2px; font-weight:600;">字幕底框</div>
+                          <div style="font-size: 11px; color: var(--text-secondary); margin: 0 0 6px 0;">整句／整行字幕背后的底色区域；可配合下方的渐变和朗读过渡色使用。</div>
                           <div class="param-row" style="flex-wrap: wrap; gap: 10px; margin-bottom: 6px;">
                     <label class="checkbox-label"><input type="checkbox" id="reels-use-box"
-                        onchange="reelsUpdatePreview()"><span>背景框</span></label>
+                        onchange="reelsUpdatePreview()"><span>启用字幕底框</span></label>
                     <label class="checkbox-label" title="开启后，多行字幕将根据单行宽度分别绘制背景块"><input type="checkbox" id="reels-box-adaptive-width"
                         onchange="reelsUpdatePreview()"><span>贴合行宽</span></label>
                     <div style="display: flex; align-items: center; gap: 4px;">
@@ -3948,10 +3953,11 @@
                     </div>
                   </div>
 
-                          <div style="font-size: 12px; color: var(--text-secondary); margin: 14px 0 6px 0; font-weight:600;">弹力色块 (打字机特效专用)</div>
+                          <div style="font-size: 12px; color: var(--text-primary); margin: 14px 0 2px 0; font-weight:600;">朗读高亮色块</div>
+                          <div style="font-size: 11px; color: var(--text-secondary); margin: 0 0 6px 0;">当前朗读的词后面跟随一个色块。适用于卡拉 OK、节奏逐词、逐词弹出和单词聚焦；不是普通字幕底框，也不只限打字机。</div>
                           <div class="param-row" style="flex-wrap: wrap; gap: 10px; margin-bottom: 6px;">
-                    <label class="checkbox-label"><input type="checkbox" id="reels-dynamic-box"
-                        onchange="reelsUpdatePreview()"><span>弹力色块</span></label>
+                    <label class="checkbox-label" title="给当前朗读的词添加跟随色块"><input type="checkbox" id="reels-dynamic-box"
+                        onchange="reelsUpdatePreview()"><span>启用高亮色块</span></label>
                     <label class="checkbox-label" title="开启后，弹力色块将以描边线框形式展现"><input type="checkbox" id="reels-dynamic-box-stroke"
                         onchange="reelsUpdatePreview()"><span>仅描边</span></label>
                     <div style="display: flex; align-items: center; gap: 4px;">
@@ -3960,7 +3966,7 @@
                         style="width: 40px;" oninput="reelsUpdatePreview()">
                     </div>
                     <div style="display: flex; align-items: center; gap: 4px;">
-                      <input type="color" id="reels-high-bg-color" value="#FFD700"
+                      <label>色块色:</label><input type="color" id="reels-high-bg-color" value="#FFD700"
                         style="width: 36px; height: 28px; border: none; cursor: pointer;"
                         onchange="reelsUpdatePreview()">
                     </div>
@@ -3986,7 +3992,8 @@
                     </div>
                   </div>
 
-                          <div style="font-size: 12px; color: var(--text-secondary); margin: 14px 0 6px 0; font-weight:600;">背景渐变</div>
+                          <div style="font-size: 12px; color: var(--text-primary); margin: 14px 0 2px 0; font-weight:600;">普通字幕底框：渐变</div>
+                          <div style="font-size: 11px; color: var(--text-secondary); margin: 0 0 6px 0;">只作用于整句／整行的普通底框；需先在上方开启“字幕底框”。不会改变朗读高亮色块。</div>
                           <div class="param-row" style="flex-wrap: wrap; gap: 8px; margin-bottom: 6px;">
                         <label class="checkbox-label"><input type="checkbox" id="reels-bg-gradient"
                             onchange="reelsUpdatePreview()"><span>启用</span></label>
@@ -4064,7 +4071,8 @@
                         </script>
                       </div>
 
-                          <div style="font-size: 12px; color: var(--text-secondary); margin: 14px 0 6px 0; font-weight:600;">背景过渡色 (随朗读变色)</div>
+                          <div style="font-size: 12px; color: var(--text-primary); margin: 14px 0 2px 0; font-weight:600;">普通字幕底框：朗读过渡色</div>
+                          <div style="font-size: 11px; color: var(--text-secondary); margin: 0 0 6px 0;">整句底框会随本句朗读进度从原底色渐变到目标色；需先开启“字幕底框”。</div>
                           <div class="param-row" style="gap: 8px;">
                         <label class="checkbox-label"><input type="checkbox" id="reels-box-transition"
                             onchange="reelsUpdatePreview()"><span>启用</span></label>
@@ -4088,7 +4096,8 @@
                     </div>
                   </div>
 
-                          <div style="font-size: 12px; color: var(--text-secondary); margin: 14px 0 6px 0; font-weight:600;">高级固定文本框 (绝对定位)</div>
+                          <div style="font-size: 12px; color: var(--text-primary); margin: 14px 0 2px 0; font-weight:600;">高级固定文本框（绝对定位）</div>
+                          <div style="font-size: 11px; color: var(--text-secondary); margin: 0 0 6px 0;">把字幕放进固定的 X/Y/W/H 区域，适合版式固定的模板；开启后以这里的位置和尺寸为准。</div>
                           <div class="param-row" style="flex-wrap: wrap; gap: 8px; margin-bottom: 6px;">
                         <label class="checkbox-label"><input type="checkbox" id="reels-adv-textbox"
                             onchange="reelsUpdatePreview()"><span>启用</span></label>
@@ -4339,7 +4348,7 @@
                       </details>
     <!-- ═══ 动画设置 ═══ -->
                   <details style="margin-bottom: 10px;">
-                    <summary style="cursor: pointer; font-size: 12px; color: var(--text-secondary);">5. 动画引擎</summary>
+                    <summary style="cursor: pointer; font-size: 12px; color: var(--text-primary);">5. 动画引擎</summary>
                     <div style="padding: 8px; background: var(--bg-tertiary); border-radius: 6px; margin-top: 4px;">
                       <div class="param-row" style="flex-wrap: wrap; gap: 10px; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.05);">
                         <div style="display: flex; align-items: center; gap: 4px;">
@@ -4419,6 +4428,11 @@
                           </select>
                         </div>
                         <div style="display: flex; align-items: center; gap: 3px;">
+                          <label>未现透明:</label>
+                          <input type="range" id="reels-typewriter-unread-opacity-range" min="0" max="255" value="0" style="width:50px;" oninput="document.getElementById('reels-typewriter-unread-opacity').value=this.value; reelsUpdatePreview()">
+                          <input type="number" id="reels-typewriter-unread-opacity" class="input input-small" min="0" max="255" value="0" style="width:42px;" oninput="document.getElementById('reels-typewriter-unread-opacity-range').value=this.value; reelsUpdatePreview()">
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 3px;">
                           <label>弹跳高度:</label>
                           <input type="range" id="reels-bounce-height-range" min="5" max="60" value="20" style="width: 50px;" oninput="document.getElementById('reels-bounce-height').value=this.value; reelsUpdatePreview()">
                           <input type="number" id="reels-bounce-height" class="input input-small" value="20" min="5"
@@ -4429,6 +4443,21 @@
                           <input type="range" id="reels-metro-bpm-range" min="30" max="300" value="120" style="width: 50px;" oninput="document.getElementById('reels-metro-bpm').value=this.value; reelsUpdatePreview()">
                           <input type="number" id="reels-metro-bpm" class="input input-small" value="120" min="30"
                             max="300" style="width: 50px;" oninput="document.getElementById('reels-metro-bpm-range').value=this.value; reelsUpdatePreview()">
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 3px;">
+                          <label>已读色:</label>
+                          <input type="color" id="reels-metro-read-color" value="#FFFFFF"
+                            style="width:30px;height:24px;border:none;cursor:pointer;" onchange="reelsUpdatePreview()">
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 3px;">
+                          <label>未读色:</label>
+                          <input type="color" id="reels-metro-unread-color" value="#808080"
+                            style="width:30px;height:24px;border:none;cursor:pointer;" onchange="reelsUpdatePreview()">
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 3px;">
+                          <label>未读透明:</label>
+                          <input type="range" id="reels-metro-unread-opacity-range" min="0" max="255" value="100" style="width:50px;" oninput="document.getElementById('reels-metro-unread-opacity').value=this.value; reelsUpdatePreview()">
+                          <input type="number" id="reels-metro-unread-opacity" class="input input-small" min="0" max="255" value="100" style="width:42px;" oninput="document.getElementById('reels-metro-unread-opacity-range').value=this.value; reelsUpdatePreview()">
                         </div>
                       </div>
                       <div class="param-row" style="flex-wrap: wrap; gap: 8px; margin-bottom: 6px;">
@@ -4575,7 +4604,7 @@
 
                   <!-- 全局蒙版 -->
                   <details style="margin-bottom: 10px;">
-                    <summary style="cursor: pointer; font-size: 12px; color: var(--text-secondary);">6. 全局遮罩
+                    <summary style="cursor: pointer; font-size: 12px; color: var(--text-primary);">6. 全局遮罩
                     </summary>
                     <div style="padding: 8px; background: var(--bg-tertiary); border-radius: 6px; margin-top: 4px;">
                       <div class="param-row" style="flex-wrap: wrap; gap: 8px; margin-bottom: 6px;">
@@ -4745,6 +4774,16 @@
                           <input type="range" id="reels-bg-scale-range" min="50" max="300" value="100" style="flex:1; min-width:80px;" oninput="document.getElementById('reels-bg-scale-num').value=this.value; reelsSaveBgConfigUI();">
                           <input type="number" id="reels-bg-scale-num" class="input input-small" value="100" min="50" max="300" style="width: 54px; height:22px; font-size:11px; padding:1px 3px;" oninput="document.getElementById('reels-bg-scale-range').value=this.value; reelsSaveBgConfigUI();">
                           <button class="btn btn-secondary" style="font-size:10px; padding:1px 3px; min-width:20px; height:20px; display:flex; align-items:center; justify-content:center; flex-shrink:0;" onclick="reelsResetParamUI('reels-bg-scale', 100)" title="恢复默认值">↺</button>
+                        </div>
+                      </div>
+
+                      <!-- 背景旋转 -->
+                      <div style="display:flex; flex-direction:column; gap:4px;">
+                        <label style="margin:0; font-size:12px; color:var(--text-secondary);">背景旋转 (°):</label>
+                        <div style="display:flex; gap:8px; align-items:center; min-width:0;">
+                          <input type="range" id="reels-bg-rotate-range" min="-180" max="180" step="1" value="0" style="flex:1; min-width:80px;" oninput="document.getElementById('reels-bg-rotate-num').value=this.value; reelsSaveBgConfigUI();">
+                          <input type="number" id="reels-bg-rotate-num" class="input input-small" value="0" min="-180" max="180" step="1" style="width: 54px; height:22px; font-size:11px; padding:1px 3px;" oninput="document.getElementById('reels-bg-rotate-range').value=this.value; reelsSaveBgConfigUI();">
+                          <button class="btn btn-secondary" style="font-size:10px; padding:1px 3px; min-width:20px; height:20px; display:flex; align-items:center; justify-content:center; flex-shrink:0;" onclick="reelsResetParamUI('reels-bg-rotate', 0)" title="恢复默认值">↺</button>
                         </div>
                       </div>
 
@@ -5201,9 +5240,23 @@
 
             <!-- ═══ 区域3: 专业时间线 ═══ -->
             <div class="reels-timeline-bar">
-              <div class="reels-timeline-header collapsed" onclick="this.classList.toggle('collapsed');this.nextElementSibling.classList.toggle('collapsed')">
+              <div class="reels-timeline-header collapsed" onclick="this.classList.toggle('collapsed');this.nextElementSibling.classList.toggle('collapsed');if(window._reelsState&&window._reelsState.timelineEditor){window._reelsState.timelineEditor._autoAdjustContainerHeight();window._reelsState.timelineEditor._resize();}">
                 <span>🎬 时间线</span>
                 <span style="font-size:10px;color:var(--text-muted);font-weight:normal;margin-left:8px;">框选 / Shift连选 / Ctrl(Cmd)点选 · 拖动所选片段可整体移动</span>
+                <span onclick="event.stopPropagation()" style="display:inline-flex;align-items:center;gap:4px;margin-left:auto;font-size:10px;color:var(--text-muted);font-weight:normal;">
+                  <button type="button" onclick="event.stopPropagation();if(window._reelsState&&window._reelsState.timelineEditor&&window._reelsState.timelineEditor.onFillGap){window._reelsState.timelineEditor.onFillGap();}" title="自动补充背景循环画面直到完全覆盖全部音频/字幕时长" style="font-size:10px;padding:2px 7px;background:rgba(99,102,241,0.2);border:1px solid rgba(99,102,241,0.4);color:#a5b4fc;border-radius:4px;cursor:pointer;margin-right:6px;">🔄 补齐循环</button>
+                  撤销
+                  <select id="reels-history-steps" title="最多保留的 Reels 撤销步数" style="font-size:10px;padding:1px 3px;">
+                    <option value="100">100 步</option>
+                    <option value="300" selected>300 步</option>
+                    <option value="1000">1000 步</option>
+                  </select>
+                  <select id="reels-history-memory" title="撤销历史最多使用的内存" style="font-size:10px;padding:1px 3px;">
+                    <option value="52428800">50 MB</option>
+                    <option value="104857600" selected>100 MB</option>
+                    <option value="209715200">200 MB</option>
+                  </select>
+                </span>
                 <span class="tl-toggle">▼</span>
               </div>
               <div class="reels-timeline-body collapsed">
@@ -6499,6 +6552,7 @@ THE HOLY	This is no coincidence...</div>
   <script src="reels-fcpxml-export.js"></script>
   <script src="reels-export-engine.js"></script>
   <script src="reels-timeline.js"></script>
+  <script src="reels-render-plan.js"></script>
   <script src="fonts-metadata.js"></script>
   <script src="reels-font-manager.js"></script>
   <script src="reels-project.js"></script>

@@ -522,11 +522,13 @@ class ReelsCanvasRenderer {
 
         // Slide
         if (anim) {
-            for (const [atype, prog] of [[animInType, inProg], [animOutType, outProg]]) {
-                if (['slide_up', 'slide_down', 'slide_left', 'slide_right'].includes(atype)) {
-                    const [dx, dy] = anim.computeSlideOffset(prog, atype, 60);
-                    ctx.translate(dx, dy);
-                }
+            if (['slide_up', 'slide_down', 'slide_left', 'slide_right'].includes(animInType)) {
+                const [dx, dy] = anim.computeSlideOffset(inProg, animInType, 60, false);
+                ctx.translate(dx, dy);
+            }
+            if (['slide_up', 'slide_down', 'slide_left', 'slide_right'].includes(animOutType)) {
+                const [dx, dy] = anim.computeSlideOffset(outProg, animOutType, 60, true);
+                ctx.translate(dx, dy);
             }
         }
 
@@ -535,7 +537,7 @@ class ReelsCanvasRenderer {
             let popP = 1.0;
             if (animInType === 'pop') popP = Math.min(popP, anim.computePopScale(inProg));
             if (animOutType === 'pop') popP = Math.min(popP, anim.computePopScale(outProg));
-            if (popP < 0.999) {
+            if (Math.abs(popP - 1.0) > 0.001) {
                 ctx.translate(cx, cy);
                 ctx.scale(popP, popP);
                 ctx.translate(-cx, -cy);
@@ -580,8 +582,11 @@ class ReelsCanvasRenderer {
         // ── Typewriter ──
         const isTypewriter = animInType === 'typewriter';
         const typewriterRevealType = s.typewriter_reveal_type || 'word';
-        // Older saved styles use 0–255 while the current UI stores 0–1.
-        const twUnreadOpacity = s.tw_unrevealed_opacity === undefined ? (100 / 255)
+        // Older saved styles may not contain this field at all.  Missing means
+        // hidden, not the old implicit 100/255 grey placeholder; otherwise an
+        // existing project leaks future words as soon as it uses typewriter.
+        // Explicit legacy values in 0–255 remain supported.
+        const twUnreadOpacity = s.tw_unrevealed_opacity === undefined ? 0
             : Math.max(0, Math.min(1, s.tw_unrevealed_opacity > 1
                 ? s.tw_unrevealed_opacity / 255 : s.tw_unrevealed_opacity));
         let twRevealedCount = -1;
@@ -780,15 +785,19 @@ class ReelsCanvasRenderer {
         }
 
         // ── Multi-layer stroke expand (pre-pass) ──
-        // A whole-line pre-pass would reveal every character before the
-        // typewriter animation gets to it.  Render expansion per visible word
-        // below in that mode instead.
-        if (s.stroke_expand_enabled && !s.only_show_active_word && !isTypewriter) {
+        // These modes control visibility per word/line.  A whole-line pre-pass
+        // would leak the expanded outline for text that is still hidden.
+        const needsPerWordStrokeExpand = s.only_show_active_word || isTypewriter || isMetronome ||
+            isWordPopRandom || isWordPopRandomPulse || isBullet;
+        if (s.stroke_expand_enabled && !needsPerWordStrokeExpand) {
             this._renderStrokeExpand(ctx, s, visibleLines, lineWidths, cx, advEnabled, advAlign, advX, advW,
                 cy, totalH, lineStep, fontStr, fontSize, letterSpacing, advY, advH);
         }
 
         // ── 文字绘制 ──
+        if (blurRadius > 0) {
+            ctx.filter = `blur(${blurRadius}px)`;
+        }
         const textColor = s.color_text || '#FFFFFF';
         const highColor = s.color_high || '#FFD700';
         const outlineColor = s.color_outline || '#3E2723';
@@ -870,16 +879,12 @@ class ReelsCanvasRenderer {
                 const wordW = this._measureTextWithSpacing(ctx, wordStr, letterSpacing);
                 const baseSpaceW = ctx.measureText(' ').width + wordSpacing;
 
-                // Current word highlight
-                let isHighlight = false;
+                // Current word timing & highlight
                 let wInfo = null;
-                if (currentTime != null && wordCounter < wordsInfo.length) {
+                if (wordCounter < wordsInfo.length) {
                     wInfo = wordsInfo[wordCounter];
-                    wordCounter++;
-                    if (wInfo.start <= currentTime && currentTime <= wInfo.end) isHighlight = true;
-                } else {
-                    wordCounter++;
                 }
+                wordCounter++;
                 const wordIdx = wordCounter - 1;
                 const totalWordCount = Math.max(1, words.length);
                 const segDur = Math.max(0.001, segEnd - segStart);
@@ -890,6 +895,11 @@ class ReelsCanvasRenderer {
                 if (wordPopGroups && wordIdx < wordPopGroups.starts.length) {
                     wordStart = wordPopGroups.starts[wordIdx];
                     wordEnd = wordPopGroups.ends[wordIdx];
+                }
+
+                let isHighlight = false;
+                if (currentTime != null && currentTime >= wordStart && currentTime <= wordEnd) {
+                    isHighlight = true;
                 }
 
                 const isWordActive = !s.only_show_active_word || (currentTime == null || (currentTime >= wordStart && currentTime <= wordEnd));
@@ -920,10 +930,10 @@ class ReelsCanvasRenderer {
 
                 // Metronome visibility
                 let metroVisible = true;
-                if (anim && isMetronome && wInfo) {
+                if (anim && isMetronome) {
                     metroVisible = anim.computeMetronomeWordVisible(
                         currentTime, segStart, segEnd,
-                        wordCounter - 1, wordsInfo.length,
+                        wordIdx, totalWordCount,
                         s.metronome_bpm || 120
                     );
                 }
@@ -937,9 +947,9 @@ class ReelsCanvasRenderer {
                     let boxW = (wordW * lineScale + dynPad * 2) * dynamicWordScale;
                     let boxH = (lineHScaled + dynPad * 2) * dynamicWordScale;
 
-                    if (s.dyn_box_anim && anim && wInfo) {
+                    if (s.dyn_box_anim && anim) {
                         const dscale = anim.computeDynBoxScale(
-                            currentTime, wInfo.start, wInfo.end,
+                            currentTime, wordStart, wordEnd,
                             s.dyn_box_anim_overshoot || 1.3, s.dyn_box_anim_duration || 0.15
                         );
                         if (Math.abs(dscale - 1.0) > 0.01) {
@@ -971,9 +981,9 @@ class ReelsCanvasRenderer {
 
                 // ── Letter jump scale ──
                 let letterJumpScale = 1.0;
-                if (anim && isLetterJump && isHighlight && wInfo) {
+                if (anim && isLetterJump && isHighlight) {
                     letterJumpScale = anim.computeLetterJumpScale(
-                        currentTime, wInfo.start, wInfo.end,
+                        currentTime, wordStart, wordEnd,
                         s.letter_jump_scale || 1.5, s.letter_jump_duration || 0.2
                     );
                 }
@@ -1019,7 +1029,9 @@ class ReelsCanvasRenderer {
                     } else {
                         wordColor = s.metro_unread_color || '#808080';
                         wordStrokeColor = s.metro_unread_stroke_color || '#404040';
-                        wordOpacity *= (s.metro_unread_opacity || 100) / 255;
+                        // 0 是用户有效设置（完全隐藏未读字），不能用 || 回退到 100。
+                        const metroUnreadOpacity = s.metro_unread_opacity ?? 100;
+                        wordOpacity *= Math.max(0, Math.min(1, Number(metroUnreadOpacity) / 255));
                     }
                 }
 
@@ -1041,11 +1053,10 @@ class ReelsCanvasRenderer {
 
                 // ── Vertical offset for char bounce ──
                 let wordY = y;
-                if (anim && isCharBounce && wInfo) {
-                    const segDur = Math.max(0.001, segEnd - segStart);
+                if (anim && isCharBounce) {
                     const bounceOff = anim.computeCharBounceOffset(
-                        currentTime, wordCounter - 1,
-                        segStart, segDur, wordsInfo.length,
+                        currentTime, wordIdx,
+                        segStart, segDur, totalWordCount,
                         cbHeight, cbStagger
                     );
                     wordY = y + bounceOff;
@@ -1067,7 +1078,11 @@ class ReelsCanvasRenderer {
                         ctx.strokeStyle = glowColor;
                         ctx.lineWidth = gr * 2;
                         ctx.lineJoin = 'round';
-                        ctx.strokeText(wordStr, drawX, wordY);
+                        if (letterSpacing > 0) {
+                            this._strokeTextSpaced(ctx, wordStr, drawX, wordY, letterSpacing);
+                        } else {
+                            ctx.strokeText(wordStr, drawX, wordY);
+                        }
                     }
                     ctx.restore();
                 }
@@ -1075,29 +1090,40 @@ class ReelsCanvasRenderer {
                 // ── Render word ──
                 if (isWordActive) {
                     // ── Local multi-layer stroke expand ──
-                    if (s.stroke_expand_enabled && (s.only_show_active_word || isTypewriter)) {
+                    if (s.stroke_expand_enabled && needsPerWordStrokeExpand) {
+                        ctx.save();
+                        ctx.globalAlpha = globalAlpha * wordOpacity;
                         if (typewriterPartial) {
                             this._renderWordStrokeExpand(ctx, s, typewriterPartial.revealed, drawX, wordY, fontStr, letterSpacing);
                             const revealedW = this._measureTextWithSpacing(ctx, typewriterPartial.revealed, letterSpacing);
-                            this._renderWordStrokeExpand(ctx, s, typewriterPartial.unrevealed, drawX + revealedW, wordY, fontStr, letterSpacing);
+                            // The unread half needs its own opacity.  In
+                            // particular, opacity 0 must hide both text and
+                            // expanded outline.
+                            if (twUnreadOpacity > 0.01) {
+                                ctx.globalAlpha = globalAlpha * wordOpacity * twUnreadOpacity;
+                                this._renderWordStrokeExpand(ctx, s, typewriterPartial.unrevealed, drawX + revealedW, wordY, fontStr, letterSpacing);
+                            }
                         } else {
                             this._renderWordStrokeExpand(ctx, s, wordStr, drawX, wordY, fontStr, letterSpacing);
                         }
+                        ctx.restore();
                     }
 
                     ctx.save();
                     ctx.globalAlpha = globalAlpha * wordOpacity;
 
                     const wordScale = letterJumpScale * randomPopScale;
+                    const wordCenterX = drawX + (wordW * lineScale) / 2;
+                    const wordCenterY = wordY + lineHScaled / 2;
                     if (wordScale !== 1.0) {
-                        ctx.translate(drawX, wordY);
+                        ctx.translate(wordCenterX, wordCenterY);
                         ctx.scale(wordScale, wordScale);
-                        ctx.translate(-drawX, -wordY);
+                        ctx.translate(-wordCenterX, -wordCenterY);
                     }
                     if (lineScale !== 1.0) {
-                        ctx.translate(drawX, wordY);
+                        ctx.translate(wordCenterX, wordCenterY);
                         ctx.scale(lineScale, lineScale);
-                        ctx.translate(-drawX, -wordY);
+                        ctx.translate(-wordCenterX, -wordCenterY);
                     }
 
                     let currentShadowColor = shadowColor;
@@ -1161,21 +1187,7 @@ class ReelsCanvasRenderer {
 
         // ── Blur → Sharp post-process ──
         if (blurRadius > 0) {
-            // Canvas filter-based blur simulation
-            ctx.save();
-            ctx.globalAlpha = globalAlpha * 0.6;
-            ctx.filter = `blur(${blurRadius}px)`;
-            // Re-draw text with blur (simplified)
-            for (let i = 0; i < visibleLines.length; i++) {
-                const line = visibleLines[i];
-                const lineW = lineWidths[i];
-                const xS = cx - lineW / 2;
-                const yS = startY + i * lineStep;
-                ctx.fillStyle = textColor;
-                ctx.fillText(line, xS, yS);
-            }
             ctx.filter = 'none';
-            ctx.restore();
         }
 
         // Restore advanced textbox clip
@@ -1773,9 +1785,10 @@ class ReelsCanvasRenderer {
         if (currentLine.tokens.length > 0 || tokens.length === 0) {
             lines.push(currentLine);
         }
+        if (lines.length === 0) return;
 
         // 4. 定位与边距计算
-        const maxLineW = Math.max(...lines.map(l => l.w));
+        const maxLineW = Math.max(0, ...lines.map(l => l.w || 0));
         const lineSpacing = s.line_spacing || 0;
         const richLineSpacings = lines.map((_, i) => i < lines.length - 1 ? lineSpacing + this._computeRandomLineSpacing(s, i, segment.start || 0) : 0);
         let totalH = 0;
@@ -2391,7 +2404,7 @@ class ReelsCanvasRenderer {
                     isHighlight = true;
                 } else {
                     color = (li === 0) ? (s.fullpage_typewriter_first_line_color || firstSegStyle.color_text || s.color_text || '#FFFFFF') : (s.color_text || '#FFFFFF');
-                    opacity = s.tw_unrevealed_opacity ?? 0.0;
+                    opacity = s.fullpage_typewriter_unrevealed_opacity ?? s.tw_unrevealed_opacity ?? 0.0;
                 }
 
                 if (currentTime >= tok.start) {
@@ -2591,7 +2604,7 @@ class ReelsCanvasRenderer {
 
             ctx.save();
 
-            const scaledFontSize = s.fontsize * group.scale;
+            const scaledFontSize = (s.fontsize || 74) * group.scale;
             const fontStr = `${italic ? 'italic ' : ''}${fontWeight} ${scaledFontSize}px "${fontFamily}", ${fallbackFamily}`;
             ctx.font = fontStr;
             ctx.textBaseline = 'top';

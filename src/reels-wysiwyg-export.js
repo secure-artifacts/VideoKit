@@ -442,38 +442,20 @@ async function reelsWysiwygExport(params) {
     const progress = (v) => { if (onProgress) onProgress(v); };
 
     // ── 确保所有覆层与字幕使用的字体全部预加载完成 ──
-    const fontsToLoad = new Set();
-    if (style && style.font_family) {
-        fontsToLoad.add(style.font_family);
-    }
-    if (Array.isArray(taskOverlays)) {
-        for (const ov of taskOverlays) {
-            if (ov.disabled) continue;
-            if (ov.type === 'textcard' || !ov.type || ov.type === '') {
-                if (ov.title_text && ov.title_font_family) fontsToLoad.add(ov.title_font_family);
-                if (ov.body_text && ov.body_font_family) fontsToLoad.add(ov.body_font_family);
-                if (ov.footer_text && ov.footer_font_family) fontsToLoad.add(ov.footer_font_family);
-            } else if (ov.type === 'text' || ov.type === 'scroll') {
-                if (ov.font_family) fontsToLoad.add(ov.font_family);
-            }
-        }
-    }
-    if (window.getFontManager && fontsToLoad.size > 0) {
-        log(`正在预加载字体: ${Array.from(fontsToLoad).join(', ')}`);
+    if (window.getFontManager) {
         const fm = window.getFontManager();
-        for (const font of fontsToLoad) {
-            try {
-                await fm.loadGoogleFont(font);
-            } catch (e) {
-                console.warn(`[Export Font Load] Failed to load font "${font}":`, e);
-            }
+        const fontsToLoad = fm.collectFonts({
+            style,
+            segments,
+            overlays: taskOverlays,
+            watermarks,
+            cover: params.cover
+        });
+        if (fontsToLoad.length > 0) {
+            log(`正在预加载字体: ${fontsToLoad.join(', ')}`);
         }
-        try {
-            await document.fonts.ready;
-            log('字体全部加载完成');
-        } catch (e) {
-            console.warn(`[Export Font Load] document.fonts.ready error:`, e);
-        }
+        await fm.ensureFontsLoaded(fontsToLoad);
+        log('字体全部预加载就绪');
     }
 
     canvas.width = targetWidth;

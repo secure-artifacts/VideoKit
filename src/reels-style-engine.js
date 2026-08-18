@@ -123,7 +123,7 @@ const DEFAULT_SUBTITLE_STYLE = {
     tw_revealed_stroke_opacity: 1.0,
     tw_unrevealed_color: '#808080',
     tw_unrevealed_stroke_color: '#404040',
-    tw_unrevealed_opacity: 0.4,
+    tw_unrevealed_opacity: 0,
     fullpage_typewriter: false,
     fullpage_typewriter_reveal_type: 'char',
     fullpage_typewriter_align: 'center',

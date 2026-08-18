@@ -16,6 +16,7 @@ const settingsService = require('./services/settings');
 const elevenlabsAuth = require('./services/elevenlabsAuth');
 const subtitleService = require('./services/subtitle');
 const fcpxmlService = require('./services/fcpxml');
+const davinciFusionExport = require('./services/davinciFusionExport');
 
 const ytdlpService = require('./services/ytdlp');
 const gladiaService = require('./services/gladia');
@@ -191,7 +192,7 @@ async function runAutoEditByScript(data = {}, progressSender = null) {
         outputDir: data.output_dir,
         outputPath: data.output_path,
         language: data.language || 'auto',
-        matchingEngine: data.matching_engine || data.matchingEngine || 'legacy',
+        matchingEngine: data.matching_engine || data.matchingEngine || 'multilingual_v2',
         matchMode: data.match_mode || data.matchMode,
         workflowMode: data.workflow_mode || data.workflowMode || 'cut_first',
         gladiaKeys,
@@ -1100,6 +1101,20 @@ async function routeAPI(endpoint, data, progressSender = null, sender = null) {
                 data.compound_mode || false
             );
         }
+
+        case 'media/create-resolve-fusion-package':
+            return davinciFusionExport.createFusionPackage({
+                outputDir: data.output_dir,
+                taskName: data.task_name,
+                fcpxmlPath: data.fcpxml_path,
+                tasks: data.tasks || [],
+                fps: data.fps || 30,
+                resolution: data.resolution || '1080x1920',
+                rebuildMediaTimeline: data.rebuild_media_timeline === true,
+            });
+
+        case 'media/install-resolve-fusion-script':
+            return davinciFusionExport.installResolveMenuScript(data.script_path);
 
         case 'media/replace-audio': {
             const videoPath = data.video_path || data.videoPath;

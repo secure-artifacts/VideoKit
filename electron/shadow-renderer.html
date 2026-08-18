@@ -17,6 +17,12 @@ const fs = require('fs');
 const path = require('path');
 const { pathToFileURL, fileURLToPath } = require('url');
 
+window.electronAPI = {
+    toFileUrl,
+    scanFonts: () => ipcRenderer.invoke('scan-fonts'),
+    fetchGoogleFonts: () => ipcRenderer.invoke('fetch-google-fonts'),
+};
+
 // ═══ 基础工具函数 ═══
 
 function _parseCropString(cropStr) {
@@ -33,7 +39,7 @@ function _parseCropString(cropStr) {
     return { cropX, cropY, cropW, cropH };
 }
 
-function _drawCroppedVideoCover(ctx, videoEl, cropX, cropY, cropW, cropH, targetW, targetH, scalePct, offsetX = 0, offsetY = 0) {
+function _drawCroppedVideoCover(ctx, videoEl, cropX, cropY, cropW, cropH, targetW, targetH, scalePct, offsetX = 0, offsetY = 0, rotation = 0) {
     if (!ctx || !videoEl || !(targetW > 0) || !(targetH > 0)) return;
     const srcW = videoEl.videoWidth || videoEl.naturalWidth || targetW;
     const srcH = videoEl.videoHeight || videoEl.naturalHeight || targetH;
@@ -47,14 +53,22 @@ function _drawCroppedVideoCover(ctx, videoEl, cropX, cropY, cropW, cropH, target
     const sHeight = srcH * cropH;
 
     const userScale = (scalePct || 100) / 100;
-    const scale = Math.max(targetW / sWidth, targetH / sHeight) * userScale;
+    let scale = Math.max(targetW / sWidth, targetH / sHeight) * userScale;
+    const radians = Math.abs((Number(rotation) || 0) % 180) * Math.PI / 180;
+    const preRotateW = sWidth * scale;
+    const preRotateH = sHeight * scale;
+    scale *= Math.max(1, targetW / (Math.abs(preRotateW * Math.cos(radians)) + Math.abs(preRotateH * Math.sin(radians))), targetH / (Math.abs(preRotateW * Math.sin(radians)) + Math.abs(preRotateH * Math.cos(radians))));
     const drawW = sWidth * scale;
     const drawH = sHeight * scale;
     const maxShiftX = Math.abs(targetW - drawW) / 2;
     const maxShiftY = Math.abs(targetH - drawH) / 2;
     const drawX = (targetW - drawW) / 2 + maxShiftX * (offsetX / 100);
     const drawY = (targetH - drawH) / 2 + maxShiftY * (offsetY / 100);
-    ctx.drawImage(videoEl, sx, sy, sWidth, sHeight, drawX, drawY, drawW, drawH);
+    ctx.save();
+    ctx.translate(drawX + drawW / 2, drawY + drawH / 2);
+    if (rotation) ctx.rotate(Number(rotation) * Math.PI / 180);
+    ctx.drawImage(videoEl, sx, sy, sWidth, sHeight, -drawW / 2, -drawH / 2, drawW, drawH);
+    ctx.restore();
 }
 
 function _canvasToRawRGBA(canvas) {
@@ -152,6 +166,7 @@ ipcRenderer.on('render-chunk', async (event, config) => {
         targetHeight,
         backgroundPath,
         bgScale,
+        bgRotation,
         bgX,
         bgY,
         bgDurScale,
@@ -184,8 +199,11 @@ ipcRenderer.on('render-chunk', async (event, config) => {
         const scripts = [
             scriptPaths.textDirection,
             scriptPaths.animEngine,
+            scriptPaths.richText,
             scriptPaths.canvasRenderer,
             scriptPaths.overlay,
+            scriptPaths.fontMetadata,
+            scriptPaths.fontManager,
         ].filter(Boolean);
 
         for (const sp of scripts) {
@@ -197,13 +215,22 @@ ipcRenderer.on('render-chunk', async (event, config) => {
             }
         }
 
-        // 2. 初始化 Canvas
+        // 2. 预加载所有字体
+        if (window.getFontManager) {
+            const fm = window.getFontManager();
+            const fontsToLoad = fm.collectFonts({ style, segments, overlays });
+            if (fontsToLoad.length > 0) log(`预加载字体: ${fontsToLoad.join(', ')}`);
+            await fm.ensureFontsLoaded(fontsToLoad);
+            log('字体全部预加载就绪');
+        }
+
+        // 3. 初始化 Canvas
         const canvas = document.getElementById('c');
         canvas.width = targetWidth;
         canvas.height = targetHeight;
         const ctx = canvas.getContext('2d');
 
-        // 3. 创建渲染器实例
+        // 4. 创建渲染器实例
         let renderer = null;
         if (typeof window.ReelsCanvasRenderer === 'function') {
             renderer = new window.ReelsCanvasRenderer(canvas);
@@ -266,18 +293,26 @@ ipcRenderer.on('render-chunk', async (event, config) => {
         log(`FFmpeg 会话: ${sessionId}`);
 
         // 背景绘制辅助
-        const _drawBgSrc = (src, tw, th, scale, offsetX = 0, offsetY = 0) => {
+        const _drawBgSrc = (src, tw, th, scale, offsetX = 0, offsetY = 0, rotation = 0) => {
             const _userScale = (scale || 100) / 100;
             const srcW = src.videoWidth || src.naturalWidth || tw;
             const srcH = src.videoHeight || src.naturalHeight || th;
-            const coverScale = Math.max(tw / srcW, th / srcH) * _userScale;
+            let coverScale = Math.max(tw / srcW, th / srcH) * _userScale;
+            const radians = Math.abs((Number(rotation) || 0) % 180) * Math.PI / 180;
+            const preRotateW = srcW * coverScale;
+            const preRotateH = srcH * coverScale;
+            coverScale *= Math.max(1, tw / (Math.abs(preRotateW * Math.cos(radians)) + Math.abs(preRotateH * Math.sin(radians))), th / (Math.abs(preRotateW * Math.sin(radians)) + Math.abs(preRotateH * Math.cos(radians))));
             const drawW = srcW * coverScale;
             const drawH = srcH * coverScale;
             const maxShiftX = Math.abs(tw - drawW) / 2;
             const maxShiftY = Math.abs(th - drawH) / 2;
             const drawX = (tw - drawW) / 2 + maxShiftX * (offsetX / 100);
             const drawY = (th - drawH) / 2 + maxShiftY * (offsetY / 100);
-            ctx.drawImage(src, drawX, drawY, drawW, drawH);
+            ctx.save();
+            ctx.translate(drawX + drawW / 2, drawY + drawH / 2);
+            if (rotation) ctx.rotate(Number(rotation) * Math.PI / 180);
+            ctx.drawImage(src, -drawW / 2, -drawH / 2, drawW, drawH);
+            ctx.restore();
         };
 
         // 蒙版
@@ -307,16 +342,16 @@ ipcRenderer.on('render-chunk', async (event, config) => {
                 const { cropX, cropY, cropW, cropH } = _parseCropString(contentVideoCrop);
                 ctx.save();
                 ctx.filter = 'blur(40px) brightness(0.6)';
-                _drawCroppedVideoCover(ctx, cvMemoryNode, cropX, cropY, cropW, cropH, targetWidth, targetHeight, bgScale || 100, bgX || 0, bgY || 0);
+                _drawCroppedVideoCover(ctx, cvMemoryNode, cropX, cropY, cropW, cropH, targetWidth, targetHeight, bgScale || 100, bgX || 0, bgY || 0, bgRotation || 0);
                 ctx.restore();
             } else if (contentVideoDirectBg && cvMemoryNode && cvMemoryRawDur > 0) {
                 const { cropX, cropY, cropW, cropH } = _parseCropString(contentVideoCrop);
-                _drawCroppedVideoCover(ctx, cvMemoryNode, cropX, cropY, cropW, cropH, targetWidth, targetHeight, bgScale || 100, bgX || 0, bgY || 0);
+                _drawCroppedVideoCover(ctx, cvMemoryNode, cropX, cropY, cropW, cropH, targetWidth, targetHeight, bgScale || 100, bgX || 0, bgY || 0, bgRotation || 0);
             } else if (bgMemoryNode) {
                 const ptsFactor = (bgDurScale || 100) / 100;
                 let t_bg = (t / ptsFactor) % bgMemoryRawDur;
                 await _seekVideoNode(bgMemoryNode, t_bg);
-                _drawBgSrc(bgMemoryNode, targetWidth, targetHeight, bgScale, bgX, bgY);
+                _drawBgSrc(bgMemoryNode, targetWidth, targetHeight, bgScale, bgX, bgY, bgRotation);
 
                 // LoopFade
                 if (bgMemoryNodeFade) {
@@ -327,12 +362,12 @@ ipcRenderer.on('render-chunk', async (event, config) => {
                         await _seekVideoNode(bgMemoryNodeFade, t_bg2);
                         ctx.save();
                         ctx.globalAlpha = Math.max(0, Math.min(1, fadeRatio));
-                        _drawBgSrc(bgMemoryNodeFade, targetWidth, targetHeight, bgScale, bgX, bgY);
+                        _drawBgSrc(bgMemoryNodeFade, targetWidth, targetHeight, bgScale, bgX, bgY, bgRotation);
                         ctx.restore();
                     }
                 }
             } else if (staticBgImg) {
-                _drawBgSrc(staticBgImg, targetWidth, targetHeight, bgScale, bgX, bgY);
+                _drawBgSrc(staticBgImg, targetWidth, targetHeight, bgScale, bgX, bgY, bgRotation);
             }
 
             // ── 内容视频 ──

@@ -68,7 +68,12 @@ function buildSubtitleBurnCommand(params) {
     const escapedAssPath = assPath.split('\\').join('/')
         .replace(/\\/g, '\\\\')
         .replace(/:/g, '\\:')
-        .replace(/'/g, "'\\''");
+        .replace(/'/g, "'\\''")
+        .replace(/\(/g, '\\(')
+        .replace(/\)/g, '\\)')
+        .replace(/\[/g, '\\[')
+        .replace(/\]/g, '\\]')
+        .replace(/ /g, '\\ ');
     const subtitleFilter = `subtitles='${escapedAssPath}'`;
 
     const args = [

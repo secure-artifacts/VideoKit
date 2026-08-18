@@ -288,6 +288,7 @@ async function prepareBg(opts) {
         loopFade = true,
         loopFadeDur = 1.0,
         bgScale = 100,
+        bgRotation = 0,
         bgX = 0,
         bgY = 0,
         bgFlipH = false,
@@ -304,18 +305,21 @@ async function prepareBg(opts) {
     fs.mkdirSync(framesDir, { recursive: true });
 
     // 构建缩放+裁切滤镜
-    const scaleFactor = (bgScale || 100) / 100;
+    const rotationDeg = Math.max(-180, Math.min(180, Number(bgRotation) || 0));
+    const rotationFilter = Math.abs(rotationDeg) < 0.01 ? '' : `,rotate=${(rotationDeg * Math.PI / 180).toFixed(8)}:ow=rotw(iw):oh=roth(ih)`;
+    // Rotating a deliberately reduced background must still fill the canvas; otherwise its corners show black.
+    const scaleFactor = Math.abs(rotationDeg) < 0.01 ? (bgScale || 100) / 100 : Math.max(1, (bgScale || 100) / 100);
     let scaleCropFilter;
     const scaledW = Math.round(targetWidth * scaleFactor);
     const scaledH = Math.round(targetHeight * scaleFactor);
     if (scaleFactor >= 1.0) {
-        scaleCropFilter = `${normalizeDisplayAspectFilter()},scale=${scaledW}:${scaledH}:force_original_aspect_ratio=increase,crop=${targetWidth}:${targetHeight}:'max(0, min(in_w-out_w, ((in_w-out_w)/2)*(1-(${bgX}/100))))':'max(0, min(in_h-out_h, ((in_h-out_h)/2)*(1-(${bgY}/100))))',setsar=1`;
+        scaleCropFilter = `${normalizeDisplayAspectFilter()}${rotationFilter},scale=${scaledW}:${scaledH}:force_original_aspect_ratio=increase,crop=${targetWidth}:${targetHeight}:'max(0, min(in_w-out_w, ((in_w-out_w)/2)*(1-(${bgX}/100))))':'max(0, min(in_h-out_h, ((in_h-out_h)/2)*(1-(${bgY}/100))))',setsar=1`;
     } else {
-        scaleCropFilter = `${normalizeDisplayAspectFilter()},scale=${scaledW}:${scaledH}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:'max(0, min(ow-iw, ((ow-iw)/2)*(1+(${bgX}/100))))':'max(0, min(oh-ih, ((oh-ih)/2)*(1+(${bgY}/100))))':color=black,setsar=1`;
+        scaleCropFilter = `${normalizeDisplayAspectFilter()}${rotationFilter},scale=${scaledW}:${scaledH}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:'max(0, min(ow-iw, ((ow-iw)/2)*(1+(${bgX}/100))))':'max(0, min(oh-ih, ((oh-ih)/2)*(1+(${bgY}/100))))':color=black,setsar=1`;
     }
     if (bgFlipH) scaleCropFilter += ',hflip';
     if (bgFlipV) scaleCropFilter += ',vflip';
-    console.log(`[WYSIWYG-BG] 背景缩放: ${bgScale}%, flipH: ${bgFlipH}, flipV: ${bgFlipV}, filter: ${scaleCropFilter}`);
+    console.log(`[WYSIWYG-BG] 背景缩放: ${bgScale}%, 旋转: ${rotationDeg}°, flipH: ${bgFlipH}, flipV: ${bgFlipV}, filter: ${scaleCropFilter}`);
 
     // ═══ 多素材拼接模式 ═══
     if (bgMode === 'multi' && Array.isArray(bgClipPool) && bgClipPool.length > 0) {
@@ -1038,14 +1042,16 @@ async function extractSimpleLoop(ffmpeg, backgroundPath, framesDir, scaleCropFil
 
 function runFFmpegSync(ffmpeg, args) {
     return new Promise((resolve, reject) => {
-        console.log(`[WYSIWYG-BG] ${ffmpeg} ${args.slice(0, 15).join(' ')} ...`);
+        // 完整命令只写入开发终端，不回显到用户弹窗。多素材导出的滤镜位于
+        // 参数末尾，旧版只打印前 15 项会把真正的兼容性问题藏起来。
+        console.log(`[WYSIWYG-BG] FFmpeg command: ${JSON.stringify([ffmpeg, ...args])}`);
         const proc = spawn(ffmpeg, args, { stdio: ['ignore', 'ignore', 'pipe'] });
         let err = '';
         proc.stderr.on('data', (d) => { err = (err + d.toString()).slice(-3000); });
         proc.on('close', (code) => {
             if (code === 0) resolve();
             else {
-                console.error(`[WYSIWYG-BG] FFmpeg 处理失败 (code=${code}):\n${err}`);
+                console.error(`[WYSIWYG-BG] FFmpeg 处理失败 (code=${code}):\n${err}\nCommand: ${JSON.stringify([ffmpeg, ...args])}`);
                 reject(new Error(formatMediaError(err, {
                     action: '背景或覆层处理',
                     code,
@@ -1250,6 +1256,7 @@ async function startSession(opts) {
         bgmPath = '', bgmVolume = 0, bgmStart = 0,
         contentVideoPath = '', contentVideoVolume = 1.0,
         bgScale = 100,
+        bgRotation = 0,
         bgX = 0,
         bgY = 0,
         bgDurScale = 100,
@@ -1361,14 +1368,16 @@ async function startSession(opts) {
         );
 
         // Build scaling filter for alpha overlay background
-        const scaleFactor = (bgScale || 100) / 100;
+        const rotationDeg = Math.max(-180, Math.min(180, Number(bgRotation) || 0));
+        const rotationFilter = Math.abs(rotationDeg) < 0.01 ? '' : `,rotate=${(rotationDeg * Math.PI / 180).toFixed(8)}:ow=rotw(iw):oh=roth(ih)`;
+        const scaleFactor = Math.abs(rotationDeg) < 0.01 ? (bgScale || 100) / 100 : Math.max(1, (bgScale || 100) / 100);
         let scaleCropFilter;
         const scaledW = Math.round(width * scaleFactor);
         const scaledH = Math.round(height * scaleFactor);
         if (scaleFactor >= 1.0) {
-            scaleCropFilter = `${normalizeDisplayAspectFilter()},scale=${scaledW}:${scaledH}:force_original_aspect_ratio=increase,crop=${width}:${height}:'max(0, min(in_w-out_w, ((in_w-out_w)/2)*(1-(${bgX}/100))))':'max(0, min(in_h-out_h, ((in_h-out_h)/2)*(1-(${bgY}/100))))',setsar=1`;
+            scaleCropFilter = `${normalizeDisplayAspectFilter()}${rotationFilter},scale=${scaledW}:${scaledH}:force_original_aspect_ratio=increase,crop=${width}:${height}:'max(0, min(in_w-out_w, ((in_w-out_w)/2)*(1-(${bgX}/100))))':'max(0, min(in_h-out_h, ((in_h-out_h)/2)*(1-(${bgY}/100))))',setsar=1`;
         } else {
-            scaleCropFilter = `${normalizeDisplayAspectFilter()},scale=${scaledW}:${scaledH}:force_original_aspect_ratio=decrease,pad=${width}:${height}:'max(0, min(ow-iw, ((ow-iw)/2)*(1+(${bgX}/100))))':'max(0, min(oh-ih, ((oh-ih)/2)*(1+(${bgY}/100))))':color=black,setsar=1`;
+            scaleCropFilter = `${normalizeDisplayAspectFilter()}${rotationFilter},scale=${scaledW}:${scaledH}:force_original_aspect_ratio=decrease,pad=${width}:${height}:'max(0, min(ow-iw, ((ow-iw)/2)*(1+(${bgX}/100))))':'max(0, min(oh-ih, ((oh-ih)/2)*(1+(${bgY}/100))))':color=black,setsar=1`;
         }
         if (opts.bgFlipH) scaleCropFilter += ',hflip';
         if (opts.bgFlipV) scaleCropFilter += ',vflip';
@@ -2364,9 +2373,12 @@ async function parallelExport(opts, mainWindow) {
 
     const scriptPaths = {
         textDirection: path.join(scriptBase, 'reels-text-direction.js'),
+        animEngine: path.join(scriptBase, 'reels-anim-engine.js'),
+        richText: path.join(scriptBase, 'reels-rich-text.js'),
         canvasRenderer: path.join(scriptBase, 'reels-canvas-renderer.js'),
         overlay: path.join(scriptBase, 'reels-overlay.js'),
-        animEngine: path.join(scriptBase, 'reels-anim-engine.js'),
+        fontMetadata: path.join(scriptBase, 'fonts-metadata.js'),
+        fontManager: path.join(scriptBase, 'reels-font-manager.js'),
     };
     console.log(`[Parallel] 脚本基础路径: ${scriptBase}`);
     console.log(`[Parallel] canvas-renderer 存在: ${fs.existsSync(scriptPaths.canvasRenderer)}`);
@@ -2476,6 +2488,7 @@ async function parallelExport(opts, mainWindow) {
                     targetHeight,
                     backgroundPath: params.backgroundPath,
                     bgScale: params.bgScale || 100,
+                    bgRotation: params.bgRotation || 0,
                     bgX: params.bgX || 0,
                     bgY: params.bgY || 0,
                     bgDurScale: params.bgDurScale || 100,

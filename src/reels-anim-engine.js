@@ -232,15 +232,26 @@ function computeDynBoxScale(currentTime, wordStart, wordEnd,
 
 /**
  * Given progress (0→1), return [dx, dy] pixel offset for slide animations.
+ * @param {number} progress - Animation progress (0 to 1)
+ * @param {string} slideType - 'slide_up' | 'slide_down' | 'slide_left' | 'slide_right'
+ * @param {number} distance - Movement distance in pixels
+ * @param {boolean} isExit - True if this is an exit animation
  */
-function computeSlideOffset(progress, slideType, distance = 80) {
+function computeSlideOffset(progress, slideType, distance = 80, isExit = false) {
     const p = Math.max(0.0, Math.min(1.0, progress));
     const smooth = p * p * (3.0 - 2.0 * p); // smoothstep
     const remaining = 1.0 - smooth;
-    if (slideType === 'slide_up') return [0.0, remaining * distance];
-    if (slideType === 'slide_down') return [0.0, -remaining * distance];
-    if (slideType === 'slide_left') return [remaining * distance, 0.0];
-    if (slideType === 'slide_right') return [-remaining * distance, 0.0];
+    if (isExit) {
+        if (slideType === 'slide_up') return [0.0, -remaining * distance];
+        if (slideType === 'slide_down') return [0.0, remaining * distance];
+        if (slideType === 'slide_left') return [-remaining * distance, 0.0];
+        if (slideType === 'slide_right') return [remaining * distance, 0.0];
+    } else {
+        if (slideType === 'slide_up') return [0.0, remaining * distance];
+        if (slideType === 'slide_down') return [0.0, -remaining * distance];
+        if (slideType === 'slide_left') return [remaining * distance, 0.0];
+        if (slideType === 'slide_right') return [-remaining * distance, 0.0];
+    }
     return [0.0, 0.0];
 }
 
@@ -309,11 +320,11 @@ function computeTransitionParams(currentTime, segStart, segEnd,
 
     if (typeName.startsWith('slide_')) {
         if (scope === 'in' || scope === 'both') {
-            const [sx, sy] = computeSlideOffset(inProg, typeName, slideDistance);
+            const [sx, sy] = computeSlideOffset(inProg, typeName, slideDistance, false);
             dx += sx; dy += sy;
         }
         if (scope === 'out' || scope === 'both') {
-            const [sx, sy] = computeSlideOffset(outProg, typeName, slideDistance);
+            const [sx, sy] = computeSlideOffset(outProg, typeName, slideDistance, true);
             dx += sx; dy += sy;
         }
     }

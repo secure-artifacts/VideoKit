@@ -64,6 +64,7 @@ class MediaSource {
 
 class Clip {
     constructor(sourceId, inT = 0, outT = 0, startT = 0) {
+        this.id = _uuid();
         this.sourceId = sourceId;
         this.inT = inT;
         this.outT = outT;
@@ -93,6 +94,13 @@ class Clip {
         this.spatialEnabled = false;
         this.spatialAmount = 0;
         this.isMain = false;
+
+        // 同一 linkGroupId 的片段构成一个“绑定组”。典型例子是主视频和
+        // 它的原声；字幕、覆层、单独配音可按需要加入或解除该组。
+        this.linkGroupId = '';
+        // 波纹编辑时是否随主序列移动。BGM 等独立音轨应设为 false。
+        this.followRipple = true;
+        this._extra = {};
     }
 
     get duration() {
@@ -124,7 +132,8 @@ class Clip {
     }
 
     toJSON() {
-        return {
+        const data = {
+            id: this.id,
             source_id: this.sourceId,
             in_t: this.inT,
             out_t: this.outT,
@@ -148,11 +157,16 @@ class Clip {
             spatial_enabled: this.spatialEnabled,
             spatial_amount: this.spatialAmount,
             is_main: this.isMain,
+            link_group_id: this.linkGroupId,
+            follow_ripple: this.followRipple,
         };
+        if (this._extra && Object.keys(this._extra).length > 0) Object.assign(data, this._extra);
+        return data;
     }
 
     static fromJSON(data) {
         const c = new Clip(data.source_id, data.in_t || 0, data.out_t || 0, data.start_t || 0);
+        c.id = data.id || _uuid();
         const map = {
             fit_mode: 'fitMode', blend_mode: 'blendMode',
             x: 'x', y: 'y', scale: 'scale', rotation: 'rotation',
@@ -163,9 +177,15 @@ class Clip {
             fade_in_dur: 'fadeInDur', fade_out_dur: 'fadeOutDur',
             spatial_enabled: 'spatialEnabled', spatial_amount: 'spatialAmount',
             is_main: 'isMain',
+            link_group_id: 'linkGroupId', follow_ripple: 'followRipple',
         };
         for (const [jsonKey, propKey] of Object.entries(map)) {
             if (jsonKey in data) c[propKey] = data[jsonKey];
+        }
+        const knownKeys = new Set(['id', 'source_id', 'in_t', 'out_t', 'start_t', ...Object.keys(map)]);
+        c._extra = {};
+        for (const [key, value] of Object.entries(data)) {
+            if (!knownKeys.has(key)) c._extra[key] = value;
         }
         return c;
     }
@@ -250,6 +270,120 @@ class Timeline {
         this.fps = fps;
         this.tracks = [];
         this.sources = {};
+        this._extra = {};
+    }
+
+    // ── 片段绑定与波纹编辑 ──
+    // 这些操作只改时间线元数据；真实媒体文件永不复制或写入撤销历史。
+    findClip(clipId) {
+        for (const track of this.tracks) {
+            const index = track.clips.findIndex((clip) => clip && clip.id === clipId);
+            if (index >= 0) return { track, trackIndex: this.tracks.indexOf(track), clip: track.clips[index], clipIndex: index };
+        }
+        return null;
+    }
+
+    linkedClips(clipOrId) {
+        const clip = typeof clipOrId === 'string' ? this.findClip(clipOrId)?.clip : clipOrId;
+        if (!clip) return [];
+        if (!clip.linkGroupId) return [clip];
+        const group = clip.linkGroupId;
+        return this.tracks.flatMap((track) => track.clips).filter((item) => item?.linkGroupId === group);
+    }
+
+    linkClips(clipIds, groupId = _uuid()) {
+        const clips = (clipIds || []).map((id) => this.findClip(id)?.clip).filter(Boolean);
+        if (!clips.length) return '';
+        clips.forEach((clip) => { clip.linkGroupId = groupId; });
+        return groupId;
+    }
+
+    unlinkClips(clipIds) {
+        (clipIds || []).forEach((id) => {
+            const clip = this.findClip(id)?.clip;
+            if (clip) clip.linkGroupId = '';
+        });
+    }
+
+    /**
+     * 从某个时间点开始让“跟随波纹”的片段整体移动。
+     * excludeClipIds 用于避免移动当前正在裁剪的片段及其绑定伙伴。
+     */
+    rippleFrom(time, delta, { excludeClipIds = [], includeAtBoundary = true } = {}) {
+        const start = Math.max(0, Number(time) || 0);
+        const shift = Number(delta) || 0;
+        if (!shift) return [];
+        const excluded = new Set(excludeClipIds);
+        const changed = [];
+        for (const track of this.tracks) {
+            if (track.locked) continue;
+            for (const clip of track.clips) {
+                if (!clip || clip.followRipple === false || excluded.has(clip.id)) continue;
+                const afterBoundary = includeAtBoundary ? clip.startT >= start : clip.startT > start;
+                if (!afterBoundary) continue;
+                clip.startT = Math.max(0, clip.startT + shift);
+                changed.push(clip);
+            }
+        }
+        return changed;
+    }
+
+    /** Move a clip and its bound companions together. */
+    moveLinked(clipId, startT) {
+        const entry = this.findClip(clipId);
+        if (!entry || entry.track.locked) return [];
+        const delta = Math.max(0, Number(startT) || 0) - entry.clip.startT;
+        const group = this.linkedClips(entry.clip);
+        group.forEach((clip) => { clip.startT = Math.max(0, clip.startT + delta); });
+        return group;
+    }
+
+    /**
+     * Change an edit boundary and ripple later content. A linked audio clip gets
+     * the same source-boundary change; captions/overlays move with the ripple
+     * when their followRipple flag is enabled.
+     */
+    trimLinked(clipId, edge, timelineTime, { ripple = true } = {}) {
+        const entry = this.findClip(clipId);
+        if (!entry || entry.track.locked || !['start', 'end'].includes(edge)) return { changed: [], shifted: [] };
+        const primary = entry.clip;
+        const oldDuration = primary.effectiveDuration;
+        const next = Math.max(0, Number(timelineTime) || 0);
+        const group = this.linkedClips(primary);
+        if (edge === 'start') {
+            if (next >= primary.startT + oldDuration - 0.05) return { changed: [], shifted: [] };
+            for (const clip of group) {
+                const localOffset = next - clip.startT;
+                if (localOffset <= 0) continue;
+                clip.inT = Math.min(clip.outT - 0.05, clip.inT + localOffset * clip.speed);
+                clip.startT = next;
+            }
+        } else {
+            if (next <= primary.startT + 0.05) return { changed: [], shifted: [] };
+            for (const clip of group) {
+                const desiredDuration = Math.max(0.05, next - clip.startT);
+                clip.outT = Math.max(clip.inT + 0.05, clip.inT + desiredDuration * clip.speed);
+            }
+        }
+        const newDuration = primary.effectiveDuration;
+        const delta = newDuration - oldDuration;
+        const excluded = group.map((clip) => clip.id);
+        const shifted = ripple && delta ? this.rippleFrom(primary.startT + oldDuration, delta, { excludeClipIds: excluded }) : [];
+        return { changed: group, shifted, delta };
+    }
+
+    replaceClipSource(clipId, sourceId, { useSourceDuration = false } = {}) {
+        const entry = this.findClip(clipId);
+        if (!entry || entry.track.locked || !this.sources[sourceId]) return null;
+        const clip = entry.clip;
+        const previousSourceId = clip.sourceId;
+        clip.sourceId = sourceId;
+        if (useSourceDuration) {
+            const duration = Math.max(0, Number(this.sources[sourceId].duration) || 0);
+            clip.inT = 0;
+            clip.outT = duration;
+        }
+        return { clip, previousSourceId };
     }
 
     // ── 逻辑分组视图 ──
@@ -369,13 +503,15 @@ class Timeline {
         for (const [sid, s] of Object.entries(this.sources)) {
             sourcesData[sid] = s instanceof MediaSource ? s.toJSON() : s;
         }
-        return {
+        const data = {
             width: this.width,
             height: this.height,
             fps: this.fps,
             sources: sourcesData,
             tracks: this.tracks.map(t => t instanceof Track ? t.toJSON() : t),
         };
+        if (this._extra && Object.keys(this._extra).length) Object.assign(data, this._extra);
+        return data;
     }
 
     static fromJSON(data) {
@@ -385,6 +521,10 @@ class Timeline {
             data.height || 1080,
             data.fps || 30,
         );
+        const knownKeys = new Set(['width', 'height', 'fps', 'sources', 'tracks']);
+        for (const [key, value] of Object.entries(data)) {
+            if (!knownKeys.has(key)) tl._extra[key] = value;
+        }
         // Sources
         for (const [sid, s] of Object.entries(data.sources || {})) {
             tl.sources[sid] = s instanceof MediaSource ? s : MediaSource.fromJSON(s);
@@ -410,6 +550,8 @@ class Timeline {
         vTrack.isMainVideo = true;
         const vClip = new Clip(sourceId, 0, duration, 0);
         vClip.fitMode = 'fill';
+        const mainLinkGroupId = _uuid();
+        vClip.linkGroupId = mainLinkGroupId;
         vTrack.clips.push(vClip);
         tl.addTrack(vTrack);
 
@@ -417,6 +559,7 @@ class Timeline {
         const aTrack = new Track('audio');
         const aClip = new Clip(sourceId, 0, duration, 0);
         aClip.isMain = true;
+        aClip.linkGroupId = mainLinkGroupId;
         aTrack.clips.push(aClip);
         tl.addTrack(aTrack);
 

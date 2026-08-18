@@ -314,14 +314,54 @@ async function reelsBatchFcpxmlExport(params) {
             if (result && result.success && result.data) {
                 const outputPath = result.data.path;
                 log(`达芬奇序列导出完成! 路径: ${outputPath}`);
-                return { outputPath };
+                let fusionPackage = null;
+                try {
+                    fusionPackage = await window.electronAPI.apiCall('media/create-resolve-fusion-package', {
+                        output_dir: outputDir,
+                        task_name: taskName,
+                        fcpxml_path: outputPath,
+                        tasks,
+                        fps,
+                        resolution: '1080x1920',
+                        rebuild_media_timeline: true,
+                    });
+                    const installResult = await window.electronAPI.apiCall('media/install-resolve-fusion-script', {
+                        script_path: fusionPackage.script_path,
+                    });
+                    fusionPackage.installed_path = installResult.installed_path;
+                    log(`已生成 Resolve Fusion 包：${fusionPackage.fusion_cues || 0} 条可编辑字幕`);
+                } catch (fusionError) {
+                    // FCPXML remains a valid deliverable if the optional Fusion package fails.
+                    log(`Fusion 包生成失败（FCPXML 仍可用）：${fusionError.message}`);
+                }
+                return { outputPath, fusionPackage };
             } else {
                 throw new Error(result?.error || 'API 返回失败');
             }
         } catch (err) {
             log(`后端 API 调用失败: ${err.message}，回退到前端生成`);
             // 回退：前端直接生成 FCPXML
-            return await _fallbackFrontendExport(segments, outputDir, taskName, fps, tasks, log);
+            const fallback = await _fallbackFrontendExport(segments, outputDir, taskName, fps, tasks, log);
+            let fusionPackage = null;
+            try {
+                fusionPackage = await window.electronAPI.apiCall('media/create-resolve-fusion-package', {
+                    output_dir: outputDir,
+                    task_name: taskName,
+                    fcpxml_path: fallback.outputPath,
+                    tasks,
+                    fps,
+                    resolution: '1080x1920',
+                    rebuild_media_timeline: true,
+                });
+                const installResult = await window.electronAPI.apiCall('media/install-resolve-fusion-script', {
+                    script_path: fusionPackage.script_path,
+                });
+                fusionPackage.installed_path = installResult.installed_path;
+                log(`前端回退 FCPXML 已生成 Resolve Fusion 包：${fusionPackage.fusion_cues || 0} 条可编辑字幕`);
+            } catch (fusionError) {
+                log(`Fusion 包生成失败（FCPXML 仍可用）：${fusionError.message}`);
+            }
+            return { ...fallback, fusionPackage };
         }
     }
 

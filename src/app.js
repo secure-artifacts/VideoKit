@@ -12197,7 +12197,7 @@ function getAutoEditRequestSettings() {
     const manualAudioPath = document.getElementById('autoedit-manual-audio-path')?.value?.trim() || '';
     return {
         language: document.getElementById('autoedit-language')?.value || 'auto',
-        matching_engine: document.getElementById('autoedit-matching-engine')?.value || 'legacy',
+        matching_engine: document.getElementById('autoedit-matching-engine')?.value || 'multilingual_v2',
         match_mode: document.getElementById('autoedit-match-mode')?.value || 'script',
         workflow_mode: document.getElementById('autoedit-workflow-mode')?.value || 'cut_first',
         transition_type: document.getElementById('autoedit-transition-type')?.value || 'none',
@@ -12673,7 +12673,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const matchingEngineInput = document.getElementById('autoedit-matching-engine');
     if (matchingEngineInput) {
         const savedEngine = localStorage.getItem('autoedit_matching_engine');
-        matchingEngineInput.value = ['multilingual_v2', 'compare_v2'].includes(savedEngine) ? savedEngine : 'legacy';
+        // 首次使用默认 V2；已经明确选过经典版的用户仍尊重其个人选择。
+        matchingEngineInput.value = ['legacy', 'multilingual_v2', 'compare_v2'].includes(savedEngine)
+            ? savedEngine
+            : 'multilingual_v2';
         matchingEngineInput.addEventListener('change', () => {
             localStorage.setItem('autoedit_matching_engine', matchingEngineInput.value);
             updateAutoEditMatchingEngineHint();
@@ -14911,6 +14914,300 @@ function toggleAutoEditReviewFullscreen() {
     document.body.style.overflow = expanded ? 'hidden' : '';
     if (button) button.textContent = expanded ? '✕ 退出放大' : '⛶ 放大审核';
 }
+
+// 独立审核窗口：保留原审核列表作为唯一数据源，弹窗只做更快的时间线操作。
+// 因此拖动切点、普通列表数字框、正式导出三者不会出现三份不同的数据。
+function openAutoEditTimelineReview() {
+    const rows = Array.from(document.querySelectorAll('.autoedit-review-row'));
+    if (!autoEditLastResult?.analysis_only || !rows.length) {
+        showToast('请先完成“快速分析”，再进入时间线审核', 'info');
+        return;
+    }
+    document.getElementById('autoedit-timeline-review-modal')?.remove();
+    let selected = 0;
+    // 不是播放已经导出的旧文件，而是按当前审核切点实时串起原片；这样改动
+    // 入/出点后，马上看到“将要导出的整片”而无需先导出一次。
+    const playback = { outputTime: 0, playing: false, token: 0, switching: false };
+    const modal = document.createElement('div');
+    modal.id = 'autoedit-timeline-review-modal';
+    modal.style.cssText = 'position:fixed;inset:0;z-index:100001;background:rgba(0,0,0,.82);display:flex;align-items:center;justify-content:center;padding:24px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;';
+    const panel = document.createElement('section');
+    panel.style.cssText = 'width:min(1180px,96vw);height:min(780px,92vh);background:#141526;border:1px solid rgba(148,163,184,.28);border-radius:14px;box-shadow:0 24px 80px rgba(0,0,0,.65);display:grid;grid-template-rows:auto 1fr auto;overflow:hidden;color:#e5e7eb;';
+    const close = () => modal.remove();
+    const fmt = value => `${Math.max(0, Number(value) || 0).toFixed(3)}s`;
+    const getRow = () => rows[selected];
+    const getSource = row => { try { return decodeURIComponent(row.dataset.source || ''); } catch (_) { return ''; } };
+    const sync = (kind, value) => {
+        const row = getRow();
+        const input = row?.querySelector(kind === 'start' ? '.ae-review-start' : '.ae-review-end');
+        if (!input) return;
+        input.value = Math.max(0, Number(value) || 0).toFixed(3);
+        if (kind === 'start') {
+            const end = row.querySelector('.ae-review-end');
+            if (end && Number(end.value) <= Number(input.value)) end.value = (Number(input.value) + .05).toFixed(3);
+        } else {
+            const start = row.querySelector('.ae-review-start');
+            if (start && Number(input.value) <= Number(start.value)) input.value = (Number(start.value) + .05).toFixed(3);
+        }
+        markAutoEditCutManual(input);
+    };
+    const setRowCut = (row, start, end) => {
+        const startInput = row?.querySelector('.ae-review-start');
+        const endInput = row?.querySelector('.ae-review-end');
+        if (!startInput || !endInput) return;
+        const safeStart = Math.max(0, Number(start) || 0);
+        const safeEnd = Math.max(safeStart + .05, Number(end) || safeStart + .05);
+        startInput.value = safeStart.toFixed(3);
+        endInput.value = safeEnd.toFixed(3);
+        markAutoEditCutManual(startInput);
+    };
+    const buildSequence = () => {
+        let cursor = 0;
+        return rows.filter(row => row.querySelector('.ae-review-enabled')?.checked !== false).map(row => {
+            const start = Number(row.querySelector('.ae-review-start')?.value) || 0;
+            const end = Math.max(start + .05, Number(row.querySelector('.ae-review-end')?.value) || start + .05);
+            const item = { row, start, end, outputStart: cursor, outputEnd: cursor + end - start };
+            cursor = item.outputEnd;
+            return item;
+        });
+    };
+    const fileUrl = source => (window.electronAPI && typeof window.electronAPI.toFileUrl === 'function')
+        ? window.electronAPI.toFileUrl(source)
+        : normalizeFilePath(source);
+    const render = () => {
+        const row = getRow();
+        const start = Number(row.querySelector('.ae-review-start')?.value) || 0;
+        const end = Number(row.querySelector('.ae-review-end')?.value) || start + .05;
+        const sourceDuration = Math.max(Number(row.dataset.sourceDuration) || 0, end + 1);
+        const sourceName = getSource(row).split(/[/\\]/).pop() || `片段 ${selected + 1}`;
+        const script = row.querySelector('.ae-review-script')?.value || '';
+        const sequence = buildSequence();
+        const totalDuration = sequence.length ? sequence[sequence.length - 1].outputEnd : 0;
+        const blocks = rows.map((item, index) => {
+            const a = Number(item.querySelector('.ae-review-start')?.value) || 0;
+            const b = Number(item.querySelector('.ae-review-end')?.value) || a + .05;
+            const width = Math.max(4, ((b - a) / Math.max(.05, totalDuration)) * 100);
+            const disabled = item.querySelector('.ae-review-enabled')?.checked === false;
+            return `<button data-index="${index}" title="${escapeHtml(item.querySelector('.ae-review-script')?.value || '')}" style="width:${width}%;min-width:34px;height:48px;border:1px solid ${index === selected ? '#60a5fa' : 'rgba(255,255,255,.14)'};background:${disabled ? 'rgba(100,116,139,.18)' : (index === selected ? 'rgba(37,99,235,.5)' : 'rgba(71,85,105,.42)')};color:#fff;border-radius:5px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 7px;text-align:left;">${index + 1}. ${fmt(b - a)}</button>`;
+        }).join('');
+        panel.innerHTML = `
+            <header style="display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid rgba(255,255,255,.1);">
+                <strong style="font-size:16px;">⏱ 文案自动剪辑 · 时间线审核</strong><span style="color:#94a3b8;font-size:12px;">拖动入点/出点立即同步到正式导出</span>
+                <button data-action="close" class="btn btn-secondary" style="margin-left:auto;padding:5px 11px;">关闭</button>
+            </header>
+            <main style="display:grid;grid-template-columns:minmax(280px,1fr) minmax(360px,1.25fr);gap:18px;padding:18px;min-height:0;">
+                <aside style="overflow:auto;border-right:1px solid rgba(255,255,255,.08);padding-right:14px;">
+                    <div style="font-size:12px;color:#94a3b8;margin-bottom:8px;">剪辑顺序 · 点击片段切换审核对象</div>
+                    <div data-role="blocks" style="display:flex;gap:5px;align-items:center;min-height:56px;padding:8px;background:#0d1020;border-radius:8px;overflow-x:auto;">${blocks}</div>
+                    <div style="margin-top:16px;display:grid;gap:7px;">${rows.map((item, index) => `<button data-index="${index}" style="text-align:left;padding:9px;border-radius:6px;border:1px solid ${index === selected ? 'rgba(96,165,250,.65)' : 'rgba(255,255,255,.09)'};background:${index === selected ? 'rgba(37,99,235,.18)' : 'transparent'};color:#e5e7eb;cursor:pointer;"><strong>${index + 1}. ${escapeHtml(getSource(item).split(/[/\\]/).pop() || '未知片段')}</strong><br><span style="color:#94a3b8;font-size:11px;">${fmt(Number(item.querySelector('.ae-review-end')?.value) - Number(item.querySelector('.ae-review-start')?.value))} · ${(item.querySelector('.ae-review-script')?.value || '').slice(0, 52)}</span></button>`).join('')}</div>
+                </aside>
+                <section style="min-width:0;display:flex;flex-direction:column;gap:14px;">
+                    <div style="background:#05070e;border-radius:9px;overflow:hidden;border:1px solid rgba(255,255,255,.1);">
+                        <div style="position:relative;background:#000;">
+                            <video data-role="master-video" controls style="display:block;width:100%;max-height:210px;background:#000;"></video>
+                            <div data-role="master-subtitle" aria-live="off" style="position:absolute;left:6%;right:6%;bottom:46px;text-align:center;pointer-events:none;font-size:clamp(15px,2vw,24px);font-weight:800;line-height:1.35;color:#fff;text-shadow:0 2px 5px #000,0 0 12px #000;word-break:break-word;"></div>
+                        </div>
+                        <div style="padding:9px 11px;display:grid;grid-template-columns:auto 1fr auto;gap:9px;align-items:center;background:#0d1020;">
+                            <button data-action="play-all" class="btn btn-primary" style="padding:4px 10px;">▶ 整片播放</button>
+                            <input data-role="master-seek" type="range" min="0" max="${Math.max(.01, totalDuration)}" step="0.01" value="${Math.min(playback.outputTime, totalDuration)}" style="width:100%;accent-color:#60a5fa;">
+                            <span data-role="master-time" style="font-variant-numeric:tabular-nums;color:#cbd5e1;font-size:12px;">${fmt(playback.outputTime)} / ${fmt(totalDuration)}</span>
+                        </div>
+                    </div>
+                    <div data-role="reels-timeline" style="height:250px;min-height:250px;border:1px solid rgba(96,165,250,.28);border-radius:9px;overflow:hidden;background:#151827;"></div>
+                    <div><div style="font-size:12px;color:#94a3b8;">当前原片</div><strong>${escapeHtml(sourceName)}</strong></div>
+                    <div style="padding:12px;border-radius:8px;background:#0d1020;min-height:62px;line-height:1.55;white-space:pre-wrap;">${escapeHtml(script || '（没有分配文案）')}</div>
+                    <div style="padding:14px;border:1px solid rgba(96,165,250,.28);border-radius:9px;background:rgba(30,41,59,.35);">
+                        <div style="display:flex;justify-content:space-between;color:#93c5fd;font-size:12px;margin-bottom:7px;"><span>原片 0.000s</span><span>${fmt(sourceDuration)}</span></div>
+                        <input data-role="start" type="range" min="0" max="${sourceDuration}" step="0.01" value="${start}" style="width:100%;accent-color:#60a5fa;">
+                        <input data-role="end" type="range" min="0" max="${sourceDuration}" step="0.01" value="${end}" style="width:100%;accent-color:#fbbf24;">
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:9px;"><label>入点 <input data-role="start-number" class="input" type="number" min="0" step="0.01" value="${start.toFixed(3)}" style="width:100%;"></label><label>出点 <input data-role="end-number" class="input" type="number" min="0" step="0.01" value="${end.toFixed(3)}" style="width:100%;"></label></div>
+                        <div style="margin-top:9px;color:#cbd5e1;font-size:13px;">当前保留：<strong data-role="cut-duration">${fmt(end - start)}</strong></div>
+                    </div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;"><button data-action="play" class="btn btn-primary">▶ 从入点试听到出点</button><button data-action="previous" class="btn btn-secondary">← 上一段</button><button data-action="next" class="btn btn-secondary">下一段 →</button><button data-action="locate" class="btn btn-secondary">在原审核列表定位</button></div>
+                </section>
+            </main>
+            <footer style="padding:11px 18px;border-top:1px solid rgba(255,255,255,.1);font-size:12px;color:#94a3b8;">修改已自动保存；关闭窗口不丢失。正式导出仍会使用这些审核入点、出点和启用状态。</footer>`;
+        panel.querySelectorAll('[data-index]').forEach(button => button.onclick = () => { selected = Number(button.dataset.index); render(); });
+        panel.querySelector('[data-action="close"]').onclick = close;
+        const reflectCurrentCut = () => {
+            const current = getRow();
+            const currentStart = Number(current.querySelector('.ae-review-start')?.value) || 0;
+            const currentEnd = Number(current.querySelector('.ae-review-end')?.value) || currentStart + .05;
+            panel.querySelector('[data-role="start"]').value = currentStart;
+            panel.querySelector('[data-role="end"]').value = currentEnd;
+            panel.querySelector('[data-role="start-number"]').value = currentStart.toFixed(3);
+            panel.querySelector('[data-role="end-number"]').value = currentEnd.toFixed(3);
+            panel.querySelector('[data-role="cut-duration"]').textContent = fmt(currentEnd - currentStart);
+        };
+        // input 而不是 change：拖动过程中就写回审核结果，但不重建弹窗 DOM，
+        // 所以滑块可以连续拖动，不会跳手柄。
+        panel.querySelector('[data-role="start"]').oninput = event => { sync('start', event.target.value); reflectCurrentCut(); };
+        panel.querySelector('[data-role="end"]').oninput = event => { sync('end', event.target.value); reflectCurrentCut(); };
+        panel.querySelector('[data-role="start-number"]').onchange = event => { sync('start', event.target.value); render(); };
+        panel.querySelector('[data-role="end-number"]').onchange = event => { sync('end', event.target.value); render(); };
+        panel.querySelector('[data-action="play"]').onclick = () => window.playVideoClip(getSource(getRow()), Number(getRow().querySelector('.ae-review-start')?.value), Number(getRow().querySelector('.ae-review-end')?.value), getRow().querySelector('.ae-review-script')?.value || '', getRow().dataset.wordTimeline || '', Number(getRow().querySelector('.ae-review-speed')?.value) || 1);
+        panel.querySelector('[data-action="previous"]').onclick = () => { selected = Math.max(0, selected - 1); render(); };
+        panel.querySelector('[data-action="next"]').onclick = () => { selected = Math.min(rows.length - 1, selected + 1); render(); };
+        panel.querySelector('[data-action="locate"]').onclick = () => { getRow().scrollIntoView({ behavior: 'smooth', block: 'center' }); getRow().classList.add('ae-quick-locate-target'); };
+        const masterVideo = panel.querySelector('[data-role="master-video"]');
+        const masterSeek = panel.querySelector('[data-role="master-seek"]');
+        const masterTime = panel.querySelector('[data-role="master-time"]');
+        const masterPlay = panel.querySelector('[data-action="play-all"]');
+        const masterSubtitle = panel.querySelector('[data-role="master-subtitle"]');
+        const updateTemporarySubtitle = () => {
+            const item = sequence.find(candidate => candidate.row === rows[selected]);
+            if (!masterSubtitle || !item) return;
+            const text = item.row.querySelector('.ae-review-script')?.value || '';
+            if (!text.trim()) { masterSubtitle.textContent = ''; return; }
+            // word_timeline 使用原片时间码；审核播放器也正播放这段原片，
+            // 因而可直接用 currentTime 标出正在读的词。文案被人工改过且
+            // 无法逐词对应时，仍完整显示文案，绝不显示错误高亮。
+            let words = [];
+            try { words = JSON.parse(decodeURIComponent(item.row.dataset.wordTimeline || '')); } catch (_) {}
+            const current = masterVideo.currentTime || item.start;
+            const hasTimedWords = Array.isArray(words) && words.length > 0
+                && words.every(word => Number.isFinite(Number(word.start)) && Number.isFinite(Number(word.end)));
+            if (!hasTimedWords) { masterSubtitle.textContent = text; return; }
+            const normalizedText = String(text).toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+            const normalizedWords = words.map(word => String(word.word || '').toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')).filter(Boolean).join(' ');
+            if (!normalizedWords || !normalizedText.includes(normalizedWords.slice(0, Math.min(normalizedWords.length, 18)))) {
+                masterSubtitle.textContent = text;
+                return;
+            }
+            masterSubtitle.innerHTML = words.map(word => {
+                const active = current >= Number(word.start) && current <= Number(word.end);
+                return `<span style="color:${active ? '#facc15' : '#fff'};padding:0 2px;">${escapeHtml(String(word.word || ''))}</span>`;
+            }).join(' ');
+        };
+        const updateMasterUi = () => {
+            masterSeek.value = Math.min(totalDuration, Math.max(0, playback.outputTime));
+            masterTime.textContent = `${fmt(playback.outputTime)} / ${fmt(totalDuration)}`;
+            masterPlay.textContent = playback.playing ? '⏸ 暂停整片' : '▶ 整片播放';
+            updateTemporarySubtitle();
+        };
+        const loadOutputTime = (outputTime, shouldPlay = playback.playing) => {
+            const safeTime = Math.max(0, Math.min(totalDuration, Number(outputTime) || 0));
+            const item = sequence.find(candidate => safeTime >= candidate.outputStart && safeTime < candidate.outputEnd) || sequence[sequence.length - 1];
+            if (!item) return;
+            playback.outputTime = safeTime;
+            selected = Number(item.row.dataset.reviewIndex) || rows.indexOf(item.row);
+            const rawTime = item.start + Math.max(0, safeTime - item.outputStart);
+            const source = getSource(item.row);
+            const token = ++playback.token;
+            const applyTime = () => {
+                if (token !== playback.token) return;
+                masterVideo.currentTime = Math.min(Math.max(item.start, rawTime), Math.max(item.start, item.end - .01));
+                masterVideo.playbackRate = Math.max(.25, Math.min(4, Number(item.row.querySelector('.ae-review-speed')?.value) || 1));
+                playback.switching = false;
+                if (shouldPlay) masterVideo.play().catch(() => { playback.playing = false; updateMasterUi(); });
+                updateMasterUi();
+            };
+            if (masterVideo.dataset.source !== source) {
+                playback.switching = true;
+                masterVideo.dataset.source = source;
+                masterVideo.src = fileUrl(source);
+                masterVideo.onloadedmetadata = applyTime;
+                masterVideo.load();
+            } else applyTime();
+        };
+        masterVideo.ontimeupdate = () => {
+            const item = sequence.find(candidate => candidate.row === rows[selected]);
+            if (!item) return;
+            playback.outputTime = item.outputStart + Math.max(0, masterVideo.currentTime - item.start);
+            if (masterVideo.currentTime >= item.end - .025 && playback.playing) {
+                loadOutputTime(item.outputEnd + .001, true);
+                return;
+            }
+            updateMasterUi();
+        };
+        masterVideo.onpause = () => { if (!playback.switching && !masterVideo.ended) { playback.playing = false; updateMasterUi(); } };
+        masterVideo.onended = () => { if (playback.playing) loadOutputTime(playback.outputTime + .001, true); };
+        masterPlay.onclick = () => {
+            if (playback.playing) { playback.playing = false; masterVideo.pause(); updateMasterUi(); }
+            else { playback.playing = true; loadOutputTime(playback.outputTime, true); }
+        };
+        masterSeek.oninput = event => loadOutputTime(event.target.value, playback.playing);
+        masterSeek.onchange = () => render();
+
+        // 自动剪辑审核和批量 Reels 使用同一个 Canvas 时间线编辑器。审核阶段
+        // 只显示视频、绑定原声、字幕三轨，避免把 BGM/覆层包装混入切点审核。
+        const timelineHost = panel.querySelector('[data-role="reels-timeline"]');
+        if (timelineHost && typeof window.ReelsTimelineEditor === 'function') {
+            const editor = new window.ReelsTimelineEditor(timelineHost);
+            const makeClip = (item, label, extra = {}) => ({
+                start: item.outputStart,
+                end: item.outputEnd,
+                name: label,
+                _reviewRow: item.row,
+                _lastStart: item.outputStart,
+                _lastEnd: item.outputEnd,
+                ...extra,
+            });
+            editor.setTracks([
+                { type: 'video', name: '视频（裁剪顺序）', clips: sequence.map(item => makeClip(item, getSource(item.row).split(/[/\\]/).pop() || '视频')), locked: false, visible: true, domain: 'visual' },
+                { type: 'subs', name: '字幕（文案定位）', clips: sequence.map(item => makeClip(item, (item.row.querySelector('.ae-review-script')?.value || '字幕').slice(0, 22))), locked: true, visible: true, domain: 'visual' },
+                { type: 'audio', name: '原声（绑定视频）', clips: sequence.map(item => makeClip(item, '原声')), locked: true, visible: true, domain: 'audio' },
+            ]);
+            editor.setDuration(Math.max(1, totalDuration), { fit: true });
+            editor.setPlayhead(playback.outputTime);
+            editor.onSeek = time => loadOutputTime(time, false);
+            editor.onClipSelect = (trackIndex, clipIndex, clip) => {
+                if (!clip?._reviewRow) return;
+                selected = rows.indexOf(clip._reviewRow);
+                loadOutputTime(clip.start, false);
+            };
+            editor.onClipChange = (trackIndex, clipIndex, clip) => {
+                if (editor._tracks[trackIndex]?.type !== 'video' || !clip?._reviewRow) return;
+                const leftDelta = clip.start - clip._lastStart;
+                const rightDelta = clip.end - clip._lastEnd;
+                const oldDuration = clip._lastEnd - clip._lastStart;
+                const newDuration = clip.end - clip.start;
+                const sourceStart = Number(clip._reviewRow.querySelector('.ae-review-start')?.value) || 0;
+                const sourceEnd = Number(clip._reviewRow.querySelector('.ae-review-end')?.value) || sourceStart + .05;
+                if (Math.abs(leftDelta) > .001 && Math.abs(rightDelta) <= .001) {
+                    setRowCut(clip._reviewRow, sourceStart + leftDelta, sourceEnd);
+                } else if (Math.abs(rightDelta) > .001 && Math.abs(leftDelta) <= .001) {
+                    setRowCut(clip._reviewRow, sourceStart, sourceEnd + rightDelta);
+                } else if (Math.abs(newDuration - oldDuration) < .02) {
+                    clip._moved = true;
+                }
+                clip._lastStart = clip.start;
+                clip._lastEnd = clip.end;
+            };
+            editor.onEditEnd = () => {
+                const videoTrack = editor._tracks.find(track => track.type === 'video');
+                const orderedRows = (videoTrack?.clips || []).slice().sort((a, b) => a.start - b.start).map(clip => clip._reviewRow).filter(Boolean);
+                const changedOrder = orderedRows.length === rows.length && orderedRows.some((row, index) => row !== rows[index]);
+                if (changedOrder) {
+                    const oldSegments = autoEditLastResult.segments.slice();
+                    const byRow = new Map(rows.map(row => [row, oldSegments[Number(row.dataset.reviewIndex)]]));
+                    autoEditLastResult.segments = orderedRows.map(row => byRow.get(row)).filter(Boolean);
+                    const parent = rows[0]?.parentNode;
+                    orderedRows.forEach((row, index) => {
+                        row.dataset.reviewIndex = String(index);
+                        parent?.appendChild(row);
+                    });
+                    rows.splice(0, rows.length, ...orderedRows);
+                    positionAutoEditMissingPlaceholders();
+                    persistAutoEditBatchReview();
+                }
+                selected = Math.max(0, Math.min(rows.length - 1, selected));
+                // 重建可让裁剪后的长度立即触发“后续片段自动推进”的波纹结果。
+                render();
+            };
+        }
+        // 初始装载当前片段，同时保持上一次整片播放位置。
+        loadOutputTime(playback.outputTime || (sequence.find(item => item.row === getRow())?.outputStart || 0), false);
+    };
+    modal.addEventListener('mousedown', event => { if (event.target === modal) close(); });
+    modal.addEventListener('keydown', event => { if (event.key === 'Escape') close(); });
+    modal.tabIndex = -1;
+    modal.appendChild(panel);
+    document.body.appendChild(modal);
+    render();
+    modal.focus();
+}
+window.openAutoEditTimelineReview = openAutoEditTimelineReview;
 
 function locateFirstAutoEditProblem() {
     const missing = document.querySelector('.autoedit-missing-placeholder:not([data-assigned="true"])');

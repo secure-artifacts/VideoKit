@@ -77,6 +77,9 @@ class ReelsTimelineEditor {
         this.onClipSelect = null;     // (trackIdx, clipIdx, clip) => {}
         this.onClipChange = null;     // (trackIdx, clipIdx, clip) => {}
         this.onClipDblClick = null;   // (trackIdx, clipIdx, clip, rect) => {}
+        // 一个鼠标拖动是一笔编辑事务，而不是数百条 mousemove 历史。
+        this.onEditStart = null;      // ({ type, trackIdx, clipIdx, clip }) => {}
+        this.onEditEnd = null;        // ({ type, trackIdx, clipIdx, clip }) => {}
 
         // 浮动编辑器
         this._editingPopup = null;
@@ -107,6 +110,11 @@ class ReelsTimelineEditor {
         window.addEventListener('mouseup', (e) => this._onMouseUp(e));
         
         this.canvas.addEventListener('wheel', (e) => this._onWheel(e), { passive: false });
+
+        this.canvas.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            this._onContextMenu(e);
+        });
 
         // 点击画布其他区域时关闭编辑器
         document.addEventListener('mousedown', (e) => {
@@ -168,6 +176,18 @@ class ReelsTimelineEditor {
     setTracks(tracks) {
         this._tracks = tracks;
         this._clearClipSelection();
+        this._autoAdjustContainerHeight();
+    }
+
+    _autoAdjustContainerHeight() {
+        if (!this.container) return;
+        const bodyEl = this.container.closest('.reels-timeline-body');
+        if (!bodyEl || bodyEl.classList.contains('collapsed')) return;
+        const trackCount = Array.isArray(this._tracks) ? this._tracks.length : 0;
+        if (trackCount <= 0) return;
+        const needed = TL_RULER_H + trackCount * (TL_TRACK_HEIGHT + 1) + 12;
+        const targetHeight = Math.max(160, Math.min(500, needed));
+        bodyEl.style.height = `${targetHeight}px`;
     }
 
     /**
@@ -295,6 +315,10 @@ class ReelsTimelineEditor {
         // 轨道区域
         this._drawTracks(ctx, W, H);
 
+        // 序列终点是一个独立的编辑边界，不等同于红色播放头。它让用户一眼
+        // 看出最后一个片段/循环背景真正在哪结束。
+        this._drawEndMarker(ctx, W, H);
+
         // 播放头
         this._drawPlayhead(ctx, W, H);
 
@@ -393,10 +417,64 @@ class ReelsTimelineEditor {
                 ctx.stroke();
             }
 
-            // 片段
+            // 片段只能画在右侧时间区域内。没有这个裁切时，横向滚动的片段
+            // 会越过 0 秒边界盖住左侧轨道名称，看上去像“滚动穿帮”。
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(TL_HEADER_W, y, Math.max(0, W - TL_HEADER_W), TL_TRACK_HEIGHT);
+            ctx.clip();
             for (let ci = 0; ci < track.clips.length; ci++) {
                 this._drawClip(ctx, track, ti, ci, y);
             }
+
+            // 检查背景画面覆盖范围，若末尾存在空白缺口（黑屏风险），绘制醒目的红色警示区域
+            const isBackgroundTrack = track.type === 'video' || (track.name && track.name.includes('背景'));
+            if (isBackgroundTrack && track.clips.length > 0) {
+                const maxEnd = Math.max(0, ...track.clips.map(c => c.end || 0));
+                if (this._duration > maxEnd + 0.1) {
+                    const gapStartPx = TL_HEADER_W + maxEnd * this._pxPerSec - this._scrollX;
+                    const gapEndPx = TL_HEADER_W + this._duration * this._pxPerSec - this._scrollX;
+                    const drawX0 = Math.max(TL_HEADER_W, gapStartPx);
+                    const drawX1 = Math.min(W, gapEndPx);
+                    if (drawX1 > drawX0) {
+                        // 红色半透明背景
+                        ctx.fillStyle = 'rgba(239, 68, 68, 0.18)';
+                        ctx.fillRect(drawX0, y + 2, drawX1 - drawX0, TL_TRACK_HEIGHT - 4);
+
+                        // 红色对角斜条纹
+                        ctx.strokeStyle = 'rgba(239, 68, 68, 0.3)';
+                        ctx.lineWidth = 2;
+                        const stripeGap = 14;
+                        for (let sx = drawX0 - TL_TRACK_HEIGHT; sx < drawX1 + TL_TRACK_HEIGHT; sx += stripeGap) {
+                            ctx.beginPath();
+                            ctx.moveTo(sx, y + TL_TRACK_HEIGHT - 2);
+                            ctx.lineTo(sx + TL_TRACK_HEIGHT, y + 2);
+                            ctx.stroke();
+                        }
+
+                        // 红色虚线边框
+                        ctx.strokeStyle = '#ef4444';
+                        ctx.lineWidth = 1.5;
+                        ctx.setLineDash([5, 3]);
+                        ctx.strokeRect(drawX0 + 0.5, y + 2.5, drawX1 - drawX0 - 1, TL_TRACK_HEIGHT - 5);
+                        ctx.setLineDash([]);
+
+                        // 警示文字与补充提示
+                        const missingSec = (this._duration - maxEnd).toFixed(1);
+                        const label = `⚠️ 画面不足 (缺 ${missingSec}s · 右键补充循环)`;
+                        ctx.font = 'bold 10px system-ui, sans-serif';
+                        ctx.fillStyle = '#fca5a5';
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'middle';
+                        const textX = (drawX0 + drawX1) / 2;
+                        const textY = y + TL_TRACK_HEIGHT / 2;
+                        if (drawX1 - drawX0 > 60) {
+                            ctx.fillText(label, textX, textY);
+                        }
+                    }
+                }
+            }
+            ctx.restore();
 
             y += TL_TRACK_HEIGHT + 1;
         }
@@ -422,6 +500,19 @@ class ReelsTimelineEditor {
         ctx.textAlign = 'left';
         ctx.fillText(track.name, 10, y + TL_TRACK_HEIGHT / 2 + 4);
 
+        // 头部警示徽章
+        const isBg = track.type === 'video' || (track.name && track.name.includes('背景'));
+        if (isBg && track.clips && track.clips.length > 0) {
+            const maxEnd = Math.max(0, ...track.clips.map(c => c.end || 0));
+            if (this._duration > maxEnd + 0.1) {
+                const missingSec = (this._duration - maxEnd).toFixed(1);
+                ctx.fillStyle = '#ef4444';
+                ctx.font = 'bold 9px system-ui, sans-serif';
+                ctx.textAlign = 'right';
+                ctx.fillText(`⚠️缺${missingSec}s`, TL_HEADER_W - 6, y + TL_TRACK_HEIGHT / 2 + 4);
+            }
+        }
+
         // 状态图标
         const icons = [];
         if (track.locked) icons.push('🔒');
@@ -441,6 +532,12 @@ class ReelsTimelineEditor {
         const w = Math.max(TL_MIN_CLIP_W, (clip.end - clip.start) * this._pxPerSec);
         const y = trackY + 3;
         const h = TL_TRACK_HEIGHT - 6;
+        // 循环素材不是一个长块：保留少量视觉间隙，让每一轮都能一眼看见。
+        // 命中/拖拽仍使用原始时间范围，不会在时间线上制造真实空白。
+        const isLoopInstance = clip._isLoopInstance === true;
+        const seam = isLoopInstance && w > 12 ? 2 : 0;
+        const drawX = x + seam;
+        const drawW = Math.max(1, w - seam * 2);
 
         // 可见范围检查
         if (x + w < TL_HEADER_W || x > this._canvasW) return;
@@ -456,19 +553,34 @@ class ReelsTimelineEditor {
         // 圆角
         const r = 4;
         ctx.beginPath();
-        ctx.moveTo(x + r, y);
-        ctx.lineTo(x + w - r, y);
-        ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-        ctx.lineTo(x + w, y + h - r);
-        ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-        ctx.lineTo(x + r, y + h);
-        ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-        ctx.lineTo(x, y + r);
-        ctx.quadraticCurveTo(x, y, x + r, y);
+        ctx.moveTo(drawX + r, y);
+        ctx.lineTo(drawX + drawW - r, y);
+        ctx.quadraticCurveTo(drawX + drawW, y, drawX + drawW, y + r);
+        ctx.lineTo(drawX + drawW, y + h - r);
+        ctx.quadraticCurveTo(drawX + drawW, y + h, drawX + drawW - r, y + h);
+        ctx.lineTo(drawX + r, y + h);
+        ctx.quadraticCurveTo(drawX, y + h, drawX, y + h - r);
+        ctx.lineTo(drawX, y + r);
+        ctx.quadraticCurveTo(drawX, y, drawX + r, y);
         ctx.closePath();
         ctx.fill();
 
         ctx.globalAlpha = 1;
+
+        if (isLoopInstance) {
+            // 明亮描边 + 接缝竖线，缩放很远时也能辨认出循环次数。
+            ctx.strokeStyle = 'rgba(137, 184, 255, 0.9)';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            if (x > TL_HEADER_W && x < this._canvasW) {
+                ctx.strokeStyle = '#9dc5ff';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(x, y + 2);
+                ctx.lineTo(x, y + h - 2);
+                ctx.stroke();
+            }
+        }
 
         // 选中边框
         if (isSelected) {
@@ -481,13 +593,13 @@ class ReelsTimelineEditor {
         if (w > 30) {
             ctx.save();
             ctx.beginPath();
-            ctx.rect(x + 2, y, w - 4, h);
+            ctx.rect(drawX + 2, y, drawW - 4, h);
             ctx.clip();
 
             ctx.font = '10px system-ui, sans-serif';
             ctx.fillStyle = '#fff';
             ctx.textAlign = 'left';
-            ctx.fillText(clip.name || '', x + 6, y + h / 2 + 3);
+            ctx.fillText(clip.name || '', drawX + 6, y + h / 2 + 3);
             ctx.restore();
         }
 
@@ -501,29 +613,96 @@ class ReelsTimelineEditor {
 
     _drawPlayhead(ctx, W, H) {
         const x = TL_HEADER_W + this._playheadPos * this._pxPerSec - this._scrollX;
-        if (x < TL_HEADER_W || x > W) return;
+        if (x < TL_HEADER_W - 20 || x > W + 20) return;
 
-        // 顶部三角
-        ctx.fillStyle = TL_COLORS.playhead;
-        ctx.beginPath();
-        ctx.moveTo(x - 6, 0);
-        ctx.lineTo(x + 6, 0);
-        ctx.lineTo(x, TL_RULER_H - 4);
-        ctx.closePath();
-        ctx.fill();
+        ctx.save();
 
-        // 竖线
-        ctx.strokeStyle = TL_COLORS.playhead;
-        ctx.lineWidth = 2;
+        // 1. 发光外晕竖线 (Glow Aura)
+        ctx.strokeStyle = 'rgba(239, 68, 68, 0.35)';
+        ctx.lineWidth = 4;
         ctx.beginPath();
         ctx.moveTo(x, TL_RULER_H);
         ctx.lineTo(x, H);
         ctx.stroke();
+
+        // 2. 鲜红核心竖线 (Red Core Line)
+        ctx.strokeStyle = '#ff3344';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(x, TL_RULER_H);
+        ctx.lineTo(x, H);
+        ctx.stroke();
+
+        // 3. 顶部红宝石播放头游标 (Header Pin Badge)
+        ctx.shadowColor = 'rgba(255, 42, 68, 0.6)';
+        ctx.shadowBlur = 6;
+        ctx.shadowOffsetY = 1;
+
+        const headW = 7;
+        const headH = TL_RULER_H - 2;
+        ctx.fillStyle = '#ff2a44';
+        ctx.beginPath();
+        ctx.moveTo(x - headW, 0);
+        ctx.lineTo(x + headW, 0);
+        ctx.lineTo(x + headW, headH - 7);
+        ctx.lineTo(x, headH);
+        ctx.lineTo(x - headW, headH - 7);
+        ctx.closePath();
+        ctx.fill();
+
+        // 边框与内部白色高光点
+        ctx.shadowColor = 'transparent';
+        ctx.strokeStyle = '#ffaab4';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(x, 7, 1.8, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.restore();
+    }
+
+    _drawEndMarker(ctx, W, H) {
+        const x = TL_HEADER_W + this._duration * this._pxPerSec - this._scrollX;
+        if (x < TL_HEADER_W || x > W) return;
+        ctx.save();
+        ctx.strokeStyle = '#94a3b8';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([5, 4]);
+        ctx.beginPath();
+        ctx.moveTo(x, TL_RULER_H);
+        ctx.lineTo(x, H);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = '#cbd5e1';
+        ctx.font = 'bold 9px system-ui, sans-serif';
+        ctx.textAlign = 'right';
+        ctx.fillText('结束', x - 4, TL_RULER_H + 12);
+        ctx.restore();
     }
 
     // ═══════════════════════════════════════════════
     // 鼠标交互
     // ═══════════════════════════════════════════════
+
+    _findLinkedClipRefs(linkGroupId) {
+        if (!linkGroupId) return [];
+        const result = [];
+        this._tracks.forEach((track, trackIdx) => {
+            (track.clips || []).forEach((clip, clipIdx) => {
+                if (clip && clip._linkGroupId === linkGroupId) {
+                    result.push({
+                        trackIdx, clipIdx, clip,
+                        origStart: clip.start,
+                        origEnd: clip.end,
+                    });
+                }
+            });
+        });
+        return result;
+    }
 
     _onMouseDown(e) {
         const rect = this.canvas.getBoundingClientRect();
@@ -593,15 +772,50 @@ class ReelsTimelineEditor {
             if (!this._selectedClips.has(key)) {
                 this._drag = null;
             } else if (hitInfo.zone === 'start') {
-                this._drag = { type: 'trim_start', trackIdx: hitInfo.trackIdx, clipIdx: hitInfo.clipIdx, origStart: clip.start, mx0: mx };
+                const linked = clip._linkGroupId ? this._findLinkedClipRefs(clip._linkGroupId) : [{ trackIdx: hitInfo.trackIdx, clipIdx: hitInfo.clipIdx, clip, origStart: clip.start, origEnd: clip.end }];
+                const followingClips = [];
+                const origEnd = clip.end;
+                const isSequenced = clip._isLoopInstance || clip._timelineRole === 'background' || clip._timelineRole === 'source_audio';
+                if (isSequenced) {
+                    this._tracks.forEach((track, ti) => {
+                        if (track.type === 'video' || track.type === 'audio') {
+                            (track.clips || []).forEach((c, ci) => {
+                                if (c && c.start >= origEnd - 0.05 && !linked.some(l => l.trackIdx === ti && l.clipIdx === ci)) {
+                                    followingClips.push({ trackIdx: ti, clipIdx: ci, clip: c, origStart: c.start, origEnd: c.end });
+                                }
+                            });
+                        }
+                    });
+                }
+                this._drag = { type: 'trim_start', trackIdx: hitInfo.trackIdx, clipIdx: hitInfo.clipIdx, origStart: clip.start, origEnd: clip.end, isSequenced, mx0: mx, linked, followingClips };
             } else if (hitInfo.zone === 'end') {
-                this._drag = { type: 'trim_end', trackIdx: hitInfo.trackIdx, clipIdx: hitInfo.clipIdx, origEnd: clip.end, mx0: mx };
+                const linked = clip._linkGroupId ? this._findLinkedClipRefs(clip._linkGroupId) : [{ trackIdx: hitInfo.trackIdx, clipIdx: hitInfo.clipIdx, clip, origStart: clip.start, origEnd: clip.end }];
+                const followingClips = [];
+                const origEnd = clip.end;
+                const isSequenced = clip._isLoopInstance || clip._timelineRole === 'background' || clip._timelineRole === 'source_audio';
+                if (isSequenced) {
+                    this._tracks.forEach((track, ti) => {
+                        if (track.type === 'video' || track.type === 'audio') {
+                            (track.clips || []).forEach((c, ci) => {
+                                if (c && c.start >= origEnd - 0.05 && !linked.some(l => l.trackIdx === ti && l.clipIdx === ci)) {
+                                    followingClips.push({ trackIdx: ti, clipIdx: ci, clip: c, origStart: c.start, origEnd: c.end });
+                                }
+                            });
+                        }
+                    });
+                }
+                this._drag = { type: 'trim_end', trackIdx: hitInfo.trackIdx, clipIdx: hitInfo.clipIdx, origStart: clip.start, origEnd: clip.end, isSequenced, mx0: mx, linked, followingClips };
             } else {
-                const group = this._selectedClipRefs().map(item => ({
-                    ...item,
-                    origStart: item.clip.start,
-                    origEnd: item.clip.end,
-                }));
+                const groupMap = new Map();
+                this._selectedClipRefs().forEach(item => {
+                    groupMap.set(`${item.trackIdx}_${item.clipIdx}`, { ...item, origStart: item.clip.start, origEnd: item.clip.end });
+                });
+                if (clip._linkGroupId) {
+                    this._findLinkedClipRefs(clip._linkGroupId).forEach(item => {
+                        groupMap.set(`${item.trackIdx}_${item.clipIdx}`, item);
+                    });
+                }
+                const group = Array.from(groupMap.values());
                 this._drag = {
                     type: 'move', trackIdx: hitInfo.trackIdx, clipIdx: hitInfo.clipIdx,
                     origStart: clip.start, origEnd: clip.end, mx0: mx, group,
@@ -612,6 +826,14 @@ class ReelsTimelineEditor {
             if (this._drag && this._drag.type !== 'playhead') {
                 this._autoFitDuration = false;
                 this._hasManualTimelineView = true;
+                if (this.onEditStart) {
+                    this.onEditStart({
+                        type: this._drag.type,
+                        trackIdx: hitInfo.trackIdx,
+                        clipIdx: hitInfo.clipIdx,
+                        clip,
+                    });
+                }
             }
 
             if (this.onClipSelect) this.onClipSelect(hitInfo.trackIdx, hitInfo.clipIdx, clip);
@@ -635,6 +857,10 @@ class ReelsTimelineEditor {
         // Drag
         if (this._drag) {
             const dxPx = mx - this._drag.mx0;
+            const dyPx = my - (this._drag.my0 || 0);
+            if (Math.abs(dxPx) >= 2 || Math.abs(dyPx) >= 2) {
+                this._drag.moved = true;
+            }
             const dt = dxPx / this._pxPerSec;
 
             if (this._drag.type === 'playhead') {
@@ -645,7 +871,6 @@ class ReelsTimelineEditor {
             if (this._drag.type === 'marquee') {
                 this._drag.mx1 = mx;
                 this._drag.my1 = my;
-                this._drag.moved = this._drag.moved || Math.hypot(mx - this._drag.mx0, my - this._drag.my0) >= 3;
                 if (this._drag.moved) this._updateMarqueeSelection(this._drag);
                 return;
             }
@@ -653,26 +878,76 @@ class ReelsTimelineEditor {
             const clip = this._tracks[this._drag.trackIdx]?.clips[this._drag.clipIdx];
             if (!clip) return;
 
+            const snapThresholdSec = Math.max(0.02, 6 / this._pxPerSec);
+
             if (this._drag.type === 'trim_start') {
-                clip.start = Math.max(0, this._drag.origStart + dt);
-                clip.start = Math.min(clip.start, clip.end - 0.05);
+                const maxTrim = (this._drag.origEnd - this._drag.origStart) - 0.05;
+                const dtTrim = Math.max(0, Math.min(dt, maxTrim));
+                this._drag.lastTrimOffset = dtTrim;
+                
+                if (this._drag.isSequenced) {
+                    const newEnd = Math.max(this._drag.origStart + 0.05, this._drag.origEnd - dtTrim);
+                    clip.start = this._drag.origStart;
+                    clip.end = newEnd;
+                    if (Array.isArray(this._drag.linked)) {
+                        for (const item of this._drag.linked) {
+                            item.clip.start = this._drag.origStart;
+                            item.clip.end = newEnd;
+                        }
+                    }
+                    if (Array.isArray(this._drag.followingClips)) {
+                        for (const item of this._drag.followingClips) {
+                            item.clip.start = Math.max(newEnd, item.origStart - dtTrim);
+                            item.clip.end = Math.max(item.clip.start + 0.05, item.origEnd - dtTrim);
+                        }
+                    }
+                    return;
+                } else {
+                    const newStart = this._drag.origStart + dtTrim;
+                    clip.start = newStart;
+                    clip.end = this._drag.origEnd;
+                    if (Array.isArray(this._drag.linked)) {
+                        for (const item of this._drag.linked) {
+                            item.clip.start = newStart;
+                            item.clip.end = this._drag.origEnd;
+                        }
+                    }
+                    return;
+                }
             } else if (this._drag.type === 'trim_end') {
-                clip.end = Math.max(clip.start + 0.05, this._drag.origEnd + dt);
+                let newEnd = Math.max(this._drag.origStart + 0.05, this._drag.origEnd + dt);
+                const delta = newEnd - this._drag.origEnd;
+                clip.end = newEnd;
+                if (Array.isArray(this._drag.linked)) {
+                    for (const item of this._drag.linked) {
+                        item.clip.end = newEnd;
+                    }
+                }
+                if (Array.isArray(this._drag.followingClips)) {
+                    for (const item of this._drag.followingClips) {
+                        item.clip.start = Math.max(newEnd, item.origStart + delta);
+                        item.clip.end = Math.max(item.clip.start + 0.05, item.origEnd + delta);
+                    }
+                }
+                return;
             } else if (this._drag.type === 'move') {
                 const group = this._drag.group || [];
                 const minStart = group.length > 0
                     ? Math.min(...group.map(item => item.origStart))
                     : this._drag.origStart;
-                const safeDt = Math.max(dt, -minStart);
+                let safeDt = dt;
+                // 磁吸到 0.0s 边界
+                if (minStart + dt < snapThresholdSec && minStart + dt > -snapThresholdSec) {
+                    safeDt = -minStart;
+                } else {
+                    safeDt = Math.max(dt, -minStart);
+                }
                 for (const item of group) {
                     item.clip.start = item.origStart + safeDt;
                     item.clip.end = item.origEnd + safeDt;
-                    if (this.onClipChange) this.onClipChange(item.trackIdx, item.clipIdx, item.clip);
                 }
                 return;
             }
-
-            if (this.onClipChange) this.onClipChange(this._drag.trackIdx, this._drag.clipIdx, clip);
             return;
         }
 
@@ -691,17 +966,46 @@ class ReelsTimelineEditor {
             } else {
                 this.canvas.style.cursor = 'pointer';
             }
+            this.canvas.title = '';
+        } else if (this._hitTestGap(mx, my)) {
+            this.canvas.style.cursor = 'default';
+            this.canvas.title = '右键菜单可补充背景循环至结尾';
         } else if (my < TL_RULER_H && mx >= TL_HEADER_W) {
             this.canvas.style.cursor = 'pointer';
+            this.canvas.title = '';
         } else {
             this.canvas.style.cursor = 'default';
+            this.canvas.title = '';
         }
     }
 
     _onMouseUp(e) {
         const wasPlayheadDrag = this._drag && this._drag.type === 'playhead';
         const marquee = this._drag && this._drag.type === 'marquee' ? this._drag : null;
+        const wasRealMove = this._drag && this._drag.moved;
+        const edit = this._drag && wasRealMove && !['playhead', 'marquee'].includes(this._drag.type)
+            ? {
+                type: this._drag.type,
+                trackIdx: this._drag.trackIdx,
+                clipIdx: this._drag.clipIdx,
+                clip: this._tracks[this._drag.trackIdx]?.clips[this._drag.clipIdx],
+                trimOffset: this._drag.lastTrimOffset || 0,
+                origStart: this._drag.origStart,
+                origEnd: this._drag.origEnd,
+                origInT: this._drag.origInT,
+            }
+            : null;
         this._drag = null;
+        if (edit && edit.clip && this.onClipChange) {
+            this.onClipChange(edit.trackIdx, edit.clipIdx, edit.clip, {
+                editMode: edit.type,
+                trimOffset: edit.trimOffset,
+                origStart: edit.origStart,
+                origEnd: edit.origEnd,
+                origInT: edit.origInT,
+            });
+        }
+        if (edit && edit.clip && this.onEditEnd) this.onEditEnd(edit);
         if (wasPlayheadDrag && this.onSeek) this.onSeek(this._playheadPos, 'mouseup');
         if (marquee && !marquee.moved) {
             this._seekToX(marquee.mx0, 'mousedown');
@@ -779,6 +1083,199 @@ class ReelsTimelineEditor {
             }
         }
         return null;
+    }
+
+    _hitTestGap(mx, my) {
+        let y = TL_RULER_H - this._scrollY;
+        for (let ti = 0; ti < this._tracks.length; ti++) {
+            const track = this._tracks[ti];
+            const isBackgroundTrack = track.type === 'video' || (track.name && track.name.includes('背景'));
+            if (isBackgroundTrack && track.clips && track.clips.length > 0) {
+                if (my >= y && my < y + TL_TRACK_HEIGHT) {
+                    const maxEnd = Math.max(0, ...track.clips.map(c => c.end || 0));
+                    if (this._duration > maxEnd + 0.1) {
+                        const gx0 = TL_HEADER_W + maxEnd * this._pxPerSec - this._scrollX;
+                        const gx1 = TL_HEADER_W + this._duration * this._pxPerSec - this._scrollX;
+                        if (mx >= Math.max(TL_HEADER_W, gx0) && mx <= gx1) {
+                            return { trackIdx: ti, gapStart: maxEnd, gapEnd: this._duration };
+                        }
+                    }
+                }
+            }
+            y += TL_TRACK_HEIGHT + 1;
+            if (ti < this._tracks.length - 1 && track.domain === 'visual' && this._tracks[ti + 1]?.domain === 'audio') {
+                y += 4;
+            }
+        }
+        return null;
+    }
+
+    _onContextMenu(e) {
+        const oldMenu = document.getElementById('reels-timeline-ctx-menu');
+        if (oldMenu) oldMenu.remove();
+
+        const rect = this.canvas.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+        const hitInfo = this._hitTestClip(mx, my);
+        if (hitInfo) {
+            const key = this._clipKey(hitInfo.trackIdx, hitInfo.clipIdx);
+            if (!this._selectedClips.has(key)) {
+                this._selectedClips.clear();
+                this._selectedClips.add(key);
+                this._selectedClip = { trackIdx: hitInfo.trackIdx, clipIdx: hitInfo.clipIdx };
+            }
+        }
+
+        const menu = document.createElement('div');
+        menu.id = 'reels-timeline-ctx-menu';
+        Object.assign(menu.style, {
+            position: 'fixed',
+            left: `${Math.min(window.innerWidth - 200, e.clientX)}px`,
+            top: `${Math.min(window.innerHeight - 180, e.clientY)}px`,
+            zIndex: '999999',
+            background: 'rgba(23, 23, 28, 0.96)',
+            backdropFilter: 'blur(12px)',
+            border: '1px solid rgba(255, 255, 255, 0.14)',
+            borderRadius: '8px',
+            padding: '6px',
+            boxShadow: '0 10px 28px rgba(0, 0, 0, 0.6)',
+            color: '#eee',
+            fontSize: '12px',
+            minWidth: '190px',
+            userSelect: 'none',
+        });
+
+        const items = [
+            {
+                icon: '🔄',
+                text: '补充背景循环至结尾',
+                shortcut: 'Auto-Fill',
+                action: () => { if (this.onFillGap) this.onFillGap(); },
+            },
+            {
+                icon: '⏮️',
+                text: '磁吸对齐到 0.0s 开头',
+                action: () => {
+                    const selected = this._selectedClipRefs();
+                    if (selected.length > 0) {
+                        const minStart = Math.min(...selected.map(s => s.clip.start));
+                        selected.forEach(s => {
+                            const dur = s.clip.end - s.clip.start;
+                            s.clip.start -= minStart;
+                            s.clip.end = s.clip.start + dur;
+                            if (this.onClipChange) this.onClipChange(s.trackIdx, s.clipIdx, s.clip, { editMode: 'move' });
+                        });
+                        if (this.onEditEnd) this.onEditEnd();
+                    }
+                },
+            },
+            {
+                icon: '✂️',
+                text: '在播放头处切分 (Split)',
+                shortcut: 'S',
+                action: () => {
+                    this._splitClipAtPlayhead();
+                },
+            },
+            {
+                icon: '🗑️',
+                text: '删除选中片段 (Delete)',
+                shortcut: 'Del',
+                danger: true,
+                action: () => {
+                    this._deleteSelectedClips();
+                },
+            },
+        ];
+
+        items.forEach(item => {
+            const btn = document.createElement('div');
+            Object.assign(btn.style, {
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '6px 10px',
+                borderRadius: '5px',
+                cursor: 'pointer',
+                transition: 'background 0.1s ease',
+                color: item.danger ? '#f87171' : '#ddd',
+            });
+            btn.innerHTML = `
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <span style="font-size:13px;">${item.icon}</span>
+                    <span>${item.text}</span>
+                </div>
+                ${item.shortcut ? `<span style="font-size:10px;color:rgba(255,255,255,0.4);">${item.shortcut}</span>` : ''}
+            `;
+            btn.onmouseenter = () => { btn.style.background = item.danger ? 'rgba(239, 68, 68, 0.25)' : 'rgba(255, 255, 255, 0.08)'; };
+            btn.onmouseleave = () => { btn.style.background = 'transparent'; };
+            btn.onclick = (ev) => {
+                ev.stopPropagation();
+                menu.remove();
+                item.action();
+            };
+            menu.appendChild(btn);
+        });
+
+        document.body.appendChild(menu);
+
+        const closeMenu = (ev) => {
+            if (!menu.contains(ev.target)) {
+                menu.remove();
+                document.removeEventListener('mousedown', closeMenu, true);
+                document.removeEventListener('keydown', handleEsc, true);
+            }
+        };
+        const handleEsc = (ev) => {
+            if (ev.key === 'Escape') {
+                menu.remove();
+                document.removeEventListener('mousedown', closeMenu, true);
+                document.removeEventListener('keydown', handleEsc, true);
+            }
+        };
+        setTimeout(() => {
+            document.addEventListener('mousedown', closeMenu, true);
+            document.addEventListener('keydown', handleEsc, true);
+        }, 10);
+    }
+
+    _splitClipAtPlayhead() {
+        const t = this._currentTime;
+        const selected = this._selectedClipRefs();
+        if (!selected.length) return;
+        const first = selected[0];
+        const clip = first.clip;
+        if (t > clip.start + 0.05 && t < clip.end - 0.05) {
+            const oldEnd = clip.end;
+            clip.end = t;
+            const newClip = {
+                ...clip,
+                start: t,
+                end: oldEnd,
+                _timelineClipId: undefined,
+            };
+            const track = this._tracks[first.trackIdx];
+            if (track) {
+                track.clips.splice(first.clipIdx + 1, 0, newClip);
+                if (this.onClipChange) this.onClipChange(first.trackIdx, first.clipIdx, clip, { editMode: 'trim_end' });
+                if (this.onEditEnd) this.onEditEnd();
+            }
+        }
+    }
+
+    _deleteSelectedClips() {
+        const selected = this._selectedClipRefs();
+        if (!selected.length) return;
+        selected.sort((a, b) => b.clipIdx - a.clipIdx);
+        for (const item of selected) {
+            const track = this._tracks[item.trackIdx];
+            if (track && !track.locked) {
+                track.clips.splice(item.clipIdx, 1);
+            }
+        }
+        this._clearClipSelection();
+        if (this.onEditEnd) this.onEditEnd();
     }
 
     // ═══════════════════════════════════════════════

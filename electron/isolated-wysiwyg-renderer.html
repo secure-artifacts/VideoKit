@@ -179,6 +179,13 @@ ipcRenderer.on('isolated-wysiwyg-run', async (_event, payload = {}) => {
         params.isCancelled = () => cancelled;
         params.onProgress = pct => ipcRenderer.send('isolated-wysiwyg-progress', { requestId, pct });
         params.onLog = message => ipcRenderer.send('isolated-wysiwyg-log', { requestId, message });
+
+        if (window.getFontManager) {
+            const fm = window.getFontManager();
+            const fontsToLoad = fm.collectFonts(params);
+            await fm.ensureFontsLoaded(fontsToLoad);
+        }
+
         const result = await window.reelsWysiwygExport(params);
         ipcRenderer.send('isolated-wysiwyg-result', { requestId, success: true, result });
     } catch (error) {

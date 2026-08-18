@@ -410,24 +410,18 @@ class ReelsFontManager {
 
         try {
             const encoded = fontFamily.replace(/ /g, '+');
-            const link = document.createElement('link');
-            link.rel = 'stylesheet';
-            // 导出会按卡片设置使用 100–900 的任意字重。以前这里只请求到 700，
-            // 例如 Anton 900 会先以替代字体/伪粗体绘制，等 CSS 字体随后到达时，
-            // 同一段文字的宽度和换行会在逐帧导出中发生变化。
-            link.href = `https://fonts.googleapis.com/css2?family=${encoded}:wght@100;200;300;400;500;600;700;800;900&display=block`;
-            const stylesheetReady = new Promise((resolve, reject) => {
-                link.onload = resolve;
-                link.onerror = () => reject(new Error(`Google Fonts stylesheet failed: ${fontFamily}`));
-            });
-            document.head.appendChild(link);
+            try {
+                await this._injectGoogleFontStylesheet(`https://fonts.googleapis.com/css2?family=${encoded}:wght@100;200;300;400;500;600;700;800;900&display=block`);
+            } catch (_) {
+                // 降级：部分单字重字体（如 Anton, Bebas Neue）不支持 wght 范围，使用默认无参数请求
+                await this._injectGoogleFontStylesheet(`https://fonts.googleapis.com/css2?family=${encoded}&display=block`);
+            }
 
-            // 先等待 CSS 规则进入 document，再逐个等待 Canvas 可能使用的字重。
-            // 仅 await document.fonts.ready 并不保证刚插入的 stylesheet 已被发现。
-            await stylesheetReady;
-            await Promise.all(['100', '200', '300', '400', '500', '600', '700', '800', '900'].map((weight) =>
-                document.fonts.load(`${weight} 16px "${fontFamily}"`)
-            ));
+            if (typeof document !== 'undefined' && document.fonts && typeof document.fonts.load === 'function') {
+                await Promise.all(['100', '200', '300', '400', '500', '600', '700', '800', '900'].map((weight) =>
+                    document.fonts.load(`${weight} 16px "${fontFamily}"`).catch(() => {})
+                ));
+            }
             this._loadedGoogleFonts.add(fontFamily);
 
             if (!this._allowedFonts.includes(fontFamily)) {
@@ -441,6 +435,93 @@ class ReelsFontManager {
             console.log(`[FontManager] Loaded Google Font: ${fontFamily}`);
         } catch (err) {
             console.warn(`[FontManager] Failed to load Google Font: ${fontFamily}`, err);
+        }
+    }
+
+    /**
+     * 辅助插入 Google Fonts CSS 规则并等待加载
+     */
+    _injectGoogleFontStylesheet(url) {
+        return new Promise((resolve, reject) => {
+            if (typeof document === 'undefined') return resolve();
+            const link = document.createElement('link');
+            link.rel = 'stylesheet';
+            link.href = url;
+            link.onload = () => resolve();
+            link.onerror = () => {
+                link.remove();
+                reject(new Error(`Google Fonts stylesheet failed: ${url}`));
+            };
+            document.head.appendChild(link);
+        });
+    }
+
+    /**
+     * 从任务配置中深度提取所有涉及的字体名称（字幕、覆层、富文本、段落覆盖、水印等）。
+     */
+    collectFonts({ style, segments, overlays, watermarks, cover } = {}) {
+        const fonts = new Set();
+        if (style && style.font_family) fonts.add(style.font_family);
+        if (Array.isArray(segments)) {
+            for (const seg of segments) {
+                if (!seg) continue;
+                const segStyle = seg.style_override || seg.subtitle_style;
+                if (segStyle && segStyle.font_family) fonts.add(segStyle.font_family);
+                if (Array.isArray(seg.styled_ranges)) {
+                    for (const r of seg.styled_ranges) {
+                        if (r && r.font_family) fonts.add(r.font_family);
+                    }
+                }
+            }
+        }
+        const scanOverlays = (ovList) => {
+            if (!Array.isArray(ovList)) return;
+            for (const ov of ovList) {
+                if (!ov || ov.disabled) continue;
+                if (ov.font_family) fonts.add(ov.font_family);
+                if (ov.title_font_family) fonts.add(ov.title_font_family);
+                if (ov.body_font_family) fonts.add(ov.body_font_family);
+                if (ov.footer_font_family) fonts.add(ov.footer_font_family);
+            }
+        };
+        scanOverlays(overlays);
+        if (cover && cover.enabled) {
+            scanOverlays(cover.overlays);
+        }
+        if (Array.isArray(watermarks)) {
+            for (const wm of watermarks) {
+                if (wm && wm.font_family) fonts.add(wm.font_family);
+            }
+        }
+        return Array.from(fonts).filter(Boolean);
+    }
+
+    /**
+     * 确保字体系统已注册并完全预加载指定字体（含本地注册与 Google Fonts 加载 + document.fonts.ready）。
+     */
+    async ensureFontsLoaded(fonts = []) {
+        if (!this._registered) {
+            try {
+                await this.register();
+            } catch (e) {
+                console.warn('[FontManager] register failed:', e);
+            }
+        }
+        const list = Array.isArray(fonts) ? fonts : [fonts];
+        for (const font of list) {
+            if (!font) continue;
+            try {
+                await this.loadGoogleFont(font);
+            } catch (e) {
+                console.warn(`[FontManager] Failed to preload font "${font}":`, e);
+            }
+        }
+        if (typeof document !== 'undefined' && document.fonts && document.fonts.ready) {
+            try {
+                await document.fonts.ready;
+            } catch (e) {
+                console.warn('[FontManager] document.fonts.ready wait error:', e);
+            }
         }
     }
 

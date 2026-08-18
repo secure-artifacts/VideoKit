@@ -94,3 +94,4 @@ test-listener.js
 parse_sarif.py
 scratch_detail.py
 security_best_practices_report.md
+QuickCut-*/

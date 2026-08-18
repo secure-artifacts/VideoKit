@@ -1150,8 +1150,10 @@
         drawBackground(ctx, task, w, h, phase);
         drawGlobalMask(ctx, getResolvedStyle(task), w, h, phase);
         drawContentVideo(ctx, task, w, h, phase);
+        const overlayAboveSubtitle = task.overlayAboveSubtitle !== false;
+        if (!overlayAboveSubtitle) drawOverlays(ctx, task, overlayTime, w, h, phase);
         drawSubtitles(ctx, task, subtitleTime, w, h, phase);
-        drawOverlays(ctx, task, overlayTime, w, h, phase);
+        if (overlayAboveSubtitle) drawOverlays(ctx, task, overlayTime, w, h, phase);
         drawWatermarks(ctx, w, h);
         updateTimeUI(Math.min(t, dur || t), dur);
         syncTimelinePlayhead(t, task);
@@ -1209,6 +1211,7 @@
 
     function drawBackground(ctx, task, w, h, phase = getPhaseInfo(getCurrentTime(), task)) {
         const bgScale = numberOr(task && task.bgScale, 100);
+        const bgRotation = numberOr(task && task.bgRotation, 0);
         const bgX = numberOr(task && task.bgX, 0);
         const bgY = numberOr(task && task.bgY, 0);
 
@@ -1226,15 +1229,15 @@
             return;
         }
         if (task && task.contentVideoDirectBg && (state.contentVideo.src || state.contentImage)) {
-            drawCroppedCover(ctx, getContentSource(), parseCrop(task.contentVideoCrop), w, h, bgScale, bgX, bgY, !!task.bgFlipH, !!task.bgFlipV);
+            drawCroppedCover(ctx, getContentSource(), parseCrop(task.contentVideoCrop), w, h, bgScale, bgX, bgY, !!task.bgFlipH, !!task.bgFlipV, bgRotation);
             return;
         }
         if (task && task.bgMode === 'multi' && getEffectiveBgClipPool(task).length > 0) {
             drawMultiBackground(ctx, task, w, h, resolveMultiBackgroundAtTime(task, phase.mainTime));
         } else if (state.bgImage && state.bgImage.complete && state.bgImage.naturalWidth > 0) {
-            drawMediaCover(ctx, state.bgImage, w, h, bgScale, bgX, bgY, !!task.bgFlipH, !!task.bgFlipV);
+            drawMediaCover(ctx, state.bgImage, w, h, bgScale, bgX, bgY, !!task.bgFlipH, !!task.bgFlipV, bgRotation);
         } else if (state.bgVideo.src && state.bgVideo.readyState >= 2 && state.bgVideo.videoWidth > 0) {
-            drawMediaCover(ctx, state.bgVideo, w, h, bgScale, bgX, bgY, !!task.bgFlipH, !!task.bgFlipV);
+            drawMediaCover(ctx, state.bgVideo, w, h, bgScale, bgX, bgY, !!task.bgFlipH, !!task.bgFlipV, bgRotation);
         } else {
             const grad = ctx.createLinearGradient(0, 0, 0, h);
             grad.addColorStop(0, '#101622');
@@ -1249,16 +1252,17 @@
         const scale = numberOr(cover.bgScale, numberOr(task && task.bgScale, 100));
         const x = numberOr(cover.bgX, numberOr(task && task.bgX, 0));
         const y = numberOr(cover.bgY, numberOr(task && task.bgY, 0));
+        const rotation = numberOr(cover.bgRotation, numberOr(task && task.bgRotation, 0));
         const flipH = !!(cover.bgFlipH || (task && task.bgFlipH));
         const flipV = !!(cover.bgFlipV || (task && task.bgFlipV));
         if (state.coverImage && state.coverImage.complete && state.coverImage.naturalWidth > 0) {
-            drawMediaCover(ctx, state.coverImage, w, h, scale, x, y, flipH, flipV);
+            drawMediaCover(ctx, state.coverImage, w, h, scale, x, y, flipH, flipV, rotation);
         } else if (state.coverVideo.src && state.coverVideo.readyState >= 2 && state.coverVideo.videoWidth > 0) {
-            drawMediaCover(ctx, state.coverVideo, w, h, scale, x, y, flipH, flipV);
+            drawMediaCover(ctx, state.coverVideo, w, h, scale, x, y, flipH, flipV, rotation);
         } else if (state.bgImage && state.bgImage.complete && state.bgImage.naturalWidth > 0) {
-            drawMediaCover(ctx, state.bgImage, w, h, scale, x, y, flipH, flipV);
+            drawMediaCover(ctx, state.bgImage, w, h, scale, x, y, flipH, flipV, rotation);
         } else if (state.bgVideo.src && state.bgVideo.readyState >= 2 && state.bgVideo.videoWidth > 0) {
-            drawMediaCover(ctx, state.bgVideo, w, h, scale, x, y, flipH, flipV);
+            drawMediaCover(ctx, state.bgVideo, w, h, scale, x, y, flipH, flipV, rotation);
         } else {
             ctx.fillStyle = '#000';
             ctx.fillRect(0, 0, w, h);
@@ -1278,7 +1282,7 @@
         if (!canDraw) return;
         ctx.save();
         ctx.globalAlpha = clamp(1 - timeToEnd / transitionDur, 0, 1);
-        drawMediaCover(ctx, bg, w, h, numberOr(task && task.bgScale, 100), numberOr(task && task.bgX, 0), numberOr(task && task.bgY, 0), !!task.bgFlipH, !!task.bgFlipV);
+        drawMediaCover(ctx, bg, w, h, numberOr(task && task.bgScale, 100), numberOr(task && task.bgX, 0), numberOr(task && task.bgY, 0), !!task.bgFlipH, !!task.bgFlipV, numberOr(task && task.bgRotation, 0));
         ctx.restore();
     }
 
@@ -1286,6 +1290,7 @@
         const bgScale = numberOr(task && task.bgScale, 100);
         const bgX = numberOr(task && task.bgX, 0);
         const bgY = numberOr(task && task.bgY, 0);
+        const bgRotation = numberOr(task && task.bgRotation, 0);
         const flipH = !!(task && task.bgFlipH);
         const flipV = !!(task && task.bgFlipV);
         if (!clips || !clips.current) {
@@ -1298,7 +1303,7 @@
         const drawClip = (clip) => {
             const src = getMultiClipSource(clip);
             if (src) {
-                drawMediaCover(ctx, src, w, h, bgScale, bgX, bgY, flipH, flipV);
+                drawMediaCover(ctx, src, w, h, bgScale, bgX, bgY, flipH, flipV, bgRotation);
             } else {
                 ctx.fillStyle = '#11151d';
                 ctx.fillRect(0, 0, w, h);
@@ -1450,7 +1455,7 @@
         const blur = numberOr(task.contentVideoBlur, 40);
         const brightness = numberOr(task.contentVideoBrightness, 60) / 100;
         ctx.filter = `blur(${blur}px) brightness(${brightness})`;
-        drawCroppedCover(ctx, src, crop, w, h, numberOr(task.bgScale, 100), numberOr(task.bgX, 0), numberOr(task.bgY, 0), !!task.bgFlipH, !!task.bgFlipV);
+        drawCroppedCover(ctx, src, crop, w, h, numberOr(task.bgScale, 100), numberOr(task.bgX, 0), numberOr(task.bgY, 0), !!task.bgFlipH, !!task.bgFlipV, numberOr(task.bgRotation, 0));
         ctx.restore();
     }
 
@@ -1941,7 +1946,9 @@
     function getTask() {
         const rs = window._reelsState;
         if (!rs || !Array.isArray(rs.tasks) || rs.selectedIdx < 0) return null;
-        return rs.tasks[rs.selectedIdx] || null;
+        const task = rs.tasks[rs.selectedIdx] || null;
+        // 预览与导出都在入口处执行同一份时间线→渲染字段同步。
+        return window.ReelsRenderPlan?.syncLegacyFields(task) || task;
     }
 
     function getSelectedIndex() {
@@ -2704,23 +2711,27 @@
         return null;
     }
 
-    function drawMediaCover(ctx, media, targetW, targetH, scalePct, offsetX, offsetY, flipH, flipV) {
+    function drawMediaCover(ctx, media, targetW, targetH, scalePct, offsetX, offsetY, flipH, flipV, rotation = 0) {
         if (!media) return;
         const srcW = media.videoWidth || media.naturalWidth || media.width || targetW;
         const srcH = media.videoHeight || media.naturalHeight || media.height || targetH;
         if (!(srcW > 0 && srcH > 0)) return;
 
-        const scale = Math.max(targetW / srcW, targetH / srcH) * (numberOr(scalePct, 100) / 100);
+        let scale = Math.max(targetW / srcW, targetH / srcH) * (numberOr(scalePct, 100) / 100);
+        const radians = Math.abs(numberOr(rotation, 0) % 180) * Math.PI / 180;
+        const preRotateW = srcW * scale;
+        const preRotateH = srcH * scale;
+        scale *= Math.max(1, targetW / (Math.abs(preRotateW * Math.cos(radians)) + Math.abs(preRotateH * Math.sin(radians))), targetH / (Math.abs(preRotateW * Math.sin(radians)) + Math.abs(preRotateH * Math.cos(radians))));
         const drawW = srcW * scale;
         const drawH = srcH * scale;
         const maxShiftX = Math.abs(targetW - drawW) / 2;
         const maxShiftY = Math.abs(targetH - drawH) / 2;
         const x = (targetW - drawW) / 2 + maxShiftX * (numberOr(offsetX, 0) / 100);
         const y = (targetH - drawH) / 2 + maxShiftY * (numberOr(offsetY, 0) / 100);
-        drawImageMaybeFlipped(ctx, media, 0, 0, srcW, srcH, x, y, drawW, drawH, flipH, flipV);
+        drawImageMaybeFlipped(ctx, media, 0, 0, srcW, srcH, x, y, drawW, drawH, flipH, flipV, rotation);
     }
 
-    function drawCroppedCover(ctx, media, crop, targetW, targetH, scalePct, offsetX, offsetY, flipH, flipV) {
+    function drawCroppedCover(ctx, media, crop, targetW, targetH, scalePct, offsetX, offsetY, flipH, flipV, rotation = 0) {
         if (!media) return;
         const srcW = media.videoWidth || media.naturalWidth || media.width || targetW;
         const srcH = media.videoHeight || media.naturalHeight || media.height || targetH;
@@ -2729,23 +2740,28 @@
         const sy = srcH * crop.y;
         const sw = srcW * crop.w;
         const sh = srcH * crop.h;
-        const scale = Math.max(targetW / sw, targetH / sh) * (numberOr(scalePct, 100) / 100);
+        let scale = Math.max(targetW / sw, targetH / sh) * (numberOr(scalePct, 100) / 100);
+        const radians = Math.abs(numberOr(rotation, 0) % 180) * Math.PI / 180;
+        const preRotateW = sw * scale;
+        const preRotateH = sh * scale;
+        scale *= Math.max(1, targetW / (Math.abs(preRotateW * Math.cos(radians)) + Math.abs(preRotateH * Math.sin(radians))), targetH / (Math.abs(preRotateW * Math.sin(radians)) + Math.abs(preRotateH * Math.cos(radians))));
         const drawW = sw * scale;
         const drawH = sh * scale;
         const maxShiftX = Math.abs(targetW - drawW) / 2;
         const maxShiftY = Math.abs(targetH - drawH) / 2;
         const x = (targetW - drawW) / 2 + maxShiftX * (numberOr(offsetX, 0) / 100);
         const y = (targetH - drawH) / 2 + maxShiftY * (numberOr(offsetY, 0) / 100);
-        drawImageMaybeFlipped(ctx, media, sx, sy, sw, sh, x, y, drawW, drawH, flipH, flipV);
+        drawImageMaybeFlipped(ctx, media, sx, sy, sw, sh, x, y, drawW, drawH, flipH, flipV, rotation);
     }
 
-    function drawImageMaybeFlipped(ctx, img, sx, sy, sw, sh, dx, dy, dw, dh, flipH, flipV) {
-        if (!flipH && !flipV) {
+    function drawImageMaybeFlipped(ctx, img, sx, sy, sw, sh, dx, dy, dw, dh, flipH, flipV, rotation = 0) {
+        if (!flipH && !flipV && !rotation) {
             ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
             return;
         }
         ctx.save();
         ctx.translate(dx + dw / 2, dy + dh / 2);
+        if (rotation) ctx.rotate(numberOr(rotation, 0) * Math.PI / 180);
         ctx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
         ctx.drawImage(img, sx, sy, sw, sh, -dw / 2, -dh / 2, dw, dh);
         ctx.restore();

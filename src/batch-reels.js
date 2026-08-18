@@ -41,6 +41,8 @@ const _reelsState = {
     watermarks: [],
     // Global subtitle style (when apply-all is enabled)
     globalSubtitleStyle: null,
+    // 最近一次用户确认的字幕样式作用域；用于识别“全部 → 独立”的交接。
+    lastSubtitleStyleScope: '',
     // Hook preview state
     hookVideoReady: false,
     hookDuration: 0,
@@ -185,6 +187,8 @@ const REELS_ANIMATION_PRESETS = {
         anim_in_duration: 0.42,
         anim_out_type: 'fade',
         anim_out_duration: 0.26,
+        typewriter_reveal_type: 'word',
+        tw_unrevealed_opacity: 0,
     },
     bounce_fun: {
         label: 'Bounce · 逐字弹跳',
@@ -201,6 +205,7 @@ const REELS_ANIMATION_PRESETS = {
         anim_out_type: 'fade',
         anim_out_duration: 0.2,
         metronome_bpm: 128,
+        metro_unread_opacity: 100,
     },
     slide_up_clean: {
         label: 'Slide Up · 上滑入场',
@@ -523,6 +528,32 @@ function _initReelsModule() {
     const tlContainer = document.getElementById('reels-timeline-container');
     if (tlContainer && typeof ReelsTimelineEditor !== 'undefined') {
         _reelsState.timelineEditor = new ReelsTimelineEditor(tlContainer);
+        const historyStepsEl = document.getElementById('reels-history-steps');
+        const historyMemoryEl = document.getElementById('reels-history-memory');
+        const syncHistorySettingsUi = () => {
+            if (typeof window.reelsGetHistorySettings !== 'function') return;
+            const settings = window.reelsGetHistorySettings();
+            if (historyStepsEl) historyStepsEl.value = String(settings.maxSteps);
+            if (historyMemoryEl) historyMemoryEl.value = String(settings.maxBytes);
+        };
+        syncHistorySettingsUi();
+        const saveHistorySettings = () => {
+            if (typeof window.reelsSetHistorySettings !== 'function') return;
+            const settings = window.reelsSetHistorySettings({
+                maxSteps: Number(historyStepsEl?.value),
+                maxBytes: Number(historyMemoryEl?.value),
+            });
+            const status = document.getElementById('reels-export-status');
+            if (status) status.textContent = `↶ 已设置撤销历史：${settings.maxSteps} 步 / ${Math.round(settings.maxBytes / 1024 / 1024)} MB`;
+        };
+        if (historyStepsEl && !historyStepsEl.dataset.bound) {
+            historyStepsEl.dataset.bound = 'true';
+            historyStepsEl.addEventListener('change', saveHistorySettings);
+        }
+        if (historyMemoryEl && !historyMemoryEl.dataset.bound) {
+            historyMemoryEl.dataset.bound = 'true';
+            historyMemoryEl.addEventListener('change', saveHistorySettings);
+        }
         _reelsState.timelineEditor.onSeek = (t, type) => {
             if (window.ReelsPreviewV2?.isOpen?.()) {
                 window.ReelsPreviewV2.seek(window.ReelsPreviewV2.timelineToAbsolute(t));
@@ -579,9 +610,46 @@ function _initReelsModule() {
 
         // 绑定片段拖拽调整事件 (onClipChange)
         let _clipDragTimer = null;
-        _reelsState.timelineEditor.onClipChange = (trackIdx, clipIdx, clip) => {
+        // 每次拖动只保存“拖动前”和“拖动后”两个状态。不能在 mousemove
+        // 中存历史，否则一次调整会占满用户设置的 100/300/1000 步额度。
+        _reelsState.timelineEditor.onEditStart = () => {
+            if (typeof window.reelsSaveHistory === 'function') window.reelsSaveHistory();
+        };
+        _reelsState.timelineEditor.onEditEnd = () => {
+            if (typeof window.reelsSaveHistory === 'function') window.reelsSaveHistory();
+            // 重新投影同一份 timeline：把已移动的绑定原声和后续波纹片段同步
+            // 回画布，但 render-plan 不会覆盖用户刚刚完成的编辑。
             const task = _getSelectedTask();
-            if (!task || !task.segments) return;
+            if (task) _updateTimelineForTask(task);
+        };
+        _reelsState.timelineEditor.onFillGap = () => {
+            const task = _getSelectedTask();
+            if (!task) return;
+            const subtitleDuration = Array.isArray(task.segments) && task.segments.length
+                ? Math.max(0, ...task.segments.map(s => Number(s.end) || 0))
+                : 0;
+            const outputDuration = Math.max(subtitleDuration, _getAudioDuration(task), _getVideoDuration(task), _getContentVideoDuration(task), task.customDuration || 0, 1);
+            if (window.ReelsRenderPlan?.fillBackgroundLoops(task, { duration: outputDuration })) {
+                _updateTimelineForTask(task);
+                if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
+                if (typeof window.reelsSaveHistory === 'function') window.reelsSaveHistory();
+                const status = document.getElementById('reels-export-status');
+                if (status) status.textContent = `🔄 已自动补充背景循环画面至 ${outputDuration.toFixed(1)}s！`;
+            }
+        };
+        _reelsState.timelineEditor.onClipChange = (trackIdx, clipIdx, clip, editOptions = {}) => {
+            const task = _getSelectedTask();
+            if (!task) return;
+            if (clip && clip._timelineClipId && window.ReelsRenderPlan?.applyEditorClip(task, clip, editOptions)) {
+                if (!_clipDragTimer && typeof reelsUpdatePreview === 'function') {
+                    _clipDragTimer = setTimeout(() => {
+                        reelsUpdatePreview();
+                        _clipDragTimer = null;
+                    }, 50);
+                }
+                return;
+            }
+            if (!task.segments) return;
             const track = _reelsState.timelineEditor._tracks[trackIdx];
             if (track && track.type === 'subs') {
                 const segIdx = clip._segIdx != null ? clip._segIdx : clipIdx;
@@ -1824,6 +1892,33 @@ function reelsApplyAnimationPreset(silent = false) {
     set('reels-glow-color', preset.holy_glow_color);
     set('reels-glow-radius', preset.holy_glow_radius);
     set('reels-blur-max', preset.blur_sharp_max);
+    set('reels-typewriter-reveal-type', preset.typewriter_reveal_type);
+    if (preset.tw_unrevealed_opacity !== undefined) {
+        const opacity = Number(preset.tw_unrevealed_opacity);
+        const opacity255 = Math.round(Math.max(0, Math.min(255, opacity > 1 ? opacity : opacity * 255)));
+        set('reels-typewriter-unread-opacity', opacity255);
+        set('reels-typewriter-unread-opacity-range', opacity255);
+    }
+    // 逐词预设的专属参数也必须落到 UI；否则换过另一种动态字幕后，
+    // 当前预设会悄悄沿用上一种的缩放/透明度。
+    set('reels-word-pop-min', preset.word_pop_random_min_scale);
+    set('reels-word-pop-min-range', preset.word_pop_random_min_scale);
+    set('reels-word-pop-max', preset.word_pop_random_max_scale);
+    set('reels-word-pop-max-range', preset.word_pop_random_max_scale);
+    set('reels-word-pop-dur', preset.word_pop_random_duration);
+    set('reels-word-pop-dur-range', preset.word_pop_random_duration);
+    set('reels-word-pop-pulse-min', preset.word_pop_random_pulse_min_scale);
+    set('reels-word-pop-pulse-min-range', preset.word_pop_random_pulse_min_scale);
+    set('reels-word-pop-pulse-max', preset.word_pop_random_pulse_max_scale);
+    set('reels-word-pop-pulse-max-range', preset.word_pop_random_pulse_max_scale);
+    set('reels-word-pop-pulse-dur', preset.word_pop_random_pulse_duration);
+    set('reels-word-pop-pulse-dur-range', preset.word_pop_random_pulse_duration);
+    set('reels-word-pop-unread-opacity', preset.word_pop_random_unread_opacity);
+    set('reels-word-pop-unread-opacity-range', preset.word_pop_random_unread_opacity);
+    set('reels-word-pop-read-opacity', preset.word_pop_random_read_opacity);
+    set('reels-word-pop-read-opacity-range', preset.word_pop_random_read_opacity);
+    set('reels-metro-unread-opacity', preset.metro_unread_opacity);
+    set('reels-metro-unread-opacity-range', preset.metro_unread_opacity);
     setChk('reels-karaoke-hl', preset.karaoke_highlight);
 
     reelsUpdatePreview();
@@ -1831,6 +1926,79 @@ function reelsApplyAnimationPreset(silent = false) {
 
 function reelsApplyAnimationPresetQuick() {
     reelsApplyAnimationPreset(true);
+}
+
+// 动画参数全部保留在面板中，方便用户了解能力范围；当前动画用不到的
+// 参数锁定并可点击说明，避免“改了但没有效果”的误会。
+const REELS_ANIMATION_PARAM_GROUPS = [
+    { types: ['floating'], label: '漂浮', ids: ['reels-float-amp', 'reels-float-amp-range', 'reels-float-period', 'reels-float-period-range'] },
+    { types: ['typewriter'], label: '打字机', ids: ['reels-typewriter-reveal-type', 'reels-typewriter-unread-opacity', 'reels-typewriter-unread-opacity-range'] },
+    { types: ['char_bounce'], label: '逐字弹跳', ids: ['reels-bounce-height', 'reels-bounce-height-range'] },
+    { types: ['metronome'], label: '节奏逐词', ids: ['reels-metro-bpm', 'reels-metro-bpm-range', 'reels-metro-read-color', 'reels-metro-unread-color', 'reels-metro-unread-opacity', 'reels-metro-unread-opacity-range'] },
+    { types: ['letter_jump'], label: '逐字放大', ids: ['reels-jump-scale', 'reels-jump-scale-range'] },
+    { types: ['flash_highlight'], label: '闪光高亮', ids: ['reels-flash-color'] },
+    { types: ['holy_glow'], label: '圣光字幕', ids: ['reels-glow-color', 'reels-glow-radius', 'reels-glow-radius-range'] },
+    { types: ['blur_sharp'], label: '模糊到清晰', ids: ['reels-blur-max', 'reels-blur-max-range'] },
+    { types: ['word_pop_random', 'word_pop_random_pulse'], label: '逐词弹出／回弹', ids: [
+        'reels-word-pop-min', 'reels-word-pop-min-range', 'reels-word-pop-max', 'reels-word-pop-max-range',
+        'reels-word-pop-dur', 'reels-word-pop-dur-range', 'reels-word-pop-unread-opacity',
+        'reels-word-pop-unread-opacity-range', 'reels-word-pop-read-opacity', 'reels-word-pop-read-opacity-range',
+        'reels-random-word-spacing', 'reels-random-word-spacing-range', 'reels-random-line-spacing',
+        'reels-random-line-spacing-range', 'reels-random-spacing-seed', 'reels-only-show-active-word'
+    ] },
+];
+
+function _showAnimationParamHint(label) {
+    let toast = document.getElementById('reels-animation-param-hint');
+    if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'reels-animation-param-hint';
+        toast.style.cssText = 'position:fixed;left:50%;bottom:34px;transform:translateX(-50%);z-index:100000;padding:9px 14px;border-radius:7px;background:rgba(20,20,28,.96);border:1px solid rgba(255,255,255,.16);color:#fff;font-size:12px;box-shadow:0 6px 24px rgba(0,0,0,.35);pointer-events:none;';
+        document.body.appendChild(toast);
+    }
+    toast.textContent = `此参数仅在“${label}”动画中可编辑。请先切换入场动画。`;
+    toast.style.display = 'block';
+    clearTimeout(_reelsState._animationParamHintTimer);
+    _reelsState._animationParamHintTimer = setTimeout(() => { toast.style.display = 'none'; }, 2600);
+}
+
+function reelsRefreshAnimationParameterAvailability() {
+    const activeType = document.getElementById('reels-anim-in')?.value || 'none';
+    const hosts = new Map();
+    for (const group of REELS_ANIMATION_PARAM_GROUPS) {
+        const active = group.types.includes(activeType);
+        for (const id of group.ids) {
+            const control = document.getElementById(id);
+            if (!control) continue;
+            const host = control.parentElement;
+            if (!host) continue;
+            hosts.set(host, { active, label: group.label });
+            control.disabled = !active;
+        }
+    }
+    for (const [host, state] of hosts) {
+        let blocker = host.querySelector(':scope > .reels-anim-param-blocker');
+        if (state.active) {
+            host.style.opacity = '';
+            host.style.position = '';
+            if (blocker) blocker.remove();
+            continue;
+        }
+        host.style.opacity = '0.42';
+        host.style.position = 'relative';
+        if (!blocker) {
+            blocker = document.createElement('button');
+            blocker.type = 'button';
+            blocker.className = 'reels-anim-param-blocker';
+            blocker.style.cssText = 'position:absolute;inset:0;z-index:2;border:0;background:transparent;cursor:not-allowed;padding:0;';
+            host.appendChild(blocker);
+        }
+        blocker.title = `仅“${state.label}”动画可编辑`;
+        blocker.onclick = (event) => {
+            event.preventDefault();
+            _showAnimationParamHint(state.label);
+        };
+    }
 }
 
 function reelsRefreshSubtitleWeightOptions() {
@@ -2037,15 +2205,17 @@ function _getNamedSubtitlePresetStyle(name) {
 
 function _resolveSubtitleStyleForTask(task) {
     const globalStyle = _reelsState.globalSubtitleStyle;
+    // “全部任务”必须真的只读全局样式。此前任务残留的预设会抢在全局样式
+    // 前面生效，用户一切换任务就像是全局样式自己变了。
+    if (_isStyleApplyAllEnabled()) {
+        return _cloneSubtitleStyle(globalStyle) || _readStyleFromUI();
+    }
     // ── 最高优先级：批量表格中设置的字幕模板预设 ──
-    // 即使 applyAll 开启，任务级别的显式预设也应该生效
+    // 仅在“当前/分组”独立调整时，任务级预设才可以覆盖其独立样式。
     if (task && task._subtitlePreset && window.ReelsStyleEngine) {
         const presetStyle = _getNamedSubtitlePresetStyle(task._subtitlePreset);
         if (presetStyle) return presetStyle;
         task._subtitlePreset = '';
-    }
-    if (_isStyleApplyAllEnabled()) {
-        return _cloneSubtitleStyle(globalStyle) || _readStyleFromUI();
     }
     if (task && task.subtitleStyle && typeof task.subtitleStyle === 'object') {
         return _cloneSubtitleStyle(task.subtitleStyle);
@@ -2078,17 +2248,25 @@ function _persistSubtitleStyleByScope(style) {
 }
 
 function reelsOnStyleApplyScopeChange() {
-    const task = _getSelectedTask();
-    const applyAll = _isStyleApplyAllEnabled();
-    if (applyAll) {
-        _persistSubtitleStyleByScope(_readStyleFromUI());
-    } else {
-        const style = _resolveSubtitleStyleForTask(task);
-        if (style) {
-            _writeStyleToUI(style);
-            _persistSubtitleStyleByScope(style);
+    const nextScope = _getSubtitleStyleScope();
+    const previousScope = _reelsState.lastSubtitleStyleScope || 'folder';
+    // 用户的工作流是“先全部定样式，再逐条调位置”。离开全部模式时，旧代码
+    // 会重新读出每条任务历史保存的完整样式，直接把刚设好的红字覆盖掉。
+    // 现在把“全部”样式作为独立编辑的起点：每条任务先拿到一份副本，后续
+    // 单独改位置只会改各自副本，不会改变颜色/字体等已定好的全局基准。
+    if (previousScope === 'all' && nextScope !== 'all') {
+        const baseStyle = _cloneSubtitleStyle(_reelsState.globalSubtitleStyle) || _cloneSubtitleStyle(_readStyleFromUI());
+        const targets = nextScope === 'task'
+            ? (_reelsState.tasks || [])
+            : _getCurrentReelsGroupTasks();
+        for (const target of targets) {
+            target.subtitleStyle = _cloneSubtitleStyle(baseStyle);
+            target._subtitlePreset = '';
         }
     }
+    _reelsState.lastSubtitleStyleScope = nextScope;
+    const style = _resolveSubtitleStyleForTask(_getSelectedTask());
+    if (style) _writeStyleToUI(style);
     reelsUpdatePreview();
 }
 
@@ -2279,14 +2457,14 @@ function _readStyleFromUI() {
         tw_revealed_stroke_color: '',
         tw_unrevealed_color: '#808080',
         tw_unrevealed_stroke_color: '#404040',
-        tw_unrevealed_opacity: 100,
+        tw_unrevealed_opacity: num('reels-typewriter-unread-opacity', 0) / 255,
 
         // Metronome
-        metro_read_color: '#FFFFFF',
+        metro_read_color: val('reels-metro-read-color') || '#FFFFFF',
         metro_read_stroke_color: '#000000',
-        metro_unread_color: '#808080',
+        metro_unread_color: val('reels-metro-unread-color') || '#808080',
         metro_unread_stroke_color: '#404040',
-        metro_unread_opacity: 100,
+        metro_unread_opacity: num('reels-metro-unread-opacity', 100),
 
         // Scrolling lyrics mode
         scrolling_mode: chk('reels-scrolling-mode'),
@@ -2299,7 +2477,7 @@ function _readStyleFromUI() {
         fullpage_typewriter_cursor: chk('reels-fullpage-typewriter-cursor'),
         fullpage_typewriter_cursor_char: val('reels-fullpage-typewriter-cursor-char') || '|',
         fullpage_typewriter_cursor_color: val('reels-fullpage-typewriter-cursor-color') || '#FFD700',
-        tw_unrevealed_opacity: num('reels-tw-unrevealed-opacity', 0) / 255,
+        fullpage_typewriter_unrevealed_opacity: num('reels-tw-unrevealed-opacity', 0) / 255,
         fullpage_typewriter_first_line_bold: chk('reels-fullpage-typewriter-first-line-bold'),
         fullpage_typewriter_first_line_scale: num('reels-fullpage-typewriter-first-line-scale', 1.2),
         fullpage_typewriter_first_line_color: chk('reels-fullpage-typewriter-first-line-color-enable') ? val('reels-fullpage-typewriter-first-line-color') : '',
@@ -2514,10 +2692,18 @@ function _writeStyleToUI(style) {
     const setChk = (id, val) => { const el = document.getElementById(id); if (el) el.checked = !!val; };
 
     set('reels-font-family', style.font_family || 'Arial');
-    // 如果字体是 Google Font，按需加载
+    // 如果字体是 Google Font，按需加载。这里以前只启动加载却立即绘制预览：
+    // 首帧会落到系统替代字体，而导出会等待字体就绪，导致两边字形/换行不同。
+    // 字体真正就绪后必须再画一次当前预览。
     if (typeof getFontManager === 'function') {
         const fm = getFontManager();
-        fm.loadGoogleFont(style.font_family || 'Arial');
+        Promise.resolve(fm.loadGoogleFont(style.font_family || 'Arial'))
+            .then(() => {
+                // 用户可能已切换到另一条任务；重绘会读取当前任务的实际样式，
+                // 因此不会把旧字体错误套到新任务上。
+                if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
+            })
+            .catch(() => {});
     }
     set('reels-fontsize', style.fontsize || 74);
     set('reels-fontsize-range', style.fontsize || 74);
@@ -2616,6 +2802,15 @@ function _writeStyleToUI(style) {
     set('reels-random-line-spacing-range', style.random_line_spacing || 0);
     set('reels-random-spacing-seed', style.random_spacing_seed || 1);
     setChk('reels-only-show-active-word', style.only_show_active_word);
+    set('reels-metro-read-color', style.metro_read_color || '#FFFFFF');
+    set('reels-metro-unread-color', style.metro_unread_color || '#808080');
+    set('reels-metro-unread-opacity', style.metro_unread_opacity ?? 100);
+    set('reels-metro-unread-opacity-range', style.metro_unread_opacity ?? 100);
+    const normalTypewriterUnreadOpacity = Number(style.tw_unrevealed_opacity ?? 0);
+    const normalTypewriterUnreadOpacity255 = Math.round(Math.max(0, Math.min(255,
+        normalTypewriterUnreadOpacity > 1 ? normalTypewriterUnreadOpacity : normalTypewriterUnreadOpacity * 255)));
+    set('reels-typewriter-unread-opacity', normalTypewriterUnreadOpacity255);
+    set('reels-typewriter-unread-opacity-range', normalTypewriterUnreadOpacity255);
 
     // Scrolling lyrics mode
     setChk('reels-scrolling-mode', style.scrolling_mode);
@@ -2632,7 +2827,9 @@ function _writeStyleToUI(style) {
     setChk('reels-fullpage-typewriter-cursor', style.fullpage_typewriter_cursor !== false);
     set('reels-fullpage-typewriter-cursor-char', style.fullpage_typewriter_cursor_char || '|');
     set('reels-fullpage-typewriter-cursor-color', style.fullpage_typewriter_cursor_color || '#FFD700');
-    set('reels-tw-unrevealed-opacity', Math.round((style.tw_unrevealed_opacity ?? 0) * 255));
+    const fullpageTypewriterUnreadOpacity = Number(style.fullpage_typewriter_unrevealed_opacity ?? style.tw_unrevealed_opacity ?? 0);
+    set('reels-tw-unrevealed-opacity', Math.round(Math.max(0, Math.min(255,
+        fullpageTypewriterUnreadOpacity > 1 ? fullpageTypewriterUnreadOpacity : fullpageTypewriterUnreadOpacity * 255))));
     setChk('reels-fullpage-typewriter-first-line-bold', style.fullpage_typewriter_first_line_bold !== false);
     set('reels-fullpage-typewriter-first-line-scale', style.fullpage_typewriter_first_line_scale ?? 1.2);
     set('reels-fullpage-typewriter-first-line-color', style.fullpage_typewriter_first_line_color || '#FFFFFF');
@@ -2657,8 +2854,10 @@ function _writeStyleToUI(style) {
     set('reels-scatter-min-rotate', style.scatter_min_rotate ?? 0);
     set('reels-scatter-max-rotate', style.scatter_max_rotate ?? 0);
 
-    // Sync _reelsState.style so hidden props survive
-    _reelsState.style = Object.assign({}, _reelsState.style || {}, style);
+    // 当前 UI 缓存必须属于“刚载入的这一套样式”。此前用 merge 保留上一套
+    // 未出现在新对象中的字段（自动着色、动效等），切换全部/独立后再保存时
+    // 就会把两套样式混合，表现为明明没改却字体/描边/动效改变。
+    _reelsState.style = _cloneSubtitleStyle(style) || {};
 
     _renderSubtitleAutoColorRules();
 }
@@ -2671,8 +2870,10 @@ function reelsUpdatePreview() {
     const renderer = _reelsState.renderer;
     if (!renderer) return;
 
+    reelsRefreshAnimationParameterAvailability();
     const style = _readStyleFromUI();
-    _persistSubtitleStyleByScope(style);
+    // 预览必须是纯读取：任务切换、播放器 timeupdate、字体异步加载都会调用它。
+    // 在这里写入会把旧任务的 UI 样式误存进新任务/新作用域。
     const previewText = (document.getElementById('reels-preview-text') || {}).value || 'Hello World 这是一个测试字幕';
     const canvas = renderer.canvas;
     const ctx = renderer.ctx;
@@ -2695,6 +2896,7 @@ function reelsUpdatePreview() {
 
     const _selectedTask = _getSelectedTask();
     const _bgScalePct = _selectedTask ? (_selectedTask.bgScale || 100) : 100;
+    const _bgRotation = Number(_selectedTask?.bgRotation) || 0;
     const _bgXPct = _selectedTask ? (_selectedTask.bgX || 0) : 0;
     const _bgYPct = _selectedTask ? (_selectedTask.bgY || 0) : 0;
 
@@ -2780,6 +2982,7 @@ function reelsUpdatePreview() {
     // ── Cover 阶段渲染 ──
     if (inCoverPhase) {
         let coverBgScale = (_selectedTask && _selectedTask.cover && _selectedTask.cover.bgScale) || _bgScalePct;
+        let coverBgRotation = Number(_selectedTask?.cover?.bgRotation ?? _selectedTask?.bgRotation) || 0;
         let coverBgX = (_selectedTask && _selectedTask.cover && _selectedTask.cover.bgX) || _bgXPct;
         let coverBgY = (_selectedTask && _selectedTask.cover && _selectedTask.cover.bgY) || _bgYPct;
         let coverBgFlipH = (_selectedTask && _selectedTask.cover && _selectedTask.cover.bgFlipH) || (_selectedTask && _selectedTask.bgFlipH) || false;
@@ -2792,13 +2995,13 @@ function reelsUpdatePreview() {
             }
         }
         if (_reelsState._previewCoverImage && _reelsState._previewCoverImage.complete && _reelsState._previewCoverImage.naturalWidth > 0) {
-            _drawVideoCover(ctx, _reelsState._previewCoverImage, w, h, coverBgScale, coverBgX, coverBgY, coverBgFlipH, coverBgFlipV);
+            _drawVideoCover(ctx, _reelsState._previewCoverImage, w, h, coverBgScale, coverBgX, coverBgY, coverBgFlipH, coverBgFlipV, coverBgRotation);
         } else if (_reelsState._previewCoverVideo && _reelsState._previewCoverVideo.readyState >= 1) {
-            _drawVideoCover(ctx, _reelsState._previewCoverVideo, w, h, coverBgScale, coverBgX, coverBgY, coverBgFlipH, coverBgFlipV);
+            _drawVideoCover(ctx, _reelsState._previewCoverVideo, w, h, coverBgScale, coverBgX, coverBgY, coverBgFlipH, coverBgFlipV, coverBgRotation);
         } else if (hasBgImg) {
-            _drawVideoCover(ctx, bgImg, w, h, coverBgScale, coverBgX, coverBgY, coverBgFlipH, coverBgFlipV);            
+            _drawVideoCover(ctx, bgImg, w, h, coverBgScale, coverBgX, coverBgY, coverBgFlipH, coverBgFlipV, coverBgRotation);
         } else if (video && video.readyState >= 1) {
-            _drawVideoCover(ctx, video, w, h, coverBgScale, coverBgX, coverBgY, coverBgFlipH, coverBgFlipV); 
+            _drawVideoCover(ctx, video, w, h, coverBgScale, coverBgX, coverBgY, coverBgFlipH, coverBgFlipV, coverBgRotation);
         } else {
             ctx.fillStyle = '#000'; ctx.fillRect(0,0,w,h);
         }
@@ -2824,7 +3027,7 @@ function reelsUpdatePreview() {
             const alpha = 1.0 - (timeToEnd / transitionDur);
             ctx.save();
             ctx.globalAlpha = Math.min(1, Math.max(0, alpha));
-            _drawVideoCover(ctx, video, w, h, _bgScalePct, _bgXPct, _bgYPct, _selectedTask?.bgFlipH || false, _selectedTask?.bgFlipV || false);
+            _drawVideoCover(ctx, video, w, h, _bgScalePct, _bgXPct, _bgYPct, _selectedTask?.bgFlipH || false, _selectedTask?.bgFlipV || false, _bgRotation);
             ctx.restore();
         }
     } else if (_selectedTask && _selectedTask.contentVideoBlurBg && cvDrawSource && cvW > 0) {
@@ -2837,7 +3040,7 @@ function reelsUpdatePreview() {
         const blurVal = _selectedTask.contentVideoBlur != null ? _selectedTask.contentVideoBlur : 40;
         const brightnessVal = (_selectedTask.contentVideoBrightness != null ? _selectedTask.contentVideoBrightness : 60) / 100;
         ctx.filter = `blur(${blurVal}px) brightness(${brightnessVal})`;
-        _drawCroppedVideoCover(ctx, cvDrawSource, cropX, cropY, cropW, cropH, w, h, _bgScalePct, _bgXPct, _bgYPct, _selectedTask?.bgFlipH || false, _selectedTask?.bgFlipV || false);
+        _drawCroppedVideoCover(ctx, cvDrawSource, cropX, cropY, cropW, cropH, w, h, _bgScalePct, _bgXPct, _bgYPct, _selectedTask?.bgFlipH || false, _selectedTask?.bgFlipV || false, _bgRotation);
         ctx.restore();
 
         // Draw global mask if enabled
@@ -2854,7 +3057,7 @@ function reelsUpdatePreview() {
         ctx.fillRect(0, 0, w, h);
 
         const { cropX, cropY, cropW, cropH } = _parseCropString(_selectedTask.contentVideoCrop);
-        _drawCroppedVideoCover(ctx, cvDrawSource, cropX, cropY, cropW, cropH, w, h, _bgScalePct, _bgXPct, _bgYPct, _selectedTask?.bgFlipH || false, _selectedTask?.bgFlipV || false);
+        _drawCroppedVideoCover(ctx, cvDrawSource, cropX, cropY, cropW, cropH, w, h, _bgScalePct, _bgXPct, _bgYPct, _selectedTask?.bgFlipH || false, _selectedTask?.bgFlipV || false, _bgRotation);
 
         // Draw global mask if enabled
         if (style.global_mask_enabled) {
@@ -2865,7 +3068,7 @@ function reelsUpdatePreview() {
             ctx.restore();
         }
     } else if (_selectedTask && _selectedTask.bgMode === 'multi' && !inCoverPhase && !inHookPhase) {
-        _drawPreviewMultiBackground(ctx, w, h, _bgScalePct, _bgXPct, _bgYPct, multiClips);
+        _drawPreviewMultiBackground(ctx, w, h, _bgScalePct, _bgXPct, _bgYPct, _bgRotation, multiClips);
         if (style.global_mask_enabled) {
             ctx.save();
             ctx.globalAlpha = style.global_mask_opacity ?? 0.5;
@@ -2874,12 +3077,12 @@ function reelsUpdatePreview() {
             ctx.restore();
         }
     } else if (video && video.src && video.readyState >= 1 && video.videoWidth > 0) {
-        _drawVideoCover(ctx, video, w, h, _bgScalePct, _bgXPct, _bgYPct, _selectedTask?.bgFlipH || false, _selectedTask?.bgFlipV || false);
+        _drawVideoCover(ctx, video, w, h, _bgScalePct, _bgXPct, _bgYPct, _selectedTask?.bgFlipH || false, _selectedTask?.bgFlipV || false, _bgRotation);
         const fadeFrame = _calcPreviewLoopFadeFrame();
         if (fadeFrame && fadeFrame.video && fadeFrame.video.readyState >= 2) {
             ctx.save();
             ctx.globalAlpha = fadeFrame.alpha;
-            _drawVideoCover(ctx, fadeFrame.video, w, h, _bgScalePct, _bgXPct, _bgYPct, _selectedTask?.bgFlipH || false, _selectedTask?.bgFlipV || false);
+            _drawVideoCover(ctx, fadeFrame.video, w, h, _bgScalePct, _bgXPct, _bgYPct, _selectedTask?.bgFlipH || false, _selectedTask?.bgFlipV || false, _bgRotation);
             ctx.restore();
         }
 
@@ -2893,7 +3096,7 @@ function reelsUpdatePreview() {
         }
     } else if (hasBgImg) {
         // Draw image background using cover mode
-        _drawVideoCover(ctx, bgImg, w, h, _bgScalePct, _bgXPct, _bgYPct, _selectedTask?.bgFlipH || false, _selectedTask?.bgFlipV || false);
+        _drawVideoCover(ctx, bgImg, w, h, _bgScalePct, _bgXPct, _bgYPct, _selectedTask?.bgFlipH || false, _selectedTask?.bgFlipV || false, _bgRotation);
 
         // Draw global mask if enabled
         if (style.global_mask_enabled) {
@@ -3926,8 +4129,8 @@ function _initAllSubtitleNumberInputsDrag() {
     });
 }
 
-function _drawImageFlipped(ctx, img, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, flipH, flipV) {
-    if (!flipH && !flipV) {
+function _drawImageFlipped(ctx, img, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, flipH, flipV, rotation = 0) {
+    if (!flipH && !flipV && !rotation) {
         if (arg5 !== undefined) {
             ctx.drawImage(img, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
         } else if (arg3 !== undefined) {
@@ -3944,18 +4147,21 @@ function _drawImageFlipped(ctx, img, arg1, arg2, arg3, arg4, arg5, arg6, arg7, a
         // 9 arguments: img, sx, sy, sw, sh, dx, dy, dw, dh
         dx = arg5; dy = arg6; dw = arg7; dh = arg8;
         ctx.translate(dx + dw / 2, dy + dh / 2);
+        if (rotation) ctx.rotate(Number(rotation) * Math.PI / 180);
         ctx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
         ctx.drawImage(img, arg1, arg2, arg3, arg4, -dw / 2, -dh / 2, dw, dh);
     } else if (arg3 !== undefined) {
         // 5 arguments: img, dx, dy, dw, dh
         dx = arg1; dy = arg2; dw = arg3; dh = arg4;
         ctx.translate(dx + dw / 2, dy + dh / 2);
+        if (rotation) ctx.rotate(Number(rotation) * Math.PI / 180);
         ctx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
         ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
     } else {
         // 3 arguments: img, dx, dy
         dx = arg1; dy = arg2; dw = img.naturalWidth || img.width || 0; dh = img.naturalHeight || img.height || 0;
         ctx.translate(dx + dw / 2, dy + dh / 2);
+        if (rotation) ctx.rotate(Number(rotation) * Math.PI / 180);
         ctx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
         ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
     }
@@ -4011,24 +4217,30 @@ function _getPreviewDrawableSource(media) {
     return media;
 }
 
-function _drawVideoCover(ctx, videoEl, targetW, targetH, scalePct, offsetX = 0, offsetY = 0, flipH = false, flipV = false) {
+function _drawVideoCover(ctx, videoEl, targetW, targetH, scalePct, offsetX = 0, offsetY = 0, flipH = false, flipV = false, rotation = 0) {
     if (!ctx || !videoEl || !(targetW > 0) || !(targetH > 0)) return;
     const drawSource = _getPreviewDrawableSource(videoEl);
     const srcW = drawSource.videoWidth || drawSource.naturalWidth || drawSource.width || targetW;
     const srcH = drawSource.videoHeight || drawSource.naturalHeight || drawSource.height || targetH;
     if (!(srcW > 0) || !(srcH > 0)) {
-        _drawImageFlipped(ctx, drawSource, 0, 0, targetW, targetH, undefined, undefined, undefined, undefined, flipH, flipV);
+        _drawImageFlipped(ctx, drawSource, 0, 0, targetW, targetH, undefined, undefined, undefined, undefined, flipH, flipV, rotation);
         return;
     }
     const userScale = (scalePct || 100) / 100;
-    const scale = Math.max(targetW / srcW, targetH / srcH) * userScale;
+    let scale = Math.max(targetW / srcW, targetH / srcH) * userScale;
+    const radians = Math.abs((Number(rotation) || 0) % 180) * Math.PI / 180;
+    const preRotateW = srcW * scale;
+    const preRotateH = srcH * scale;
+    const rotatedW = Math.abs(preRotateW * Math.cos(radians)) + Math.abs(preRotateH * Math.sin(radians));
+    const rotatedH = Math.abs(preRotateW * Math.sin(radians)) + Math.abs(preRotateH * Math.cos(radians));
+    scale *= Math.max(1, targetW / rotatedW, targetH / rotatedH);
     const drawW = srcW * scale;
     const drawH = srcH * scale;
     const maxShiftX = Math.abs(targetW - drawW) / 2;
     const maxShiftY = Math.abs(targetH - drawH) / 2;
     const drawX = (targetW - drawW) / 2 + maxShiftX * (offsetX / 100);
     const drawY = (targetH - drawH) / 2 + maxShiftY * (offsetY / 100);
-    _drawImageFlipped(ctx, drawSource, drawX, drawY, drawW, drawH, undefined, undefined, undefined, undefined, flipH, flipV);
+    _drawImageFlipped(ctx, drawSource, drawX, drawY, drawW, drawH, undefined, undefined, undefined, undefined, flipH, flipV, rotation);
 }
 
 function _parseCropString(cropStr) {
@@ -4045,13 +4257,13 @@ function _parseCropString(cropStr) {
     return { cropX, cropY, cropW, cropH };
 }
 
-function _drawCroppedVideoCover(ctx, videoEl, cropX, cropY, cropW, cropH, targetW, targetH, scalePct, offsetX = 0, offsetY = 0, flipH = false, flipV = false) {
+function _drawCroppedVideoCover(ctx, videoEl, cropX, cropY, cropW, cropH, targetW, targetH, scalePct, offsetX = 0, offsetY = 0, flipH = false, flipV = false, rotation = 0) {
     if (!ctx || !videoEl || !(targetW > 0) || !(targetH > 0)) return;
     const drawSource = _getPreviewDrawableSource(videoEl);
     const srcW = drawSource.videoWidth || drawSource.naturalWidth || drawSource.width || targetW;
     const srcH = drawSource.videoHeight || drawSource.naturalHeight || drawSource.height || targetH;
     if (!(srcW > 0) || !(srcH > 0)) {
-        _drawImageFlipped(ctx, drawSource, 0, 0, targetW, targetH, undefined, undefined, undefined, undefined, flipH, flipV);
+        _drawImageFlipped(ctx, drawSource, 0, 0, targetW, targetH, undefined, undefined, undefined, undefined, flipH, flipV, rotation);
         return;
     }
     const sx = srcW * cropX;
@@ -4060,14 +4272,20 @@ function _drawCroppedVideoCover(ctx, videoEl, cropX, cropY, cropW, cropH, target
     const sHeight = srcH * cropH;
 
     const userScale = (scalePct || 100) / 100;
-    const scale = Math.max(targetW / sWidth, targetH / sHeight) * userScale;
+    let scale = Math.max(targetW / sWidth, targetH / sHeight) * userScale;
+    const radians = Math.abs((Number(rotation) || 0) % 180) * Math.PI / 180;
+    const preRotateW = sWidth * scale;
+    const preRotateH = sHeight * scale;
+    const rotatedW = Math.abs(preRotateW * Math.cos(radians)) + Math.abs(preRotateH * Math.sin(radians));
+    const rotatedH = Math.abs(preRotateW * Math.sin(radians)) + Math.abs(preRotateH * Math.cos(radians));
+    scale *= Math.max(1, targetW / rotatedW, targetH / rotatedH);
     const drawW = sWidth * scale;
     const drawH = sHeight * scale;
     const maxShiftX = Math.abs(targetW - drawW) / 2;
     const maxShiftY = Math.abs(targetH - drawH) / 2;
     const drawX = (targetW - drawW) / 2 + maxShiftX * (offsetX / 100);
     const drawY = (targetH - drawH) / 2 + maxShiftY * (offsetY / 100);
-    _drawImageFlipped(ctx, drawSource, sx, sy, sWidth, sHeight, drawX, drawY, drawW, drawH, flipH, flipV);
+    _drawImageFlipped(ctx, drawSource, sx, sy, sWidth, sHeight, drawX, drawY, drawW, drawH, flipH, flipV, rotation);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -4832,7 +5050,7 @@ function _syncPreviewMultiPlayers(task, clips) {
     }
 }
 
-function _drawPreviewMultiBackground(ctx, w, h, bgScale, bgX, bgY, clips) {
+function _drawPreviewMultiBackground(ctx, w, h, bgScale, bgX, bgY, bgRotation, clips) {
     if (!clips) {
         ctx.fillStyle = '#000';
         ctx.fillRect(0, 0, w, h);
@@ -4868,7 +5086,7 @@ function _drawPreviewMultiBackground(ctx, w, h, bgScale, bgX, bgY, clips) {
     const drawClip = (clip) => {
         const src = getDrawSource(clip);
         if (src) {
-            _drawVideoCover(ctx, src, w, h, bgScale, bgX, bgY, task?.bgFlipH || false, task?.bgFlipV || false);
+            _drawVideoCover(ctx, src, w, h, bgScale, bgX, bgY, task?.bgFlipH || false, task?.bgFlipV || false, bgRotation);
         } else {
             ctx.fillStyle = '#1e1e1e';
             ctx.fillRect(0, 0, w, h);
@@ -6080,9 +6298,54 @@ function _updatePreviewTimeUI(currentTime, duration) {
 function _updateTimelineForTask(task) {
     if (!_reelsState.timelineEditor || !task) return;
     const editor = _reelsState.timelineEditor;
+    if (window.ReelsRenderPlan) {
+        const subtitleDuration = Array.isArray(task.segments) && task.segments.length
+            ? Math.max(...task.segments.map(segment => Number(segment.end) || 0))
+            : 0;
+        // 背景轨必须显示真实的“循环实例”，不能把一段 5 秒背景循环 20 秒
+        // 伪装成一个大块。多素材时复用预览的同一分段算法；单素材循环时按
+        // 原始媒体时长平铺成 #1/#2/#3…，最后一轮按成片终点截短。
+        let backgroundSegments = task.bgMode === 'multi' && typeof _calculatePreviewSegments === 'function'
+            ? _calculatePreviewSegments(task)
+            : [];
+        if (!backgroundSegments.length) {
+            const resolvedBackground = typeof _resolvePreviewBackgroundPath === 'function'
+                ? _resolvePreviewBackgroundPath(task)
+                : { path: task.bgPath || task.videoPath || '' };
+            const backgroundPath = resolvedBackground?.path || task.bgPath || task.videoPath || '';
+            const rawBackgroundDuration = _getVideoDuration(task);
+            const outputDuration = Math.max(subtitleDuration, _getAudioDuration(task), _getContentVideoDuration(task), task.customDuration || 0, rawBackgroundDuration || 0, 1);
+            if (backgroundPath) {
+                const loopDuration = rawBackgroundDuration > 0.05 ? rawBackgroundDuration : outputDuration;
+                for (let start = 0, index = 0; start < outputDuration - 0.001; start += loopDuration, index++) {
+                    const end = Math.min(outputDuration, start + loopDuration);
+                    backgroundSegments.push({
+                        path: backgroundPath,
+                        start,
+                        end,
+                        duration: end - start,
+                        trimStart: 0,
+                        speedFactor: 1,
+                        loopIndex: index,
+                    });
+                }
+            }
+        }
+        const tracks = window.ReelsRenderPlan.getEditorTracks(task, {
+            // 媒体元数据还没读到时，字幕末尾仍能给出可靠的整片长度，避免
+            // 主视频/人声在时间线中退化为 0 秒的细竖条。
+            duration: Math.max(_getAudioDuration(task), _getVideoDuration(task), _getContentVideoDuration(task), subtitleDuration, task.customDuration || 0, 1),
+            width: _reelsState.targetWidth || 1080,
+            height: _reelsState.targetHeight || 1920,
+            backgroundSegments,
+        });
+        if (tracks.length) editor.setTracks(tracks);
+    }
     editor.subtitleBaseStyle = _resolveSubtitleStyleForTask(task);
-    if (task.segments && task.segments.length > 0) editor.loadSubtitleTrack(task.segments);
-    else editor.loadSubtitleTrack([]);
+    if (!window.ReelsRenderPlan) {
+        if (task.segments && task.segments.length > 0) editor.loadSubtitleTrack(task.segments);
+        else editor.loadSubtitleTrack([]);
+    }
 
     const aDur = _getAudioDuration(task);
     const vDur = _getVideoDuration(task);
@@ -6101,12 +6364,12 @@ function _updateTimelineForTask(task) {
         : contentDur;
     const taskKey = task.id || task.fileName || task.audioPath || task.bgPath || '';
     const isNewTimelineTask = editor._timelineTaskKey !== taskKey;
-    editor.loadAudioTrack(aDur, task.audioPath ? '人声' : '音频');
+    if (!window.ReelsRenderPlan) editor.loadAudioTrack(aDur, task.audioPath ? '人声' : '音频');
     // 背景在预览/输出中会循环覆盖整段内容，轨道也应显示实际覆盖时长，
     // 不能在无配音时退回到单个背景素材的原始时长。
     const bgTrackDur = totalDur;
     const bgTrackName = task.contentVideoDirectBg ? '内容背景' : (totalDur > vDur + 0.01 ? '背景(循环)' : '背景');
-    editor.loadBackgroundTrack(bgTrackDur, bgTrackName);
+    if (!window.ReelsRenderPlan) editor.loadBackgroundTrack(bgTrackDur, bgTrackName);
     editor.setDuration(totalDur, { fit: isNewTimelineTask });
     editor._timelineTaskKey = taskKey;
 }
@@ -9672,6 +9935,7 @@ async function _exportCoverVideo(task, taskStyle, outputDirTrimmed, baseName) {
             voiceVolume: 0,
             bgVolume: 0,
             bgScale: task.cover.bgScale || task.bgScale || 100,
+            bgRotation: task.cover.bgRotation ?? task.bgRotation ?? 0,
             bgX: task.cover.bgX || task.bgX || 0,
             bgY: task.cover.bgY || task.bgY || 0,
             bgFlipH: task.cover.bgFlipH || task.bgFlipH || false,
@@ -10148,6 +10412,17 @@ async function reelsStartExport(options = {}) {
         ? Math.max(1, parseInt(resumeState.requestedConcurrency) || 1)
         : (concurrencyInput ? Math.max(1, parseInt(concurrencyInput.value) || 1) : 1);
 
+    // ═══ 自动补齐背景循环检查（杜绝导出画面不足或黑屏） ═══
+    for (const task of tasks) {
+        const subtitleDuration = Array.isArray(task.segments) && task.segments.length
+            ? Math.max(0, ...task.segments.map(s => Number(s.end) || 0))
+            : 0;
+        const outputDuration = Math.max(subtitleDuration, _getAudioDuration(task), _getVideoDuration(task), _getContentVideoDuration(task), task.customDuration || 0, 1);
+        if (window.ReelsRenderPlan?.fillBackgroundLoops(task, { duration: outputDuration })) {
+            _reelsAppendExportLogUI(`[前置检查] 任务 "${task.baseName || task.fileName || 'Reels'}" 背景画面已自动补齐循环至 ${outputDuration.toFixed(1)}s`);
+        }
+    }
+
     // ═══ 多模板矩阵展开 ═══
     const multiPresetCfg = resumeState?.multiPresetCfg || _getMultiPresetConfig();
     const exportJobs = [];
@@ -10330,6 +10605,14 @@ async function reelsStartExport(options = {}) {
             const i = currentIndex++;
             const job = exportJobs[i];
             const task = job.task;
+            // 与 V2 预览使用同一个渲染计划入口。导出不读取时间线编辑器的
+            // 临时显示数据，避免“预览一套、导出另一套”。
+            if (window.ReelsRenderPlan?.syncLegacyFields) {
+                window.ReelsRenderPlan.syncLegacyFields(task, {
+                    width: _reelsState.targetWidth || 1080,
+                    height: _reelsState.targetHeight || 1920,
+                });
+            }
             const tw = _reelsState.targetWidth || 1080;
             const th = _reelsState.targetHeight || 1920;
 
@@ -10347,42 +10630,17 @@ async function reelsStartExport(options = {}) {
         // ── 确保当前任务的所有覆层与字幕使用的字体全部预加载完成 ──
         _reelsUpdateJobProgressUI(i, 0, '加载字体', 'running');
         if (statusEl) statusEl.textContent = `加载字体中 ${i + 1}/${totalJobs}: ${task.fileName}${presetLabel}`;
-        const fontsToLoad = new Set();
-        if (taskStyle && taskStyle.font_family) {
-            fontsToLoad.add(taskStyle.font_family);
-        }
-        const collectOverlaysFonts = (ovs) => {
-            if (!Array.isArray(ovs)) return;
-            for (const ov of ovs) {
-                if (ov.disabled) continue;
-                if (ov.type === 'textcard' || !ov.type || ov.type === '') {
-                    if (ov.title_text && ov.title_font_family) fontsToLoad.add(ov.title_font_family);
-                    if (ov.body_text && ov.body_font_family) fontsToLoad.add(ov.body_font_family);
-                    if (ov.footer_text && ov.footer_font_family) fontsToLoad.add(ov.footer_font_family);
-                } else if (ov.type === 'text' || ov.type === 'scroll') {
-                    if (ov.font_family) fontsToLoad.add(ov.font_family);
-                }
-            }
-        };
-        collectOverlaysFonts(task.overlays);
-        if (task.cover && task.cover.enabled) {
-            collectOverlaysFonts(task.cover.overlays);
-        }
-        if (window.getFontManager && fontsToLoad.size > 0) {
+        if (window.getFontManager) {
             const fm = window.getFontManager();
-            for (const font of fontsToLoad) {
-                try {
-                    await fm.loadGoogleFont(font);
-                } catch (e) {
-                    console.warn(`[Export Font Load] Failed to load font "${font}":`, e);
-                }
-            }
-            try {
-                await document.fonts.ready;
-                console.log(`[Export Font Load] Fonts loaded successfully:`, Array.from(fontsToLoad));
-            } catch (e) {
-                console.warn(`[Export Font Load] document.fonts.ready error:`, e);
-            }
+            const fontsToLoad = fm.collectFonts({
+                style: taskStyle,
+                segments: task.segments,
+                overlays: task.overlays,
+                cover: task.cover,
+                watermarks: _reelsState.watermarks
+            });
+            await fm.ensureFontsLoaded(fontsToLoad);
+            console.log(`[Export Font Load] Fonts loaded successfully:`, fontsToLoad);
         }
 
         _reelsUpdateJobProgressUI(i, Math.max(1, jobProgress[i] || 0), '准备导出', 'running');
@@ -10600,6 +10858,7 @@ async function reelsStartExport(options = {}) {
                     bgmVolume: _getEffectiveBgmVolumePercent(task, bgmVolume) / 100,
                     bgmStart: Math.max(0, parseFloat(task.bgmStart) || 0),
                     bgScale: task.bgScale || 100,
+                    bgRotation: task.bgRotation || 0,
                     bgX: task.bgX || 0,
                     bgY: task.bgY || 0,
                     bgFlipH: task.bgFlipH || false,
@@ -10969,6 +11228,7 @@ async function reelsStartExport(options = {}) {
                                 backgroundPath: bgPath,
                                 bgMode: task.bgMode || 'single',
                                 bgScale: task.bgScale || 100,
+                                bgRotation: task.bgRotation || 0,
                                 bgX: task.bgX || 0,
                                 bgY: task.bgY || 0,
                                 contentVideoPath: task.contentVideoPath || null,
@@ -11086,6 +11346,7 @@ async function reelsStartExport(options = {}) {
                     bgmVolume: _getEffectiveBgmVolumePercent(task, bgmVolume) / 100,
                     bgmStart: Math.max(0, parseFloat(task.bgmStart) || 0),
                     bgScale: task.bgScale || 100,
+                    bgRotation: task.bgRotation || 0,
                     bgX: task.bgX || 0,
                     bgY: task.bgY || 0,
                     bgFlipH: task.bgFlipH || false,
@@ -11372,6 +11633,11 @@ async function reelsStartExport(options = {}) {
                     onLog: (msg) => console.log(`[FCPXML ${safeGroupName || 'Bulk'}] ${msg}`)
                 });
                 _reelsState.lastExportOutputPath = res.outputPath;
+                if (res.fusionPackage?.script_path) {
+                    _reelsState.lastResolveFusionScriptPath = res.fusionPackage.script_path;
+                    _reelsState.lastResolveFusionMenuScriptPath = res.fusionPackage.installed_path || '';
+                    console.log(`[Resolve Fusion] ${res.fusionPackage.fusion_cues || 0} 条可编辑字幕脚本: ${res.fusionPackage.script_path}`);
+                }
             } catch (err) {
                 failCount += groupTasks.length;
                 okCount = Math.max(0, okCount - groupTasks.length);
@@ -11400,7 +11666,11 @@ async function reelsStartExport(options = {}) {
     } else if (!canceled && okCount > 0) {
         _reelsUpdateLastErrorUI('');
         const latest = _reelsState.lastExportOutputPath || `${outputDirTrimmed}${outputJoinSep}`;
-        alert(`导出完成 ${okCount}/${totalJobs}\n输出目录: ${outputDirTrimmed}\n最新文件: ${latest}`);
+        const fusionScript = _reelsState.lastResolveFusionScriptPath || '';
+        const fusionNote = fusionScript
+            ? `\nFusion 字幕已安装：${_reelsState.lastResolveFusionMenuScriptPath || fusionScript}\n重启 Resolve 后点 Workspace > Scripts > Comp > VideoKit Import Fusion，即可导入可编辑 Text+ 字幕。`
+            : '';
+        alert(`导出完成 ${okCount}/${totalJobs}\n输出目录: ${outputDirTrimmed}\n最新文件: ${latest}${fusionNote}`);
         // 自动打开输出文件夹
         if (window.electronAPI && window.electronAPI.apiCall) {
             try { await window.electronAPI.apiCall('file/open-folder', { path: outputDirTrimmed }); } catch (e) { }
@@ -11689,6 +11959,7 @@ function applyRestoredProject(result) {
             ? (opts.subtitleStyleScope || (opts.subtitleStyleApplyAll === true ? 'all' : 'folder'))
             : 'folder';
         setVal('reels-style-scope', restoredStyleScope);
+        _reelsState.lastSubtitleStyleScope = restoredStyleScope;
 
 
         
@@ -11833,6 +12104,43 @@ async function reelsLoadProject() {
 let _reelsHistoryStack = [];
 let _reelsHistoryIndex = -1;
 let _isRestoringHistory = false;
+const REELS_HISTORY_SETTINGS_KEY = 'videokit_reels_history_settings_v1';
+const REELS_HISTORY_DEFAULTS = Object.freeze({ maxSteps: 300, maxBytes: 100 * 1024 * 1024 });
+
+function _readReelsHistorySettings() {
+    try {
+        const stored = JSON.parse(localStorage.getItem(REELS_HISTORY_SETTINGS_KEY) || '{}');
+        return {
+            maxSteps: Math.max(30, Math.min(1000, Number(stored.maxSteps) || REELS_HISTORY_DEFAULTS.maxSteps)),
+            maxBytes: Math.max(10 * 1024 * 1024, Math.min(500 * 1024 * 1024, Number(stored.maxBytes) || REELS_HISTORY_DEFAULTS.maxBytes)),
+        };
+    } catch (_) {
+        return { ...REELS_HISTORY_DEFAULTS };
+    }
+}
+
+function _historyBytes() {
+    // JS 字符串通常以 UTF-16 保存；近似值足够用来控制内存上限。
+    return _reelsHistoryStack.reduce((total, item) => total + String(item || '').length * 2, 0);
+}
+
+window.reelsGetHistorySettings = function() {
+    return { ..._readReelsHistorySettings(), currentSteps: _reelsHistoryStack.length, currentBytes: _historyBytes() };
+};
+
+window.reelsSetHistorySettings = function(input = {}) {
+    const previous = _readReelsHistorySettings();
+    const next = {
+        maxSteps: Math.max(30, Math.min(1000, Number(input.maxSteps) || previous.maxSteps)),
+        maxBytes: Math.max(10 * 1024 * 1024, Math.min(500 * 1024 * 1024, Number(input.maxBytes) || previous.maxBytes)),
+    };
+    localStorage.setItem(REELS_HISTORY_SETTINGS_KEY, JSON.stringify(next));
+    while (_reelsHistoryStack.length > next.maxSteps || _historyBytes() > next.maxBytes) {
+        _reelsHistoryStack.shift();
+        _reelsHistoryIndex = Math.max(-1, _reelsHistoryIndex - 1);
+    }
+    return window.reelsGetHistorySettings();
+};
 
 window.reelsSaveHistory = function() {
     if (_isRestoringHistory || !window._reelsState || typeof collectCurrentProjectState !== 'function') return;
@@ -11847,11 +12155,12 @@ window.reelsSaveHistory = function() {
             _reelsHistoryStack = _reelsHistoryStack.slice(0, _reelsHistoryIndex + 1);
         }
         _reelsHistoryStack.push(stateStr);
-        // 限制最多保存30步历史
-        if (_reelsHistoryStack.length > 30) {
+        _reelsHistoryIndex = _reelsHistoryStack.length - 1;
+        const settings = _readReelsHistorySettings();
+        // 两道限制：步数和占用。达到任一限制都淘汰最早状态。
+        while (_reelsHistoryStack.length > settings.maxSteps || _historyBytes() > settings.maxBytes) {
             _reelsHistoryStack.shift();
-        } else {
-            _reelsHistoryIndex++;
+            _reelsHistoryIndex = Math.max(-1, _reelsHistoryIndex - 1);
         }
     } catch (e) {
         console.warn('[History] Failed to save history snapshot', e);
@@ -12065,6 +12374,10 @@ function reelsMarkStyleDirty(e) {
             if (span) span.textContent = '-- 自定义样式 --';
         }
     }
+
+    // 只有用户真实改动某个样式控件时才写入当前作用域；预览/任务切换不写。
+    // input/change 在控件值更新后触发，这里读取到的是最终值。
+    _persistSubtitleStyleByScope(_readStyleFromUI());
 }
 
 // ═══════════════════════════════════════════════════════
@@ -12242,6 +12555,10 @@ window.reelsSyncBackgroundTabUI = function(task) {
     const bgScale = task.bgScale != null ? task.bgScale : 100;
     document.getElementById('reels-bg-scale-num').value = bgScale;
     document.getElementById('reels-bg-scale-range').value = bgScale;
+
+    const bgRotation = task.bgRotation != null ? task.bgRotation : 0;
+    document.getElementById('reels-bg-rotate-num').value = bgRotation;
+    document.getElementById('reels-bg-rotate-range').value = bgRotation;
 
     // 背景X偏移
     const bgX = task.bgX != null ? task.bgX : 0;
@@ -12427,6 +12744,7 @@ window.reelsSaveBgConfigUI = function() {
 
     // 背景基本配置
     task.bgScale = parseInt(document.getElementById('reels-bg-scale-num').value) || 100;
+    task.bgRotation = Math.max(-180, Math.min(180, parseFloat(document.getElementById('reels-bg-rotate-num').value) || 0));
     task.bgX = parseInt(document.getElementById('reels-bg-x-num').value) || 0;
     task.bgY = parseInt(document.getElementById('reels-bg-y-num').value) || 0;
     task.bgFlipH = document.getElementById('reels-bg-fliph-ui').checked;

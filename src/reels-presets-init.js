@@ -169,6 +169,8 @@ const REELS_BUILTIN_PRESETS = {
         anim_in_duration: 0.4,
         anim_out_type: "fade",
         anim_out_duration: 0.3,
+        typewriter_reveal_type: "word",
+        tw_unrevealed_opacity: 0,
     },
 
     "粉色气泡": {

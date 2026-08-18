@@ -18,7 +18,7 @@ const PROJECT_VERSION = '2.0.0';
 const REELS_TASK_EXTRA_FIELDS = [
     'txtPath', 'txtContent', 'ttsText', 'ttsVoiceId', 'aiScript', 'aligned',
     'exportName', 'status', 'error',
-    'bgScale', 'bgX', 'bgY', 'bgFlipH', 'bgFlipV', 'bgDurScale', 'audioDurScale',
+    'bgScale', 'bgRotation', 'bgX', 'bgY', 'bgFlipH', 'bgFlipV', 'bgDurScale', 'audioDurScale',
     'bgMode', 'bgClipPool', 'bgTransition', 'bgTransDur', 'bgClipSettings', 'bgMinClipDur', 'bgMaxClipDur',
     'bgmPath', 'bgmVolume', 'bgmStart', 'bgVideoVolume',
     'bgmMode', 'bgmClipPool', 'bgmClipActivePool', 'bgmClipOrder',
@@ -233,6 +233,22 @@ function _normalizeProjectData(data) {
     const version = data.version || '1.0.0';
     const result = JSON.parse(JSON.stringify(data));
 
+    // 普通打字机过去没有独立的“未现字透明度”控件，却把缺失值当成
+    // 100/255（或样式引擎的 0.4）来画。旧工程因此会露出后续灰字。
+    // 这些都是历史默认值，不是用户可在当时明确设置的普通打字机参数；
+    // 只迁移一次，之后用户在新控件设置的值绝不再被覆盖。
+    const migrateTypewriterUnreadOpacity = (style) => {
+        if (!style || typeof style !== 'object' || style._typewriterUnreadOpacityV2) return;
+        if (style.anim_in_type === 'typewriter') {
+            const raw = style.tw_unrevealed_opacity;
+            if (raw === undefined || raw === 0.4 || raw === 100) {
+                style.tw_unrevealed_opacity = 0;
+            }
+        }
+        style._typewriterUnreadOpacityV2 = true;
+    };
+    migrateTypewriterUnreadOpacity(result.style);
+
     // AutoSub 旧格式兼容
     if (result.tasks) {
         for (const task of result.tasks) {
@@ -247,6 +263,9 @@ function _normalizeProjectData(data) {
                 if (!task.style.fontsize) task.style.fontsize = 74;
                 if (task.style.color_text === undefined) task.style.color_text = '#FFFFFF';
             }
+            migrateTypewriterUnreadOpacity(task.style);
+            migrateTypewriterUnreadOpacity(task.subtitleStyle);
+            migrateTypewriterUnreadOpacity(task.subtitle_style);
 
             // segments 修复：确保 start/end 是秒
             if (task.segments) {
