@@ -199,6 +199,18 @@ const DEFAULT_SUBTITLE_STYLE = {
     blur_sharp_clear_frac: 0.4,
     only_show_active_word: false,
 
+    // ── Ambient optical glow (illuminates background behind text) ──
+    ambient_glow_enabled: false,
+    ambient_glow_color: '#FFFB8F',
+    ambient_glow_radius: 650,
+    ambient_glow_opacity: 0.65,
+    ambient_glow_blend_mode: 'lighter',
+    ambient_lighting_enabled: false,
+    ambient_dark_color: '#000000',
+    ambient_dark_opacity: 0.70,
+    ambient_dark_center_opacity: 0.70,
+    ambient_dark_radius: 0.75,
+
     // ── Multi-layer stroke expansion ──
     stroke_expand_enabled: false,
     stroke_expand_layers: 3,
@@ -655,7 +667,7 @@ const PRESET_CATEGORIES = {
     '🎤 卡拉OK高亮': ['卡拉OK高亮','节奏逐词','闪光高亮','黑边_粉红高亮','黑边_薄荷高亮','黑边_电蓝高亮','极简纯文+电光青高亮','重金大字+强对比排版'],
     '🔥 逐词动态': ['单词聚焦_自适应色块','逐个大小出字-55','逐个大小出字-45','逐个出字+红色动画','逐个出字大小-爆贴','蓝底白字+动感回弹','黄线框高亮_逐词弹出','撞色黄底框高亮','紫色动态底框','逐字放大','逐词弹出(随机大小)','逐词弹出(随机回弹)','Hormozi 风格字幕'],
     '✨ 特殊动画': ['打字机模式','逐行出现','悬浮漂移','霓虹多层描边','滚动歌词_粉高亮','圣光降临','阴影沉浸式','全屏打字机_金黄光标','随机分散气泡卡片','随机单词定位','风驰幻影_白斜体'],
-    '💫 阴影发光': ['软阴影_青字高亮','硬阴影_黄字高亮','纯白发光字','粉红发光字','硬阴影_黄白斜体','红橙渐变_硬阴影','霓虹双色发光'],
+    '💫 阴影发光': ['金色霓虹环境光','软阴影_青字高亮','硬阴影_黄字高亮','纯白发光字','粉红发光字','硬阴影_黄白斜体','红橙渐变_硬阴影','霓虹双色发光'],
 };
 
 function getPresetsByCategory() {
@@ -674,10 +686,10 @@ function getPresetsByCategory() {
         }
     }
 
-    // Add uncategorized (user-saved) presets
+    // Add uncategorized (user-saved) presets to the top
     const uncategorized = allNames.filter(n => !used.has(n));
     if (uncategorized.length > 0) {
-        categorized.push({ category: '💾 我的预设', names: uncategorized });
+        categorized.unshift({ category: '💾 我的预设', names: uncategorized });
     }
 
     return { categorized, presetsMap: allPresets };

@@ -346,7 +346,7 @@
             if (typeof window.reelsOnSubtitleToggleChange === 'function') {
                 window.reelsOnSubtitleToggleChange(exportSubtitleToggle || subtitleToggle);
             }
-            renderFrame(getCurrentTime());
+            render();
         });
         root.querySelector('[data-role="seek"]').addEventListener('input', onSeekInput);
         root.querySelector('[data-role="seek"]').addEventListener('pointerdown', () => { state.dragSeek = true; });
@@ -1150,6 +1150,7 @@
         drawBackground(ctx, task, w, h, phase);
         drawGlobalMask(ctx, getResolvedStyle(task), w, h, phase);
         drawContentVideo(ctx, task, w, h, phase);
+        state.renderer?.renderAmbientLightingBase?.(getResolvedStyle(task), w, h);
         const overlayAboveSubtitle = task.overlayAboveSubtitle !== false;
         if (!overlayAboveSubtitle) drawOverlays(ctx, task, overlayTime, w, h, phase);
         drawSubtitles(ctx, task, subtitleTime, w, h, phase);
@@ -1525,11 +1526,20 @@
 
     function drawOverlays(ctx, task, time, w, h, phase = getPhaseInfo(getCurrentTime(), task)) {
         const show = state.root?.querySelector('[data-role="overlays"]')?.checked !== false;
-        if (!show || !window.ReelsOverlay || !task) return;
+        if (!window.ReelsOverlay || !task) return;
+        // 插入轨不是用户创建的“覆层”。无论普通覆层预览开关状态如何，它都
+        // 必须按时间线独立合成；否则用户会看到插入片段存在但画面消失。
+        const inserts = !phase.inCover && !phase.inHook
+            ? getInsertTrackOverlays(task, w, h)
+            : [];
         const overlays = phase.inCover && task.cover && Array.isArray(task.cover.overlays)
             ? task.cover.overlays
             : (phase.inHook ? [] : getLiveOverlays(task));
-        for (const ov of overlays) {
+        const visibleOverlays = show ? overlays : [];
+        const drawable = !phase.inCover && !phase.inHook && typeof window.ReelsRenderPlan?.getCompositedOverlays === 'function'
+            ? window.ReelsRenderPlan.getCompositedOverlays(task, { width: w, height: h }).filter(ov => ov._insertClip || show)
+            : [...inserts, ...visibleOverlays];
+        for (const ov of drawable) {
             if (!ov || ov.disabled) continue;
             const start = numberOr(ov.start, 0);
             const end = numberOr(ov.end, 9999);
@@ -1539,7 +1549,7 @@
             try {
                 // Preview must never inherit a stale/concurrent export marker,
                 // otherwise ReelsOverlay intentionally suppresses guide boxes.
-                const previewOv = { ...ov, _allOverlays: overlays, _exporting: false };
+                const previewOv = { ...ov, _allOverlays: drawable, _exporting: false };
                 window.ReelsOverlay.drawOverlay(ctx, previewOv, time, w, h);
                 // Keep computed bounds available to hit-testing/property UI.
                 for (const key of ['_renderedX', '_renderedY', '_renderedW', '_renderedH']) {
@@ -1549,7 +1559,7 @@
                 console.warn('[PreviewV2] overlay render failed', err);
             }
         }
-        if (!phase.inCover && !phase.inHook) drawOverlaySelection(ctx, overlays, time, w, h);
+        if (!phase.inCover && !phase.inHook) drawOverlaySelection(ctx, drawable, time, w, h);
     }
 
     function drawOverlaySelection(ctx, overlays, time, w, h) {
@@ -1821,6 +1831,13 @@
             return rs.overlayProxy.overlayMgr.overlays || [];
         }
         return task.overlays || [];
+    }
+
+    function getInsertTrackOverlays(task, width, height) {
+        return window.ReelsRenderPlan?.getInsertOverlays?.(task, {
+            width: width || state.canvas?.width || 1080,
+            height: height || state.canvas?.height || 1920,
+        }) || [];
     }
 
     function findActiveSegment(task, time, style = null) {

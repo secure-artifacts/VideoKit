@@ -1262,6 +1262,7 @@ async function startSession(opts) {
         bgDurScale = 100,
         audioDurScale = 100,
         reverbEnabled = false, reverbPreset = 'hall', reverbMix = 30, stereoWidth = 100, audioFxTarget = 'all',
+        insertAudioClips = [],
         renderedAudioPath = null,
         targetDuration = 0,
         totalFrames = 0,
@@ -1453,6 +1454,7 @@ async function startSession(opts) {
         bgDurScale,
         audioDurScale,
         reverbEnabled, reverbPreset, reverbMix, stereoWidth, audioFxTarget,
+        insertAudioClips,
         renderedAudioPath,
         targetDuration,
         totalFrames,
@@ -2052,6 +2054,14 @@ async function mixAudio(session) {
             args.push('-stream_loop', '-1', '-i', cvPath);
             nextInputIdx++;
         }
+        const insertInputs = [];
+        for (const item of (session.insertAudioClips || [])) {
+            if (!item?.sourcePath || !fs.existsSync(item.sourcePath) || item.audioMode === 'keep-main' || item.audioMode === 'mute') continue;
+            if (!(await hasAudioTrack(item.sourcePath))) continue;
+            const inputIdx = nextInputIdx++;
+            args.push('-i', item.sourcePath);
+            insertInputs.push({ ...item, inputIdx });
+        }
 
         // 混响需要额外的 IR 文件输入
         let irInputIdx = -1;
@@ -2069,8 +2079,23 @@ async function mixAudio(session) {
         let filterParts = [];
         let voiceOutLabel;
 
+        // “仅素材原声”不是简单地额外加一轨：在插入片段覆盖的时间段，主音轨
+        // 必须静音，否则听起来仍会有配音/BGM 混入。音量表达式按帧求值，片段
+        // 之外保持原来的主音量。
+        const sourceOnlyWindows = (session.insertAudioClips || [])
+            .filter(item => item?.audioMode === 'source-only')
+            .map(item => {
+                const start = Math.max(0, Number(item.timelineStart) || 0);
+                const end = start + Math.max(.05, Number(item.duration) || 1.5);
+                // 逗号属于 FFmpeg filtergraph 分隔符，必须在表达式内转义。
+                return `between(t\\,${start.toFixed(3)}\\,${end.toFixed(3)})`;
+            });
+        const mainAudioGate = sourceOnlyWindows.length
+            ? `*if(${sourceOnlyWindows.join('+')}\\,0\\,1):eval=frame`
+            : '';
+
         // 人声音量
-        filterParts.push(`[1:a]volume=${voiceVolume.toFixed(3)}[vpre]`);
+        filterParts.push(`[1:a]volume=${voiceVolume.toFixed(3)}${mainAudioGate}[vpre]`);
 
         // 音频变速（atempo）：audioDurScale=150% → 减速为 0.667x（拉长1.5倍）
         const aDurScale = session.audioDurScale || 100;
@@ -2117,7 +2142,8 @@ async function mixAudio(session) {
         // 渲染后的背景音频（已含特效）
         if (renderedBgInputIdx >= 0) {
             const bgTempo = buildAtempoChainForDurationScale(session.bgDurScale || 100);
-            const bgFilter = bgTempo ? `volume=${bgVolume.toFixed(3)},${bgTempo}` : `volume=${bgVolume.toFixed(3)}`;
+            const bgBaseFilter = `volume=${bgVolume.toFixed(3)}${mainAudioGate}`;
+            const bgFilter = bgTempo ? `${bgBaseFilter},${bgTempo}` : bgBaseFilter;
             filterParts.push(`[${renderedBgInputIdx}:a]${bgFilter}[rbg]`);
             mixLabels.push('[rbg]');
         }
@@ -2125,22 +2151,32 @@ async function mixAudio(session) {
         // 背景音频（原始，无特效）
         if (bgInputIdx >= 0) {
             const bgTempo = buildAtempoChainForDurationScale(session.bgDurScale || 100);
-            const bgFilter = bgTempo ? `volume=${bgVolume.toFixed(3)},${bgTempo}` : `volume=${bgVolume.toFixed(3)}`;
+            const bgBaseFilter = `volume=${bgVolume.toFixed(3)}${mainAudioGate}`;
+            const bgFilter = bgTempo ? `${bgBaseFilter},${bgTempo}` : bgBaseFilter;
             filterParts.push(`[${bgInputIdx}:a]${bgFilter}[bg]`);
             mixLabels.push('[bg]');
         }
 
         // BGM
         if (bgmInputIdx >= 0) {
-            filterParts.push(`[${bgmInputIdx}:a]volume=${bgmVolume.toFixed(3)}[bgm]`);
+            filterParts.push(`[${bgmInputIdx}:a]volume=${bgmVolume.toFixed(3)}${mainAudioGate}[bgm]`);
             mixLabels.push('[bgm]');
         }
 
         // 覆层视频音频
         if (cvInputIdx >= 0) {
-            filterParts.push(`[${cvInputIdx}:a]volume=${cvVol.toFixed(3)}[cva]`);
+            filterParts.push(`[${cvInputIdx}:a]volume=${cvVol.toFixed(3)}${mainAudioGate}[cva]`);
             mixLabels.push('[cva]');
         }
+        insertInputs.forEach((item, index) => {
+            const gain = Math.max(0, Math.min(2, Number(item.volume ?? 100) / 100));
+            const trimStart = Math.max(0, Number(item.sourceTrimStart) || 0);
+            const duration = Math.max(.05, Number(item.duration) || 1.5);
+            const delay = Math.max(0, Math.round((Number(item.timelineStart) || 0) * 1000));
+            const label = `[insa${index}]`;
+            filterParts.push(`[${item.inputIdx}:a]atrim=start=${trimStart.toFixed(3)}:duration=${duration.toFixed(3)},asetpts=PTS-STARTPTS,volume=${gain.toFixed(3)},adelay=${delay}|${delay}${label}`);
+            mixLabels.push(label);
+        });
 
         // 最终混合
         if (mixLabels.length > 1) {

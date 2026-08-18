@@ -129,6 +129,8 @@ const _batchTableState = {
     projectDir: '',
     projectName: 'UntitledProject.json',
     openSnapshotTasks: null,
+    // 停顿插入的统一规则：只影响之后执行的批量插入，不改已有片段。
+    insertDurationRule: { mode: 'fixed', fixedDuration: 3, maxDuration: 3 },
 };
 
 // ── 标签页辅助 ──
@@ -830,6 +832,14 @@ function _renderBatchTable() {
         _batchAutoSave();
     }
     const tasks = state.tasks || [];
+    const selectedInsertTasks = [...(_batchTableState.selectedRows || [])].map(index => tasks[index]).filter(Boolean);
+    const insertFolderTasks = selectedInsertTasks.length ? selectedInsertTasks : tasks.filter(task => task.insertMediaFolder);
+    const insertFolders = [...new Set(insertFolderTasks.map(task => task.insertMediaFolder).filter(Boolean))];
+    const insertFolderLabel = insertFolders.length === 0
+        ? '未选插入文件夹'
+        : insertFolders.length === 1
+            ? `📁 ${_escHtml(_shortName(insertFolders[0]))} · ${insertFolderTasks[0]?.insertMediaFiles?.length || 0} 个素材`
+            : `⚠️ 已选任务使用 ${insertFolders.length} 个不同文件夹`;
 
     // ── 自动校验与初始化当前活跃的覆层图层 ──
     const templateTask = state.tasks[state.selectedIdx] || state.tasks[0];
@@ -1041,6 +1051,16 @@ function _renderBatchTable() {
                         <button class="rbt-btn" id="rbt-paste-clip-ab" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;" title="A/B双版文案">粘贴剪辑文案 (A/B版)</button>
                         <button class="rbt-btn" id="rbt-bulk-create-btn" style="padding:2px 8px;font-size:11px;background:rgba(124,92,255,0.15);border:1px solid rgba(124,92,255,0.3);color:#b8a0ff;font-weight:600;" title="类似Canva大量制作：表格数据 × 覆层模板 = 批量任务">🧩 大量制作</button>
                         <button class="rbt-btn" id="rbt-import-material-groups-btn" style="padding:2px 8px;font-size:11px;background:rgba(76,158,255,0.12);border:1px solid rgba(76,158,255,0.3);color:#8fc7ff;" title="选择总文件夹；一级子文件夹各生成一行：音频 + 多视频拼接循环">📦 导入素材组</button>
+                        <button class="rbt-btn" id="rbt-insert-folder-btn" style="padding:2px 8px;font-size:11px;background:rgba(16,185,129,.14);border:1px solid rgba(16,185,129,.35);color:#86efac;" title="给勾选任务设置同一个插入素材文件夹">📁 插入素材文件夹</button>
+                        <span style="font-size:11px;color:#fde68a;">插入时长</span>
+                        <select id="rbt-insert-duration-mode" style="height:22px;font-size:10px;">
+                            <option value="fixed" ${_batchTableState.insertDurationRule?.mode !== 'silence' ? 'selected' : ''}>固定</option>
+                            <option value="silence" ${_batchTableState.insertDurationRule?.mode === 'silence' ? 'selected' : ''}>按停顿自动</option>
+                        </select>
+                        <input id="rbt-insert-duration-fixed" type="number" min="0.05" max="120" step="0.05" value="${_batchTableState.insertDurationRule?.fixedDuration ?? 3}" style="width:43px;height:18px;font-size:10px;">s
+                        <span id="rbt-insert-duration-max-wrap" style="display:${_batchTableState.insertDurationRule?.mode === 'silence' ? 'inline-flex' : 'none'};align-items:center;gap:3px;font-size:10px;color:#ccc;">最长 <input id="rbt-insert-duration-max" type="number" min="0.05" max="120" step="0.05" value="${_batchTableState.insertDurationRule?.maxDuration ?? 3}" style="width:43px;height:18px;font-size:10px;">s</span>
+                        <button class="rbt-btn" id="rbt-insert-silence-btn" style="padding:2px 8px;font-size:11px;background:rgba(251,191,36,.14);border:1px solid rgba(251,191,36,.35);color:#fde68a;" title="按勾选任务各自的停顿点批量插入素材">⏸ 批量停顿插入</button>
+                        <span id="rbt-insert-folder-status" style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;color:${insertFolders.length > 1 ? '#fbbf24' : insertFolders.length ? '#86efac' : '#888'};" title="${insertFolders.length === 1 ? _escHtml(insertFolders[0]) : ''}">${insertFolderLabel}</span>
                     </div>
 
                     <!-- === 4. 批量参数总设置 (Scaling / Content Video / Blur) === -->
@@ -1052,6 +1072,10 @@ function _renderBatchTable() {
                             <input type="number" id="rbt-batch-duration" min="0" max="600" step="0.5" placeholder="自动" style="width:52px;background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);color:#ccc;padding:2px;font-size:11px;text-align:center;">
                         </label>
                         <button class="rbt-btn" id="rbt-apply-batch-basic" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;">应用基础</button>
+                        <span style="color:rgba(255,255,255,.2);">|</span><span style="font-size:11px;color:#86efac;">插入音频</span>
+                        <select id="rbt-batch-insert-audio-mode" style="height:22px;font-size:10px;"><option value="keep-main">保留主音</option><option value="mix">混入原音</option><option value="mute">静音</option></select>
+                        <input id="rbt-batch-insert-audio-volume" type="number" min="0" max="200" value="0" style="width:42px;height:18px;font-size:10px;">%
+                        <button class="rbt-btn" id="rbt-apply-batch-insert-audio" style="padding:2px 8px;font-size:11px;">应用插入音频</button>
                         <span style="color:rgba(255,255,255,0.2);margin:0 2px;">|</span>
                         <span class="rbt-batch-subgroup">配乐</span>
                         <button class="rbt-btn" id="rbt-set-bgm-btn" style="padding:2px 8px;font-size:11px;background:rgba(155,89,182,0.15);border:1px solid rgba(155,89,182,0.3);color:#b8a0ff;margin-right:4px;" title="批量设置同一个本地配乐文件到勾选配乐框（或全部）的行">批量设置配乐文件</button>
@@ -1260,6 +1284,7 @@ function _renderBatchTable() {
 
                             <!-- 元数据与配置列 -->
                             <th class="rbt-col-act rbt-grp-base">操作</th>
+                            <th class="rbt-col-insert rbt-grp-base">🎬 插入素材</th>
                             <th class="rbt-col-tpl rbt-grp-base">动态字幕模版</th>
                             <th class="rbt-col-tpl rbt-grp-base">覆层预设</th>
                             <th class="rbt-col-dur rbt-grp-base">时长(s)</th>
@@ -2074,8 +2099,16 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates, textcards, s
             <td class="rbt-col-num rbt-grp-base">${idx + 1}</td>
             <td class="rbt-col-act rbt-grp-base">
                 <button class="rbt-row-btn rbt-select-btn" data-idx="${idx}" title="预览此任务">👁</button>
+                <button class="rbt-row-btn rbt-insert-btn" data-idx="${idx}" title="管理本任务插入素材">🎬</button>
                 <button class="rbt-row-btn rbt-clone-btn" data-idx="${idx}" title="复制此行">📋</button>
                 <button class="rbt-row-btn rbt-delete-btn" data-idx="${idx}" title="删除此行">🗑</button>
+            </td>
+            <td class="rbt-col-insert rbt-grp-base">
+                <div style="display:flex;flex-direction:column;gap:2px;min-width:105px;font-size:9px;line-height:1.2;">
+                    <button class="rbt-row-btn rbt-insert-btn" data-idx="${idx}" style="width:max-content;color:#86efac;" title="追加、重生成、清空或打开时间线微调">🎬 ${Array.isArray(task.insertClips) ? task.insertClips.length : 0} 段</button>
+                    <span title="${_escHtml(task.insertMediaFolder || '')}" style="max-width:125px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:${task.insertMediaFolder ? '#9ca3af' : '#666'};">${task.insertMediaFolder ? `📁 ${_escHtml(_shortName(task.insertMediaFolder))}` : '未设置文件夹'}</span>
+                    ${Array.isArray(task.insertClips) && task.insertClips.length ? `<span style="color:#fbbf24;">自动 ${task.insertClips.filter(item => item.generatedBy === 'batch-silence').length} · 手工 ${task.insertClips.filter(item => item.generatedBy !== 'batch-silence').length}</span>` : ''}
+                </div>
             </td>
             <td class="rbt-col-tpl rbt-grp-base">
                 <div class="rbt-sub-tpl-trigger rbt-select" data-idx="${idx}" style="cursor:pointer;font-size:10px;padding:0 4px;height:22px;display:flex;align-items:center;justify-content:space-between;user-select:none;" title="点击选择字幕模板（含样式预览）">
@@ -3830,6 +3863,38 @@ function _bindBatchTableEvents() {
     container.querySelector('#rbt-import-material-groups-btn')?.addEventListener('click', () => {
         _selectAndImportMaterialGroupFolders({ mode: 'append' });
     });
+    container.querySelector('#rbt-insert-folder-btn')?.addEventListener('click', () => {
+        const tasks = _getSelectedIndices().map(index => window._reelsState.tasks[index]).filter(Boolean);
+        if (!tasks.length) { alert('请先勾选要设置插入素材的任务行'); return; }
+        Promise.resolve(window.reelsSetInsertFolderForTasks?.(tasks)).then(() => _renderBatchTable());
+    });
+    container.querySelector('#rbt-insert-silence-btn')?.addEventListener('click', () => {
+        const tasks = _getSelectedIndices();
+        if (!tasks.length) { alert('请先勾选要按停顿点插入素材的任务行'); return; }
+        const rule = _batchTableState.insertDurationRule || {};
+        window.reelsBatchInsertAtSilences?.({ durationRule: rule });
+    });
+    const syncInsertDurationRule = () => {
+        const mode = container.querySelector('#rbt-insert-duration-mode')?.value || 'fixed';
+        const fixedDuration = Math.max(.05, Math.min(120, Number(container.querySelector('#rbt-insert-duration-fixed')?.value) || 3));
+        const maxDuration = Math.max(.05, Math.min(120, Number(container.querySelector('#rbt-insert-duration-max')?.value) || 3));
+        _batchTableState.insertDurationRule = { mode, fixedDuration, maxDuration };
+        const maxWrap = container.querySelector('#rbt-insert-duration-max-wrap');
+        if (maxWrap) maxWrap.style.display = mode === 'silence' ? 'inline-flex' : 'none';
+    };
+    container.querySelector('#rbt-insert-duration-mode')?.addEventListener('change', syncInsertDurationRule);
+    container.querySelector('#rbt-insert-duration-fixed')?.addEventListener('change', syncInsertDurationRule);
+    container.querySelector('#rbt-insert-duration-max')?.addEventListener('change', syncInsertDurationRule);
+    container.querySelector('#rbt-apply-batch-insert-audio')?.addEventListener('click', () => {
+        const mode = container.querySelector('#rbt-batch-insert-audio-mode')?.value || 'keep-main';
+        const configured = Number(container.querySelector('#rbt-batch-insert-audio-volume')?.value);
+        const volume = Math.max(0, Math.min(200, Number.isFinite(configured) ? configured : 0));
+        const targets = _getSelectedIndices().map(index => window._reelsState.tasks[index]).filter(Boolean);
+        if (!targets.length) { alert('请先勾选任务行'); return; }
+        targets.forEach(task => (task.insertClips || []).forEach(clip => { clip.audioMode = mode; clip.volume = volume; }));
+        _renderBatchTable();
+        if (typeof window.reelsSaveHistory === 'function') window.reelsSaveHistory();
+    });
 
     // ── 读取文件夹 ──
     container.querySelector('#rbt-upload-folder')?.addEventListener('click', () => {
@@ -5238,7 +5303,7 @@ function _bindBatchTableEvents() {
     const tbody = container.querySelector('#rbt-tbody');
     if (tbody) {
         // Windows 兼容：点击缩放显示值切换控件可见性（无 hover 时的替代方案）
-        tbody.addEventListener('click', (e) => {
+        tbody.addEventListener('click', async (e) => {
             if (e.target.classList.contains('rbt-scale-display')) {
                 const td = e.target.closest('td');
                 if (td) {
@@ -5509,7 +5574,18 @@ function _bindBatchTableEvents() {
                 }
             }
         });
-        tbody.addEventListener('click', (e) => {
+        tbody.addEventListener('click', async (e) => {
+            const insertBtn = e.target.closest('.rbt-insert-btn');
+            if (insertBtn) {
+                const idx = parseInt(insertBtn.dataset.idx);
+                const task = window._reelsState?.tasks?.[idx];
+                if (!task) return;
+                const action = await window.reelsShowInputDialog?.('本任务插入素材：1追加 / 2重生成自动 / 3清空重来 / 4时间线微调', '输入 1、2、3 或 4', '1');
+                if (action === '4') { _applyBatchTableChanges(); reelsToggleBatchTable(); if (typeof reelsSelectTask === 'function') reelsSelectTask(idx); return; }
+                if (!['1', '2', '3'].includes(action)) return;
+                window.reelsInsertAtSilences?.({ task, mode: action === '2' ? 'regenerate' : action === '3' ? 'reset' : 'append' });
+                return;
+            }
             // 预览按钮
             const selectBtn = e.target.closest('.rbt-select-btn');
             if (selectBtn) {
@@ -17724,3 +17800,22 @@ function _bindMediaSidebarEvents(container) {
     // Render existing items on open
     _renderPoolItems();
 }
+
+// 历史记录需要包含所有批量标签页，而不只是当前投影到主编辑器的任务。
+window.reelsCaptureBatchTableState = function() {
+    return {
+        activeTabId: _batchTableState?.activeTabId || '',
+        tabs: _cloneBatchTasks((_batchTableState?.tabs || []).map(tab => ({ ...tab, tasks: _cloneBatchTasks(tab.tasks || []) }))),
+        selectedRows: [...(_batchTableState?.selectedRows || [])],
+    };
+};
+window.reelsRestoreBatchTableState = function(snapshot) {
+    if (!snapshot || !_batchTableState) return;
+    _batchTableState.tabs = (snapshot.tabs || []).map(tab => ({ ...tab, tasks: _cloneBatchTasks(tab.tasks || []) }));
+    _batchTableState.activeTabId = snapshot.activeTabId || _batchTableState.tabs[0]?.id || '';
+    _batchTableState.selectedRows = new Set(snapshot.selectedRows || []);
+};
+window.reelsGetSelectedBatchTasks = function() {
+    const tasks = window._reelsState?.tasks || [];
+    return [...(_batchTableState?.selectedRows || [])].map(index => tasks[index]).filter(Boolean);
+};

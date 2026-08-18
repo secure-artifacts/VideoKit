@@ -84,9 +84,9 @@
     },
     {
       "key": "sk_63c056ad834057cc54e538889e41ebd67f500b89f4a796dd",
-      "enabled": true,
-      "auto_disabled": false,
-      "auto_disabled_reason": ""
+      "enabled": false,
+      "auto_disabled": true,
+      "auto_disabled_reason": "remaining<200"
     },
     {
       "key": "sk_e581af4ad5cd8c238c877d76135235a9ef5ec5f5c6208447",
@@ -102,9 +102,9 @@
     },
     {
       "key": "sk_5e735a71925bfde1f3cb2ef2b3daf9c8751fa055d80fd651",
-      "enabled": false,
-      "auto_disabled": true,
-      "auto_disabled_reason": "remaining<200"
+      "enabled": true,
+      "auto_disabled": false,
+      "auto_disabled_reason": ""
     },
     {
       "key": "sk_794537e081830f2c5e195de50cf98aa8ffe45693b0cca63b",
@@ -120,7 +120,9 @@
     },
     {
       "key": "sk_fc8b73fac102103d1a502d16c20b6ee53e0c3fe2e948c408",
-      "enabled": true
+      "enabled": false,
+      "auto_disabled": true,
+      "auto_disabled_reason": "remaining<200"
     },
     {
       "key": "sk_3cbc8c676d1ce903c7e03281dcf46030811fbd3c0bd9b9ea",

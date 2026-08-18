@@ -2582,6 +2582,7 @@ class ReelsOverlayPanel {
                     ov.disabled = !ov.disabled;
                     this._refreshList();
                     if (this.videoCanvas) this.videoCanvas.render();
+                    if (typeof this.videoCanvas?.onOverlayChange === 'function') this.videoCanvas.onOverlayChange();
                 }
             });
         });
@@ -2600,6 +2601,7 @@ class ReelsOverlayPanel {
                             this._val('rop-name', ov.name);
                         }
                         this._refreshList();
+                        if (typeof this.videoCanvas?.onOverlayChange === 'function') this.videoCanvas.onOverlayChange();
                     }
                 }
             });
@@ -2618,6 +2620,7 @@ class ReelsOverlayPanel {
                     overlays[idx + 1] = temp;
                     this._refreshList();
                     if (this.videoCanvas) this.videoCanvas.render();
+                    if (typeof this.videoCanvas?.onOverlayChange === 'function') this.videoCanvas.onOverlayChange();
                 }
             });
         });
@@ -2635,6 +2638,7 @@ class ReelsOverlayPanel {
                     overlays[idx - 1] = temp;
                     this._refreshList();
                     if (this.videoCanvas) this.videoCanvas.render();
+                    if (typeof this.videoCanvas?.onOverlayChange === 'function') this.videoCanvas.onOverlayChange();
                 }
             });
         });

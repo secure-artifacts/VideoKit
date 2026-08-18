@@ -2804,22 +2804,37 @@ async function autoEditByScript(opts = {}) {
                         scopedWords.length ? findBestWordWindow(scopedWords, line, 0.45) : null
                     );
                     if (!match || !scopedWords[match.startIdx] || !scopedWords[match.endIdx]) {
-                        lineMatches.length = 0;
-                        break;
+                        continue;
                     }
                     const firstWord = scopedWords[match.startIdx];
                     const lastWord = scopedWords[match.endIdx];
-                    lineMatches.push({
-                        text: line,
-                        start: Math.max(srtStart, srtStart + Math.round(((firstWord.start - plan.start) / speed) * 1000)),
-                        end: Math.min(srtEnd, srtStart + Math.round(((lastWord.end - plan.start) / speed) * 1000)),
-                    });
+
+                    // 检查此句是否落入本次裁切的 [plan.start, plan.end] 范围内：
+                    // 如果该行在裁切入点之前结束，或在裁切出点之后开始，则已被用户剪掉，不生成字幕！
+                    if (lastWord.end <= plan.start + 0.05 || firstWord.start >= plan.end - 0.05) {
+                        wordCursor += match.endIdx + 1;
+                        continue;
+                    }
+
+                    const clampedStartSec = Math.max(plan.start, firstWord.start);
+                    const clampedEndSec = Math.min(plan.end, lastWord.end);
+                    if (clampedEndSec > clampedStartSec) {
+                        const lineStartMs = srtStart + Math.round(((clampedStartSec - plan.start) / speed) * 1000);
+                        const lineEndMs = srtStart + Math.round(((clampedEndSec - plan.start) / speed) * 1000);
+                        if (lineEndMs > lineStartMs + 50) {
+                            lineMatches.push({
+                                text: line,
+                                start: Math.max(srtStart, lineStartMs),
+                                end: Math.min(srtEnd, lineEndMs),
+                            });
+                        }
+                    }
                     wordCursor += match.endIdx + 1;
                 }
 
-                if (lineMatches.length === reviewedLines.length && lineMatches.every(item => item.end > item.start)) {
+                if (lineMatches.length > 0) {
                     srtItems.push(...lineMatches);
-                } else {
+                } else if (!plan.words || plan.words.length === 0) {
                     // 没有可靠逐词定位时仍严格保留用户断行，按每行有效字符数分配片段时长。
                     const weights = reviewedLines.map(line => Math.max(1, normalizeText(line).length));
                     const totalWeight = weights.reduce((sum, value) => sum + value, 0);
@@ -2948,11 +2963,13 @@ async function autoEditByScript(opts = {}) {
                 duration: Math.round((plan.end - plan.start) * 1000) / 1000,
                 audience_response: plan.audienceResponse || null,
                 transcription_source: plan.transcription.source,
-                word_timeline: (plan.words || []).map(word => ({
-                    word: word.raw,
-                    start: word.start,
-                    end: word.end,
-                })),
+                word_timeline: (plan.words || [])
+                    .filter(word => word.end > plan.start - 0.05 && word.start < plan.end + 0.05)
+                    .map(word => ({
+                        word: word.raw,
+                        start: Math.max(0, (word.start - plan.start) / speed),
+                        end: Math.min(cutDuration, (word.end - plan.start) / speed),
+                    })),
             });
         }
 

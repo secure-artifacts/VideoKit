@@ -5,6 +5,22 @@ const path = require('node:path');
 
 const RenderPlan = require('../src/reels-render-plan.js');
 
+test('image insert clips project as static image overlays with their own timeline duration', () => {
+    const task = {
+        insertClips: [{
+            id: 'still-1', sourcePath: '/tmp/reaction.png', sourceType: 'image',
+            timelineStart: 4, duration: 2.25, transform: { scale: 80, rotation: 12, opacity: 75 },
+        }],
+    };
+    const [overlay] = RenderPlan.getInsertOverlays(task, { width: 1080, height: 1920 });
+    assert.equal(overlay.type, 'image');
+    assert.equal(overlay.start, 4);
+    assert.equal(overlay.end, 6.25);
+    assert.equal(overlay.scale, 0.8);
+    assert.equal(overlay.rotation, 12);
+    assert.equal(overlay.opacity, 191.25);
+});
+
 test('preview and export receive the same timeline-synchronised task fields', () => {
     const task = {
         bgPath: path.join(os.tmpdir(), 'original.mp4'),

@@ -349,6 +349,8 @@ async function reelsWysiwygExport(params) {
         segments,
         originalScript = '',
         overlays: taskOverlays,
+        watermarks = [],
+        cover = null,
         backgroundPath,
         bgMode = 'single',       // 'single' | 'multi'
         bgClipPool = [],         // 多素材池路径列表
@@ -400,6 +402,7 @@ async function reelsWysiwygExport(params) {
         reverbMix = 30,
         stereoWidth = 100,
         audioFxTarget = 'all',
+        insertAudioClips = [],
         useMemoryDecoder = false,
         useGPU = false,
         crf = 23,
@@ -736,10 +739,12 @@ async function reelsWysiwygExport(params) {
             if (!opath || /^blob:/i.test(opath)) {
                 throw new Error(`覆层素材不是可导出的本地文件路径: ${ov.name || ov.content}`);
             }
+            const videoOffset = Math.max(0, parseFloat(ov.video_start_offset || 0));
+            const overlayPlayDur = Math.max(0.1, parseFloat(ov.end || duration) - parseFloat(ov.start || 0));
             const oPrep = await window.electronAPI.reelsComposeWysiwyg('prepare-overlay', {
                 overlayPath: opath,
                 fps,
-                duration: Math.min(duration, parseFloat(ov.end || duration)),
+                duration: videoOffset + overlayPlayDur + 1,
             });
             if (oPrep && oPrep.framesDir) {
                 ov._framesDir = oPrep.framesDir;
@@ -846,6 +851,7 @@ async function reelsWysiwygExport(params) {
         reverbMix,
         stereoWidth,
         audioFxTarget,
+        insertAudioClips,
         useGPU,
         crf,
         qualityPreset,
@@ -1098,6 +1104,9 @@ async function reelsWysiwygExport(params) {
                 _drawImageFlipped(ctx, currentCvImg, sx, sy, sWidth, sHeight, drawX, drawY, drawW, drawH, contentVideoFlipH, contentVideoFlipV);
             }
 
+            // 环境暗部与逐字光源属于同一效果；先压暗画面，再由字幕光局部提亮。
+            renderer.renderAmbientLightingBase?.(style, targetWidth, targetHeight);
+
             // ── 动态字幕 ──
             const renderSubtitle = () => {
                 if (!showSubtitle) return;
@@ -1121,8 +1130,11 @@ async function reelsWysiwygExport(params) {
 
             // ── 覆盖层（文字卡片等）──
             if (taskOverlays && taskOverlays.length > 0 && window.ReelsOverlay) {
-                // 注入覆层列表引用（供跟随绑定），按面板图层顺序渲染。
-                for (const ov of taskOverlays.filter(ov => !ov.disabled)) {
+                // 与主预览/分层导出一致：滚动覆层先绘制，其余按时间线层级顺序。
+                const sortedOvs = taskOverlays.filter(ov => !ov.disabled).slice().sort((a, b) => {
+                    return (Number(a.z_index) || 0) - (Number(b.z_index) || 0);
+                });
+                for (const ov of sortedOvs) {
                     ov._allOverlays = taskOverlays;
                     const ovStart = parseFloat(ov.start || 0);
                     const ovEnd = parseFloat(ov.end || 9999);

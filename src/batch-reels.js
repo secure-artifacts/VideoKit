@@ -569,21 +569,66 @@ function _initReelsModule() {
         };
         _reelsState.timelineEditor.onClipSelect = (ti, ci, clip) => {
             console.log('[Timeline] Selected clip', ti, ci, clip);
-            // 选中字幕块时跳转到该字幕的开始时间
-            if (clip && clip.start != null) {
-                const midTime = (clip.start + (clip.end || clip.start)) / 2;
-                if (window.ReelsPreviewV2?.isOpen?.()) {
-                    window.ReelsPreviewV2.seek(window.ReelsPreviewV2.timelineToAbsolute(midTime));
-                } else {
-                    const task = _getSelectedTask();
-                    const hookDur = _reelsState.hookDuration || 0;
-                    const coverDur = (task && task.cover && task.cover.enabled) ? (parseFloat(task.cover.duration) || 0.01) : 0;
-                    const offsetDur = hookDur + coverDur;
-                    const aDurScale = (task && task.audioDurScale) ? (task.audioDurScale / 100) : 1;
-                    const absoluteTarget = (midTime * aDurScale) + offsetDur;
-                    _onSeek({ absoluteTarget });
-                }
+            // 选中片段只改变编辑焦点，绝不改写播放头。此前点击某个字幕/素材块
+            // 会把播放头强制跳到片段中点，和时间尺点击/拖动形成竞争，审核时很
+            // 难判断当前预览究竟对应哪个时间。需要定位时直接点击时间尺即可。
+            if (clip?._timelineRole === 'insert_video') {
+                _showInsertClipInspector(clip);
+            } else {
+                _hideInsertClipInspector();
             }
+            if (clip?._timelineRole === 'overlay' || clip?._overlayId) {
+                _reelsState.overlaySelectedId = clip._overlayId || clip._timelineClipId;
+                if (_reelsState.overlayProxy?.overlayMgr) {
+                    _reelsState.overlayProxy.overlayMgr.selectedId = _reelsState.overlaySelectedId;
+                }
+                if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
+                if (typeof window.reelsRenderOverlayListUI === 'function') window.reelsRenderOverlayListUI();
+            }
+        };
+        _reelsState.timelineEditor.onTrackVisibilityChange = (trackIdx, visible, track) => {
+            const task = _getSelectedTask();
+            if (!task) return;
+            const isInsert = track.role === 'insert_video' || (track.name && track.name.includes('插入')) || track.clips?.some(c => c._timelineRole === 'insert_video');
+            const isBg = !isInsert && (track.role === 'background' || (track.name && track.name.includes('背景')) || (track.type === 'video' && !track.name?.includes('插入')));
+
+            if (track._overlayId) {
+                // 单个覆层卡片轨
+                const activeOverlays = (_reelsState.overlayProxy?.overlayMgr?.overlays) || task.overlays || [];
+                const ov = activeOverlays.find(o => o.id === track._overlayId);
+                if (ov) {
+                    ov.disabled = !visible;
+                    _syncCurrentOverlayEditorToSelectedTask();
+                    if (_reelsState.overlayPanel) _reelsState.overlayPanel._refreshList?.();
+                }
+            } else if (isInsert) {
+                // 插入素材轨
+                task.insertClipsDisabled = !visible;
+                if (Array.isArray(task.insertClips)) {
+                    task.insertClips.forEach(item => { item.disabled = !visible; });
+                }
+            } else if (track.type === 'subs') {
+                // 字幕轨
+                task.showSubtitle = visible;
+                const subtitleToggle = document.getElementById('reels-subtitle-toggle');
+                if (subtitleToggle) {
+                    subtitleToggle.checked = visible;
+                }
+            } else if (isBg) {
+                // 背景视频轨
+                task.bgDisabled = !visible;
+            }
+
+            // 同步时间线底层模型的轨道 visible 状态
+            const timeline = window.ReelsRenderPlan?.ensureTimeline?.(task);
+            if (timeline) {
+                const tlTrack = timeline.tracks.find(t => t.id === track._timelineTrackId || t.type === track.type);
+                if (tlTrack) tlTrack.visible = visible;
+            }
+
+            reelsUpdatePreview();
+            if (typeof window.ReelsPreviewV2?.render === 'function') window.ReelsPreviewV2.render();
+            if (typeof window.ReelsPreviewV2?.redraw === 'function') window.ReelsPreviewV2.redraw();
         };
         const syncEditedSubtitleSegment = (seg, newText) => {
             const text = String(newText || '');
@@ -620,7 +665,12 @@ function _initReelsModule() {
             // 重新投影同一份 timeline：把已移动的绑定原声和后续波纹片段同步
             // 回画布，但 render-plan 不会覆盖用户刚刚完成的编辑。
             const task = _getSelectedTask();
-            if (task) _updateTimelineForTask(task);
+            if (task) {
+                // 插入素材片段的删除/拆分发生在编辑器的显示模型中；在重绘前
+                // 回写到当前任务，确保切换任务、保存工程时不会丢失。
+                window.ReelsRenderPlan?.syncInsertClipsFromTimeline?.(task);
+                _updateTimelineForTask(task);
+            }
         };
         _reelsState.timelineEditor.onFillGap = () => {
             const task = _getSelectedTask();
@@ -677,6 +727,133 @@ function _initReelsModule() {
                     }
                 }
             }
+        };
+        _reelsState.timelineEditor.onTrackOrderChange = (trackIdx, direction, editorTrack, targetTrack) => {
+            const task = _getSelectedTask();
+            if (!task) return;
+            // 覆层轨和插入素材轨是同一合成栈。以前后面的绑定覆盖了这里，
+            // 时间线会移动但画面顺序不会改变。
+            if (window.ReelsRenderPlan?.moveCompositedOverlay?.(task, editorTrack, targetTrack)) {
+                _syncCurrentOverlayEditorToSelectedTask();
+                if (_reelsState.overlayPanel) _reelsState.overlayPanel._refreshList?.();
+                _updateTimelineForTask(task);
+                if (typeof window.reelsSaveHistory === 'function') window.reelsSaveHistory();
+                if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
+                if (typeof window.ReelsPreviewV2?.render === 'function') window.ReelsPreviewV2.render();
+                return;
+            }
+            const timeline = task && window.ReelsRenderPlan?.ensureTimeline?.(task);
+            const track = timeline?.tracks?.find(item => item.id === editorTrack._timelineTrackId);
+            if (!track) return;
+            if (direction === 'up') timeline.moveTrackUp(track);
+            else timeline.moveTrackDown(track);
+            window.ReelsRenderPlan.syncLegacyFields(task);
+            _updateTimelineForTask(task);
+            if (typeof window.reelsSaveHistory === 'function') window.reelsSaveHistory();
+            if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
+        };
+        _reelsState.timelineEditor.onClipContextMenu = (trackIdx, clipIdx, clip) => {
+            const extraItems = [];
+            const task = _getSelectedTask();
+            if (!task || !clip) return [];
+
+            const role = clip._timelineRole || '';
+            const track = _reelsState.timelineEditor._tracks[trackIdx];
+
+            // 1. 预览此片段
+            extraItems.push({
+                icon: '▶️',
+                text: '从此处开始预览',
+                action: () => {
+                    _reelsState.timelineEditor.setPlayhead(clip.start);
+                    if (typeof _previewPlay === 'function') _previewPlay(clip.start);
+                },
+            });
+
+            // 2. 视频轨操作 (背景/内容视频/插入素材)
+            if (track?.type === 'video' || role === 'background' || role === 'content_video' || role === 'insert_video') {
+                extraItems.push({
+                    icon: '🎬',
+                    text: '替换此视频素材文件…',
+                    action: async () => {
+                        const path = await _pickSingleFile('替换素材视频', ['mp4', 'mov', 'mkv', 'webm', 'avi', 'm4v']);
+                        if (!path) return;
+                        const timeline = window.ReelsRenderPlan?.ensureTimeline(task);
+                        const found = timeline?.findClip(clip._timelineClipId);
+                        if (found) {
+                            const source = new window.ReelsTimeline.MediaSource(path);
+                            source.duration = Math.max(found.clip.outT, 1.5);
+                            timeline.sources[source.id] = source;
+                            found.clip.sourceId = source.id;
+                        }
+                        if (role === 'background') {
+                            task.bgPath = path;
+                            task.videoPath = path;
+                        } else if (role === 'content_video') {
+                            task.contentVideoPath = path;
+                        }
+                        window.ReelsRenderPlan?.syncLegacyFields(task);
+                        _updateTimelineForTask(task);
+                        if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
+                        if (typeof window.reelsSaveHistory === 'function') window.reelsSaveHistory();
+                    },
+                });
+            }
+
+            // 3. 字幕轨操作 (字幕编辑与替换)
+            if (track?.type === 'subs' || role === 'subs') {
+                extraItems.push({
+                    icon: '✏️',
+                    text: '编辑此句字幕文字与样式…',
+                    action: () => {
+                        const rect = _reelsState.timelineEditor._getClipScreenRect(trackIdx, clipIdx);
+                        _reelsState.timelineEditor._openSubtitleEditor(trackIdx, clipIdx, clip, rect);
+                    },
+                });
+                extraItems.push({
+                    icon: '📄',
+                    text: '导入/替换外部 SRT 字幕…',
+                    action: async () => {
+                        const path = await _pickSingleFile('选择 SRT 字幕文件', ['srt', 'vtt', 'ass']);
+                        if (!path) return;
+                        if (typeof loadSrtFileForTask === 'function') {
+                            await loadSrtFileForTask(task, path);
+                        } else if (window.electronAPI?.readFileText && typeof parseSRT === 'function') {
+                            const srtContent = await window.electronAPI.readFileText(path);
+                            const rawSegs = parseSRT(srtContent).map(seg => ({ ...seg, _timeUnit: 'sec' }));
+                            task.segments = window.ReelsSubtitleProcessor
+                                ? ReelsSubtitleProcessor.srtToSegmentsWithWords(rawSegs)
+                                : rawSegs;
+                            task.srtPath = path;
+                        }
+                        _updateTimelineForTask(task);
+                        if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
+                    },
+                });
+            }
+
+            // 4. 音频轨操作 (人声/配乐/原声)
+            if (track?.type === 'audio' || track?.type === 'bgm' || role === 'voice' || role === 'bgm' || role === 'source_audio') {
+                extraItems.push({
+                    icon: '🎵',
+                    text: '替换音频文件…',
+                    action: async () => {
+                        const path = await _pickSingleFile('选择音频文件', ['mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg']);
+                        if (!path) return;
+                        if (role === 'bgm' || track?.type === 'bgm') {
+                            task.bgmPath = path;
+                        } else {
+                            task.audioPath = path;
+                        }
+                        window.ReelsRenderPlan?.syncLegacyFields(task);
+                        _updateTimelineForTask(task);
+                        if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
+                        if (typeof window.reelsSaveHistory === 'function') window.reelsSaveHistory();
+                    },
+                });
+            }
+
+            return extraItems;
         };
 
         // 双击字幕编辑后的回写
@@ -754,10 +931,14 @@ function _initReelsModule() {
                     task.overlayAboveSubtitle = value !== false;
                     reelsUpdatePreview();
                 },
+                onOverlayChange() {
+                    _syncCurrentOverlayEditorToSelectedTask();
+                    reelsUpdatePreview();
+                    if (typeof window.ReelsPreviewV2?.render === 'function') window.ReelsPreviewV2.render();
+                },
                 // 回调占位
                 onSelect: null,
                 onDeselect: null,
-                onOverlayChange: null,
             };
         }
         _reelsState.overlayPanel = new ReelsOverlayPanel(ovPanelRoot, _reelsState.overlayProxy);
@@ -1921,6 +2102,8 @@ function reelsApplyAnimationPreset(silent = false) {
     set('reels-metro-unread-opacity-range', preset.metro_unread_opacity);
     setChk('reels-karaoke-hl', preset.karaoke_highlight);
 
+    _persistSubtitleStyleByScope(_readStyleFromUI());
+    reelsRefreshAnimationParameterAvailability();
     reelsUpdatePreview();
 }
 
@@ -1963,41 +2146,29 @@ function _showAnimationParamHint(label) {
 }
 
 function reelsRefreshAnimationParameterAvailability() {
+    // 移除所有可能遗留的遮罩按钮
+    document.querySelectorAll('.reels-anim-param-blocker').forEach(b => b.remove());
+
     const activeType = document.getElementById('reels-anim-in')?.value || 'none';
-    const hosts = new Map();
-    for (const group of REELS_ANIMATION_PARAM_GROUPS) {
-        const active = group.types.includes(activeType);
-        for (const id of group.ids) {
-            const control = document.getElementById(id);
-            if (!control) continue;
-            const host = control.parentElement;
-            if (!host) continue;
-            hosts.set(host, { active, label: group.label });
-            control.disabled = !active;
-        }
-    }
-    for (const [host, state] of hosts) {
-        let blocker = host.querySelector(':scope > .reels-anim-param-blocker');
-        if (state.active) {
-            host.style.opacity = '';
-            host.style.position = '';
-            if (blocker) blocker.remove();
-            continue;
-        }
-        host.style.opacity = '0.42';
-        host.style.position = 'relative';
-        if (!blocker) {
-            blocker = document.createElement('button');
-            blocker.type = 'button';
-            blocker.className = 'reels-anim-param-blocker';
-            blocker.style.cssText = 'position:absolute;inset:0;z-index:2;border:0;background:transparent;cursor:not-allowed;padding:0;';
-            host.appendChild(blocker);
-        }
-        blocker.title = `仅“${state.label}”动画可编辑`;
-        blocker.onclick = (event) => {
-            event.preventDefault();
-            _showAnimationParamHint(state.label);
-        };
+    
+    // 智能动态切换：根据当前选择的入场动画展示对应专属参数卡片，隐藏其他无关卡片
+    const boxes = document.querySelectorAll('.reels-anim-group-box');
+    boxes.forEach(box => {
+        const types = (box.getAttribute('data-anim-types') || '').split(',').map(s => s.trim()).filter(Boolean);
+        const isMatch = types.includes(activeType);
+        box.style.display = isMatch ? 'block' : 'none';
+    });
+
+    // 确保所有参数输入控件完全可用（非 disabled），且容器样式正常
+    const container = document.getElementById('reels-anim-param-container');
+    if (container) {
+        container.querySelectorAll('input, select, button').forEach(el => {
+            el.disabled = false;
+        });
+        container.querySelectorAll('div').forEach(el => {
+            el.style.opacity = '';
+            el.style.position = '';
+        });
     }
 }
 
@@ -2193,7 +2364,9 @@ function _getCurrentReelsGroupTasks() {
     if (task._batchTabId) {
         return (_reelsState.tasks || []).filter(t => t._batchTabId === task._batchTabId);
     }
-    return [task];
+    // 未分文件夹/标签的普通任务属于同一个主队列/默认分组（整批任务一同控制）
+    const unpartitioned = (_reelsState.tasks || []).filter(t => !t._folderQueueId && !t._batchTabId);
+    return unpartitioned.length > 0 ? unpartitioned : (_reelsState.tasks || [task]);
 }
 
 function _getNamedSubtitlePresetStyle(name) {
@@ -2234,6 +2407,9 @@ function _persistSubtitleStyleByScope(style) {
     const scope = _getSubtitleStyleScope();
     if (scope === 'all') {
         _reelsState.globalSubtitleStyle = safeStyle;
+        for (const t of (_reelsState.tasks || [])) {
+            t.subtitleStyle = _cloneSubtitleStyle(safeStyle);
+        }
         return;
     }
     const task = _getSelectedTask();
@@ -2405,6 +2581,18 @@ function _readStyleFromUI() {
         global_mask_enabled: chk('reels-global-mask'),
         global_mask_color: val('reels-global-mask-color') || '#000000',
         global_mask_opacity: num('reels-global-mask-opacity', 128) / 255,
+
+        // 逐字环境光：范围使用画布像素，强度以 UI 百分比保存为 0–1。
+        ambient_glow_enabled: chk('reels-ambient-glow-enabled'),
+        ambient_glow_color: val('reels-ambient-glow-color') || '#FFFB8F',
+        ambient_glow_radius: num('reels-ambient-glow-radius', 650),
+        ambient_glow_opacity: num('reels-ambient-glow-opacity', 65) / 100,
+        ambient_glow_blend_mode: val('reels-ambient-glow-blend-mode') || 'lighter',
+        ambient_lighting_enabled: chk('reels-ambient-lighting-enabled'),
+        ambient_dark_color: val('reels-ambient-dark-color') || '#000000',
+        ambient_dark_opacity: num('reels-ambient-dark-opacity', 70) / 100,
+        ambient_dark_center_opacity: num('reels-ambient-dark-center', 70) / 100,
+        ambient_dark_radius: num('reels-ambient-dark-radius', 75) / 100,
 
         // Background box
         adv_bg_enabled: chk('reels-adv-bg'),
@@ -2772,7 +2960,28 @@ function _writeStyleToUI(style) {
     // Global mask
     setChk('reels-global-mask', style.global_mask_enabled);
     set('reels-global-mask-color', style.global_mask_color || '#000000');
-    set('reels-global-mask-opacity', Math.round((style.global_mask_opacity ?? 0.5) * 255));
+    const globalMaskOpacity = Math.round((style.global_mask_opacity ?? 0.5) * 255);
+    set('reels-global-mask-opacity', globalMaskOpacity);
+    set('reels-global-mask-opacity-range', globalMaskOpacity);
+    setChk('reels-ambient-glow-enabled', style.ambient_glow_enabled);
+    set('reels-ambient-glow-color', style.ambient_glow_color || '#FFFB8F');
+    set('reels-ambient-glow-radius', style.ambient_glow_radius ?? 650);
+    set('reels-ambient-glow-radius-range', style.ambient_glow_radius ?? 650);
+    set('reels-ambient-glow-blend-mode', style.ambient_glow_blend_mode || 'lighter');
+    setChk('reels-ambient-lighting-enabled', style.ambient_lighting_enabled);
+    set('reels-ambient-dark-color', style.ambient_dark_color || '#000000');
+    const ambientDarkPercent = Math.round((style.ambient_dark_opacity ?? .70) * 100);
+    set('reels-ambient-dark-opacity', ambientDarkPercent);
+    set('reels-ambient-dark-opacity-range', ambientDarkPercent);
+    const ambientDarkCenterPercent = Math.round((style.ambient_dark_center_opacity ?? .70) * 100);
+    set('reels-ambient-dark-center', ambientDarkCenterPercent);
+    set('reels-ambient-dark-center-range', ambientDarkCenterPercent);
+    const ambientDarkRadiusPercent = Math.round((style.ambient_dark_radius ?? .75) * 100);
+    set('reels-ambient-dark-radius', ambientDarkRadiusPercent);
+    set('reels-ambient-dark-radius-range', ambientDarkRadiusPercent);
+    const ambientOpacityPercent = Math.round((style.ambient_glow_opacity ?? .65) * 100);
+    set('reels-ambient-glow-opacity', ambientOpacityPercent);
+    set('reels-ambient-glow-opacity-range', ambientOpacityPercent);
 
     set('reels-adv-x', style.advanced_textbox_x || 200);
     set('reels-adv-y', style.advanced_textbox_y || 1400);
@@ -2860,6 +3069,7 @@ function _writeStyleToUI(style) {
     _reelsState.style = _cloneSubtitleStyle(style) || {};
 
     _renderSubtitleAutoColorRules();
+    reelsRefreshAnimationParameterAvailability();
 }
 
 // ═══════════════════════════════════════════════════════
@@ -2867,10 +3077,14 @@ function _writeStyleToUI(style) {
 // ═══════════════════════════════════════════════════════
 
 function reelsUpdatePreview() {
+    reelsRefreshAnimationParameterAvailability();
+    // 独立预览打开时由 ReelsPreviewV2 自己驱动画布。旧预览即使已隐藏，过去
+    // 仍会继续运行并操作 ReelsOverlay 共用的视频缓存：V2 seek 到当前时间，
+    // 旧预览又按自己的 0 秒 seek 回去，插入视频因此永远拿不到稳定帧。
+    if (window.ReelsPreviewV2?.isOpen?.()) return;
     const renderer = _reelsState.renderer;
     if (!renderer) return;
 
-    reelsRefreshAnimationParameterAvailability();
     const style = _readStyleFromUI();
     // 预览必须是纯读取：任务切换、播放器 timeupdate、字体异步加载都会调用它。
     // 在这里写入会把旧任务的 UI 样式误存进新任务/新作用域。
@@ -3287,14 +3501,18 @@ function reelsUpdatePreview() {
         }
     } else if (!inCoverEditMode && _inHookPhase) {
         // Normal mode > Hook phase -> Do NOT render any overlays
-    } else if (_reelsState.overlayProxy && _reelsState.overlayProxy.overlayMgr) {
-        // Cover edit mode OR Normal mode > Main Phase -> Render whatever overlayMgr holds
-        const ovMgr = _reelsState.overlayProxy.overlayMgr;
-        const overlays = ovMgr.overlays || [];
-        if (overlays.length > 0 && window.ReelsOverlay) {
+    } else if (window.ReelsOverlay && _selectedTask) {
+        // Cover edit mode OR Normal mode > Main Phase -> Render overlayMgr or task overlays + insertClips
+        const ovMgr = _reelsState.overlayProxy ? _reelsState.overlayProxy.overlayMgr : null;
+        const baseOverlays = ovMgr ? (ovMgr.overlays || []) : (_selectedTask.overlays || []);
+        // 插入轨不写入用户的普通覆层管理器，预览时临时投影进来，避免切换
+        // 任务或编辑文字覆层时污染 insertClips。
+        const insertOverlays = _getTaskRenderOverlays(_selectedTask).filter(ov => ov._insertClip);
+        const overlays = [...insertOverlays, ...baseOverlays];
+        if (overlays.length > 0) {
             // 注入覆层列表引用（供跟随绑定），确保 scroll 先渲染
             const sorted = overlays.filter(o => !o.disabled).slice().sort((a, b) => {
-                return (a.type === 'scroll' ? 0 : 1) - (b.type === 'scroll' ? 0 : 1);
+                return (Number(a.z_index) || 0) - (Number(b.z_index) || 0);
             });
             for (const ov of sorted) {
                 ov._allOverlays = overlays;
@@ -3311,9 +3529,14 @@ function reelsUpdatePreview() {
             }
         }
         // ── 选中框 + 拖拽手柄 ──
-        _drawOverlaySelectionUI(ctx, w, h);
+        if (ovMgr) {
+            _drawOverlaySelectionUI(ctx, w, h);
+        }
     }
     };
+
+    // 环境暗部与字幕光使用同一组样式，不能借用全局黑色遮罩。
+    renderer.renderAmbientLightingBase?.(style, w, h);
 
     // “覆层在字幕下方”时先画覆层；否则等字幕完成后再画。
     if (!overlayAboveSubtitle) renderOverlays();
@@ -4320,6 +4543,7 @@ function _syncCurrentOverlayEditorToSelectedTask() {
     } else {
         task.overlays = [...(mgr.overlays || [])];
     }
+    _updateTimelineForTask(task);
 }
 
 function _reelsFileExists(filePath) {
@@ -8972,7 +9196,7 @@ function reelsSetDefaultPreset() {
 /**
  * 自定义输入弹窗（替代 Electron 不支持的 prompt()）
  */
-function _showInputDialog(title, placeholder) {
+function _showInputDialog(title, placeholder, defaultValue = '') {
     return new Promise((resolve) => {
         const overlay = document.createElement('div');
         overlay.style.cssText = 'position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;';
@@ -8980,7 +9204,7 @@ function _showInputDialog(title, placeholder) {
         box.style.cssText = 'background:var(--bg-primary,#1e1e2e);border:1px solid var(--border-color,#444);border-radius:12px;padding:24px;min-width:340px;box-shadow:0 8px 32px rgba(0,0,0,0.5);';
         box.innerHTML = `
             <div style="font-size:15px;font-weight:600;margin-bottom:14px;color:var(--text-primary,#fff);">${title}</div>
-            <input type="text" id="_input_dialog_val" placeholder="${placeholder || ''}"
+            <input type="text" id="_input_dialog_val" value="${String(defaultValue).replace(/"/g, '&quot;')}" placeholder="${placeholder || ''}"
                 style="width:100%;box-sizing:border-box;padding:8px 12px;border-radius:6px;border:1px solid var(--border-color,#555);background:var(--bg-secondary,#2a2a3e);color:var(--text-primary,#fff);font-size:14px;outline:none;">
             <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;">
                 <button id="_input_dialog_cancel" style="padding:6px 18px;border-radius:6px;border:1px solid var(--border-color,#555);background:transparent;color:var(--text-secondary,#aaa);cursor:pointer;font-size:13px;">取消</button>
@@ -9015,6 +9239,7 @@ function _showInputDialog(title, placeholder) {
         setTimeout(() => { if (document.activeElement !== input) input.focus(); }, 150);
     });
 }
+window.reelsShowInputDialog = _showInputDialog;
 
 window.showNamingSettingsDialog = function(mode) {
     return new Promise((resolve) => {
@@ -10818,7 +11043,8 @@ async function reelsStartExport(options = {}) {
                     segments: task.segments || [],
                     originalScript: task.ttsText || task.aiScript || task.txtContent || "",
                     showSubtitle: showSubtitle,
-                    overlays: task.overlays || [],
+                    overlays: _getTaskRenderOverlays(task),
+                    insertAudioClips: _getTaskInsertAudio(task),
                     overlayAboveSubtitle: task.overlayAboveSubtitle !== false,
                     backgroundPath: bgPath,
                     bgMode: task.bgMode || 'single',
@@ -11224,7 +11450,7 @@ async function reelsStartExport(options = {}) {
                             params: {
                                 style: taskStyle,
                                 segments: showSubtitle ? (task.segments || []) : [],
-                                overlays: task.overlays || [],
+                                overlays: _getTaskRenderOverlays(task),
                                 backgroundPath: bgPath,
                                 bgMode: task.bgMode || 'single',
                                 bgScale: task.bgScale || 100,
@@ -11307,7 +11533,8 @@ async function reelsStartExport(options = {}) {
                     segments: task.segments || [],
                     originalScript: task.ttsText || task.aiScript || task.txtContent || "",
                     showSubtitle: showSubtitle,
-                    overlays: task.overlays || [],
+                    overlays: _getTaskRenderOverlays(task),
+                    insertAudioClips: _getTaskInsertAudio(task),
                     backgroundPath: bgPath,
                     alphaOverlayBgPath: canUseAlpha ? bgPath : null,
                     bgMode: task.bgMode || 'single',
@@ -11849,6 +12076,9 @@ function collectCurrentProjectState() {
     return {
         tasks: _cloneProjectDataForSave(_reelsState.tasks),
         backgroundLibrary: _cloneProjectDataForSave(_reelsState.backgroundLibrary || []),
+        // 当前任务只是批量表格中一个标签页的投影；必须同时保存完整标签页，
+        // 才能撤销跨标签的参数、素材池和行级修改。
+        batchTable: window.reelsCaptureBatchTableState?.(),
         style: globalStyle,
         exportOpts,
         selectedIdx: _reelsState.selectedIdx,
@@ -11884,6 +12114,12 @@ function applyRestoredProject(result) {
         : -1;
     _reelsState.backgroundLibrary = [];
     _ensureBackgroundLibraryFromTasks();
+
+    // 在渲染/同步当前标签之前恢复完整批量表格快照，避免撤销时把其他标签页
+    // 的任务、素材配置和参数覆盖成当前任务页的数据。
+    if (result.batchTable && typeof window.reelsRestoreBatchTableState === 'function') {
+        window.reelsRestoreBatchTableState(result.batchTable);
+    }
 
     // Keep the batch-table active tab in sync so loaded template paths appear
     // in the table as well as in the Reels task list.
@@ -12510,6 +12746,549 @@ async function _pickSingleFile(title, extensions) {
         };
         input.click();
     });
+}
+
+function _getTaskRenderOverlays(task) {
+    const options = {
+        width: _reelsState?.targetWidth || 1080,
+        height: _reelsState?.targetHeight || 1920,
+    };
+    if (typeof window.ReelsRenderPlan?.getCompositedOverlays === 'function') {
+        return window.ReelsRenderPlan.getCompositedOverlays(task, options);
+    }
+    const base = Array.isArray(task?.overlays) ? task.overlays : [];
+    const inserts = window.ReelsRenderPlan?.getInsertOverlays?.(task, options) || [];
+    return [...inserts, ...base];
+}
+
+function _getTaskInsertAudio(task) {
+    const override = document.getElementById('reels-export-insert-audio-override')?.checked;
+    const mode = document.getElementById('reels-export-insert-audio-mode')?.value || 'keep-main';
+    const configured = Number(document.getElementById('reels-export-insert-audio-volume')?.value);
+    const volume = Math.max(0, Math.min(200, Number.isFinite(configured) ? configured : 0));
+    return (task?.insertClips || []).map(item => override ? { ...item, audioMode: mode, volume } : item)
+        .filter(item => item?.sourcePath && ['source-only', 'mix'].includes(item.audioMode));
+}
+
+// ─── 每任务插入素材 ───
+// 文件夹是公共来源；实际插入的具体路径与时间码只保存在当前 task.insertClips。
+window.reelsChooseInsertMediaFolder = async function() {
+    const task = _getSelectedTask();
+    if (!task) { if (typeof showToast === 'function') showToast('请先选择一条任务', 'warning'); return; }
+    return window.reelsSetInsertFolderForTasks([task]);
+};
+window.reelsSetInsertFolderForTasks = async function(tasks = []) {
+    if (!tasks.length) return;
+    const folder = await window.electronAPI?.selectDirectory?.();
+    if (!folder) return;
+    const entries = await window.electronAPI?.scanDirectory?.(folder) || [];
+    const files = entries.filter(item => !item.isDirectory && /\.(mp4|mov|mkv|webm|avi|m4v|gif|png|jpe?g|webp)$/i.test(item.name));
+    if (!files.length) { if (typeof showToast === 'function') showToast('该文件夹没有可用的视频、图片或 GIF', 'warning'); return; }
+    tasks.forEach(task => { task.insertMediaFolder = folder; task.insertMediaFiles = files.map(item => item.path); });
+    if (typeof window.reelsSaveHistory === 'function') window.reelsSaveHistory();
+    if (typeof showToast === 'function') showToast(`已为 ${tasks.length} 条任务加载 ${files.length} 个插入素材`, 'success', 4000);
+};
+
+window.reelsInsertMediaAtPlayhead = async function() {
+    const task = _getSelectedTask();
+    if (!task || !window.ReelsRenderPlan) { if (typeof showToast === 'function') showToast('请先选择一条任务', 'warning'); return; }
+    const files = Array.isArray(task.insertMediaFiles) ? task.insertMediaFiles : [];
+    if (!files.length) {
+        await window.reelsChooseInsertMediaFolder();
+        if (!Array.isArray(task.insertMediaFiles) || !task.insertMediaFiles.length) return;
+    }
+    const selected = await _chooseInsertMediaFromFolder(task);
+    if (!selected) return;
+    const playhead = _reelsState.timelineEditor?._playheadPos || 0;
+    const sourceType = _getInsertMediaSourceType(selected);
+    window.ReelsRenderPlan.addInsertClip(task, { sourcePath: selected, sourceType, timelineStart: playhead });
+    _updateTimelineForTask(task);
+    if (typeof window.reelsSaveHistory === 'function') window.reelsSaveHistory();
+    if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
+    if (typeof showToast === 'function') showToast('已插入到当前播放头，可在“插入素材”轨拖动或裁切', 'success');
+};
+
+// 只从 FFmpeg 找到的静音区间取点；不会在说话中间随机切画面。
+window.reelsInsertAtSilences = async function(options = {}) {
+    const task = options.task || _getSelectedTask();
+    const files = task?.insertMediaFiles || [];
+    const mediaPath = task?.audioPath || task?.voicePath || task?.bgPath || task?.videoPath;
+    if (!task || !mediaPath) { if (typeof showToast === 'function') showToast('当前任务缺少可分析的音视频', 'warning'); return; }
+    if (!files.length) { await window.reelsChooseInsertMediaFolder(); if (!(task.insertMediaFiles || []).length) return; }
+    if (!window.electronAPI?.reelsDetectSilence) { if (typeof showToast === 'function') showToast('当前版本未加载停顿检测服务', 'error'); return; }
+    const requested = options.count ?? await _showInputDialog('每条任务插入几个素材？', '例如：3', '3');
+    if (requested == null) return;
+    const count = Math.max(1, Math.min(12, Number(requested) || 3));
+    if (options.mode === 'regenerate') task.insertClips = (task.insertClips || []).filter(item => item.generatedBy !== 'batch-silence' || item.locked);
+    if (options.mode === 'reset') task.insertClips = [];
+    try {
+        if (typeof showToast === 'function') showToast('正在本地分析停顿点…', 'info');
+        const silences = await window.electronAPI.reelsDetectSilence({ filePath: mediaPath, noiseDb: -35, minDuration: .35 });
+        const duration = Math.max(_getAudioDuration(task), _getVideoDuration(task), task.customDuration || 0, 1);
+        const candidates = (silences || []).filter(point => {
+            const t = Number(point?.start);
+            return Number.isFinite(t) && t >= 3 && t <= duration - 3;
+        });
+        // 任务已有片段与新片段之间最少 5 秒，避免连续闪切。
+        const used = (task.insertClips || []).map(item => Number(item.timelineStart) || 0);
+        const selected = [];
+        for (let i = candidates.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1)); [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+        }
+        for (const point of candidates) {
+            const time = Number(point.start);
+            if (selected.length >= count) break;
+            if ([...used, ...selected].every(prev => {
+                const prevTime = typeof prev === 'object' ? Number(prev.start) : Number(prev);
+                return Math.abs(prevTime - time) >= 5;
+            })) selected.push(point);
+        }
+        if (!selected.length) { if (typeof showToast === 'function') showToast('没有找到适合插入的停顿点；可降低最短停顿阈值后重试', 'warning'); return; }
+        const durationRule = options.durationRule || {};
+        const fixedDuration = Math.max(.05, Math.min(120, Number(durationRule.fixedDuration) || 3));
+        const maxDuration = Math.max(.05, Math.min(120, Number(durationRule.maxDuration) || 3));
+        selected.sort((a, b) => Number(a.start) - Number(b.start)).forEach((point, index) => {
+            const time = Number(point.start);
+            // 自动模式严格不越过检测出的停顿尾部，避免插入画面压到说话内容。
+            const silenceDuration = Math.max(.05, Number(point.end) - time || .05);
+            const clipDuration = durationRule.mode === 'silence'
+                ? Math.min(maxDuration, silenceDuration)
+                : fixedDuration;
+            const path = task.insertMediaFiles[index % task.insertMediaFiles.length];
+            // 图片同样可由停顿点批量插入；它是静态画面片段，不应误当成视频。
+            window.ReelsRenderPlan.addInsertClip(task, {
+                sourcePath: path,
+                sourceType: _getInsertMediaSourceType(path),
+                timelineStart: time,
+                duration: clipDuration,
+                generatedBy: 'batch-silence'
+            });
+        });
+        if (task === _getSelectedTask()) _updateTimelineForTask(task);
+        if (typeof window.reelsSaveHistory === 'function') window.reelsSaveHistory();
+        if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
+        if (typeof showToast === 'function') showToast(`已在 ${selected.length} 个停顿点插入素材；可逐段在时间线调整`, 'success');
+    } catch (error) {
+        console.error('[InsertMedia] silence detection failed', error);
+        if (typeof showToast === 'function') showToast(`停顿检测失败：${error.message}`, 'error');
+    }
+};
+
+window.reelsBatchInsertAtSilences = async function(options = {}) {
+    const selected = window.reelsGetSelectedBatchTasks?.() || [];
+    const targets = selected.length ? selected : (_getSelectedTask() ? [_getSelectedTask()] : []);
+    if (!targets.length) { if (typeof showToast === 'function') showToast('请先在批量表格勾选任务', 'warning'); return; }
+    const requested = await _showInputDialog(`为 ${targets.length} 条任务各插入几个素材？`, '例如：3', '3');
+    if (requested == null) return;
+    const count = Math.max(1, Math.min(12, Number(requested) || 3));
+    let completed = 0;
+    for (const task of targets) {
+        try { await window.reelsInsertAtSilences({ task, count, durationRule: options.durationRule }); completed++; } catch (_) { /* 单条失败不阻断批次 */ }
+    }
+    if (_getSelectedTask()) _updateTimelineForTask(_getSelectedTask());
+    if (typeof showToast === 'function') showToast(`停顿插入完成：${completed}/${targets.length} 条任务`, completed === targets.length ? 'success' : 'warning');
+};
+
+function _getInsertMediaSourceType(path = '') {
+    if (/\.(png|jpe?g|webp)$/i.test(path)) return 'image';
+    if (/\.gif$/i.test(path)) return 'gif';
+    return 'video';
+}
+
+async function _chooseInsertMediaFromFolder(task) {
+    const files = Array.isArray(task?.insertMediaFiles) ? task.insertMediaFiles : [];
+    if (!files.length) return null;
+    return new Promise(resolve => {
+        const modal = document.createElement('div');
+        Object.assign(modal.style, { position: 'fixed', inset: '0', zIndex: '999999', background: 'rgba(0,0,0,.6)', display: 'flex', alignItems: 'center', justifyContent: 'center' });
+        const panel = document.createElement('div');
+        Object.assign(panel.style, { width: 'min(720px,90vw)', maxHeight: '70vh', overflow: 'auto', padding: '16px', borderRadius: '10px', background: '#1d1d25', border: '1px solid #4b5563', color: '#f3f4f6' });
+        panel.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><b>选择插入素材</b><button style="cursor:pointer">取消</button></div>';
+        panel.querySelector('button').onclick = () => { modal.remove(); resolve(null); };
+        const list = document.createElement('div');
+        Object.assign(list.style, { display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(150px,1fr))', gap: '8px' });
+        files.forEach(path => {
+            const button = document.createElement('button');
+            button.title = path;
+            button.textContent = String(path).split(/[\\/]/).pop();
+            Object.assign(button.style, { minHeight: '52px', padding: '7px', cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#d1fae5', background: '#16352e', border: '1px solid #2d6a55', borderRadius: '6px' });
+            button.onclick = () => { modal.remove(); resolve(path); };
+            list.appendChild(button);
+        });
+        panel.appendChild(list); modal.appendChild(panel); document.body.appendChild(modal);
+    });
+}
+
+function _hideInsertClipInspector() {
+    document.getElementById('reels-insert-clip-inspector')?.remove();
+}
+
+function _showInsertClipInspector(editorClip) {
+    _hideInsertClipInspector();
+    const task = _getSelectedTask();
+    const item = (task?.insertClips || []).find(value => value.id === editorClip._timelineClipId || value.id === editorClip._insertId)
+        || (task?.insertClips || []).find(value => Math.abs((value.timelineStart || 0) - (editorClip.start || 0)) < .01);
+    if (!task || !item) return;
+
+    const panel = document.createElement('div');
+    panel.id = 'reels-insert-clip-inspector';
+    Object.assign(panel.style, {
+        position: 'absolute',
+        right: '16px',
+        bottom: '60px',
+        zIndex: '100',
+        width: '320px',
+        maxHeight: '80vh',
+        overflowY: 'auto',
+        padding: '14px',
+        borderRadius: '12px',
+        background: 'rgba(18, 22, 28, 0.96)',
+        backdropFilter: 'blur(16px)',
+        border: '1px solid rgba(16, 185, 129, 0.7)',
+        color: '#f3f4f6',
+        fontSize: '12px',
+        boxShadow: '0 16px 40px rgba(0, 0, 0, 0.65), 0 0 20px rgba(16, 185, 129, 0.15)',
+        userSelect: 'none',
+    });
+
+    const transform = item.transform || (item.transform = { x: 0, y: 0, scale: 100, rotation: 0, opacity: 100 });
+    if (!item.transitionIn) item.transitionIn = { type: 'fade', duration: 0.35 };
+    if (!item.transitionOut) item.transitionOut = { type: 'fade', duration: 0.35 };
+    const isImage = item.sourceType === 'image' || /\.(png|jpe?g|webp)$/i.test(item.sourcePath || '');
+    const filename = (item.sourcePath || '').split(/[/\\]/).pop() || '素材片段';
+    const canvasW = _reelsState?.targetWidth || 1080;
+    const canvasH = _reelsState?.targetHeight || 1920;
+    const isPip = item.mode === 'pip' || item.mode === 'overlay';
+    const baseW = transform.w != null ? Number(transform.w) : (isPip ? Math.round(canvasW * 0.38) : canvasW);
+    const baseH = transform.h != null ? Number(transform.h) : (isPip ? Math.round(canvasH * 0.28) : canvasH);
+    const curX = transform.x != null ? Number(transform.x) : (isPip ? canvasW - baseW - 48 : 0);
+    const curY = transform.y != null ? Number(transform.y) : (isPip ? canvasH - baseH - 160 : 0);
+    const transInType = item.transitionIn?.type !== undefined ? item.transitionIn.type : 'fade';
+    const transInDur = item.transitionIn?.duration != null ? Number(item.transitionIn.duration) : 0.35;
+    const transOutType = item.transitionOut?.type !== undefined ? item.transitionOut.type : 'fade';
+    const transOutDur = item.transitionOut?.duration != null ? Number(item.transitionOut.duration) : 0.35;
+
+    panel.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;border-bottom:1px solid rgba(255,255,255,0.08);padding-bottom:8px">
+        <div style="font-weight:700;color:#6ee7b7;display:flex;align-items:center;gap:6px">
+          <span>🎬 插入素材与画中画</span>
+          <span style="font-size:10px;padding:1px 6px;border-radius:4px;background:rgba(16,185,129,0.2);color:#a7f3d0;border:1px solid rgba(16,185,129,0.35);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${filename}">${filename}</span>
+        </div>
+        <button id="reels-insert-close-btn" style="background:none;border:none;color:#9ca3af;cursor:pointer;font-size:16px;line-height:1;padding:2px 6px;border-radius:4px">✕</button>
+      </div>
+
+      <!-- 模式与音量 -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+        <div>
+          <label style="display:block;font-size:11px;color:#9ca3af;margin-bottom:3px">显示模式</label>
+          <select data-key="mode" style="width:100%;padding:4px 6px;border-radius:6px;background:#1e2430;border:1px solid #374151;color:#e5e7eb;font-size:11px">
+            <option value="pip" ${item.mode !== 'replace-video-keep-main-audio' ? 'selected' : ''}>画中画 / 画面叠层</option>
+            <option value="replace-video-keep-main-audio" ${item.mode === 'replace-video-keep-main-audio' ? 'selected' : ''}>全屏替换背景 (切镜)</option>
+          </select>
+        </div>
+        <div>
+          <label style="display:block;font-size:11px;color:#9ca3af;margin-bottom:3px">音量 (${item.volume ?? 0}%)</label>
+          <input data-key="volume" type="range" min="0" max="200" value="${item.volume ?? 0}" style="width:100%;accent-color:#10b981">
+        </div>
+      </div>
+
+      <!-- 9 宫格快捷对齐 -->
+      <div style="margin-bottom:12px;background:rgba(0,0,0,0.25);padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.05)">
+        <div style="font-size:11px;color:#9ca3af;margin-bottom:6px;display:flex;justify-content:space-between">
+          <span>快捷 9 宫格对齐</span>
+          <span style="color:#6b7280;font-size:10px">画布 ${canvasW}×${canvasH}</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;max-width:140px;margin:0 auto">
+          <button data-align="top-left" class="reels-align-btn" title="左上" style="padding:4px 0;background:#2d3748;border:1px solid #4a5568;border-radius:4px;color:#cbd5e1;cursor:pointer;font-size:11px">↖</button>
+          <button data-align="top-center" class="reels-align-btn" title="中上" style="padding:4px 0;background:#2d3748;border:1px solid #4a5568;border-radius:4px;color:#cbd5e1;cursor:pointer;font-size:11px">⬆</button>
+          <button data-align="top-right" class="reels-align-btn" title="右上" style="padding:4px 0;background:#2d3748;border:1px solid #4a5568;border-radius:4px;color:#cbd5e1;cursor:pointer;font-size:11px">↗</button>
+          <button data-align="center-left" class="reels-align-btn" title="左中" style="padding:4px 0;background:#2d3748;border:1px solid #4a5568;border-radius:4px;color:#cbd5e1;cursor:pointer;font-size:11px">⬅</button>
+          <button data-align="center" class="reels-align-btn" title="居中" style="padding:4px 0;background:#059669;border:1px solid #10b981;border-radius:4px;color:#fff;cursor:pointer;font-size:11px">┼</button>
+          <button data-align="center-right" class="reels-align-btn" title="右中" style="padding:4px 0;background:#2d3748;border:1px solid #4a5568;border-radius:4px;color:#cbd5e1;cursor:pointer;font-size:11px">➡</button>
+          <button data-align="bottom-left" class="reels-align-btn" title="左下" style="padding:4px 0;background:#2d3748;border:1px solid #4a5568;border-radius:4px;color:#cbd5e1;cursor:pointer;font-size:11px">↙</button>
+          <button data-align="bottom-center" class="reels-align-btn" title="中下" style="padding:4px 0;background:#2d3748;border:1px solid #4a5568;border-radius:4px;color:#cbd5e1;cursor:pointer;font-size:11px">⬇</button>
+          <button data-align="bottom-right" class="reels-align-btn" title="右下" style="padding:4px 0;background:#2d3748;border:1px solid #4a5568;border-radius:4px;color:#cbd5e1;cursor:pointer;font-size:11px">↘</button>
+        </div>
+      </div>
+
+      <!-- 位置精确调整 -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+        <div>
+          <label style="display:flex;justify-content:space-between;font-size:11px;color:#9ca3af;margin-bottom:3px">
+            <span>X 坐标 (px)</span>
+          </label>
+          <input data-t="x" type="number" value="${Math.round(curX)}" style="width:100%;padding:4px 6px;border-radius:6px;background:#1e2430;border:1px solid #374151;color:#e5e7eb;font-size:11px">
+        </div>
+        <div>
+          <label style="display:flex;justify-content:space-between;font-size:11px;color:#9ca3af;margin-bottom:3px">
+            <span>Y 坐标 (px)</span>
+          </label>
+          <input data-t="y" type="number" value="${Math.round(curY)}" style="width:100%;padding:4px 6px;border-radius:6px;background:#1e2430;border:1px solid #374151;color:#e5e7eb;font-size:11px">
+        </div>
+      </div>
+
+      <!-- 缩放与旋转 -->
+      <div style="margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">
+          <span style="font-size:11px;color:#9ca3af">缩放比例</span>
+          <div style="display:flex;align-items:center;gap:4px">
+            <button data-scale-val="50" style="background:#2d3748;border:none;border-radius:3px;color:#94a3b8;padding:1px 4px;font-size:9px;cursor:pointer">50%</button>
+            <button data-scale-val="100" style="background:#2d3748;border:none;border-radius:3px;color:#94a3b8;padding:1px 4px;font-size:9px;cursor:pointer">100%</button>
+            <button data-scale-val="150" style="background:#2d3748;border:none;border-radius:3px;color:#94a3b8;padding:1px 4px;font-size:9px;cursor:pointer">150%</button>
+            <span id="reels-scale-val-txt" style="color:#6ee7b7;font-weight:600;min-width:34px;text-align:right">${transform.scale ?? 100}%</span>
+          </div>
+        </div>
+        <input data-t="scale" type="range" min="10" max="300" value="${transform.scale ?? 100}" style="width:100%;accent-color:#10b981">
+      </div>
+
+      <div style="margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">
+          <span style="font-size:11px;color:#9ca3af">旋转角度</span>
+          <div style="display:flex;align-items:center;gap:4px">
+            <button data-rot-val="0" style="background:#2d3748;border:none;border-radius:3px;color:#94a3b8;padding:1px 4px;font-size:9px;cursor:pointer">0°</button>
+            <button data-rot-val="90" style="background:#2d3748;border:none;border-radius:3px;color:#94a3b8;padding:1px 4px;font-size:9px;cursor:pointer">90°</button>
+            <button data-rot-val="180" style="background:#2d3748;border:none;border-radius:3px;color:#94a3b8;padding:1px 4px;font-size:9px;cursor:pointer">180°</button>
+            <button data-rot-val="-90" style="background:#2d3748;border:none;border-radius:3px;color:#94a3b8;padding:1px 4px;font-size:9px;cursor:pointer">-90°</button>
+            <span id="reels-rot-val-txt" style="color:#6ee7b7;font-weight:600;min-width:30px;text-align:right">${transform.rotation ?? 0}°</span>
+          </div>
+        </div>
+        <input data-t="rotation" type="range" min="-180" max="180" value="${transform.rotation ?? 0}" style="width:100%;accent-color:#10b981">
+      </div>
+
+      <!-- 翻转与透明度 -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+        <div>
+          <label style="display:block;font-size:11px;color:#9ca3af;margin-bottom:3px">不透明度 (${transform.opacity ?? 100}%)</label>
+          <input data-t="opacity" type="range" min="0" max="100" value="${transform.opacity ?? 100}" style="width:100%;accent-color:#10b981">
+        </div>
+        <div style="display:flex;align-items:flex-end;gap:4px;padding-bottom:2px">
+          <button id="reels-fliph-btn" style="flex:1;padding:5px 0;background:${transform.flipH ? '#059669' : '#2d3748'};border:1px solid ${transform.flipH ? '#10b981' : '#4a5568'};border-radius:6px;color:#f3f4f6;cursor:pointer;font-size:11px" title="水平镜像翻转">⇋ 水平</button>
+          <button id="reels-flipv-btn" style="flex:1;padding:5px 0;background:${transform.flipV ? '#059669' : '#2d3748'};border:1px solid ${transform.flipV ? '#10b981' : '#4a5568'};border-radius:6px;color:#f3f4f6;cursor:pointer;font-size:11px" title="垂直镜像翻转">⥮ 垂直</button>
+        </div>
+      </div>
+
+      <!-- 入场 / 出场转场动画 -->
+      <div style="background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.25);border-radius:8px;padding:10px;margin-bottom:12px">
+        <div style="font-weight:600;color:#a7f3d0;margin-bottom:8px;font-size:11px;display:flex;align-items:center;gap:4px">
+          <span>✨ 转场动画 (淡入淡出 / 滑入 / 弹出)</span>
+        </div>
+        
+        <!-- 入场动画 -->
+        <div style="display:grid;grid-template-columns:1.2fr 1fr;gap:6px;margin-bottom:6px;align-items:center">
+          <div>
+            <label style="display:block;font-size:10px;color:#9ca3af;margin-bottom:2px">入场动画</label>
+            <select data-anim="in-type" style="width:100%;padding:3px 5px;border-radius:4px;background:#1e2430;border:1px solid #374151;color:#e5e7eb;font-size:11px">
+              <option value="none" ${transInType === 'none' ? 'selected' : ''}>无动画</option>
+              <option value="fade" ${transInType === 'fade' ? 'selected' : ''}>淡入 (Fade In)</option>
+              <option value="pop" ${transInType === 'pop' ? 'selected' : ''}>弹出 (Pop)</option>
+              <option value="slide_up" ${transInType === 'slide_up' ? 'selected' : ''}>向上滑入</option>
+              <option value="slide_down" ${transInType === 'slide_down' ? 'selected' : ''}>向下滑入</option>
+              <option value="slide_left" ${transInType === 'slide_left' ? 'selected' : ''}>向左滑入</option>
+              <option value="slide_right" ${transInType === 'slide_right' ? 'selected' : ''}>向右滑入</option>
+            </select>
+          </div>
+          <div>
+            <label style="display:block;font-size:10px;color:#9ca3af;margin-bottom:2px">入场时长 (s)</label>
+            <input data-anim="in-dur" type="number" min="0.05" max="2" step="0.05" value="${transInDur}" style="width:100%;padding:3px 5px;border-radius:4px;background:#1e2430;border:1px solid #374151;color:#e5e7eb;font-size:11px">
+          </div>
+        </div>
+
+        <!-- 出场动画 -->
+        <div style="display:grid;grid-template-columns:1.2fr 1fr;gap:6px;align-items:center">
+          <div>
+            <label style="display:block;font-size:10px;color:#9ca3af;margin-bottom:2px">出场动画</label>
+            <select data-anim="out-type" style="width:100%;padding:3px 5px;border-radius:4px;background:#1e2430;border:1px solid #374151;color:#e5e7eb;font-size:11px">
+              <option value="none" ${transOutType === 'none' ? 'selected' : ''}>无动画</option>
+              <option value="fade" ${transOutType === 'fade' ? 'selected' : ''}>淡出 (Fade Out)</option>
+              <option value="pop" ${transOutType === 'pop' ? 'selected' : ''}>弹缩消失 (Pop)</option>
+              <option value="slide_up" ${transOutType === 'slide_up' ? 'selected' : ''}>向上滑出</option>
+              <option value="slide_down" ${transOutType === 'slide_down' ? 'selected' : ''}>向下滑出</option>
+              <option value="slide_left" ${transOutType === 'slide_left' ? 'selected' : ''}>向左滑出</option>
+              <option value="slide_right" ${transOutType === 'slide_right' ? 'selected' : ''}>向右滑出</option>
+            </select>
+          </div>
+          <div>
+            <label style="display:block;font-size:10px;color:#9ca3af;margin-bottom:2px">出场时长 (s)</label>
+            <input data-anim="out-dur" type="number" min="0.05" max="2" step="0.05" value="${transOutDur}" style="width:100%;padding:3px 5px;border-radius:4px;background:#1e2430;border:1px solid #374151;color:#e5e7eb;font-size:11px">
+          </div>
+        </div>
+      </div>
+
+      <!-- 时间与裁切 -->
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:12px">
+        <div>
+          <label style="display:block;font-size:10px;color:#9ca3af;margin-bottom:2px">持续时长 (s)</label>
+          <input data-d="duration" type="number" min="0.05" max="120" step="0.1" value="${item.duration ?? 1.5}" style="width:100%;padding:3px 5px;border-radius:4px;background:#1e2430;border:1px solid #374151;color:#e5e7eb;font-size:11px">
+        </div>
+        <div>
+          <label style="display:block;font-size:10px;color:#9ca3af;margin-bottom:2px">源入点 (s)</label>
+          <input data-s="sourceTrimStart" type="number" min="0" step="0.1" value="${item.sourceTrimStart ?? 0}" style="width:100%;padding:3px 5px;border-radius:4px;background:#1e2430;border:1px solid #374151;color:#e5e7eb;font-size:11px">
+        </div>
+        <div>
+          <label style="display:block;font-size:10px;color:#9ca3af;margin-bottom:2px">源出点 (s)</label>
+          <input data-s="sourceTrimEnd" type="number" min="0" step="0.1" value="${item.sourceTrimEnd ?? ((item.sourceTrimStart || 0) + (item.duration || 1.5))}" style="width:100%;padding:3px 5px;border-radius:4px;background:#1e2430;border:1px solid #374151;color:#e5e7eb;font-size:11px">
+        </div>
+      </div>
+
+      <!-- 底部删除按钮 -->
+      <div style="display:flex;justify-content:flex-end">
+        <button id="reels-insert-delete-btn" style="padding:4px 10px;background:#ef4444;border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:11px;font-weight:600">🗑️ 删除此素材片段</button>
+      </div>
+    `;
+
+    // ── 交互事件绑定 ──
+    const closeBtn = panel.querySelector('#reels-insert-close-btn');
+    if (closeBtn) closeBtn.onclick = _hideInsertClipInspector;
+
+    const syncLiveUpdate = () => {
+        window.ReelsRenderPlan?.ensureTimeline(task);
+        _updateTimelineForTask(task);
+        if (typeof window.reelsSaveHistory === 'function') window.reelsSaveHistory();
+        if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
+        if (typeof window.ReelsPreviewV2?.render === 'function') window.ReelsPreviewV2.render();
+    };
+
+    // 快捷 9 宫格对齐处理
+    panel.querySelectorAll('.reels-align-btn').forEach(btn => {
+        btn.onclick = () => {
+            const align = btn.dataset.align;
+            const w = baseW * ((transform.scale || 100) / 100);
+            const h = baseH * ((transform.scale || 100) / 100);
+            const padX = 48, padY = 48, bottomPadY = 160;
+            let targetX = curX, targetY = curY;
+
+            if (align === 'top-left') { targetX = padX; targetY = padY; }
+            else if (align === 'top-center') { targetX = (canvasW - w) / 2; targetY = padY; }
+            else if (align === 'top-right') { targetX = canvasW - w - padX; targetY = padY; }
+            else if (align === 'center-left') { targetX = padX; targetY = (canvasH - h) / 2; }
+            else if (align === 'center') { targetX = (canvasW - w) / 2; targetY = (canvasH - h) / 2; }
+            else if (align === 'center-right') { targetX = canvasW - w - padX; targetY = (canvasH - h) / 2; }
+            else if (align === 'bottom-left') { targetX = padX; targetY = canvasH - h - bottomPadY; }
+            else if (align === 'bottom-center') { targetX = (canvasW - w) / 2; targetY = canvasH - h - bottomPadY; }
+            else if (align === 'bottom-right') { targetX = canvasW - w - padX; targetY = canvasH - h - bottomPadY; }
+
+            transform.x = Math.round(targetX);
+            transform.y = Math.round(targetY);
+            const xInput = panel.querySelector('[data-t="x"]');
+            const yInput = panel.querySelector('[data-t="y"]');
+            if (xInput) xInput.value = transform.x;
+            if (yInput) yInput.value = transform.y;
+            syncLiveUpdate();
+        };
+    });
+
+    // 快捷缩放与旋转按钮
+    panel.querySelectorAll('[data-scale-val]').forEach(btn => {
+        btn.onclick = () => {
+            const val = Number(btn.dataset.scaleVal);
+            transform.scale = val;
+            const scaleInput = panel.querySelector('[data-t="scale"]');
+            if (scaleInput) scaleInput.value = val;
+            const txt = panel.querySelector('#reels-scale-val-txt');
+            if (txt) txt.textContent = `${val}%`;
+            syncLiveUpdate();
+        };
+    });
+
+    panel.querySelectorAll('[data-rot-val]').forEach(btn => {
+        btn.onclick = () => {
+            const val = Number(btn.dataset.rotVal);
+            transform.rotation = val;
+            const rotInput = panel.querySelector('[data-t="rotation"]');
+            if (rotInput) rotInput.value = val;
+            const txt = panel.querySelector('#reels-rot-val-txt');
+            if (txt) txt.textContent = `${val}°`;
+            syncLiveUpdate();
+        };
+    });
+
+    // 水平/垂直翻转
+    const flipHBtn = panel.querySelector('#reels-fliph-btn');
+    if (flipHBtn) {
+        flipHBtn.onclick = () => {
+            transform.flipH = !transform.flipH;
+            flipHBtn.style.background = transform.flipH ? '#4f46e5' : '#2d3748';
+            flipHBtn.style.borderColor = transform.flipH ? '#6366f1' : '#4a5568';
+            syncLiveUpdate();
+        };
+    }
+    const flipVBtn = panel.querySelector('#reels-flipv-btn');
+    if (flipVBtn) {
+        flipVBtn.onclick = () => {
+            transform.flipV = !transform.flipV;
+            flipVBtn.style.background = transform.flipV ? '#4f46e5' : '#2d3748';
+            flipVBtn.style.borderColor = transform.flipV ? '#6366f1' : '#4a5568';
+            syncLiveUpdate();
+        };
+    }
+
+    // 转场动画设置
+    const inTypeSelect = panel.querySelector('[data-anim="in-type"]');
+    const inDurInput = panel.querySelector('[data-anim="in-dur"]');
+    const outTypeSelect = panel.querySelector('[data-anim="out-type"]');
+    const outDurInput = panel.querySelector('[data-anim="out-dur"]');
+
+    const updateAnims = () => {
+        const inType = inTypeSelect?.value || 'none';
+        const inDur = Math.max(0.05, Number(inDurInput?.value) || 0.3);
+        const outType = outTypeSelect?.value || 'none';
+        const outDur = Math.max(0.05, Number(outDurInput?.value) || 0.3);
+        item.transitionIn = { type: inType, duration: inDur };
+        item.transitionOut = { type: outType, duration: outDur };
+        syncLiveUpdate();
+    };
+    inTypeSelect?.addEventListener('change', updateAnims);
+    inDurInput?.addEventListener('input', updateAnims);
+    outTypeSelect?.addEventListener('change', updateAnims);
+    outDurInput?.addEventListener('input', updateAnims);
+
+    // 通用输入框与滑块实时监听 (input + change)
+    panel.querySelectorAll('input,select').forEach(input => {
+        const handler = () => {
+            if (input.dataset.key) {
+                item[input.dataset.key] = input.dataset.key === 'volume' ? Number(input.value) : input.value;
+            }
+            if (input.dataset.t) {
+                transform[input.dataset.t] = Number(input.value);
+                if (input.dataset.t === 'scale') {
+                    const txt = panel.querySelector('#reels-scale-val-txt');
+                    if (txt) txt.textContent = `${input.value}%`;
+                } else if (input.dataset.t === 'rotation') {
+                    const txt = panel.querySelector('#reels-rot-val-txt');
+                    if (txt) txt.textContent = `${input.value}°`;
+                }
+            }
+            if (input.dataset.d) {
+                item.duration = Math.max(0.05, Math.min(120, Number(input.value) || 1.5));
+                item.sourceTrimEnd = Math.max(0, Number(item.sourceTrimStart) || 0) + item.duration;
+            }
+            if (input.dataset.s) {
+                item[input.dataset.s] = Math.max(0, Number(input.value) || 0);
+                if (input.dataset.s === 'sourceTrimEnd') {
+                    item.duration = Math.max(0.05, item.sourceTrimEnd - (Number(item.sourceTrimStart) || 0));
+                } else {
+                    item.sourceTrimEnd = (Number(item.sourceTrimStart) || 0) + Math.max(0.05, Number(item.duration) || 1.5);
+                }
+            }
+            syncLiveUpdate();
+        };
+        input.addEventListener('input', handler);
+        input.addEventListener('change', handler);
+    });
+
+    // 删除按钮
+    const delBtn = panel.querySelector('#reels-insert-delete-btn');
+    if (delBtn) {
+        delBtn.onclick = () => {
+            if (confirm('确定要删除此插入素材片段吗？')) {
+                task.insertClips = (task.insertClips || []).filter(c => c !== item && c.id !== item.id);
+                _hideInsertClipInspector();
+                syncLiveUpdate();
+            }
+        };
+    }
+
+    document.getElementById('batch-reels-panel')?.appendChild(panel);
 }
 
 // ─── 背景与内容视频双向同步与保存逻辑 ───

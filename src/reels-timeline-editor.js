@@ -16,9 +16,9 @@
 // 常量
 // ═══════════════════════════════════════════════
 
-const TL_TRACK_HEIGHT = 48;
+const TL_TRACK_HEIGHT = 38;
 const TL_HEADER_W = 140;
-const TL_RULER_H = 28;
+const TL_RULER_H = 26;
 const TL_HANDLE_W = 6;
 const TL_MIN_CLIP_W = 4;
 const TL_COLORS = {
@@ -33,14 +33,52 @@ const TL_COLORS = {
     domainSep: '#FF6B6B',
     trackTypes: {
         video: '#3366FF',
-        subs: '#FFD700',
+        asr: '#06b6d4',
+        script: '#8b5cf6',
+        subs: '#f59e0b',
         text: '#FF66CC',
         image: '#44CC88',
-        audio: '#66BBFF',
+        audio: '#38bdf8',
+        overlay: '#a855f7',
     },
     selected: '#4c9eff',
     clipBg: 'rgba(255,255,255,0.1)',
 };
+
+/**
+ * 智能分词与折行排版（西文按空格/标点单词分词，中文按字符分词），最大化在有限宽度内展示完整字幕
+ */
+function _layoutClipLines(ctx, text, maxW, maxLines = 2) {
+    if (!text || maxW < 10) return [];
+    if (ctx.measureText(text).width <= maxW) return [text];
+
+    const isCJK = /[\u4e00-\u9fff]/.test(text);
+    const tokens = isCJK ? text.split('') : text.split(/(\s+)/).filter(Boolean);
+    const lines = [];
+    let curLine = '';
+
+    for (let i = 0; i < tokens.length; i++) {
+        const token = tokens[i];
+        const testLine = curLine + token;
+        if (ctx.measureText(testLine).width > maxW && curLine.trim()) {
+            lines.push(curLine.trim());
+            curLine = token.trim();
+            if (lines.length >= maxLines - 1) {
+                const remaining = tokens.slice(i).join('').trim();
+                let lastLine = remaining;
+                while (lastLine && ctx.measureText(lastLine + '…').width > maxW) {
+                    lastLine = lastLine.slice(0, -1);
+                }
+                lines.push((lastLine ? lastLine : '') + '…');
+                return lines;
+            }
+        } else {
+            curLine = testLine;
+        }
+    }
+    if (curLine.trim()) lines.push(curLine.trim());
+    return lines;
+}
 
 class ReelsTimelineEditor {
     constructor(containerEl) {
@@ -52,8 +90,14 @@ class ReelsTimelineEditor {
         this.container.appendChild(this.canvas);
         this.ctx = this.canvas.getContext('2d');
 
+        // 浮动全文字幕气泡卡片
+        this._tooltipEl = null;
+
         // 数据
         this._duration = 10;          // 总时长 (秒)
+        // 时间线使用导出器相同的帧率。把鼠标坐标收敛到帧边界，避免预览媒体
+        // 实际只能落在某一帧、而红色播放头停在相邻小数位置的错位感。
+        this._frameRate = 30;
         this._tracks = [];             // [{type, name, clips:[], locked, visible, ...}]
         this._playheadPos = 0;        // 播放头位置 (秒)
 
@@ -68,15 +112,19 @@ class ReelsTimelineEditor {
         this._selectedClips = new Set(); // 多选键: "trackIdx:clipIdx"
         this._selectionAnchor = null; // Shift 连选起点
         this._hoveredClip = null;
+        this._hoveredZone = null;
 
         // 拖拽状态
-        this._drag = null;            // {type: 'move'|'trim_start'|'trim_end'|'playhead', ...}
+        this._drag = null;            // {type: 'move'|'trim_start'|'trim_end'|'cut_in'|'cut_out'|'playhead', ...}
 
         // 回调
         this.onSeek = null;           // (timeSec) => {}
         this.onClipSelect = null;     // (trackIdx, clipIdx, clip) => {}
         this.onClipChange = null;     // (trackIdx, clipIdx, clip) => {}
         this.onClipDblClick = null;   // (trackIdx, clipIdx, clip, rect) => {}
+        // 可由业务层为不同类型片段追加右键操作；返回菜单项数组。
+        this.onClipContextMenu = null; // (trackIdx, clipIdx, clip) => [{icon,text,action,danger?}]
+        this.onTrackOrderChange = null; // (trackIdx, direction, track) => {}
         // 一个鼠标拖动是一笔编辑事务，而不是数百条 mousemove 历史。
         this.onEditStart = null;      // ({ type, trackIdx, clipIdx, clip }) => {}
         this.onEditEnd = null;        // ({ type, trackIdx, clipIdx, clip }) => {}
@@ -98,6 +146,34 @@ class ReelsTimelineEditor {
         });
         this.canvas.tabIndex = 0;
 
+        // 浮动全文字幕气泡卡片 (Hover Popover Card)
+        this._tooltipEl = document.createElement('div');
+        this._tooltipEl.className = 'rte-floating-tooltip';
+        Object.assign(this._tooltipEl.style, {
+            position: 'absolute',
+            pointerEvents: 'none',
+            zIndex: '99999',
+            opacity: '0',
+            background: 'rgba(15, 23, 42, 0.96)',
+            backdropFilter: 'blur(16px)',
+            WebkitBackdropFilter: 'blur(16px)',
+            border: '1px solid rgba(255, 255, 255, 0.18)',
+            boxShadow: '0 12px 30px -4px rgba(0, 0, 0, 0.65), 0 4px 12px rgba(0,0,0,0.4)',
+            borderRadius: '8px',
+            padding: '10px 14px',
+            color: '#f8fafc',
+            fontSize: '12px',
+            maxWidth: '380px',
+            minWidth: '200px',
+            lineHeight: '1.5',
+            boxSizing: 'border-box',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '6px',
+            transition: 'opacity 0.12s ease',
+        });
+        this.container.appendChild(this._tooltipEl);
+
         // 事件
         this.canvas.addEventListener('mousedown', (e) => {
             this.canvas.focus({ preventScroll: true });
@@ -109,6 +185,13 @@ class ReelsTimelineEditor {
         window.addEventListener('mousemove', (e) => this._onMouseMove(e));
         window.addEventListener('mouseup', (e) => this._onMouseUp(e));
         
+        this.canvas.addEventListener('mouseleave', () => {
+            this._hoveredClip = null;
+            this._hoveredZone = null;
+            this._hideTooltip();
+            this._render();
+        });
+
         this.canvas.addEventListener('wheel', (e) => this._onWheel(e), { passive: false });
 
         this.canvas.addEventListener('contextmenu', (e) => {
@@ -161,6 +244,16 @@ class ReelsTimelineEditor {
         }
     }
 
+    setFrameRate(fps) {
+        const next = Number(fps);
+        if (Number.isFinite(next) && next >= 1 && next <= 240) this._frameRate = next;
+    }
+
+    _snapToFrame(timeSec) {
+        const frameRate = this._frameRate || 30;
+        return Math.round(timeSec * frameRate) / frameRate;
+    }
+
     _fitDurationToViewport() {
         if (!this._canvasW || !this._duration) return;
         // 右侧留出少量余量，避免最后一个刻度文字和播放头被裁切。
@@ -168,15 +261,74 @@ class ReelsTimelineEditor {
         this._pxPerSec = Math.max(0.1, Math.min(1000, availableWidth / this._duration));
     }
 
-    setPlayhead(timeSec) {
+    setPlayhead(timeSec, options = {}) {
         if (this._drag && this._drag.type === 'playhead') return;
         this._playheadPos = Math.max(0, Math.min(timeSec, this._duration));
+        if (options.autoScroll !== false) {
+            this.ensureTimeVisible(this._playheadPos);
+        }
+        if (options.render !== false) {
+            this._render();
+        }
+    }
+
+    ensureTimeVisible(timeSec) {
+        if (!this._canvasW || !Number.isFinite(timeSec)) return;
+        const availableW = Math.max(10, this._canvasW - TL_HEADER_W - 40);
+        const x = TL_HEADER_W + timeSec * this._pxPerSec - this._scrollX;
+        if (x < TL_HEADER_W + 10) {
+            this._scrollX = Math.max(0, timeSec * this._pxPerSec - 20);
+        } else if (x > this._canvasW - 20) {
+            this._scrollX = Math.max(0, timeSec * this._pxPerSec - (availableW * 0.8));
+        }
+    }
+
+    ensureClipVisible(clip) {
+        if (!clip || !this._canvasW) return;
+        const start = Number(clip.start) || 0;
+        const end = Number(clip.end) || start;
+        const availableW = Math.max(10, this._canvasW - TL_HEADER_W - 40);
+        const startX = TL_HEADER_W + start * this._pxPerSec - this._scrollX;
+        const endX = TL_HEADER_W + end * this._pxPerSec - this._scrollX;
+        if (startX < TL_HEADER_W + 10 || endX > this._canvasW - 20) {
+            const clipMidTime = start + (end - start) / 2;
+            this._scrollX = Math.max(0, clipMidTime * this._pxPerSec - (availableW / 2));
+            this._render();
+        }
     }
 
     setTracks(tracks) {
         this._tracks = tracks;
         this._clearClipSelection();
         this._autoAdjustContainerHeight();
+        this._resize();
+        this._render();
+    }
+
+    moveTrack(trackIdx, direction) {
+        const track = this._tracks[trackIdx];
+        if (!track) return;
+        const peers = this._tracks.map((item, index) => ({ item, index })).filter(item => item.item.domain === track.domain);
+        const position = peers.findIndex(item => item.index === trackIdx);
+        const target = peers[position + (direction === 'up' ? -1 : 1)];
+        if (!target) return;
+        [this._tracks[trackIdx], this._tracks[target.index]] = [this._tracks[target.index], this._tracks[trackIdx]];
+        if (this.onTrackOrderChange) this.onTrackOrderChange(trackIdx, direction, track, target.item);
+        this._render();
+    }
+
+    selectClip(trackIdx, clipIdx, options = {}) {
+        if (!this._tracks[trackIdx]?.clips?.[clipIdx]) return;
+        if (!options.keepExisting) {
+            this._clearClipSelection();
+        }
+        const key = this._clipKey(trackIdx, clipIdx);
+        this._selectedClips.add(key);
+        this._selectedClip = { trackIdx, clipIdx };
+        this._selectionAnchor = { trackIdx, clipIdx };
+        if (options.render !== false) {
+            this._render();
+        }
     }
 
     _autoAdjustContainerHeight() {
@@ -427,8 +579,9 @@ class ReelsTimelineEditor {
                 this._drawClip(ctx, track, ti, ci, y);
             }
 
-            // 检查背景画面覆盖范围，若末尾存在空白缺口（黑屏风险），绘制醒目的红色警示区域
-            const isBackgroundTrack = track.type === 'video' || (track.name && track.name.includes('背景'));
+            // 检查主背景画面覆盖范围，若末尾存在空白缺口（黑屏风险），绘制醒目的红色警示区域（插入素材/覆层轨不需要填满全片，不触发警示）
+            const isInsertOrOverlay = (track.name && (track.name.includes('插入') || track.name.includes('覆层') || track.name.includes('画中画'))) || track.role === 'insert_video' || track.clips?.some(c => c._timelineRole === 'insert_video');
+            const isBackgroundTrack = !isInsertOrOverlay && (track.name?.includes('背景') || (track.type === 'video' && !track.name?.includes('插入')));
             if (isBackgroundTrack && track.clips.length > 0) {
                 const maxEnd = Math.max(0, ...track.clips.map(c => c.end || 0));
                 if (this._duration > maxEnd + 0.1) {
@@ -494,14 +647,36 @@ class ReelsTimelineEditor {
         ctx.fillStyle = typeColor;
         ctx.fillRect(0, y, 4, TL_TRACK_HEIGHT);
 
-        // 名称
-        ctx.font = 'bold 11px system-ui, sans-serif';
-        ctx.fillStyle = '#ccc';
-        ctx.textAlign = 'left';
-        ctx.fillText(track.name, 10, y + TL_TRACK_HEIGHT / 2 + 4);
+        // 眼睛按钮 (显隐控制)
+        const isVisible = track.visible !== false;
+        const eyeX = TL_HEADER_W - 24;
+        const eyeY = y + (TL_TRACK_HEIGHT - 18) / 2;
+        const eyeSize = 18;
+
+        // 眼睛按钮底色与边框
+        ctx.fillStyle = isVisible ? 'rgba(255, 255, 255, 0.08)' : 'rgba(239, 68, 68, 0.22)';
+        ctx.strokeStyle = isVisible ? 'rgba(255, 255, 255, 0.15)' : 'rgba(239, 68, 68, 0.5)';
+        ctx.lineWidth = 1;
+        if (typeof ctx.roundRect === 'function') {
+            ctx.beginPath();
+            ctx.roundRect(eyeX, eyeY, eyeSize, eyeSize, 4);
+            ctx.fill();
+            ctx.stroke();
+        } else {
+            ctx.fillRect(eyeX, eyeY, eyeSize, eyeSize);
+            ctx.strokeRect(eyeX, eyeY, eyeSize, eyeSize);
+        }
+
+        ctx.font = '11px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = isVisible ? '#e2e8f0' : '#f87171';
+        ctx.fillText(isVisible ? '👁' : '🚫', eyeX + eyeSize / 2, eyeY + eyeSize / 2 + 1);
 
         // 头部警示徽章
-        const isBg = track.type === 'video' || (track.name && track.name.includes('背景'));
+        let rightBadgeOffset = eyeX - 6;
+        const isInsert = track.role === 'insert_video' || (track.name && track.name.includes('插入')) || track.clips?.some(c => c._timelineRole === 'insert_video');
+        const isBg = !isInsert && (track.role === 'background' || (track.name && track.name.includes('背景')) || (track.type === 'video' && !track.name?.includes('插入')));
         if (isBg && track.clips && track.clips.length > 0) {
             const maxEnd = Math.max(0, ...track.clips.map(c => c.end || 0));
             if (this._duration > maxEnd + 0.1) {
@@ -509,21 +684,36 @@ class ReelsTimelineEditor {
                 ctx.fillStyle = '#ef4444';
                 ctx.font = 'bold 9px system-ui, sans-serif';
                 ctx.textAlign = 'right';
-                ctx.fillText(`⚠️缺${missingSec}s`, TL_HEADER_W - 6, y + TL_TRACK_HEIGHT / 2 + 4);
+                ctx.textBaseline = 'alphabetic';
+                ctx.fillText(`⚠️缺${missingSec}s`, rightBadgeOffset, y + TL_TRACK_HEIGHT / 2 + 4);
+                rightBadgeOffset -= 45;
             }
         }
 
-        // 状态图标
-        const icons = [];
-        if (track.locked) icons.push('🔒');
-        if (!track.visible) icons.push('👁️‍🗨️');
-
-        if (icons.length) {
+        // 状态图标 (如锁定)
+        if (track.locked) {
             ctx.font = '10px system-ui';
             ctx.fillStyle = '#888';
             ctx.textAlign = 'right';
-            ctx.fillText(icons.join(' '), TL_HEADER_W - 6, y + TL_TRACK_HEIGHT / 2 + 4);
+            ctx.textBaseline = 'alphabetic';
+            ctx.fillText('🔒', rightBadgeOffset, y + TL_TRACK_HEIGHT / 2 + 4);
+            rightBadgeOffset -= 16;
         }
+
+        // 名称 (截断以防超出)
+        ctx.font = 'bold 11px system-ui, sans-serif';
+        ctx.fillStyle = isVisible ? '#ccc' : '#6b7280';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'alphabetic';
+        let displayName = track.name || '';
+        const maxTextW = Math.max(20, rightBadgeOffset - 12);
+        if (ctx.measureText(displayName).width > maxTextW) {
+            while (displayName.length > 1 && ctx.measureText(displayName + '…').width > maxTextW) {
+                displayName = displayName.slice(0, -1);
+            }
+            displayName += '…';
+        }
+        ctx.fillText(displayName, 10, y + TL_TRACK_HEIGHT / 2 + 4);
     }
 
     _drawClip(ctx, track, trackIdx, clipIdx, trackY) {
@@ -535,9 +725,11 @@ class ReelsTimelineEditor {
         // 循环素材不是一个长块：保留少量视觉间隙，让每一轮都能一眼看见。
         // 命中/拖拽仍使用原始时间范围，不会在时间线上制造真实空白。
         const isLoopInstance = clip._isLoopInstance === true;
-        const seam = isLoopInstance && w > 12 ? 2 : 0;
+        const seam = isLoopInstance && w > 12 ? 2.5 : Math.max(1.5, Math.min(3, w * 0.04));
         const drawX = x + seam;
-        const drawW = Math.max(1, w - seam * 2);
+        const drawW = Math.max(2, w - seam * 2);
+        const drawY = y + 1;
+        const drawH = h - 2;
 
         // 可见范围检查
         if (x + w < TL_HEADER_W || x > this._canvasW) return;
@@ -545,70 +737,312 @@ class ReelsTimelineEditor {
         const isSelected = this._selectedClips.has(this._clipKey(trackIdx, clipIdx));
         const isHovered = this._hoveredClip?.trackIdx === trackIdx && this._hoveredClip?.clipIdx === clipIdx;
 
-        // 片段背景
-        const color = clip.color || TL_COLORS.trackTypes[track.type] || '#888';
-        ctx.fillStyle = isSelected ? color : isHovered ? this._lighten(color, 0.15) : this._darken(color, 0.3);
-        ctx.globalAlpha = isSelected ? 0.9 : 0.7;
+        const prevGlobalAlpha = ctx.globalAlpha;
+        if (track.visible === false) {
+            ctx.globalAlpha = 0.38;
+        }
 
-        // 圆角
-        const r = 4;
-        ctx.beginPath();
-        ctx.moveTo(drawX + r, y);
-        ctx.lineTo(drawX + drawW - r, y);
-        ctx.quadraticCurveTo(drawX + drawW, y, drawX + drawW, y + r);
-        ctx.lineTo(drawX + drawW, y + h - r);
-        ctx.quadraticCurveTo(drawX + drawW, y + h, drawX + drawW - r, y + h);
-        ctx.lineTo(drawX + r, y + h);
-        ctx.quadraticCurveTo(drawX, y + h, drawX, y + h - r);
-        ctx.lineTo(drawX, y + r);
-        ctx.quadraticCurveTo(drawX, y, drawX + r, y);
-        ctx.closePath();
-        ctx.fill();
+        // 片段卡片背景（支持交替色相与现代渐变）
+        const isSubLike = track.type === 'subs' || track.type === 'asr' || track.type === 'script';
+        const isTrimmedSub = isSubLike && (clip._isTrimmed === true || clip.isTrimmed === true);
+        const baseColor = clip.color || TL_COLORS.trackTypes[track.type] || '#3b82f6';
+        let bgGradient = ctx.createLinearGradient(drawX, drawY, drawX, drawY + drawH);
 
-        ctx.globalAlpha = 1;
-
-        if (isLoopInstance) {
-            // 明亮描边 + 接缝竖线，缩放很远时也能辨认出循环次数。
-            ctx.strokeStyle = 'rgba(137, 184, 255, 0.9)';
-            ctx.lineWidth = 1;
-            ctx.stroke();
-            if (x > TL_HEADER_W && x < this._canvasW) {
-                ctx.strokeStyle = '#9dc5ff';
-                ctx.lineWidth = 2;
-                ctx.beginPath();
-                ctx.moveTo(x, y + 2);
-                ctx.lineTo(x, y + h - 2);
-                ctx.stroke();
+        if (track.type === 'video') {
+            const isAlt = clipIdx % 2 === 1;
+            if (isSelected) {
+                bgGradient.addColorStop(0, '#3b82f6');
+                bgGradient.addColorStop(1, '#1d4ed8');
+            } else if (isHovered) {
+                bgGradient.addColorStop(0, '#2563eb');
+                bgGradient.addColorStop(1, '#1e40af');
+            } else {
+                bgGradient.addColorStop(0, isAlt ? '#1d4ed8' : '#1e40af');
+                bgGradient.addColorStop(1, isAlt ? '#1e3a8a' : '#172554');
+            }
+        } else if (isTrimmedSub) {
+            if (isSelected) {
+                bgGradient.addColorStop(0, '#ef4444');
+                bgGradient.addColorStop(1, '#b91c1c');
+            } else if (isHovered) {
+                bgGradient.addColorStop(0, '#dc2626');
+                bgGradient.addColorStop(1, '#991b1b');
+            } else {
+                bgGradient.addColorStop(0, 'rgba(239, 68, 68, 0.45)');
+                bgGradient.addColorStop(1, 'rgba(185, 28, 28, 0.55)');
+            }
+        } else if (track.type === 'asr') {
+            const isAlt = clipIdx % 2 === 1;
+            if (isSelected) {
+                bgGradient.addColorStop(0, '#06b6d4');
+                bgGradient.addColorStop(1, '#0891b2');
+            } else if (isHovered) {
+                bgGradient.addColorStop(0, '#0ea5e9');
+                bgGradient.addColorStop(1, '#0284c7');
+            } else {
+                bgGradient.addColorStop(0, isAlt ? '#0891b2' : '#0e7490');
+                bgGradient.addColorStop(1, isAlt ? '#155e75' : '#164e63');
+            }
+        } else if (track.type === 'script') {
+            const isAlt = clipIdx % 2 === 1;
+            if (isSelected) {
+                bgGradient.addColorStop(0, '#a855f7');
+                bgGradient.addColorStop(1, '#7e22ce');
+            } else if (isHovered) {
+                bgGradient.addColorStop(0, '#c084fc');
+                bgGradient.addColorStop(1, '#9333ea');
+            } else {
+                bgGradient.addColorStop(0, isAlt ? '#7e22ce' : '#6b21a8');
+                bgGradient.addColorStop(1, isAlt ? '#581c87' : '#3b0764');
+            }
+        } else if (track.type === 'subs') {
+            const isAlt = clipIdx % 2 === 1;
+            if (isSelected) {
+                bgGradient.addColorStop(0, '#f59e0b');
+                bgGradient.addColorStop(1, '#b45309');
+            } else {
+                bgGradient.addColorStop(0, isAlt ? '#d97706' : '#b45309');
+                bgGradient.addColorStop(1, isAlt ? '#92400e' : '#78350f');
+            }
+        } else {
+            if (isSelected) {
+                bgGradient.addColorStop(0, this._lighten(baseColor, 0.2));
+                bgGradient.addColorStop(1, baseColor);
+            } else {
+                bgGradient.addColorStop(0, this._darken(baseColor, 0.15));
+                bgGradient.addColorStop(1, this._darken(baseColor, 0.4));
             }
         }
 
-        // 选中边框
-        if (isSelected) {
-            ctx.strokeStyle = TL_COLORS.selected;
-            ctx.lineWidth = 2;
-            ctx.stroke();
+        // 绘制独立卡片圆角矩形
+        const r = Math.min(5, drawW / 2, drawH / 2);
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(drawX + r, drawY);
+        ctx.lineTo(drawX + drawW - r, drawY);
+        ctx.quadraticCurveTo(drawX + drawW, drawY, drawX + drawW, drawY + r);
+        ctx.lineTo(drawX + drawW, drawY + drawH - r);
+        ctx.quadraticCurveTo(drawX + drawW, drawY + drawH, drawX + drawW - r, drawY + drawH);
+        ctx.lineTo(drawX + r, drawY + drawH);
+        ctx.quadraticCurveTo(drawX, drawY + drawH, drawX, drawY + drawH - r);
+        ctx.lineTo(drawX, drawY + r);
+        ctx.quadraticCurveTo(drawX, drawY, drawX + r, drawY);
+        ctx.closePath();
+
+        ctx.fillStyle = bgGradient;
+        ctx.fill();
+
+        // 独立卡片描边（使相邻片段边界泾渭分明）
+        if (isTrimmedSub) {
+            ctx.strokeStyle = isSelected ? '#fca5a5' : (isHovered ? 'rgba(239, 68, 68, 0.95)' : 'rgba(239, 68, 68, 0.55)');
+            ctx.lineWidth = isSelected ? 2 : 1;
+        } else if (track.type === 'asr') {
+            ctx.strokeStyle = isSelected ? '#a5f3fc' : (isHovered ? 'rgba(103, 232, 249, 0.8)' : 'rgba(6, 182, 212, 0.35)');
+            ctx.lineWidth = isSelected ? 2 : 1;
+        } else if (track.type === 'script') {
+            ctx.strokeStyle = isSelected ? '#e9d5ff' : (isHovered ? 'rgba(216, 180, 254, 0.8)' : 'rgba(168, 85, 247, 0.35)');
+            ctx.lineWidth = isSelected ? 2 : 1;
+        } else {
+            ctx.strokeStyle = isSelected ? '#93c5fd' : (isHovered ? 'rgba(255, 255, 255, 0.6)' : 'rgba(255, 255, 255, 0.25)');
+            ctx.lineWidth = isSelected ? 2 : 1;
+        }
+        ctx.stroke();
+
+        // 渲染裁掉的空档部分 (Trimmed Head / Tail) 与 中间有效保留区域
+        const inT = clip.inT !== undefined ? clip.inT : (clip._trimHead || 0);
+        const sourceDur = clip.sourceDuration || (clip.end - clip.start);
+        const outT = clip.outT !== undefined ? clip.outT : (clip.sourceDuration && clip._trimTail !== undefined ? clip.sourceDuration - clip._trimTail : sourceDur);
+        const trimHead = inT;
+        const trimTail = Math.max(0, sourceDur - outT);
+
+        const inW = Math.max(0, Math.min(drawW, inT * this._pxPerSec));
+        const outW = Math.max(inW, Math.min(drawW, outT * this._pxPerSec));
+        const hasTrimHead = trimHead > 0.02 && inW > 1;
+        const hasTrimTail = trimTail > 0.02 && outW < drawW - 1;
+
+        // 1. 中间有效保留区域 (Active Kept Content Gradient)
+        const activeX = drawX + inW;
+        const activeW = Math.max(1, outW - inW);
+        ctx.fillStyle = bgGradient;
+        ctx.fillRect(activeX, drawY, activeW, drawH);
+
+        // 2. 左侧前段被裁掉的空档（鲜明红色背景 + 入点红线 + 时间标识）
+        if (hasTrimHead) {
+            ctx.fillStyle = isSelected ? 'rgba(239, 68, 68, 0.45)' : 'rgba(239, 68, 68, 0.32)';
+            ctx.fillRect(drawX, drawY, inW, drawH);
+
+            // 标注裁切时间
+            if (inW > 24 && drawH > 24) {
+                ctx.font = 'bold 9px system-ui, sans-serif';
+                ctx.fillStyle = '#fca5a5';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(`前-${inT.toFixed(1)}s`, drawX + inW / 2, drawY + drawH / 2);
+            }
         }
 
-        // 片段文本
-        if (w > 30) {
+        // 3. 右侧后段被裁掉的空档（鲜明红色背景 + 出点红线 + 时间标识）
+        if (hasTrimTail) {
+            const tailW = drawW - outW;
+            ctx.fillStyle = isSelected ? 'rgba(239, 68, 68, 0.45)' : 'rgba(239, 68, 68, 0.32)';
+            ctx.fillRect(drawX + outW, drawY, tailW, drawH);
+
+            // 标注裁切时间
+            if (tailW > 24 && drawH > 24) {
+                ctx.font = 'bold 9px system-ui, sans-serif';
+                ctx.fillStyle = '#fca5a5';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(`后-${trimTail.toFixed(1)}s`, drawX + outW + tailW / 2, drawY + drawH / 2);
+            }
+        }
+
+        // 片段文本与序号徽章（清晰标识片段边界与裁切信息）
+        if (drawW > 16) {
             ctx.save();
             ctx.beginPath();
-            ctx.rect(drawX + 2, y, drawW - 4, h);
+            ctx.rect(drawX + 2, drawY, drawW - 4, drawH);
             ctx.clip();
 
-            ctx.font = '10px system-ui, sans-serif';
-            ctx.fillStyle = '#fff';
-            ctx.textAlign = 'left';
-            ctx.fillText(clip.name || '', drawX + 6, y + h / 2 + 3);
+            const hasTrim = hasTrimHead || hasTrimTail;
+            let textLeft = activeX + 6;
+
+            if (isSubLike) {
+                // 字幕类轨道（ASR/提供的文案/最终字幕）双行排版与自适应折行，最大化展示完整字幕
+                const fontSz = drawH >= 34 ? 10 : 9;
+                ctx.font = isTrimmedSub ? `italic ${fontSz}px system-ui, -apple-system, sans-serif` : `bold ${fontSz}px system-ui, -apple-system, sans-serif`;
+                if (isTrimmedSub) {
+                    ctx.fillStyle = '#fecaca';
+                } else if (track.type === 'asr') {
+                    ctx.fillStyle = '#e0f2fe';
+                } else if (track.type === 'script') {
+                    ctx.fillStyle = '#fae8ff';
+                } else {
+                    ctx.fillStyle = '#fffbeb';
+                }
+                ctx.textAlign = 'left';
+                ctx.textBaseline = 'middle';
+
+                const maxTextW = Math.max(10, drawW - 10);
+                const lines = _layoutClipLines(ctx, clip.name || '', maxTextW, drawH >= 30 ? 2 : 1);
+
+                if (lines.length <= 1) {
+                    ctx.fillText(lines[0] || clip.name || '', drawX + 5, drawY + drawH / 2);
+                } else {
+                    const lineH = fontSz + 2.5;
+                    const totalH = lines.length * lineH;
+                    const startY = drawY + (drawH - totalH) / 2 + fontSz / 2;
+                    lines.forEach((line, lIdx) => {
+                        ctx.fillText(line, drawX + 5, startY + lIdx * lineH);
+                    });
+                }
+            } else {
+                // 绘制序号徽章 [#1]
+                if (activeW > 38) {
+                    const badgeText = `#${clipIdx + 1}`;
+                    ctx.font = 'bold 9px system-ui, sans-serif';
+                    const badgeW = ctx.measureText(badgeText).width + 6;
+                    const badgeH = 13;
+                    const badgeY = drawY + 4;
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+                    ctx.beginPath();
+                    ctx.roundRect ? ctx.roundRect(textLeft, badgeY, badgeW, badgeH, 3) : ctx.rect(textLeft, badgeY, badgeW, badgeH);
+                    ctx.fill();
+                    ctx.fillStyle = '#f8fafc';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(badgeText, textLeft + badgeW / 2, badgeY + badgeH / 2);
+                    textLeft += badgeW + 5;
+                }
+
+                // 片段文件名 / 文本
+                ctx.font = 'bold 10px system-ui, sans-serif';
+                ctx.fillStyle = '#fff';
+                ctx.textAlign = 'left';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(clip.name || '', textLeft, drawY + (hasTrim && drawH > 32 ? 10 : drawH / 2));
+
+                // 第二行：裁切与时长信息
+                if (activeW > 50 && drawH > 32) {
+                    ctx.font = '9px system-ui, sans-serif';
+                    ctx.fillStyle = isSelected ? '#bfdbfe' : '#93c5fd';
+                    let info = `保留 ${(outT - inT).toFixed(2)}s`;
+                    if (hasTrimTail) info += ` [后-${trimTail.toFixed(1)}s]`;
+                    if (hasTrimHead) info = `[前-${trimHead.toFixed(1)}s] ` + info;
+                    ctx.fillText(info.trim(), activeX + 6, drawY + drawH - 7);
+                }
+            }
             ctx.restore();
         }
 
-        // Trim 手柄 (仅选中/悬停时)
-        if (isSelected || isHovered) {
-            ctx.fillStyle = 'rgba(255,255,255,0.5)';
-            ctx.fillRect(x, y, TL_HANDLE_W, h);
-            ctx.fillRect(x + w - TL_HANDLE_W, y, TL_HANDLE_W, h);
+        const isHoveredIn = isHovered && this._hoveredZone === 'cut_in';
+        const isHoveredOut = isHovered && this._hoveredZone === 'cut_out';
+        const isDraggingIn = this._drag?.trackIdx === trackIdx && this._drag?.clipIdx === clipIdx && this._drag?.type === 'cut_in';
+        const isDraggingOut = this._drag?.trackIdx === trackIdx && this._drag?.clipIdx === clipIdx && this._drag?.type === 'cut_out';
+
+        // 4. 入点切线及可拖拽把手 (In-point Cut Line & Handle)
+        const hasInCut = (track.type === 'video' || track.type === 'audio') && (clip.inT !== undefined || clip._trimHead !== undefined);
+        if (hasInCut) {
+            const cutLineX = Math.round(drawX + inW);
+            const activeIn = isHoveredIn || isDraggingIn;
+            ctx.save();
+            ctx.strokeStyle = activeIn ? '#38bdf8' : (isSelected ? '#60a5fa' : (hasTrimHead ? '#ef4444' : 'rgba(56, 189, 248, 0.8)'));
+            ctx.lineWidth = activeIn ? 3 : 2;
+            if (activeIn) {
+                ctx.shadowColor = '#38bdf8';
+                ctx.shadowBlur = 8;
+            }
+            ctx.beginPath();
+            ctx.moveTo(cutLineX, drawY);
+            ctx.lineTo(cutLineX, drawY + drawH);
+            ctx.stroke();
+
+            // 绘制入点把手 (Pill Handle Grip)
+            const handleW = 6;
+            const handleH = Math.min(12, Math.max(8, drawH / 3));
+            ctx.fillStyle = activeIn ? '#38bdf8' : (hasTrimHead ? '#f87171' : '#38bdf8');
+            ctx.beginPath();
+            ctx.roundRect ? ctx.roundRect(cutLineX - handleW / 2, drawY, handleW, handleH, 2) : ctx.rect(cutLineX - handleW / 2, drawY, handleW, handleH);
+            ctx.roundRect ? ctx.roundRect(cutLineX - handleW / 2, drawY + drawH - handleH, handleW, handleH, 2) : ctx.rect(cutLineX - handleW / 2, drawY + drawH - handleH, handleW, handleH);
+            ctx.fill();
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(cutLineX - 1, drawY + 2, 2, handleH - 4);
+            ctx.fillRect(cutLineX - 1, drawY + drawH - handleH + 2, 2, handleH - 4);
+            ctx.restore();
         }
+
+        // 5. 出点切线及可拖拽把手 (Out-point Cut Line & Handle)
+        const hasOutCut = (track.type === 'video' || track.type === 'audio') && (clip.outT !== undefined || clip._trimTail !== undefined);
+        if (hasOutCut) {
+            const cutLineX = Math.round(drawX + outW);
+            const activeOut = isHoveredOut || isDraggingOut;
+            ctx.save();
+            ctx.strokeStyle = activeOut ? '#fbbf24' : (isSelected ? '#f59e0b' : (hasTrimTail ? '#ef4444' : 'rgba(251, 191, 36, 0.8)'));
+            ctx.lineWidth = activeOut ? 3 : 2;
+            if (activeOut) {
+                ctx.shadowColor = '#fbbf24';
+                ctx.shadowBlur = 8;
+            }
+            ctx.beginPath();
+            ctx.moveTo(cutLineX, drawY);
+            ctx.lineTo(cutLineX, drawY + drawH);
+            ctx.stroke();
+
+            // 绘制出点把手 (Pill Handle Grip)
+            const handleW = 6;
+            const handleH = Math.min(12, Math.max(8, drawH / 3));
+            ctx.fillStyle = activeOut ? '#fbbf24' : (hasTrimTail ? '#f87171' : '#fbbf24');
+            ctx.beginPath();
+            ctx.roundRect ? ctx.roundRect(cutLineX - handleW / 2, drawY, handleW, handleH, 2) : ctx.rect(cutLineX - handleW / 2, drawY, handleW, handleH);
+            ctx.roundRect ? ctx.roundRect(cutLineX - handleW / 2, drawY + drawH - handleH, handleW, handleH, 2) : ctx.rect(cutLineX - handleW / 2, drawY + drawH - handleH, handleW, handleH);
+            ctx.fill();
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(cutLineX - 1, drawY + 2, 2, handleH - 4);
+            ctx.fillRect(cutLineX - 1, drawY + drawH - handleH + 2, 2, handleH - 4);
+            ctx.restore();
+        }
+        ctx.restore();
+        ctx.globalAlpha = prevGlobalAlpha;
     }
 
     _drawPlayhead(ctx, W, H) {
@@ -705,6 +1139,7 @@ class ReelsTimelineEditor {
     }
 
     _onMouseDown(e) {
+        this._hideTooltip();
         const rect = this.canvas.getBoundingClientRect();
         const mx = e.clientX - rect.left;
         const my = e.clientY - rect.top;
@@ -716,8 +1151,22 @@ class ReelsTimelineEditor {
             return;
         }
 
-        // 2. 点击轨道头部 → 忽略
-        if (mx < TL_HEADER_W) return;
+        // 2. 点击轨道头部
+        if (mx < TL_HEADER_W) {
+            const trackIdx = this._trackIndexAtY(my);
+            if (trackIdx >= 0 && trackIdx < this._tracks.length) {
+                const track = this._tracks[trackIdx];
+                if (mx >= TL_HEADER_W - 28 && mx <= TL_HEADER_W - 2) {
+                    track.visible = (track.visible === false ? true : false);
+                    if (this.onTrackVisibilityChange) {
+                        this.onTrackVisibilityChange(trackIdx, track.visible, track);
+                    }
+                    this._render();
+                    return;
+                }
+            }
+            return;
+        }
 
         // 3. 检测是否点击了 Trim 手柄
         const hitInfo = this._hitTestClip(mx, my);
@@ -771,6 +1220,36 @@ class ReelsTimelineEditor {
 
             if (!this._selectedClips.has(key)) {
                 this._drag = null;
+            } else if (hitInfo.zone === 'cut_in') {
+                const origInT = clip.inT !== undefined ? clip.inT : (clip._trimHead || 0);
+                const sourceDur = clip.sourceDuration || (clip.end - clip.start);
+                const origOutT = clip.outT !== undefined ? clip.outT : (clip.sourceDuration && clip._trimTail !== undefined ? clip.sourceDuration - clip._trimTail : sourceDur);
+                this._drag = {
+                    type: 'cut_in',
+                    trackIdx: hitInfo.trackIdx,
+                    clipIdx: hitInfo.clipIdx,
+                    origInT,
+                    origOutT,
+                    origStart: clip.start,
+                    origEnd: clip.end,
+                    sourceDuration: sourceDur,
+                    mx0: mx,
+                };
+            } else if (hitInfo.zone === 'cut_out') {
+                const origInT = clip.inT !== undefined ? clip.inT : (clip._trimHead || 0);
+                const sourceDur = clip.sourceDuration || (clip.end - clip.start);
+                const origOutT = clip.outT !== undefined ? clip.outT : (clip.sourceDuration && clip._trimTail !== undefined ? clip.sourceDuration - clip._trimTail : sourceDur);
+                this._drag = {
+                    type: 'cut_out',
+                    trackIdx: hitInfo.trackIdx,
+                    clipIdx: hitInfo.clipIdx,
+                    origInT,
+                    origOutT,
+                    origStart: clip.start,
+                    origEnd: clip.end,
+                    sourceDuration: sourceDur,
+                    mx0: mx,
+                };
             } else if (hitInfo.zone === 'start') {
                 const linked = clip._linkGroupId ? this._findLinkedClipRefs(clip._linkGroupId) : [{ trackIdx: hitInfo.trackIdx, clipIdx: hitInfo.clipIdx, clip, origStart: clip.start, origEnd: clip.end }];
                 const followingClips = [];
@@ -880,7 +1359,56 @@ class ReelsTimelineEditor {
 
             const snapThresholdSec = Math.max(0.02, 6 / this._pxPerSec);
 
-            if (this._drag.type === 'trim_start') {
+            if (this._drag.type === 'cut_in') {
+                const dt = (mx - this._drag.mx0) / this._pxPerSec;
+                let newInT = Math.max(0, Math.min(this._drag.origOutT - 0.05, this._drag.origInT + dt));
+                newInT = this._snapToFrame(newInT);
+                clip.inT = newInT;
+                clip._trimHead = newInT;
+
+                this._tracks.forEach(track => {
+                    const comp = track.clips?.[this._drag.clipIdx];
+                    if (comp && comp !== clip && (comp._reviewRow === clip._reviewRow || comp._linkGroupId === clip._linkGroupId)) {
+                        comp.inT = newInT;
+                        comp._trimHead = newInT;
+                    }
+                });
+
+                if (this.onClipChange) {
+                    this.onClipChange(this._drag.trackIdx, this._drag.clipIdx, clip, {
+                        editMode: 'cut_in',
+                        inT: newInT,
+                        outT: clip.outT !== undefined ? clip.outT : this._drag.origOutT,
+                    });
+                }
+                this._render();
+                return;
+            } else if (this._drag.type === 'cut_out') {
+                const dt = (mx - this._drag.mx0) / this._pxPerSec;
+                const maxDur = this._drag.sourceDuration || (clip.end - clip.start);
+                let newOutT = Math.max(this._drag.origInT + 0.05, Math.min(maxDur, this._drag.origOutT + dt));
+                newOutT = this._snapToFrame(newOutT);
+                clip.outT = newOutT;
+                clip._trimTail = Math.max(0, maxDur - newOutT);
+
+                this._tracks.forEach(track => {
+                    const comp = track.clips?.[this._drag.clipIdx];
+                    if (comp && comp !== clip && (comp._reviewRow === clip._reviewRow || comp._linkGroupId === clip._linkGroupId)) {
+                        comp.outT = newOutT;
+                        comp._trimTail = Math.max(0, maxDur - newOutT);
+                    }
+                });
+
+                if (this.onClipChange) {
+                    this.onClipChange(this._drag.trackIdx, this._drag.clipIdx, clip, {
+                        editMode: 'cut_out',
+                        inT: clip.inT !== undefined ? clip.inT : this._drag.origInT,
+                        outT: newOutT,
+                    });
+                }
+                this._render();
+                return;
+            } else if (this._drag.type === 'trim_start') {
                 const maxTrim = (this._drag.origEnd - this._drag.origStart) - 0.05;
                 const dtTrim = Math.max(0, Math.min(dt, maxTrim));
                 this._drag.lastTrimOffset = dtTrim;
@@ -954,33 +1482,54 @@ class ReelsTimelineEditor {
         // Hover
         if (mx < 0 || my < 0 || mx > rect.width || my > rect.height) {
             this._hoveredClip = null;
+            this._hoveredZone = null;
+            this._hideTooltip();
             return;
         }
 
         const hitInfo = this._hitTestClip(mx, my);
         this._hoveredClip = hitInfo ? { trackIdx: hitInfo.trackIdx, clipIdx: hitInfo.clipIdx } : null;
+        this._hoveredZone = hitInfo ? hitInfo.zone : null;
 
         if (hitInfo) {
-            if (hitInfo.zone === 'start' || hitInfo.zone === 'end') {
+            if (hitInfo.zone === 'cut_in') {
+                this.canvas.style.cursor = 'col-resize';
+            } else if (hitInfo.zone === 'cut_out') {
+                this.canvas.style.cursor = 'col-resize';
+            } else if (hitInfo.zone === 'start' || hitInfo.zone === 'end') {
                 this.canvas.style.cursor = 'col-resize';
             } else {
-                this.canvas.style.cursor = 'pointer';
+                this.canvas.style.cursor = 'grab';
             }
-            this.canvas.title = '';
-        } else if (this._hitTestGap(mx, my)) {
-            this.canvas.style.cursor = 'default';
-            this.canvas.title = '右键菜单可补充背景循环至结尾';
-        } else if (my < TL_RULER_H && mx >= TL_HEADER_W) {
-            this.canvas.style.cursor = 'pointer';
-            this.canvas.title = '';
+            this.canvas.removeAttribute('title');
+            this._showTooltip(hitInfo, mx, my);
+            this._render();
         } else {
-            this.canvas.style.cursor = 'default';
-            this.canvas.title = '';
+            this._hideTooltip();
+            if (mx < TL_HEADER_W && my >= TL_RULER_H) {
+                const trackIdx = this._trackIndexAtY(my);
+                if (trackIdx >= 0 && trackIdx < this._tracks.length && mx >= TL_HEADER_W - 28 && mx <= TL_HEADER_W - 2) {
+                    this.canvas.style.cursor = 'pointer';
+                    const track = this._tracks[trackIdx];
+                    this.canvas.title = track.visible === false ? '点击显示此轨道 (取消静默)' : '点击隐藏此轨道 (临时静默)';
+                } else {
+                    this.canvas.style.cursor = 'default';
+                    this.canvas.title = '';
+                }
+            } else if (this._hitTestGap(mx, my)) {
+                this.canvas.style.cursor = 'default';
+                this.canvas.title = '右键菜单可补充背景循环至结尾';
+            } else if (my < TL_RULER_H && mx >= TL_HEADER_W) {
+                this.canvas.style.cursor = 'pointer';
+                this.canvas.title = '';
+            } else {
+                this.canvas.style.cursor = 'default';
+                this.canvas.title = '';
+            }
         }
     }
 
     _onMouseUp(e) {
-        const wasPlayheadDrag = this._drag && this._drag.type === 'playhead';
         const marquee = this._drag && this._drag.type === 'marquee' ? this._drag : null;
         const wasRealMove = this._drag && this._drag.moved;
         const edit = this._drag && wasRealMove && !['playhead', 'marquee'].includes(this._drag.type)
@@ -993,6 +1542,10 @@ class ReelsTimelineEditor {
                 origStart: this._drag.origStart,
                 origEnd: this._drag.origEnd,
                 origInT: this._drag.origInT,
+                origOutT: this._drag.origOutT,
+                inT: this._tracks[this._drag.trackIdx]?.clips[this._drag.clipIdx]?.inT,
+                outT: this._tracks[this._drag.trackIdx]?.clips[this._drag.clipIdx]?.outT,
+                isEnd: true,
             }
             : null;
         this._drag = null;
@@ -1003,30 +1556,109 @@ class ReelsTimelineEditor {
                 origStart: edit.origStart,
                 origEnd: edit.origEnd,
                 origInT: edit.origInT,
+                origOutT: edit.origOutT,
+                inT: edit.inT,
+                outT: edit.outT,
+                isEnd: true,
             });
         }
         if (edit && edit.clip && this.onEditEnd) this.onEditEnd(edit);
-        if (wasPlayheadDrag && this.onSeek) this.onSeek(this._playheadPos, 'mouseup');
+        // mousedown/mousemove 已经把最终位置同步到预览；这里不要再发一个完全
+        // 相同的 seek。旧逻辑会令异步视频 seek 互相取消，表现为播放头闪跳。
         if (marquee && !marquee.moved) {
             this._seekToX(marquee.mx0, 'mousedown');
-            if (this.onSeek) this.onSeek(this._playheadPos, 'mouseup');
         }
+    }
+
+    zoom(factor, centerTimeSec = null) {
+        this._autoFitDuration = false;
+        this._hasManualTimelineView = true;
+        const availableW = Math.max(10, (this._canvasW || 800) - TL_HEADER_W - 24);
+        const centerTime = (centerTimeSec !== null && Number.isFinite(centerTimeSec))
+            ? centerTimeSec
+            : (this._playheadPos || 0);
+
+        const currentCenterX = centerTime * this._pxPerSec - this._scrollX;
+        const newPxPerSec = Math.max(2, Math.min(2000, this._pxPerSec * factor));
+
+        const targetScreenX = (currentCenterX >= 0 && currentCenterX <= availableW)
+            ? currentCenterX
+            : (availableW / 2);
+
+        this._pxPerSec = newPxPerSec;
+        this._scrollX = Math.max(0, centerTime * newPxPerSec - targetScreenX);
+        this._render();
+    }
+
+    zoomIn(centerTime = null) {
+        this.zoom(1.35, centerTime);
+    }
+
+    zoomOut(centerTime = null) {
+        this.zoom(0.74, centerTime);
+    }
+
+    zoomFit() {
+        this._autoFitDuration = true;
+        this._hasManualTimelineView = false;
+        this._scrollX = 0;
+        this._fitDurationToViewport();
+        this._render();
+    }
+
+    zoomToClip(clip) {
+        if (!clip) return;
+        const start = Number(clip.start) || 0;
+        const end = Number(clip.end) || (start + 1);
+        const dur = Math.max(0.1, end - start);
+        const availableW = Math.max(10, (this._canvasW || 800) - TL_HEADER_W - 40);
+        // 让当前片段占据可视区域约 65% 的宽度，方便超精细裁剪入出点
+        const targetPxPerSec = Math.max(5, Math.min(2000, (availableW * 0.65) / dur));
+        this._autoFitDuration = false;
+        this._hasManualTimelineView = true;
+        this._pxPerSec = targetPxPerSec;
+        const clipMidTime = start + dur / 2;
+        this._scrollX = Math.max(0, clipMidTime * targetPxPerSec - (availableW / 2));
+        this._render();
     }
 
     _onWheel(e) {
         e.preventDefault();
 
         if (e.ctrlKey || e.metaKey) {
-            // 缩放
+            // 围绕鼠标指针平滑缩放
             this._autoFitDuration = false;
-            const factor = e.deltaY > 0 ? 0.85 : 1.18;
-            this._pxPerSec = Math.max(10, Math.min(1000, this._pxPerSec * factor));
+            this._hasManualTimelineView = true;
+            const rect = this.canvas.getBoundingClientRect();
+            const mouseX = Math.max(0, e.clientX - rect.left - TL_HEADER_W);
+            const timeAtMouse = Math.max(0, (mouseX + this._scrollX) / this._pxPerSec);
+            const factor = e.deltaY > 0 ? 0.82 : 1.22;
+            const newPxPerSec = Math.max(2, Math.min(2000, this._pxPerSec * factor));
+            this._scrollX = Math.max(0, timeAtMouse * newPxPerSec - mouseX);
+            this._pxPerSec = newPxPerSec;
+            this._render();
+        } else if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+            // 触控板水平平移
+            this._hasManualTimelineView = true;
+            this._scrollX = Math.max(0, this._scrollX + e.deltaX);
+            this._render();
         } else if (e.shiftKey) {
-            // 垂直滚动
-            this._scrollY = Math.max(0, this._scrollY + e.deltaY);
-        } else {
-            // 水平滚动
+            // Shift + 滚轮水平平移
+            this._hasManualTimelineView = true;
             this._scrollX = Math.max(0, this._scrollX + e.deltaY);
+            this._render();
+        } else {
+            // 普通滚轮：若轨道高度超出视口则优先纵向平滑滚动，否则水平滚动
+            const totalContentH = TL_RULER_H + this._tracks.length * (TL_TRACK_HEIGHT + 1) + 12;
+            const rect = this.canvas.getBoundingClientRect();
+            if (totalContentH > rect.height && rect.height > 0) {
+                const maxScrollY = Math.max(0, totalContentH - rect.height);
+                this._scrollY = Math.max(0, Math.min(maxScrollY, this._scrollY + e.deltaY));
+            } else {
+                this._hasManualTimelineView = true;
+                this._scrollX = Math.max(0, this._scrollX + e.deltaY);
+            }
+            this._render();
         }
     }
 
@@ -1067,10 +1699,34 @@ class ReelsTimelineEditor {
                     const cx = TL_HEADER_W + clip.start * this._pxPerSec - this._scrollX;
                     const cw = Math.max(TL_MIN_CLIP_W, (clip.end - clip.start) * this._pxPerSec);
 
-                    if (mx >= cx && mx <= cx + cw) {
+                    if (mx >= cx - 8 && mx <= cx + cw + 8) {
+                        const HANDLE_HIT_PX = 8;
+                        const hasInternalCuts = (track.type === 'video' || track.type === 'audio') && (clip.inT !== undefined || clip._trimHead !== undefined || clip.outT !== undefined || clip._trimTail !== undefined);
+                        
+                        if (hasInternalCuts) {
+                            const inT = clip.inT !== undefined ? clip.inT : (clip._trimHead || 0);
+                            const sourceDur = clip.sourceDuration || (clip.end - clip.start);
+                            const outT = clip.outT !== undefined ? clip.outT : (clip.sourceDuration && clip._trimTail !== undefined ? clip.sourceDuration - clip._trimTail : sourceDur);
+                            
+                            const inW = Math.max(0, Math.min(cw, inT * this._pxPerSec));
+                            const outW = Math.max(inW, Math.min(cw, outT * this._pxPerSec));
+                            
+                            const cutInX = cx + inW;
+                            const cutOutX = cx + outW;
+                            const distIn = Math.abs(mx - cutInX);
+                            const distOut = Math.abs(mx - cutOutX);
+
+                            if (distIn <= HANDLE_HIT_PX && distIn <= distOut) {
+                                return { trackIdx: ti, clipIdx: ci, zone: 'cut_in' };
+                            }
+                            if (distOut <= HANDLE_HIT_PX) {
+                                return { trackIdx: ti, clipIdx: ci, zone: 'cut_out' };
+                            }
+                        }
+
                         let zone = 'body';
-                        if (mx - cx < TL_HANDLE_W) zone = 'start';
-                        if (cx + cw - mx < TL_HANDLE_W) zone = 'end';
+                        if (Math.abs(mx - cx) <= TL_HANDLE_W) zone = 'start';
+                        if (Math.abs(mx - (cx + cw)) <= TL_HANDLE_W) zone = 'end';
                         return { trackIdx: ti, clipIdx: ci, zone };
                     }
                 }
@@ -1118,6 +1774,7 @@ class ReelsTimelineEditor {
         const mx = e.clientX - rect.left;
         const my = e.clientY - rect.top;
         const hitInfo = this._hitTestClip(mx, my);
+        const headerTrackIdx = mx < TL_HEADER_W ? this._trackIndexAtY(my) : -1;
         if (hitInfo) {
             const key = this._clipKey(hitInfo.trackIdx, hitInfo.clipIdx);
             if (!this._selectedClips.has(key)) {
@@ -1188,8 +1845,23 @@ class ReelsTimelineEditor {
                 },
             },
         ];
+        if (headerTrackIdx >= 0) {
+            items.unshift(
+                { icon: '⬆️', text: '轨道上移（更高层）', action: () => this.moveTrack(headerTrackIdx, 'up') },
+                { icon: '⬇️', text: '轨道下移（更低层）', action: () => this.moveTrack(headerTrackIdx, 'down') },
+            );
+        }
+        let finalItems = items;
+        if (hitInfo && typeof this.onClipContextMenu === 'function') {
+            const extra = this.onClipContextMenu(hitInfo.trackIdx, hitInfo.clipIdx, this._tracks[hitInfo.trackIdx]?.clips?.[hitInfo.clipIdx]);
+            if (Array.isArray(extra)) {
+                finalItems = [...extra, ...items];
+            } else if (extra && Array.isArray(extra.items)) {
+                finalItems = extra.override ? extra.items : [...extra.items, ...items];
+            }
+        }
 
-        items.forEach(item => {
+        finalItems.forEach(item => {
             const btn = document.createElement('div');
             Object.assign(btn.style, {
                 display: 'flex',
@@ -1238,6 +1910,16 @@ class ReelsTimelineEditor {
             document.addEventListener('mousedown', closeMenu, true);
             document.addEventListener('keydown', handleEsc, true);
         }, 10);
+    }
+
+    _trackIndexAtY(my) {
+        let y = TL_RULER_H - this._scrollY;
+        for (let index = 0; index < this._tracks.length; index++) {
+            if (my >= y && my < y + TL_TRACK_HEIGHT) return index;
+            y += TL_TRACK_HEIGHT + 1;
+            if (index < this._tracks.length - 1 && this._tracks[index].domain === 'visual' && this._tracks[index + 1]?.domain === 'audio') y += 4;
+        }
+        return -1;
     }
 
     _splitClipAtPlayhead() {
@@ -1365,7 +2047,7 @@ class ReelsTimelineEditor {
 
     _seekToX(mx, type) {
         const t = (mx - TL_HEADER_W + this._scrollX) / this._pxPerSec;
-        this._playheadPos = Math.max(0, Math.min(this._duration, t));
+        this._playheadPos = Math.max(0, Math.min(this._duration, this._snapToFrame(t)));
         if (this.onSeek) this.onSeek(this._playheadPos, type);
     }
 
@@ -1491,6 +2173,121 @@ class ReelsTimelineEditor {
         g = Math.max(0, Math.min(255, g + Math.round(255 * amount)));
         b = Math.max(0, Math.min(255, b + Math.round(255 * amount)));
         return `rgb(${r},${g},${b})`;
+    }
+
+    _showTooltip(hitInfo, mx, my) {
+        if (!this._tooltipEl || this._drag) {
+            this._hideTooltip();
+            return;
+        }
+        const track = this._tracks[hitInfo.trackIdx];
+        const clip = track?.clips?.[hitInfo.clipIdx];
+        if (!track || !clip) {
+            this._hideTooltip();
+            return;
+        }
+
+        const isSubLike = track.type === 'subs' || track.type === 'asr' || track.type === 'script';
+        const isTrimmed = clip._isTrimmed === true || clip.isTrimmed === true;
+        const dur = (clip.end - clip.start);
+
+        let badgeTitle = track.name || '片段';
+        let badgeColor = '#94a3b8';
+        let badgeBg = 'rgba(148, 163, 184, 0.15)';
+        let badgeIcon = '📄';
+
+        if (track.type === 'asr') {
+            badgeTitle = 'AI 语音识别原文';
+            badgeColor = '#38bdf8';
+            badgeBg = 'rgba(56, 189, 248, 0.18)';
+            badgeIcon = '🎙️';
+        } else if (track.type === 'script') {
+            badgeTitle = '我提供的参考文案';
+            badgeColor = '#c084fc';
+            badgeBg = 'rgba(192, 132, 252, 0.18)';
+            badgeIcon = '📝';
+        } else if (track.type === 'subs') {
+            badgeTitle = '最终导出字幕';
+            badgeColor = '#fbbf24';
+            badgeBg = 'rgba(251, 191, 36, 0.18)';
+            badgeIcon = '✨';
+        } else if (track.type === 'video') {
+            badgeTitle = '视频片段 (裁剪序列)';
+            badgeColor = '#60a5fa';
+            badgeBg = 'rgba(96, 165, 250, 0.18)';
+            badgeIcon = '🎬';
+        } else if (track.type === 'audio') {
+            badgeTitle = '原声伴音轨';
+            badgeColor = '#38bdf8';
+            badgeBg = 'rgba(56, 189, 248, 0.18)';
+            badgeIcon = '🔊';
+        }
+
+        const escapeHtml = str => String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        const contentText = clip._fullText || clip.name || '（无文字内容）';
+
+        let statusBadge = '';
+        if (isSubLike) {
+            if (isTrimmed) {
+                statusBadge = `<span style="display:inline-flex;align-items:center;gap:3px;color:#fca5a5;background:rgba(239,68,68,0.22);padding:2px 7px;border-radius:4px;font-size:11px;font-weight:600;">❌ 已剪掉 (超出保留范围)</span>`;
+            } else {
+                statusBadge = `<span style="display:inline-flex;align-items:center;gap:3px;color:#86efac;background:rgba(34,197,94,0.2);padding:2px 7px;border-radius:4px;font-size:11px;font-weight:600;">✅ 保留导出</span>`;
+            }
+        }
+
+        let actionHint = '';
+        if (hitInfo.zone === 'cut_in') {
+            actionHint = `<div style="font-size:11px;color:#38bdf8;background:rgba(56,189,248,0.12);padding:4px 8px;border-radius:5px;display:flex;align-items:center;gap:4px;">↔️ <strong>正在悬停入点切线</strong>：按住左键拖动可调整片段开始时间</div>`;
+        } else if (hitInfo.zone === 'cut_out') {
+            actionHint = `<div style="font-size:11px;color:#fbbf24;background:rgba(251,191,36,0.12);padding:4px 8px;border-radius:5px;display:flex;align-items:center;gap:4px;">↔️ <strong>正在悬停出点切线</strong>：按住左键拖动可调整片段结束时间</div>`;
+        }
+
+        this._tooltipEl.innerHTML = `
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;border-bottom:1px solid rgba(255,255,255,0.08);padding-bottom:6px;">
+                <div style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:${badgeColor};background:${badgeBg};padding:2px 8px;border-radius:4px;">
+                    <span>${badgeIcon}</span>
+                    <span>${badgeTitle}</span>
+                </div>
+                ${statusBadge}
+            </div>
+            <div style="font-size:13px;font-weight:600;color:#ffffff;line-height:1.55;word-break:break-word;white-space:pre-wrap;max-height:140px;overflow-y:auto;user-select:none;">
+                ${escapeHtml(contentText)}
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:11px;color:#94a3b8;border-top:1px solid rgba(255,255,255,0.06);padding-top:5px;">
+                <span>⏱️ 时间：<strong style="color:#e2e8f0;">${clip.start.toFixed(2)}s ~ ${clip.end.toFixed(2)}s</strong></span>
+                <span>时长：<strong style="color:#e2e8f0;">${dur.toFixed(2)}s</strong></span>
+            </div>
+            ${actionHint}
+        `;
+
+        // 位置计算 (确保不超出容器边缘)
+        const containerRect = this.container.getBoundingClientRect();
+        const tooltipW = Math.min(360, Math.max(220, this._tooltipEl.offsetWidth || 280));
+        const tooltipH = Math.max(70, this._tooltipEl.offsetHeight || 90);
+
+        let left = mx + 16;
+        let top = my - tooltipH - 12;
+
+        if (top < 8) {
+            top = my + 22;
+        }
+        if (left + tooltipW > containerRect.width - 12) {
+            left = mx - tooltipW - 16;
+        }
+        if (left < 10) left = 10;
+        if (top + tooltipH > containerRect.height - 8) {
+            top = containerRect.height - tooltipH - 8;
+        }
+
+        this._tooltipEl.style.left = `${left}px`;
+        this._tooltipEl.style.top = `${top}px`;
+        this._tooltipEl.style.opacity = '1';
+    }
+
+    _hideTooltip() {
+        if (this._tooltipEl && this._tooltipEl.style.opacity !== '0') {
+            this._tooltipEl.style.opacity = '0';
+        }
     }
 }
 

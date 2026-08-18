@@ -168,6 +168,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     reelsCompose: (opts) => ipcRenderer.invoke('reels-compose', opts),
     concatVideo: (opts) => ipcRenderer.invoke('concat-video', opts),
     reelsComposeWysiwyg: (action, data) => ipcRenderer.invoke('reels-compose-wysiwyg', action, data),
+    reelsDetectSilence: (data) => ipcRenderer.invoke('reels-detect-silence', data),
     createReelsFramePipeline: (sessionId) => new Promise((resolve, reject) => {
         const requestId = `reels-pipe-${Date.now()}-${Math.random().toString(36).slice(2)}`;
         const timer = setTimeout(() => {

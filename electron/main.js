@@ -609,7 +609,29 @@ function createWindow() {
     });
 
     if (!app.isPackaged) {
-        mainWindow.loadURL('http://localhost:5173');
+        let loadRetries = 0;
+        const loadDevServer = () => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.loadURL('http://localhost:5173').catch(() => {});
+            }
+        };
+        mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+            if (validatedURL && validatedURL.includes('localhost:5173') && loadRetries < 25) {
+                loadRetries++;
+                setTimeout(() => {
+                    if (mainWindow && !mainWindow.isDestroyed()) {
+                        loadDevServer();
+                    }
+                }, 600);
+            } else if (loadRetries >= 25) {
+                const localHtml = path.join(__dirname, '../dist/index.html');
+                const fs = require('fs');
+                if (fs.existsSync(localHtml) && mainWindow && !mainWindow.isDestroyed()) {
+                    mainWindow.loadFile(localHtml);
+                }
+            }
+        });
+        loadDevServer();
         mainWindow.webContents.openDevTools();
         mainWindow.webContents.once('did-finish-load', async () => {
             const recovered = await recoverPendingBatchFromTemplates(mainWindow);
@@ -1006,6 +1028,11 @@ app.whenReady().then(async () => {
             });
         }
         return result;
+    });
+    // Reels 插入素材：只分析本地音轨停顿，不调用外部 AI 服务。
+    ipcMain.handle('reels-detect-silence', async (event, data = {}) => {
+        if (!data.filePath) throw new Error('缺少待检测的音视频文件');
+        return ffmpegService.detectSilence(data.filePath, Number(data.noiseDb ?? -35), Number(data.minDuration ?? .35));
     });
     ipcMain.on('reels-frame-pipeline-open', (event, data = {}) => {
         const { port1, port2 } = new MessageChannelMain();

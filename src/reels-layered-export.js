@@ -431,10 +431,12 @@ async function reelsLayeredExport(params) {
         for (const ov of videoOverlays) {
             if (!ov.content) continue;
             const opath = _normalizeLocalPath(ov.content);
+            const videoOffset = Math.max(0, parseFloat(ov.video_start_offset || 0));
+            const overlayPlayDur = Math.max(0.1, parseFloat(ov.end || duration) - parseFloat(ov.start || 0));
             const oPrep = await window.electronAPI.reelsComposeWysiwyg('prepare-overlay', {
                 overlayPath: opath,
                 fps,
-                duration: Math.min(duration, parseFloat(ov.end || duration)),
+                duration: videoOffset + overlayPlayDur + 1,
             });
             if (oPrep && oPrep.framesDir) {
                 ov._framesDir = oPrep.framesDir;
@@ -675,6 +677,7 @@ async function reelsLayeredExport(params) {
             // 字幕层: 透明底 + 字幕
             // ══════════════════════════════════════
             subtitleCtx.clearRect(0, 0, targetWidth, targetHeight);
+            subtitleRenderer.renderAmbientLightingBase?.(style, targetWidth, targetHeight);
 
             if (showSubtitle && segments && segments.length > 0) {
                 let activeSeg = segments.find(seg => t >= (seg.start || 0) && t <= (seg.end || 0));

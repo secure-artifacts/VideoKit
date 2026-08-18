@@ -33,6 +33,40 @@ class ReelsCanvasRenderer {
         this._contextSegments = segments || [];
     }
 
+    // 环境光的暗部调色（电影级暗角过渡）：支持暗部颜色、暗部强度、中心暗度与暗角范围实时调节
+    renderAmbientLightingBase(style, videoW, videoH) {
+        const isEnabled = style?.ambient_lighting_enabled || style?.ambient_glow_enabled;
+        if (!isEnabled) return;
+        const ctx = this.ctx;
+        const outerOpacity = Math.max(0, Math.min(1, Number(style.ambient_dark_opacity ?? .70)));
+        const centerOpacity = Math.max(0, Math.min(1, Number(style.ambient_dark_center_opacity ?? .20)));
+        if (outerOpacity <= 0.005 && centerOpacity <= 0.005) return;
+        
+        const darkColor = style.ambient_dark_color || '#000000';
+        const hex = String(darkColor).replace('#', '');
+        const rVal = parseInt(hex.slice(0, 2), 16) || 0;
+        const gVal = parseInt(hex.slice(2, 4), 16) || 0;
+        const bVal = parseInt(hex.slice(4, 6), 16) || 0;
+
+        const darkRadiusRatio = Math.max(0.1, Math.min(2.0, Number(style.ambient_dark_radius ?? 0.8)));
+        const posY = style.pos_y != null ? style.pos_y : 0.5;
+        const centerX = videoW / 2;
+        const centerY = videoH * posY;
+        const innerR = videoW * (darkRadiusRatio * 0.15);
+        const outerR = videoW * (darkRadiusRatio * 0.95);
+
+        ctx.save();
+        ctx.globalCompositeOperation = 'source-over';
+        const vigGrad = ctx.createRadialGradient(centerX, centerY, innerR, centerX, centerY, outerR);
+        vigGrad.addColorStop(0, `rgba(${rVal}, ${gVal}, ${bVal}, ${centerOpacity.toFixed(3)})`);
+        vigGrad.addColorStop(0.35, `rgba(${rVal}, ${gVal}, ${bVal}, ${(centerOpacity + (outerOpacity - centerOpacity) * 0.45).toFixed(3)})`);
+        vigGrad.addColorStop(0.70, `rgba(${rVal}, ${gVal}, ${bVal}, ${(centerOpacity + (outerOpacity - centerOpacity) * 0.82).toFixed(3)})`);
+        vigGrad.addColorStop(1, `rgba(${rVal}, ${gVal}, ${bVal}, ${outerOpacity.toFixed(3)})`);
+        ctx.fillStyle = vigGrad;
+        ctx.fillRect(0, 0, videoW, videoH);
+        ctx.restore();
+    }
+
     /**
      * 主渲染入口
      */
@@ -43,6 +77,8 @@ class ReelsCanvasRenderer {
             ...(style || {}),
             ...(segment.style_override || segment.subtitle_style || {})
         };
+        // 最后一遍文字清晰层：环境光已经全部叠完，不能再参与光的混合。
+        if (style?._ambient_text_final_pass) s.ambient_glow_enabled = false;
         const segmentText = segment.edited_text || segment.text || '';
         const textDirection = (typeof ReelsTextDirection !== 'undefined')
             ? ReelsTextDirection.resolve(s.text_direction, segmentText)
@@ -297,10 +333,17 @@ class ReelsCanvasRenderer {
             paraWordsGroups[pIdx].push(flatWords[w]);
         }
 
+        const popMaxScaleGlobal = Math.max(1.0,
+            Number(s.word_pop_random_max_scale ?? 1.0),
+            Number(s.word_pop_random_pulse_max_scale ?? 1.0),
+            Number(s.letter_jump_scale ?? 1.0)
+        );
+        const antiCollisionPaddingGlobal = (popMaxScaleGlobal > 1.05) ? ((ctx.measureText(' ').width + wordSpacing) * (popMaxScaleGlobal - 1.0) * 1.2) : 0;
+
         for (let i = 0; i < paragraphs.length; i++) {
             const paraWords = paraWordsGroups[i];
             if (paraWords.length > 0) {
-                const wrapWordSpacing = wordSpacing + randomWordSpacingMax;
+                const wrapWordSpacing = wordSpacing + randomWordSpacingMax + antiCollisionPaddingGlobal;
                 const paraLines = this._wrapTokensByPixelWidth(paraWords, maxWidth, joiner, letterSpacing, wrapWordSpacing);
                 lines.push(...paraLines);
             } else {
@@ -316,8 +359,7 @@ class ReelsCanvasRenderer {
         const lineSpacing = s.line_spacing || 0;
         const lineH = fontSize * 1.2;
         const lineStep = lineH + lineSpacing;
-        const blockTypography = (s.block_typography_enabled === true)
-            || (s.block_typography_enabled == null && (s.anim_in_type || 'none') === 'word_pop_random');
+        const blockTypography = s.block_typography_enabled === true;
         const blockScaleMin = Number.isFinite(Number(s.block_scale_min)) ? Number(s.block_scale_min) : 0.78;
         const blockScaleMax = Number.isFinite(Number(s.block_scale_max)) ? Number(s.block_scale_max) : 1.6;
         const blockTargetWidth = maxWidth;
@@ -344,10 +386,11 @@ class ReelsCanvasRenderer {
             const fit = blockTargetWidth / safeW;
             return Math.max(blockScaleMin, Math.min(blockScaleMax, fit));
         });
-        const lineHeights = lineScales.map(sc => lineH * sc);
+        const lineHeights = lineScales.map(sc => lineH * sc * Math.max(1.0, popMaxScaleGlobal * 0.95));
         const lineSpacings = visibleLines.map((_, i) => {
             if (i >= visibleLines.length - 1) return 0;
-            return lineSpacing + this._computeRandomLineSpacing(s, i, segStart);
+            const verticalCushion = (popMaxScaleGlobal > 1.05) ? (lineH * (popMaxScaleGlobal - 1.0) * 0.35) : 0;
+            return lineSpacing + verticalCushion + this._computeRandomLineSpacing(s, i, segStart);
         });
         const lineTopOffsets = [];
         let accumY = 0;
@@ -365,6 +408,13 @@ class ReelsCanvasRenderer {
         const _isLJ_ = animInType_ === 'letter_jump';
         const segDur_ = Math.max(0.001, segEnd - segStart);
         const baseSpaceW_ = ctx.measureText(' ').width + wordSpacing;
+        const popMaxScale_ = Math.max(1.0,
+            Number(s.word_pop_random_max_scale ?? 1.0),
+            Number(s.word_pop_random_pulse_max_scale ?? 1.0),
+            Number(s.letter_jump_scale ?? 1.0)
+        );
+        const antiCollisionPadding_ = (popMaxScale_ > 1.05) ? (baseSpaceW_ * (popMaxScale_ - 1.0) * 1.2) : 0;
+        const safeBaseSpaceW_ = baseSpaceW_ + antiCollisionPadding_;
 
         let actualMaxLineW = 0;
         let finalMaxLineW = 0; // 所有词完全展开后的最终宽度（用于稳定居中锚点）
@@ -379,9 +429,7 @@ class ReelsCanvasRenderer {
 
             for (let ti = 0; ti < lineTokens.length; ti++) {
                 const ww = this._measureTextWithSpacing(ctx, lineTokens[ti], letterSpacing);
-                // 与渲染循环完全一致的 advanceScale 计算
-                let advScale = lScale;
-                let finalAdvScale = lScale; // 最终 scale（始终包含随机缩放）
+                let allocScale = 1.0;
                 let spacingWordStart = segStart + segDur_ * (simWordIdx / Math.max(1, words.length));
 
                 if (_isWPR_) {
@@ -392,44 +440,29 @@ class ReelsCanvasRenderer {
                         ws = segStart + segDur_ * (simWordIdx / Math.max(1, words.length));
                     }
                     spacingWordStart = ws;
-                    const randScale = this._computeWordRandomFinalScale(
+                    allocScale = this._computeWordRandomFinalScale(
                         simWordIdx, segStart, ws,
                         Number(s.word_pop_random_min_scale ?? 0.7),
                         Number(s.word_pop_random_max_scale ?? 1.34)
                     );
-                    finalAdvScale *= randScale;
-                    if (currentTime >= ws) {
-                        advScale *= randScale;
-                    }
-                }
-
-                if (_isWPRP_) {
+                } else if (_isWPRP_) {
                     const pMax = Number(s.word_pop_random_pulse_max_scale ?? 1.40);
-                    const pFactor = Math.max(1.0, pMax * 0.85);
-                    advScale *= pFactor;
-                    finalAdvScale *= pFactor;
-                }
-
-                // letter_jump: 高亮词会有瞬时放大
-                if (_isLJ_) {
+                    allocScale = Math.max(1.0, pMax * 0.85);
+                } else if (_isLJ_) {
                     const ljScale = Number(s.letter_jump_scale ?? 1.5);
                     if (ljScale > 1.0) {
-                        advScale *= ljScale;
-                        finalAdvScale *= ljScale;
+                        allocScale = ljScale;
                     }
                 }
 
-                // 视觉宽度 = wordW * scale (文字实际绘制宽度)
-                const visualWordW = ww * advScale;
-                const finalVisualWordW = ww * finalAdvScale;
-                const gapW = baseSpaceW_ + this._computeRandomWordSpacing(s, simWordIdx, segStart, spacingWordStart);
-                // 累加：词宽 + 词间距（最后一个词不加间距）
+                const slotW = ww * lScale * allocScale;
+                const gapW = (safeBaseSpaceW_ + this._computeRandomWordSpacing(s, simWordIdx, segStart, spacingWordStart)) * lScale;
                 if (ti < lineTokens.length - 1) {
-                    lineRenderedW += visualWordW + gapW * advScale;
-                    lineFinalW += finalVisualWordW + gapW * finalAdvScale;
+                    lineRenderedW += slotW + gapW;
+                    lineFinalW += slotW + gapW;
                 } else {
-                    lineRenderedW += visualWordW;
-                    lineFinalW += finalVisualWordW;
+                    lineRenderedW += slotW;
+                    lineFinalW += slotW;
                 }
                 simWordIdx++;
             }
@@ -902,10 +935,30 @@ class ReelsCanvasRenderer {
                     isHighlight = true;
                 }
 
-                const isWordActive = !s.only_show_active_word || (currentTime == null || (currentTime >= wordStart && currentTime <= wordEnd));
-                const drawX = s.only_show_active_word
-                    ? (cx - (wordW * lineScale) / 2)
-                    : (textDirection === 'rtl' ? currX - wordW * lineScale : currX);
+                let allocScale = 1.0;
+                if (isWordPopRandom) {
+                    allocScale = this._computeWordRandomFinalScale(
+                        wordIdx, segStart, wordStart,
+                        Number(s.word_pop_random_min_scale ?? 0.7),
+                        Number(s.word_pop_random_max_scale ?? 1.34)
+                    );
+                } else if (isWordPopRandomPulse) {
+                    const pMax = Number(s.word_pop_random_pulse_max_scale ?? 1.40);
+                    allocScale = Math.max(1.0, pMax * 0.85);
+                } else if (isLetterJump) {
+                    const ljScale = Number(s.letter_jump_scale ?? 1.5);
+                    if (ljScale > 1.0) allocScale = ljScale;
+                }
+
+                const slotW = wordW * lineScale * allocScale;
+                const slotX = textDirection === 'rtl' ? currX - slotW : currX;
+
+                const isWordActive = !s.only_show_active_word || (currentTime == null || (currentTime >= wordStart && (wordIdx === totalWordCount - 1 ? currentTime <= wordEnd : currentTime < wordEnd)));
+                const wordCenterX = s.only_show_active_word ? cx : (slotX + slotW / 2);
+                const drawX = wordCenterX - (wordW * lineScale) / 2;
+
+                const wordCenterY = y + lineHScaled / 2;
+                let wordY = y;
 
                 // Word Pop 会在绘制阶段放大当前词。色块也必须采用相同
                 // 缩放，否则文字回弹时会跑出色块，或看起来整体错位。
@@ -991,6 +1044,9 @@ class ReelsCanvasRenderer {
                 let wordOpacity = lineAlpha;
                 if (s.only_show_active_word && currentTime != null && (currentTime < wordStart || currentTime > wordEnd)) {
                     wordOpacity = 0.0;
+                } else if ((s.ambient_glow_enabled || style?._ambient_text_final_pass)
+                    && currentTime != null && currentTime < wordStart) {
+                    wordOpacity = 0.0;
                 }
                 let wordColor = isHighlight ? highColor : textColor;
                 let wordStrokeColor = outlineColor;
@@ -1052,7 +1108,6 @@ class ReelsCanvasRenderer {
                 }
 
                 // ── Vertical offset for char bounce ──
-                let wordY = y;
                 if (anim && isCharBounce) {
                     const bounceOff = anim.computeCharBounceOffset(
                         currentTime, wordIdx,
@@ -1069,12 +1124,12 @@ class ReelsCanvasRenderer {
                 }
 
                 // ── Holy glow around text ──
-                if (isHolyGlow && holyGlowRadius > 0 && isWordActive) {
+                if (isHolyGlow && !style?._ambient_text_final_pass && holyGlowRadius > 0 && isWordActive && wordOpacity > 0.001) {
                     ctx.save();
                     const glowColor = s.holy_glow_color || '#FFFFCC';
                     for (let gr = holyGlowRadius; gr > 0; gr--) {
                         const ga = (80 * holyGlowAlpha * (gr / holyGlowRadius) * 0.5) / 255;
-                        ctx.globalAlpha = globalAlpha * ga;
+                        ctx.globalAlpha = globalAlpha * wordOpacity * ga;
                         ctx.strokeStyle = glowColor;
                         ctx.lineWidth = gr * 2;
                         ctx.lineJoin = 'round';
@@ -1088,7 +1143,7 @@ class ReelsCanvasRenderer {
                 }
 
                 // ── Render word ──
-                if (isWordActive) {
+                if (isWordActive && wordOpacity > 0.001) {
                     // ── Local multi-layer stroke expand ──
                     if (s.stroke_expand_enabled && needsPerWordStrokeExpand) {
                         ctx.save();
@@ -1113,8 +1168,54 @@ class ReelsCanvasRenderer {
                     ctx.globalAlpha = globalAlpha * wordOpacity;
 
                     const wordScale = letterJumpScale * randomPopScale;
-                    const wordCenterX = drawX + (wordW * lineScale) / 2;
-                    const wordCenterY = wordY + lineHScaled / 2;
+
+                    // ── 调色级物理曝光提亮 (Exposure Dodge & Optical Luminescence) ──
+                    if (s.ambient_glow_enabled && (currentTime == null || currentTime >= wordStart)) {
+                        ctx.save();
+                        const ambColor = s.ambient_glow_color || s.color_high || '#FFE600';
+                        const rawRadius = Number(s.ambient_glow_radius) || 360;
+                        const baseRadius = Math.max(60, rawRadius);
+                        const wordAlpha = Math.max(0.1, Math.min(1.0, Number(s.ambient_glow_opacity ?? 0.55))) * animOpacity;
+
+                        const hex = String(ambColor).replace('#', '');
+                        const rVal = parseInt(hex.slice(0, 2), 16) || 255;
+                        const gVal = parseInt(hex.slice(2, 4), 16) || 230;
+                        const bVal = parseInt(hex.slice(4, 6), 16) || 120;
+
+                        // ── Pass 1: 广域温和曝光减淡 (Color-Dodge: 扩大光圈范围，降低中心峰值，柔和提亮不爆光) ──
+                        ctx.globalCompositeOperation = 'color-dodge';
+                        const dodgeGrad = ctx.createRadialGradient(wordCenterX, wordCenterY, 0, wordCenterX, wordCenterY, baseRadius);
+                        dodgeGrad.addColorStop(0, `rgba(${Math.round(rVal * 0.55)}, ${Math.round(gVal * 0.55)}, ${Math.round(bVal * 0.55)}, ${(wordAlpha * 0.48).toFixed(3)})`);
+                        dodgeGrad.addColorStop(0.3, `rgba(${Math.round(rVal * 0.38)}, ${Math.round(gVal * 0.38)}, ${Math.round(bVal * 0.38)}, ${(wordAlpha * 0.32).toFixed(3)})`);
+                        dodgeGrad.addColorStop(0.65, `rgba(${Math.round(rVal * 0.18)}, ${Math.round(gVal * 0.18)}, ${Math.round(bVal * 0.18)}, ${(wordAlpha * 0.12).toFixed(3)})`);
+                        dodgeGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+                        ctx.fillStyle = dodgeGrad;
+                        ctx.fillRect(wordCenterX - baseRadius, wordCenterY - baseRadius, baseRadius * 2, baseRadius * 2);
+
+                        // ── Pass 2: 大范围暖调色温弥散 (Soft-Light: 广角柔和铺光，增强环境包围感) ──
+                        ctx.globalCompositeOperation = 'soft-light';
+                        const toneRadius = baseRadius * 1.35;
+                        const toneGrad = ctx.createRadialGradient(wordCenterX, wordCenterY, 0, wordCenterX, wordCenterY, toneRadius);
+                        toneGrad.addColorStop(0, `rgba(${rVal}, ${gVal}, ${bVal}, ${(wordAlpha * 0.75).toFixed(3)})`);
+                        toneGrad.addColorStop(0.45, `rgba(${rVal}, ${gVal}, ${bVal}, ${(wordAlpha * 0.38).toFixed(3)})`);
+                        toneGrad.addColorStop(0.8, `rgba(${rVal}, ${gVal}, ${bVal}, ${(wordAlpha * 0.10).toFixed(3)})`);
+                        toneGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+                        ctx.fillStyle = toneGrad;
+                        ctx.fillRect(wordCenterX - toneRadius, wordCenterY - toneRadius, toneRadius * 2, toneRadius * 2);
+
+                        // ── Pass 3: 柔美边缘光学微光 (Screen: 消除光斑生硬边界) ──
+                        ctx.globalCompositeOperation = 'screen';
+                        const screenRadius = baseRadius * 0.75;
+                        const screenGrad = ctx.createRadialGradient(wordCenterX, wordCenterY, 0, wordCenterX, wordCenterY, screenRadius);
+                        screenGrad.addColorStop(0, `rgba(${rVal}, ${gVal}, ${bVal}, ${(wordAlpha * 0.18).toFixed(3)})`);
+                        screenGrad.addColorStop(0.5, `rgba(${rVal}, ${gVal}, ${bVal}, ${(wordAlpha * 0.06).toFixed(3)})`);
+                        screenGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+                        ctx.fillStyle = screenGrad;
+                        ctx.fillRect(wordCenterX - screenRadius, wordCenterY - screenRadius, screenRadius * 2, screenRadius * 2);
+
+                        ctx.restore();
+                    }
+
                     if (wordScale !== 1.0) {
                         ctx.translate(wordCenterX, wordCenterY);
                         ctx.scale(wordScale, wordScale);
@@ -1126,6 +1227,7 @@ class ReelsCanvasRenderer {
                         ctx.translate(-wordCenterX, -wordCenterY);
                     }
 
+                    let currentShadowBlur = shadowBlur;
                     let currentShadowColor = shadowColor;
                     if (shadowColor && shadowColor.includes(',')) {
                         const shadowColors = shadowColor.split(',').map(c => c.trim());
@@ -1140,15 +1242,15 @@ class ReelsCanvasRenderer {
                         const revealedW = this._measureTextWithSpacing(ctx, typewriterPartial.revealed, letterSpacing);
                         this._drawWord(ctx, typewriterPartial.revealed, drawX, wordY, revealedColor,
                             useStroke && !s.stroke_expand_enabled, revealedStroke, borderW, outlineAlpha,
-                            shadowBlur, shadowOffX, shadowOffY, currentShadowColor, shadowAlpha, letterSpacing, s);
+                            currentShadowBlur, shadowOffX, shadowOffY, currentShadowColor, shadowAlpha, letterSpacing, s);
                         ctx.globalAlpha = globalAlpha * wordOpacity * twUnreadOpacity;
                         this._drawWord(ctx, typewriterPartial.unrevealed, drawX + revealedW, wordY, unrevealedColor,
                             useStroke && !s.stroke_expand_enabled, unrevealedStroke, borderW, outlineAlpha,
-                            shadowBlur, shadowOffX, shadowOffY, currentShadowColor, shadowAlpha, letterSpacing, s);
+                            currentShadowBlur, shadowOffX, shadowOffY, currentShadowColor, shadowAlpha, letterSpacing, s);
                     } else {
                         this._drawWord(ctx, wordStr, drawX, wordY, wordColor,
                             useStroke && !s.stroke_expand_enabled, wordStrokeColor, borderW, outlineAlpha,
-                            shadowBlur, shadowOffX, shadowOffY, currentShadowColor, shadowAlpha, letterSpacing, s);
+                            currentShadowBlur, shadowOffX, shadowOffY, currentShadowColor, shadowAlpha, letterSpacing, s);
                     }
                     ctx.restore();
                 }
@@ -1170,17 +1272,8 @@ class ReelsCanvasRenderer {
                     ctx.restore();
                 }
 
-                let advanceScale = lineScale;
-                if (isWordPopRandom && currentTime >= wordStart) {
-                    const finalRandScale = this._computeWordRandomFinalScale(
-                        wordIdx, segStart, wordStart,
-                        Number(s.word_pop_random_min_scale ?? 0.7),
-                        Number(s.word_pop_random_max_scale ?? 1.34)
-                    );
-                    advanceScale *= finalRandScale;
-                }
                 const randomGapW = this._computeRandomWordSpacing(s, wordIdx, segStart, wordStart);
-                const advanceW = (wordW + baseSpaceW + randomGapW) * advanceScale;
+                const advanceW = slotW + (safeBaseSpaceW_ + randomGapW) * lineScale;
                 currX += textDirection === 'rtl' ? -advanceW : advanceW;
             }
         }
@@ -1194,6 +1287,13 @@ class ReelsCanvasRenderer {
         if (advEnabled) ctx.restore();
 
         ctx.restore();
+
+        // 同一段内后出现单词的环境光可能覆盖先画出的字。再绘制一遍没有
+        // 环境光的文字层，使所有光只作用于背景、文字始终位于合成最顶层。
+        if (s.ambient_glow_enabled && !style?._ambient_text_final_pass) {
+            this.renderSubtitle({ ...s, ambient_glow_enabled: false, _ambient_text_final_pass: true },
+                segment, currentTime, videoW, videoH, true);
+        }
     }
 
     // ─── Advanced textbox background ───
@@ -1517,10 +1617,34 @@ class ReelsCanvasRenderer {
         if (words.length === 0) return { width: 0, nextWordIdx: startWordIdx };
         let total = 0;
         let wordIdx = startWordIdx;
+        const popMax = Math.max(1.0,
+            Number(style.word_pop_random_max_scale ?? 1.0),
+            Number(style.word_pop_random_pulse_max_scale ?? 1.0),
+            Number(style.letter_jump_scale ?? 1.0)
+        );
+        const baseSpaceW = ctx.measureText(' ').width + wordSpacing;
+        const antiCollisionPadding = (popMax > 1.05) ? (baseSpaceW * (popMax - 1.0) * 1.2) : 0;
+        const safeSpaceW = baseSpaceW + antiCollisionPadding;
+
         for (let i = 0; i < words.length; i++) {
-            total += this._measureTextWithSpacing(ctx, words[i], letterSpacing);
+            const rawW = this._measureTextWithSpacing(ctx, words[i], letterSpacing);
+            let allocScale = 1.0;
+            if ((style.anim_in_type || 'none') === 'word_pop_random') {
+                allocScale = this._computeWordRandomFinalScale(
+                    wordIdx, segStart, segStart,
+                    Number(style.word_pop_random_min_scale ?? 0.7),
+                    Number(style.word_pop_random_max_scale ?? 1.34)
+                );
+            } else if ((style.anim_in_type || 'none') === 'word_pop_random_pulse') {
+                const pMax = Number(style.word_pop_random_pulse_max_scale ?? 1.40);
+                allocScale = Math.max(1.0, pMax * 0.85);
+            } else if ((style.anim_in_type || 'none') === 'letter_jump') {
+                const ljScale = Number(style.letter_jump_scale ?? 1.5);
+                if (ljScale > 1.0) allocScale = ljScale;
+            }
+            total += rawW * allocScale;
             if (i < words.length - 1) {
-                total += ctx.measureText(' ').width + wordSpacing + this._computeRandomWordSpacing(style, wordIdx, segStart, segStart);
+                total += safeSpaceW + this._computeRandomWordSpacing(style, wordIdx, segStart, segStart);
             }
             wordIdx++;
         }

@@ -30,6 +30,9 @@ const REELS_TASK_EXTRA_FIELDS = [
     'pipPath',
     'hookFile', 'hookTrimStart', 'hookTrimEnd', 'hookSpeed',
     'hookTransition', 'hookTransDuration', 'hook',
+    // 每条任务独立的插入素材时间线。旧工程没有该字段时保持空数组，
+    // 不会改变已有背景/覆层的预览或导出结果。
+    'insertClips', 'insertMediaFolder', 'insertMediaFiles', 'insertDefaultsOverride', 'visualOverlayOrder',
     'customDuration',
     '_overlayPresetName',
     'firstSubtitleStyleOverride',

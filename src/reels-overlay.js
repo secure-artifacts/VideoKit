@@ -477,7 +477,10 @@ function createScrollOverlay(opts = {}) {
 // 2. Overlay Renderer
 // ═══════════════════════════════════════════════════════
 
-function _normalizeLocalMediaPath(p) {
+// 必须使用模块专属名称。batch-reels.js 也有一个方向相反的同名工具（把
+// local-media URL 还原为文件路径）；经典 script 标签会把顶层函数放入同一
+// 全局作用域，后加载者曾覆盖这里，导致绝对路径被浏览器解析成 localhost URL。
+function _normalizeOverlayMediaPath(p) {
     if (!p || typeof p !== 'string') return '';
     if (/^(local-media|https?|blob|data):/i.test(p)) return p;
     
@@ -538,10 +541,16 @@ function _getCachedImage(path) {
         _imageCache[path] = img;
         // GIF 需要挂到可见 DOM 中才能让 Chromium 推进动画帧
         if (isGif) _attachGifToDom(img);
+        if (typeof window !== 'undefined' && typeof window.ReelsPreviewV2?.render === 'function') {
+            window.ReelsPreviewV2.render();
+        }
+        if (typeof window !== 'undefined' && typeof window.reelsUpdatePreview === 'function') {
+            window.reelsUpdatePreview();
+        }
     };
     img.onerror = () => { _imageCache[path] = null; }; // allow retry on error
     _imageCache[path] = _IMAGE_LOADING;
-    img.src = _normalizeLocalMediaPath(path);
+    img.src = _normalizeOverlayMediaPath(path);
     return null;
 }
 
@@ -560,15 +569,50 @@ function _attachGifToDom(img) {
 }
 
 const _videoCache = {};
+let _overlayVideoDomContainer = null;
+
+// Chromium/Electron 可能暂停完全脱离 DOM 的 <video> 解码器。插入轨的视频
+// 原先只存在于 JS 缓存中，因此路径和时间都正确，Canvas 仍拿不到可绘制帧。
+// 容器保持在视口内并使用极低透明度，与独立预览自身的媒体元素采用同一策略。
+function _attachOverlayVideoToDom(video) {
+    if (!video || typeof document === 'undefined') return;
+    if (!_overlayVideoDomContainer) {
+        _overlayVideoDomContainer = document.createElement('div');
+        _overlayVideoDomContainer.id = 'reels-overlay-video-decoder-host';
+        _overlayVideoDomContainer.setAttribute('aria-hidden', 'true');
+        _overlayVideoDomContainer.style.cssText = 'position:fixed;left:0;top:0;width:2px;height:2px;overflow:hidden;pointer-events:none;opacity:0.001;z-index:-1;';
+        document.body.appendChild(_overlayVideoDomContainer);
+    }
+    video.style.cssText = 'display:block;width:2px;height:2px;object-fit:cover;';
+    if (video.parentNode !== _overlayVideoDomContainer) {
+        _overlayVideoDomContainer.appendChild(video);
+    }
+}
+
 function _getCachedVideo(path) {
     if (!path) return null;
     if (_videoCache[path]) return _videoCache[path];
     const vid = document.createElement('video');
-    vid.src = _normalizeLocalMediaPath(path);
+    vid.src = _normalizeOverlayMediaPath(path);
     vid.muted = true;
     vid.loop = true;
     vid.playsInline = true;
     vid.preload = 'auto';
+    vid.autoplay = true;
+    _attachOverlayVideoToDom(vid);
+    const notifyPreview = () => {
+        if (typeof window !== 'undefined' && typeof window.ReelsPreviewV2?.render === 'function') {
+            window.ReelsPreviewV2.render();
+        }
+        if (typeof window !== 'undefined'
+            && !window.ReelsPreviewV2?.isOpen?.()
+            && typeof window.reelsUpdatePreview === 'function') {
+            window.reelsUpdatePreview();
+        }
+    };
+    vid.addEventListener('loadeddata', notifyPreview, { once: true });
+    vid.addEventListener('canplay', notifyPreview);
+    vid.addEventListener('seeked', notifyPreview);
     vid.load();
     // 自动播放让 Canvas 能拿到帧
     vid.play().catch(() => {});
@@ -598,7 +642,7 @@ function _getGifDecoder(path) {
     // 异步初始化解码器
     (async () => {
         try {
-            const url = _normalizeLocalMediaPath(path);
+            const url = _normalizeOverlayMediaPath(path);
             const response = await fetch(url);
             const arrayBuffer = await response.arrayBuffer();
 
@@ -642,7 +686,7 @@ function _getGifDecoder(path) {
                 // ImageDecoder 不可用，回退到静态图
                 console.warn('[GIF] ImageDecoder API 不可用, GIF 将显示为静态图');
                 const img = new Image();
-                img.src = _normalizeLocalMediaPath(path);
+                img.src = _normalizeOverlayMediaPath(path);
                 img.onload = () => {
                     gifData.frames[0] = img;
                     gifData.frameCount = 1;
@@ -1046,8 +1090,12 @@ function drawOverlay(ctx, origOv, currentTime = 0, canvasW = 1920, canvasH = 108
     // scroll 覆层: 动画完成后保持在最终位置
     // _previewAtEnd: 跳过时间检查，强制渲染终点位置
     const isPreviewingEnd = ov._previewAtEnd && ov.anim_dest_enabled;
-    if (!isPreviewingEnd && currentTime < start) return;
+    if (!isPreviewingEnd && currentTime < start) {
+        if (ov._insertClip) console.log('[InsertDraw] SKIPPED: currentTime', currentTime, '< start', start);
+        return;
+    }
     if (!isPreviewingEnd && end < 9999 && ov.type !== 'scroll' && currentTime > end + 0.001) {
+        if (ov._insertClip) { console.log('[InsertDraw] SKIPPED: currentTime', currentTime, '> end', end); return; }
         // 对于 video/image 覆层，如果 end 恰好等于视频时长（被 9999 覆盖的遗留问题），也视为全程
         if ((ov.type === 'video' || ov.type === 'image') && end > 0) {
             // 允许继续绘制（循环播放）
@@ -1135,7 +1183,8 @@ function drawOverlay(ctx, origOv, currentTime = 0, canvasW = 1920, canvasH = 108
     }
 
     const rotation = parseFloat(ov.rotation || 0);
-    const opacity = parseFloat(ov.opacity ?? 255) / 255;
+    const rawOp = Number.isFinite(parseFloat(ov.opacity)) ? parseFloat(ov.opacity) : 255;
+    const opacity = (rawOp <= 1.0 && rawOp >= 0) ? rawOp : rawOp / 255;
 
     ctx.save();
 
@@ -1313,7 +1362,7 @@ function _drawVideoOverlay(ctx, ov, x, y, w, h, currentTime) {
         if (ov._currentFrameImage) {
             drawable = ov._currentFrameImage;
         } else {
-            drawable = _getCachedImage(_normalizeLocalMediaPath(fPath)); 
+            drawable = _getCachedImage(_normalizeOverlayMediaPath(fPath)); 
         }
     } else {
         // ═══ 预览模式：使用 <video> 或 GIF 解码器 ═══
@@ -1345,11 +1394,21 @@ function _drawVideoOverlay(ctx, ov, x, y, w, h, currentTime) {
                 const d = vid.duration || 1;
                 let targetTime = relTime % d;
 
-                // 检测主时间轴是否在推进（预览是否正在播放）
-                const prevTime = ov._lastPreviewTime || 0;
-                const timeAdvancing = Math.abs(currentTime - (ov._lastMasterTime || 0)) > 0.001;
-                ov._lastMasterTime = currentTime;
-                ov._lastPreviewTime = relTime;
+                // 检测主时间轴是否在推进（预览是否正在播放）。状态必须保存在
+                // 真正长期存在的 video 元素上；独立预览会为每帧创建 ov 浅拷贝，
+                // 存在 ov 上会每帧丢失，造成暂停画面反复 play/seek 而无法解码。
+                const nowMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
+                const prevMasterTime = Number(vid._reelsLastMasterTime);
+                const prevWallTime = Number(vid._reelsLastWallTime);
+                const hasPreviousSample = Number.isFinite(prevMasterTime) && Number.isFinite(prevWallTime);
+                const wallDelta = hasPreviousSample ? nowMs - prevWallTime : Infinity;
+                const masterDelta = hasPreviousSample ? currentTime - prevMasterTime : 0;
+                const timeAdvancing = hasPreviousSample
+                    && wallDelta >= 0 && wallDelta < 500
+                    && masterDelta > 0.0005;
+                vid._reelsLastMasterTime = currentTime;
+                vid._reelsLastWallTime = nowMs;
+                vid._reelsLastPreviewTime = relTime;
 
                 if (!timeAdvancing) {
                     // 预览暂停中 → 暂停覆层视频，seek 到目标帧

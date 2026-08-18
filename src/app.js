@@ -12422,7 +12422,7 @@ function renderAutoEditBatchTasks() {
         const analysisResultHtml = renderAutoEditBatchMatchResult(task);
         return `<div class="autoedit-batch-task" ondragover="event.preventDefault()" ondrop="autoEditBatchDrop(event,${i})" style="border:1px solid var(--border-color);border-radius:8px;padding:10px;background:var(--bg-tertiary);display:grid;grid-template-columns:128px 1fr;gap:10px;">
           <div style="width:128px;align-self:start;">${task.thumbnail ? `<div style="width:128px;display:flex;justify-content:center;align-items:center;background:#111;border-radius:6px;overflow:hidden;"><img src="${task.thumbnail}" onclick="playAutoEditBatchSource(${i})" style="display:block;max-width:128px;width:auto;height:auto;max-height:180px;object-fit:contain;cursor:pointer;" title="按原始视频比例显示，点击预览"></div>` : '<div style="width:128px;height:82px;background:#111;border-radius:6px;display:grid;place-items:center;color:#777;">无缩略图</div>'}<div title="${escapeHtml(first)}" style="font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:4px;">${escapeHtml(first)}</div></div>
-          <div><div style="display:flex;justify-content:space-between;gap:8px;align-items:center;"><div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;"><label title="输入目标顺序编号后回车或点击空白处" style="display:inline-flex;align-items:center;gap:4px;padding:3px 6px;border:1px solid rgba(99,102,241,.5);border-radius:6px;background:rgba(99,102,241,.12);font-size:11px;color:#c7d2fe;">顺序 <input type="number" min="1" max="${autoEditBatchTasks.length}" value="${i+1}" onchange="setAutoEditBatchTaskOrder(${i},this.value)" onkeydown="if(event.key==='Enter'){this.blur()}" ${autoEditBatchRunning?'disabled':''} style="width:46px;background:#111225;color:#fff;border:1px solid rgba(255,255,255,.18);border-radius:4px;padding:2px 4px;text-align:center;"></label><span draggable="true" ondragstart="autoEditBatchDragStart(event,${i})" title="拖动排序" style="cursor:grab;font-size:18px;">☰</span><button class="btn btn-secondary" title="上移一位" onclick="nudgeAutoEditBatchTask(${i},-1)" ${autoEditBatchRunning||i===0?'disabled':''} style="padding:1px 5px;">↑</button><button class="btn btn-secondary" title="下移一位" onclick="nudgeAutoEditBatchTask(${i},1)" ${autoEditBatchRunning||i===autoEditBatchTasks.length-1?'disabled':''} style="padding:1px 5px;">↓</button><strong>${escapeHtml(task.name)}</strong></div><span title="${escapeHtml(task.reelsTransferError || task.message)}" style="color:${colors[task.status] || '#8b95c0'}">${escapeHtml(task.message)}</span></div><div class="hint">直接修改顺序编号可快速移动 · ${task.clips.length} 个视频 · ${lines} 行断行文案</div><label style="display:flex;align-items:center;gap:7px;margin-top:7px;font-size:11px;"><strong style="min-width:76px;color:#c7d2fe;">🏷️ 导出名称</strong><input class="input" value="${escapeHtml(task.outputName || task.name)}" placeholder="Reels 中的任务名和最终文件名" onchange="updateAutoEditBatchOutputName(${i},this.value)" ${autoEditBatchRunning?'disabled':''} style="flex:1;"></label><label style="display:block;margin-top:8px;"><strong style="display:block;font-size:11px;color:#bfdbfe;margin-bottom:4px;">📝 当前任务的完整断行后文案 <span class="hint" style="font-weight:400;">（用于字幕匹配和自动剪辑）</span></strong><textarea class="input" rows="3" placeholder="在这里输入或修改已经断好行的完整文案……" onchange="updateAutoEditBatchScript(${i},this.value)" ${autoEditBatchRunning?'disabled':''} style="width:100%;resize:vertical;background:var(--bg-secondary);">${escapeHtml(task.script)}</textarea></label>${analysisResultHtml}${task.result?.analysis_only ? `<button class="btn btn-secondary" onclick="openAutoEditBatchReview(${i})" ${autoEditBatchRunning?'disabled':''} style="margin-top:6px;">审核时间线</button><button class="btn btn-primary" onclick="exportAutoEditBatchTask(${i})" ${autoEditBatchRunning||task.status==='analyzing'?'disabled':''} style="margin:6px 0 0 6px;">正式导出</button><button class="btn btn-secondary" onclick="exportAutoEditBatchTask(${i},{skipReels:true})" ${autoEditBatchRunning||task.status==='analyzing'?'disabled':''} style="margin:6px 0 0 6px;">仅视频 + 字幕</button>` : ''}${task.result?.output_path && !task.result?.analysis_only ? `<button class="btn btn-secondary" onclick="showAutoEditBatchOutput(${i})" style="margin-top:6px;">📁 查看成片</button>${task.reelsTransferError ? `<button class="btn btn-secondary" onclick="retryAutoEditBatchTaskToReels(${i})" ${autoEditBatchRunning?'disabled':''} style="margin:6px 0 0 6px;">重送 Reels</button>` : ''}` : ''}</div>
+          <div><div style="display:flex;justify-content:space-between;gap:8px;align-items:center;"><div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;"><label title="输入目标顺序编号后回车或点击空白处" style="display:inline-flex;align-items:center;gap:4px;padding:3px 6px;border:1px solid rgba(99,102,241,.5);border-radius:6px;background:rgba(99,102,241,.12);font-size:11px;color:#c7d2fe;">顺序 <input type="number" min="1" max="${autoEditBatchTasks.length}" value="${i+1}" onchange="setAutoEditBatchTaskOrder(${i},this.value)" onkeydown="if(event.key==='Enter'){this.blur()}" ${autoEditBatchRunning?'disabled':''} style="width:46px;background:#111225;color:#fff;border:1px solid rgba(255,255,255,.18);border-radius:4px;padding:2px 4px;text-align:center;"></label><span draggable="true" ondragstart="autoEditBatchDragStart(event,${i})" title="拖动排序" style="cursor:grab;font-size:18px;">☰</span><button class="btn btn-secondary" title="上移一位" onclick="nudgeAutoEditBatchTask(${i},-1)" ${autoEditBatchRunning||i===0?'disabled':''} style="padding:1px 5px;">↑</button><button class="btn btn-secondary" title="下移一位" onclick="nudgeAutoEditBatchTask(${i},1)" ${autoEditBatchRunning||i===autoEditBatchTasks.length-1?'disabled':''} style="padding:1px 5px;">↓</button><strong>${escapeHtml(task.name)}</strong></div><span title="${escapeHtml(task.reelsTransferError || task.message)}" style="color:${colors[task.status] || '#8b95c0'}">${escapeHtml(task.message)}</span></div><div class="hint">直接修改顺序编号可快速移动 · ${task.clips.length} 个视频 · ${lines} 行断行文案</div><label style="display:flex;align-items:center;gap:7px;margin-top:7px;font-size:11px;"><strong style="min-width:76px;color:#c7d2fe;">🏷️ 导出名称</strong><input class="input" value="${escapeHtml(task.outputName || task.name)}" placeholder="Reels 中的任务名和最终文件名" onchange="updateAutoEditBatchOutputName(${i},this.value)" ${autoEditBatchRunning?'disabled':''} style="flex:1;"></label><label style="display:block;margin-top:8px;"><strong style="display:block;font-size:11px;color:#bfdbfe;margin-bottom:4px;">📝 当前任务的完整断行后文案 <span class="hint" style="font-weight:400;">（用于字幕匹配和自动剪辑）</span></strong><textarea class="input" rows="3" placeholder="在这里输入或修改已经断好行的完整文案……" onchange="updateAutoEditBatchScript(${i},this.value)" ${autoEditBatchRunning?'disabled':''} style="width:100%;resize:vertical;background:var(--bg-secondary);">${escapeHtml(task.script)}</textarea></label>${analysisResultHtml}${task.result?.analysis_only ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;align-items:center;"><button class="btn btn-primary" onclick="openAutoEditBatchTimelineReview(${i})" ${autoEditBatchRunning?'disabled':''} style="font-size:12px;padding:4px 10px;">⏱ 时间线审核</button><button class="btn btn-secondary" onclick="openAutoEditBatchReview(${i})" ${autoEditBatchRunning?'disabled':''} style="font-size:12px;padding:4px 10px;">📋 列表审核</button><button class="btn btn-primary" onclick="exportAutoEditBatchTask(${i})" ${autoEditBatchRunning||task.status==='analyzing'?'disabled':''} style="font-size:12px;padding:4px 10px;">正式导出</button><button class="btn btn-secondary" onclick="exportAutoEditBatchTask(${i},{skipReels:true})" ${autoEditBatchRunning||task.status==='analyzing'?'disabled':''} style="font-size:12px;padding:4px 10px;">仅视频 + 字幕</button></div>` : ''}${task.result?.output_path && !task.result?.analysis_only ? `<button class="btn btn-secondary" onclick="showAutoEditBatchOutput(${i})" style="margin-top:6px;">📁 查看成片</button>${task.reelsTransferError ? `<button class="btn btn-secondary" onclick="retryAutoEditBatchTaskToReels(${i})" ${autoEditBatchRunning?'disabled':''} style="margin:6px 0 0 6px;">重送 Reels</button>` : ''}` : ''}</div>
         </div>`;
     }).join('');
 }
@@ -12627,6 +12627,16 @@ function openAutoEditBatchReview(index) {
     } : task.result;
     autoEditActiveBatchIndex=index; autoEditLastResult=reviewResult; autoEditOutputDir=task.result.output_dir||window.electronAPI.pathJoin(task.folder,'_auto_edit'); setAutoEditMode('single',true); renderAutoEditResult(reviewResult); document.getElementById('autoedit-result-section')?.classList.remove('hidden');
 }
+
+function openAutoEditBatchTimelineReview(index) {
+    openAutoEditBatchReview(index);
+    if (typeof openAutoEditTimelineReview === 'function') {
+        setTimeout(() => {
+            openAutoEditTimelineReview();
+        }, 50);
+    }
+}
+window.openAutoEditBatchTimelineReview = openAutoEditBatchTimelineReview;
 
 let autoEditFiles = [];
 let autoEditOutputDir = '';
@@ -14667,10 +14677,16 @@ function previewAutoEditComparisonCut(button, engine) {
 function collectAutoEditReviewSegments() {
     if (!autoEditLastResult?.analysis_only) return [];
     return Array.from(document.querySelectorAll('.autoedit-review-row')).map((row, index) => {
-        const original = autoEditLastResult.segments?.[index] || {};
+        const originalReviewIndex = Number(row.dataset.reviewIndex);
+        const original = (Number.isFinite(originalReviewIndex) && autoEditLastResult.segments?.[originalReviewIndex])
+            || autoEditLastResult.segments?.[index]
+            || {};
+        const sourcePath = row.dataset.source ? decodeURIComponent(row.dataset.source) : (original.source || '');
         return {
+            ...original,
             segment_id: original.segment_id,
-            source: original.source,
+            source: sourcePath,
+            source_index: Number(row.dataset.sourceIndex) || original.source_index,
             enabled: row.querySelector('.ae-review-enabled')?.checked !== false,
             script: row.querySelector('.ae-review-script')?.value || original.script || '',
             start: Number(row.querySelector('.ae-review-start')?.value),
@@ -14689,11 +14705,30 @@ function collectAutoEditReviewSegments() {
 // “正式导出”，批量导出会直接使用当前审核结果。
 function persistAutoEditBatchReview() {
     const task = autoEditActiveBatchIndex >= 0 ? autoEditBatchTasks[autoEditActiveBatchIndex] : null;
+    const reviewSegments = collectAutoEditReviewSegments().map(segment => ({ ...segment }));
+    if (autoEditLastResult) {
+        autoEditLastResult.segments = reviewSegments;
+    }
     if (!task) return;
-    task.reviewSegments = collectAutoEditReviewSegments().map(segment => ({ ...segment }));
+    task.reviewSegments = reviewSegments;
     if (task.reviewSegments.length) {
         task.status = 'warning';
         task.message = '审核修改已自动保存，等待导出';
+        // 同步更新外面的完整文案 task.script，确保外面卡片实时同步！
+        const activeScripts = task.reviewSegments
+            .filter(s => s.enabled !== false && s.script && s.script.trim())
+            .map(s => s.script.trim());
+        if (activeScripts.length) {
+            task.script = activeScripts.join('\n');
+            const mainScriptEl = document.getElementById('autoedit-script');
+            if (mainScriptEl) {
+                mainScriptEl.value = task.script;
+                if (typeof updateAutoEditScriptCount === 'function') updateAutoEditScriptCount();
+            }
+        }
+    }
+    if (typeof renderAutoEditBatchTasks === 'function' && autoEditBatchTasks.length > 0) {
+        renderAutoEditBatchTasks();
     }
 }
 
@@ -14789,7 +14824,7 @@ async function openAutoEditMissedSpeechFix(button) {
     }
 
     const overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;inset:0;z-index:100001;background:rgba(0,0,0,.78);display:flex;align-items:center;justify-content:center;padding:20px;';
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:200000;background:rgba(0,0,0,.78);display:flex;align-items:center;justify-content:center;padding:20px;';
     const modal = document.createElement('div');
     modal.style.cssText = 'width:620px;max-width:94vw;background:#15162b;border:1px solid rgba(255,255,255,.14);border-radius:12px;padding:18px;color:#edf2ff;box-shadow:0 24px 70px rgba(0,0,0,.55);';
     modal.innerHTML = `
@@ -14917,6 +14952,349 @@ function toggleAutoEditReviewFullscreen() {
 
 // 独立审核窗口：保留原审核列表作为唯一数据源，弹窗只做更快的时间线操作。
 // 因此拖动切点、普通列表数字框、正式导出三者不会出现三份不同的数据。
+function buildAutoEditSrtCues(text, rawWords, cutStart, cutEnd, outputStart = 0) {
+    const rawLines = String(text || '').split(/\r?\n+/).map(l => l.trim()).filter(Boolean);
+    let words = [];
+    if (typeof rawWords === 'string' && rawWords) {
+        try { words = JSON.parse(decodeURIComponent(rawWords)); } catch (_) {}
+    } else if (Array.isArray(rawWords)) {
+        words = rawWords;
+    }
+
+    const validWords = words.filter(w => {
+        const ws = Number(w.start);
+        const we = Number(w.end);
+        return Number.isFinite(ws) && Number.isFinite(we) && we >= cutStart - 0.08 && ws <= cutEnd + 0.08;
+    });
+
+    const clipDur = Math.max(0.1, cutEnd - cutStart);
+
+    // 1. 如果用户提供了明确文案（优先严格按用户文案和换行断句）
+    if (rawLines.length > 0) {
+        if (rawLines.length === 1) {
+            const cStart = validWords.length > 0 ? Math.max(cutStart, Number(validWords[0].start)) : cutStart;
+            const cEnd = validWords.length > 0 ? Math.min(cutEnd, Math.max(cStart + 0.1, Number(validWords[validWords.length - 1].end))) : cutEnd;
+            return [{
+                start: cStart,
+                end: cEnd,
+                outputStart: outputStart + Math.max(0, cStart - cutStart),
+                outputEnd: outputStart + Math.max(0.1, cEnd - cutStart),
+                text: rawLines[0],
+                words: validWords
+            }];
+        }
+
+        // 多行断句：按行字符数比例分配时长
+        const totalChars = rawLines.reduce((acc, l) => acc + l.length, 0) || 1;
+        let curStart = cutStart;
+        return rawLines.map((line, idx) => {
+            const lineFraction = line.length / totalChars;
+            const lineDur = Math.max(0.1, clipDur * lineFraction);
+            const lineEnd = (idx === rawLines.length - 1) ? cutEnd : Math.min(cutEnd, curStart + lineDur);
+            const cue = {
+                start: curStart,
+                end: lineEnd,
+                outputStart: outputStart + Math.max(0, curStart - cutStart),
+                outputEnd: outputStart + Math.max(0.1, lineEnd - cutStart),
+                text: line,
+                words: []
+            };
+            curStart = lineEnd;
+            return cue;
+        });
+    }
+
+    // 2. 如果文案为空，回退到 ASR 词时间轴自然分句
+    if (validWords.length > 0) {
+        const cues = [];
+        let currentWords = [];
+
+        for (let i = 0; i < validWords.length; i++) {
+            const w = validWords[i];
+            currentWords.push(w);
+            const wordStr = String(w.word || '').trim();
+            const hasPunctuation = /[，。！？,.!?;:—…\n]/.test(wordStr);
+            const isLongPhrase = currentWords.length >= 7;
+            const nextGap = (i < validWords.length - 1) ? (Number(validWords[i + 1].start) - Number(w.end)) : 0;
+            const isPause = nextGap > 0.4;
+
+            if (hasPunctuation || isLongPhrase || isPause || i === validWords.length - 1) {
+                const cStart = Math.max(cutStart, Number(currentWords[0].start));
+                const cEnd = Math.min(cutEnd, Math.max(cStart + 0.1, Number(currentWords[currentWords.length - 1].end)));
+                const cueText = currentWords.map(x => x.word).join(/^[\u4e00-\u9fff]/.test(currentWords[0].word) ? '' : ' ');
+                cues.push({
+                    start: cStart,
+                    end: cEnd,
+                    outputStart: outputStart + Math.max(0, cStart - cutStart),
+                    outputEnd: outputStart + Math.max(0.1, cEnd - cutStart),
+                    text: cueText.trim(),
+                    words: currentWords
+                });
+                currentWords = [];
+            }
+        }
+        if (cues.length > 0) return cues;
+    }
+
+    return [{
+        start: cutStart,
+        end: cutEnd,
+        outputStart: outputStart,
+        outputEnd: outputStart + clipDur,
+        text: String(text || '').trim(),
+        words: []
+    }];
+}
+
+function groupAutoEditWordsIntoCues(wordsList) {
+    if (!wordsList || wordsList.length === 0) return [];
+    const cues = [];
+    let currentWords = [];
+    for (let i = 0; i < wordsList.length; i++) {
+        const w = wordsList[i];
+        currentWords.push(w);
+        const wordStr = String(w.word || '').trim();
+        const hasPunctuation = /[，。！？,.!?;:—…\n]/.test(wordStr);
+        const isLongPhrase = currentWords.length >= 7;
+        const nextGap = (i < wordsList.length - 1) ? (Number(wordsList[i + 1].start) - Number(w.end)) : 0;
+        const isPause = nextGap > 0.35;
+
+        if (hasPunctuation || isLongPhrase || isPause || i === wordsList.length - 1) {
+            const cStart = Number(currentWords[0].start);
+            const cEnd = Math.max(cStart + 0.08, Number(currentWords[currentWords.length - 1].end));
+            const cueText = currentWords.map(x => x.word).join(/^[\u4e00-\u9fff]/.test(currentWords[0].word) ? '' : ' ');
+            cues.push({
+                start: cStart,
+                end: cEnd,
+                text: cueText.trim(),
+                words: [...currentWords],
+            });
+            currentWords = [];
+        }
+    }
+    return cues;
+}
+
+function buildAutoEditAllTimelineCues(text, rawWords, cutStart, cutEnd, timelineBase = 0) {
+    const rawLines = String(text || '').split(/\r?\n+/).map(l => l.trim()).filter(Boolean);
+    let words = [];
+    if (typeof rawWords === 'string' && rawWords) {
+        try { words = JSON.parse(decodeURIComponent(rawWords)); } catch (_) {}
+    } else if (Array.isArray(rawWords)) {
+        words = rawWords;
+    }
+
+    const validWords = words.filter(w => {
+        const ws = Number(w.start);
+        const we = Number(w.end);
+        return Number.isFinite(ws) && Number.isFinite(we) && we > ws;
+    });
+
+    const clipDur = Math.max(0.1, cutEnd - cutStart);
+
+    // 提取被剪除的头部与尾部词段 (保留在时间线上标红展示)
+    const headWords = validWords.filter(w => Number(w.end) <= cutStart + 0.05);
+    const tailWords = validWords.filter(w => Number(w.start) >= cutEnd - 0.05);
+    const activeWords = validWords.filter(w => Number(w.end) > cutStart + 0.05 && Number(w.start) < cutEnd - 0.05);
+
+    const headCues = groupAutoEditWordsIntoCues(headWords).map(c => ({
+        ...c,
+        outputStart: timelineBase + c.start,
+        outputEnd: timelineBase + c.end,
+        isTrimmed: true
+    }));
+
+    const tailCues = groupAutoEditWordsIntoCues(tailWords).map(c => ({
+        ...c,
+        outputStart: timelineBase + c.start,
+        outputEnd: timelineBase + c.end,
+        isTrimmed: true
+    }));
+
+    let activeCues = [];
+
+    // 1. 如果用户提供了明确文案（优先严格按用户文案和换行断句）
+    if (rawLines.length > 0) {
+        if (rawLines.length === 1) {
+            const cStart = activeWords.length > 0 ? Math.max(cutStart, Number(activeWords[0].start)) : cutStart;
+            const cEnd = activeWords.length > 0 ? Math.min(cutEnd, Math.max(cStart + 0.1, Number(activeWords[activeWords.length - 1].end))) : cutEnd;
+            activeCues = [{
+                start: cStart,
+                end: cEnd,
+                outputStart: timelineBase + cStart,
+                outputEnd: timelineBase + cEnd,
+                text: rawLines[0],
+                words: activeWords,
+                isTrimmed: false
+            }];
+        } else {
+            const totalChars = rawLines.reduce((acc, l) => acc + l.length, 0) || 1;
+            let curStart = cutStart;
+            activeCues = rawLines.map((line, idx) => {
+                const lineFraction = line.length / totalChars;
+                const lineDur = Math.max(0.1, clipDur * lineFraction);
+                const lineEnd = (idx === rawLines.length - 1) ? cutEnd : Math.min(cutEnd, curStart + lineDur);
+                const cue = {
+                    start: curStart,
+                    end: lineEnd,
+                    outputStart: timelineBase + curStart,
+                    outputEnd: timelineBase + lineEnd,
+                    text: line,
+                    words: [],
+                    isTrimmed: false
+                };
+                curStart = lineEnd;
+                return cue;
+            });
+        }
+    } else if (activeWords.length > 0) {
+        activeCues = groupAutoEditWordsIntoCues(activeWords).map(c => ({
+            ...c,
+            outputStart: timelineBase + c.start,
+            outputEnd: timelineBase + c.end,
+            isTrimmed: false
+        }));
+    } else {
+        activeCues = [{
+            start: cutStart,
+            end: cutEnd,
+            outputStart: timelineBase + cutStart,
+            outputEnd: timelineBase + cutEnd,
+            text: String(text || '').trim(),
+            words: [],
+            isTrimmed: false
+        }];
+    }
+
+    return [...headCues, ...activeCues, ...tailCues].sort((a, b) => a.start - b.start);
+}
+
+function openAutoEditHelpModal() {
+    const existing = document.getElementById('autoedit-help-guide-modal');
+    if (existing) existing.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'autoedit-help-guide-modal';
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:200005;background:rgba(0,0,0,0.82);backdrop-filter:blur(14px);display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;';
+    
+    const modal = document.createElement('div');
+    modal.style.cssText = 'width:780px;max-width:96vw;max-height:92vh;background:linear-gradient(180deg,#131628 0%,#0c0e1a 100%);border:1px solid rgba(96,165,250,0.35);border-radius:14px;display:flex;flex-direction:column;box-shadow:0 24px 70px rgba(0,0,0,0.8);color:#edf2ff;overflow:hidden;animation:fadeIn 0.15s ease-out;';
+    
+    modal.innerHTML = `
+        <header style="display:flex;align-items:center;justify-content:space-between;padding:12px 20px;background:rgba(255,255,255,0.03);border-bottom:1px solid rgba(255,255,255,0.08);flex-shrink:0;">
+            <div style="display:flex;align-items:center;gap:10px;">
+                <span style="font-size:22px;">📖</span>
+                <div>
+                    <strong style="font-size:15.5px;color:#f8fafc;letter-spacing:-0.2px;">自动剪辑时间线审核 · 使用指南与技巧</strong>
+                    <div style="font-size:11px;color:#94a3b8;margin-top:2px;">快速掌握多轨编辑、切点拖拽微调、字幕修改与快捷键</div>
+                </div>
+            </div>
+            <button class="btn btn-secondary ae-help-close" style="padding:4px 12px;font-size:12px;border-radius:6px;">✕ 关闭 (ESC)</button>
+        </header>
+        <div style="flex:1;overflow-y:auto;padding:18px 22px;display:flex;flex-direction:column;gap:14px;font-size:12.5px;line-height:1.65;color:#cbd5e1;">
+            <!-- 1. 四轨系统详解 -->
+            <section style="background:rgba(15,23,42,0.65);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:13px 15px;">
+                <div style="font-size:13.5px;font-weight:700;color:#93c5fd;margin-bottom:10px;display:flex;align-items:center;gap:6px;">
+                    <span>🎞️</span> 四大轨道系统说明（所见即所得）
+                </div>
+                <div style="display:flex;flex-direction:column;gap:9px;">
+                    <div style="display:flex;gap:10px;align-items:flex-start;">
+                        <span style="background:rgba(59,130,246,0.25);color:#93c5fd;border:1px solid rgba(59,130,246,0.4);padding:2px 8px;border-radius:5px;font-size:11px;font-weight:700;white-space:nowrap;margin-top:2px;">🎬 视频与原声音频轨</span>
+                        <div>
+                            <div><b style="color:#60a5fa;">蓝色区域</b> 为最终保留的视频画面；<b style="color:#f87171;">两端红色区域</b> 为剪除掉的头尾空白/杂音部分。</div>
+                            <div style="font-size:11.5px;color:#94a3b8;">💡 分界线上设有专属手柄（<span style="color:#38bdf8;font-weight:600;">🔵 青色入点</span> 与 <span style="color:#fbbf24;font-weight:600;">🟡 黄色出点</span>），鼠标按住即可直接在时间线上左右拖拽微调，视频播放器会实时预览对应帧！</div>
+                        </div>
+                    </div>
+                    <div style="display:flex;gap:10px;align-items:flex-start;">
+                        <span style="background:rgba(56,189,248,0.2);color:#38bdf8;border:1px solid rgba(56,189,248,0.35);padding:2px 8px;border-radius:5px;font-size:11px;font-weight:700;white-space:nowrap;margin-top:2px;">🎙️ AI 语音识别轨 (ASR)</span>
+                        <div>AI 听写的原声原始词流及发音时间戳，用于对照口播原声节奏。超出裁剪范围的单词会自动标记为红色。</div>
+                    </div>
+                    <div style="display:flex;gap:10px;align-items:flex-start;">
+                        <span style="background:rgba(168,85,247,0.2);color:#c084fc;border:1px solid rgba(168,85,247,0.35);padding:2px 8px;border-radius:5px;font-size:11px;font-weight:700;white-space:nowrap;margin-top:2px;">📝 我提供的文案轨 (Script)</span>
+                        <div>展示您输入的参考剧本文案（按行分句展示），方便直观对照 AI 是否读全了文案。</div>
+                    </div>
+                    <div style="display:flex;gap:10px;align-items:flex-start;">
+                        <span style="background:rgba(245,158,11,0.25);color:#fcd34d;border:1px solid rgba(245,158,11,0.4);padding:2px 8px;border-radius:5px;font-size:11px;font-weight:700;white-space:nowrap;margin-top:2px;">✨ 最终导出字幕轨 (Subtitles)</span>
+                        <div>
+                            <div><b>最终合成到视频、并在上方视频播放器画面中实时预览的字幕</b>。</div>
+                            <div style="font-size:11.5px;color:#94a3b8;">💡 落在剪切范围外的字幕将以<b style="color:#f87171;">红色</b>完整保留在时间线上，绝不会被误删；有效区间内的字幕呈现为亮丽的<b style="color:#fcd34d;">金色</b>。</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 2. 切点微调与编辑 -->
+            <section style="background:rgba(15,23,42,0.65);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:13px 15px;">
+                <div style="font-size:13.5px;font-weight:700;color:#86efac;margin-bottom:10px;display:flex;align-items:center;gap:6px;">
+                    <span>✂️</span> 切点微调与字幕修改
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                    <div style="background:rgba(0,0,0,0.35);padding:10px;border-radius:7px;border:1px solid rgba(255,255,255,0.06);">
+                        <strong style="color:#38bdf8;display:block;margin-bottom:4px;">1. 时间线手柄直接拖拽</strong>
+                        <span style="color:#94a3b8;font-size:11.5px;">将鼠标悬停在时间线切块内侧的青/黄切点把手上，按住鼠标左右拖拽，视频画面和右侧输入框将毫秒级联动更新。</span>
+                    </div>
+                    <div style="background:rgba(0,0,0,0.35);padding:10px;border-radius:7px;border:1px solid rgba(255,255,255,0.06);">
+                        <strong style="color:#fbbf24;display:block;margin-bottom:4px;">2. 右侧数字输入与滑块</strong>
+                        <span style="color:#94a3b8;font-size:11.5px;">在右侧「入点」「出点」输入框中直接输入精确秒数（如 2.350）或拖动滑块，所有调整<b>实时自动保存</b>，关窗不丢失。</span>
+                    </div>
+                    <div style="background:rgba(0,0,0,0.35);padding:10px;border-radius:7px;border:1px solid rgba(255,255,255,0.06);grid-column:1 / -1;">
+                        <strong style="color:#c084fc;display:block;margin-bottom:4px;">3. 修改文案与手动断行分句</strong>
+                        <span style="color:#94a3b8;font-size:11.5px;">在右侧「目标文案 (字幕)」文本框中直接编辑字幕或按回车手动换行分句，时间线上的字幕轨与视频画面会立即同步更新。若大幅修改了文字内容需 AI 重新对齐切点，点击「⚡ 重算切点」即可。</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 3. 顶部工具栏与全局操作 -->
+            <section style="background:rgba(15,23,42,0.65);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:13px 15px;">
+                <div style="font-size:13.5px;font-weight:700;color:#fcd34d;margin-bottom:10px;display:flex;align-items:center;gap:6px;">
+                    <span>⚙️</span> 留白与智能重算工具
+                </div>
+                <div style="display:flex;flex-direction:column;gap:7px;font-size:12px;">
+                    <div>• <b style="color:#93c5fd;">前留白 / 后留白</b>：控制语音开始前和结束后的缓冲时长（默认前 0.12s / 后 0.22s），可有效防止口播吞字或音频爆音。</div>
+                    <div>• <b style="color:#86efac;">⚡ 全局重算</b>：将顶部设置的前后留白或阈值，一键应用并重新计算全部片段的入出点。</div>
+                    <div>• <b style="color:#fde047;">全用 V2 / 经典</b>：一键为所有片段切换切点对齐算法（V2 适合多语种与长句，经典算法适合简短对白）。</div>
+                </div>
+            </section>
+
+            <!-- 4. 常用快捷键与操作手势 -->
+            <section style="background:rgba(15,23,42,0.65);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:13px 15px;">
+                <div style="font-size:13.5px;font-weight:700;color:#f472b6;margin-bottom:10px;display:flex;align-items:center;gap:6px;">
+                    <span>⌨️</span> 快捷键与鼠标手势
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:11.5px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 8px;background:rgba(0,0,0,0.3);border-radius:5px;"><span style="color:#94a3b8;">播放 / 暂停</span><kbd style="background:#1e293b;padding:2px 7px;border-radius:4px;color:#f1f5f9;border:1px solid rgba(255,255,255,0.1);">Space 空格</kbd></div>
+                    <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 8px;background:rgba(0,0,0,0.3);border-radius:5px;"><span style="color:#94a3b8;">时间线缩放</span><kbd style="background:#1e293b;padding:2px 7px;border-radius:4px;color:#f1f5f9;border:1px solid rgba(255,255,255,0.1);">Cmd / Ctrl + 滚轮</kbd></div>
+                    <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 8px;background:rgba(0,0,0,0.3);border-radius:5px;"><span style="color:#94a3b8;">片段快捷菜单</span><kbd style="background:#1e293b;padding:2px 7px;border-radius:4px;color:#f1f5f9;border:1px solid rgba(255,255,255,0.1);">右键点击切块/卡片</kbd></div>
+                    <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 8px;background:rgba(0,0,0,0.3);border-radius:5px;"><span style="color:#94a3b8;">关闭审核窗口</span><kbd style="background:#1e293b;padding:2px 7px;border-radius:4px;color:#f1f5f9;border:1px solid rgba(255,255,255,0.1);">ESC 键</kbd></div>
+                </div>
+            </section>
+        </div>
+        <footer style="padding:10px 20px;background:rgba(255,255,255,0.02);border-top:1px solid rgba(255,255,255,0.08);display:flex;justify-content:flex-end;flex-shrink:0;">
+            <button class="btn btn-primary ae-help-close" style="padding:5px 22px;font-size:12px;border-radius:6px;">我明白了</button>
+        </footer>
+    `;
+
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    const close = () => {
+        overlay.remove();
+        document.removeEventListener('keydown', onKeyDown);
+    };
+
+    overlay.querySelectorAll('.ae-help-close').forEach(btn => btn.onclick = close);
+    overlay.onclick = (e) => { if (e.target === overlay) close(); };
+    
+    const onKeyDown = (e) => {
+        if (e.key === 'Escape') {
+            e.stopPropagation();
+            close();
+        }
+    };
+    document.addEventListener('keydown', onKeyDown);
+}
+window.openAutoEditHelpModal = openAutoEditHelpModal;
+
 function openAutoEditTimelineReview() {
     const rows = Array.from(document.querySelectorAll('.autoedit-review-row'));
     if (!autoEditLastResult?.analysis_only || !rows.length) {
@@ -14927,12 +15305,14 @@ function openAutoEditTimelineReview() {
     let selected = 0;
     // 不是播放已经导出的旧文件，而是按当前审核切点实时串起原片；这样改动
     // 入/出点后，马上看到“将要导出的整片”而无需先导出一次。
+    let editorInstance = null;
     const playback = { outputTime: 0, playing: false, token: 0, switching: false };
     const modal = document.createElement('div');
     modal.id = 'autoedit-timeline-review-modal';
-    modal.style.cssText = 'position:fixed;inset:0;z-index:100001;background:rgba(0,0,0,.82);display:flex;align-items:center;justify-content:center;padding:24px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;';
+    modal.style.cssText = 'position:fixed;inset:0;z-index:100001;background:rgba(0,0,0,.85);backdrop-filter:blur(16px);display:flex;align-items:center;justify-content:center;padding:10px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;overflow-y:auto;box-sizing:border-box;';
     const panel = document.createElement('section');
-    panel.style.cssText = 'width:min(1180px,96vw);height:min(780px,92vh);background:#141526;border:1px solid rgba(148,163,184,.28);border-radius:14px;box-shadow:0 24px 80px rgba(0,0,0,.65);display:grid;grid-template-rows:auto 1fr auto;overflow:hidden;color:#e5e7eb;';
+    panel.dataset.role = 'review-panel';
+    panel.style.cssText = 'width:min(1420px,98vw);max-width:98vw;height:min(950px,96vh);max-height:96vh;background:linear-gradient(180deg,#121422 0%,#0c0d16 100%);border:1px solid rgba(255,255,255,.14);border-radius:16px;box-shadow:0 30px 100px rgba(0,0,0,.85);display:grid;grid-template-rows:auto 1fr auto;overflow:hidden;color:#e5e7eb;';
     const close = () => modal.remove();
     const fmt = value => `${Math.max(0, Number(value) || 0).toFixed(3)}s`;
     const getRow = () => rows[selected];
@@ -14966,8 +15346,20 @@ function openAutoEditTimelineReview() {
         return rows.filter(row => row.querySelector('.ae-review-enabled')?.checked !== false).map(row => {
             const start = Number(row.querySelector('.ae-review-start')?.value) || 0;
             const end = Math.max(start + .05, Number(row.querySelector('.ae-review-end')?.value) || start + .05);
-            const item = { row, start, end, outputStart: cursor, outputEnd: cursor + end - start };
-            cursor = item.outputEnd;
+            const sourceDur = Math.max(Number(row.dataset.sourceDuration) || 0, end + .05);
+            const item = {
+                row,
+                start,
+                end,
+                sourceDuration: sourceDur,
+                sourceTimelineStart: cursor,
+                sourceTimelineEnd: cursor + sourceDur,
+                inTimeline: cursor + start,
+                outTimeline: cursor + end,
+                outputStart: cursor + start,
+                outputEnd: cursor + end
+            };
+            cursor += sourceDur;
             return item;
         });
     };
@@ -14975,6 +15367,7 @@ function openAutoEditTimelineReview() {
         ? window.electronAPI.toFileUrl(source)
         : normalizeFilePath(source);
     const render = () => {
+        let selectSegment = null;
         const row = getRow();
         const start = Number(row.querySelector('.ae-review-start')?.value) || 0;
         const end = Number(row.querySelector('.ae-review-end')?.value) || start + .05;
@@ -14982,53 +15375,455 @@ function openAutoEditTimelineReview() {
         const sourceName = getSource(row).split(/[/\\]/).pop() || `片段 ${selected + 1}`;
         const script = row.querySelector('.ae-review-script')?.value || '';
         const sequence = buildSequence();
-        const totalDuration = sequence.length ? sequence[sequence.length - 1].outputEnd : 0;
+        const totalDuration = sequence.length ? sequence[sequence.length - 1].sourceTimelineEnd : 0;
         const blocks = rows.map((item, index) => {
             const a = Number(item.querySelector('.ae-review-start')?.value) || 0;
             const b = Number(item.querySelector('.ae-review-end')?.value) || a + .05;
-            const width = Math.max(4, ((b - a) / Math.max(.05, totalDuration)) * 100);
             const disabled = item.querySelector('.ae-review-enabled')?.checked === false;
-            return `<button data-index="${index}" title="${escapeHtml(item.querySelector('.ae-review-script')?.value || '')}" style="width:${width}%;min-width:34px;height:48px;border:1px solid ${index === selected ? '#60a5fa' : 'rgba(255,255,255,.14)'};background:${disabled ? 'rgba(100,116,139,.18)' : (index === selected ? 'rgba(37,99,235,.5)' : 'rgba(71,85,105,.42)')};color:#fff;border-radius:5px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 7px;text-align:left;">${index + 1}. ${fmt(b - a)}</button>`;
+            const isCur = index === selected;
+            return `<button data-index="${index}" data-role="pill" class="ae-review-pill ${isCur ? 'active' : ''}" title="${escapeHtml(item.querySelector('.ae-review-script')?.value || '')}" style="${disabled ? 'opacity:0.4;' : ''}"><span>#${index + 1}</span><span style="font-size:10px;color:${isCur ? '#bfdbfe' : '#94a3b8'};">${fmt(b - a)}</span></button>`;
         }).join('');
+        const cards = rows.map((item, index) => {
+            const a = Number(item.querySelector('.ae-review-start')?.value) || 0;
+            const b = Number(item.querySelector('.ae-review-end')?.value) || a + .05;
+            const fileName = getSource(item).split(/[/\\]/).pop() || `片段 ${index + 1}`;
+            const disabled = item.querySelector('.ae-review-enabled')?.checked === false;
+            const text = (item.querySelector('.ae-review-script')?.value || '').trim();
+            const isCur = index === selected;
+            const segIdx = Number(item.dataset?.reviewIndex ?? index);
+            const seg = autoEditLastResult?.segments?.[segIdx] || {};
+            const matchPercent = Number.isFinite(Number(seg.similarity)) ? Math.round(Number(seg.similarity)) : Math.round((Number(seg.match_score) || 0) * 100);
+            const isCritical = matchPercent < 50;
+            const isLow = matchPercent >= 50 && matchPercent < 75;
+            const isDup = item.dataset.duplicate === 'true';
+            const issueReason = seg.issue_reason || seg.ambiguity || '';
+
+            return `<button data-index="${index}" data-role="card" class="ae-review-card ${isCur ? 'active' : ''}">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
+                    <strong style="font-size:12px;color:${isCur ? '#93c5fd' : '#f1f5f9'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${index + 1}. ${escapeHtml(fileName)}</strong>
+                    <span style="font-size:10px;font-weight:700;padding:1px 5px;border-radius:4px;background:${disabled ? 'rgba(239,68,68,0.15)' : 'rgba(59,130,246,0.18)'};color:${disabled ? '#f87171' : '#60a5fa'};font-variant-numeric:tabular-nums;flex-shrink:0;">${fmt(b - a)}</span>
+                </div>
+                <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin:1px 0;">
+                    <span style="font-size:9.5px;font-weight:700;padding:0.5px 4px;border-radius:3px;background:${isCritical ? 'rgba(239,68,68,0.25)' : (isLow ? 'rgba(245,158,11,0.2)' : 'rgba(59,130,246,0.18)')};color:${isCritical ? '#f87171' : (isLow ? '#fbbf24' : '#60a5fa')};">匹配 ${matchPercent}%</span>
+                    ${isDup ? '<span style="font-size:9.5px;font-weight:700;padding:0.5px 4px;border-radius:3px;background:rgba(239,68,68,0.25);color:#fca5a5;">⚠️重复</span>' : ''}
+                    ${issueReason ? `<span style="font-size:9.5px;font-weight:600;padding:0.5px 4px;border-radius:3px;background:rgba(245,158,11,0.2);color:#fcd34d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:110px;" title="${escapeHtml(issueReason)}">⚠️ ${escapeHtml(issueReason)}</span>` : ''}
+                </div>
+                <div style="font-size:11px;color:${isCur ? '#e2e8f0' : '#94a3b8'};line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word;">${escapeHtml(text || '（无文案）')}</div>
+            </button>`;
+        }).join('');
+        const currentLeadPad = parseFloat(document.getElementById('autoedit-lead-pad')?.value || document.getElementById('mtb-autoedit-lead')?.value || '0.12');
+        const currentTailPad = parseFloat(document.getElementById('autoedit-tail-pad')?.value || document.getElementById('mtb-autoedit-tail')?.value || '0.22');
+        const currentMinScore = parseFloat(document.getElementById('autoedit-min-score')?.value || document.getElementById('mtb-autoedit-score')?.value || '0.52');
         panel.innerHTML = `
-            <header style="display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid rgba(255,255,255,.1);">
-                <strong style="font-size:16px;">⏱ 文案自动剪辑 · 时间线审核</strong><span style="color:#94a3b8;font-size:12px;">拖动入点/出点立即同步到正式导出</span>
-                <button data-action="close" class="btn btn-secondary" style="margin-left:auto;padding:5px 11px;">关闭</button>
+            <style>
+                .ae-review-pill {
+                    flex-shrink: 0; height: 26px; padding: 0 9px; border-radius: 999px;
+                    border: 1px solid rgba(255, 255, 255, 0.12); background: rgba(255, 255, 255, 0.04);
+                    color: #cbd5e1; font-size: 11px; font-weight: 600; cursor: pointer;
+                    display: flex; align-items: center; gap: 4px; white-space: nowrap; transition: all .15s ease;
+                }
+                .ae-review-pill:hover { border-color: rgba(96, 165, 250, 0.5); background: rgba(59, 130, 246, 0.15); color: #93c5fd; }
+                .ae-review-pill.active {
+                    border-color: #3b82f6 !important; background: rgba(59, 130, 246, 0.45) !important;
+                    color: #93c5fd !important; box-shadow: 0 0 10px rgba(59, 130, 246, 0.3) !important;
+                }
+                .ae-review-card {
+                    text-align: left; padding: 9px 12px; border-radius: 8px;
+                    border: 1px solid rgba(255, 255, 255, 0.08); background: rgba(255, 255, 255, 0.02);
+                    color: #e2e8f0; cursor: pointer; transition: all .15s ease;
+                    display: flex; flex-direction: column; gap: 4px;
+                }
+                .ae-review-card:hover { border-color: rgba(96, 165, 250, 0.4); background: rgba(255, 255, 255, 0.05); }
+                .ae-review-card.active {
+                    border-color: #60a5fa !important;
+                    background: linear-gradient(135deg, rgba(37, 99, 235, 0.38), rgba(30, 41, 59, 0.75)) !important;
+                    box-shadow: 0 0 18px rgba(59, 130, 246, 0.35) !important;
+                }
+                .ae-review-card.active strong { color: #93c5fd !important; }
+                .ae-review-card.active div:nth-child(2) { color: #f1f5f9 !important; }
+                .ae-quick-param-input {
+                    width: 52px !important;
+                    min-width: 52px !important;
+                    padding: 2px 2px !important;
+                    font-size: 11px !important;
+                    text-align: center !important;
+                    box-sizing: border-box !important;
+                    -moz-appearance: textfield !important;
+                }
+                .ae-quick-param-input::-webkit-inner-spin-button,
+                .ae-quick-param-input::-webkit-outer-spin-button {
+                    -webkit-appearance: none !important;
+                    margin: 0 !important;
+                }
+                #autoedit-timeline-review-modal ::-webkit-scrollbar {
+                    width: 6px;
+                    height: 6px;
+                }
+                #autoedit-timeline-review-modal ::-webkit-scrollbar-track {
+                    background: rgba(0, 0, 0, 0.2);
+                    border-radius: 4px;
+                }
+                #autoedit-timeline-review-modal ::-webkit-scrollbar-thumb {
+                    background: rgba(255, 255, 255, 0.2);
+                    border-radius: 4px;
+                }
+                #autoedit-timeline-review-modal ::-webkit-scrollbar-thumb:hover {
+                    background: rgba(96, 165, 250, 0.55);
+                }
+                @media (max-height: 860px) {
+                    #autoedit-timeline-review-modal [data-role="review-panel"] {
+                        height: 98vh !important;
+                        max-height: 98vh !important;
+                    }
+                    #autoedit-timeline-review-modal .ae-video-wrap {
+                        height: clamp(120px, 18vh, 160px) !important;
+                        min-height: 110px !important;
+                    }
+                    #autoedit-timeline-review-modal [data-role="reels-timeline"] {
+                        height: 220px !important;
+                        min-height: 195px !important;
+                    }
+                }
+            </style>
+            <header style="display:flex;align-items:center;justify-content:space-between;padding:8px 18px;background:rgba(255,255,255,0.02);border-bottom:1px solid rgba(255,255,255,.08);flex-wrap:wrap;gap:8px;flex-shrink:0;">
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <span style="font-size:18px;">⏱️</span>
+                    <strong style="font-size:15px;letter-spacing:-0.2px;color:#f8fafc;">文案自动剪辑 · 时间线审核</strong>
+                    <span style="background:rgba(59,130,246,0.18);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;">多轨实时同步</span>
+                    <span style="color:#94a3b8;font-size:12px;">共 ${rows.length} 个片段 · 总时长 <strong style="color:#cbd5e1;font-variant-numeric:tabular-nums;">${fmt(totalDuration)}</strong></span>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;background:rgba(0,0,0,0.38);padding:3px 10px;border-radius:7px;border:1px solid rgba(255,255,255,0.08);font-size:11px;">
+                    <span style="color:#94a3b8;font-weight:700;">⚙️ 留白/阈值:</span>
+                    <label style="display:flex;align-items:center;gap:3px;color:#93c5fd;" title="声音开始前的留白缓冲">前留白 <input data-role="quick-lead-pad" class="input ae-quick-param-input" type="number" step="0.01" min="0" max="2" value="${currentLeadPad.toFixed(2)}" style="background:#0d1020;border-color:rgba(96,165,250,0.4);color:#93c5fd;">s</label>
+                    <label style="display:flex;align-items:center;gap:3px;color:#fbbf24;" title="声音结束后的留白缓冲">后留白 <input data-role="quick-tail-pad" class="input ae-quick-param-input" type="number" step="0.01" min="0" max="2" value="${currentTailPad.toFixed(2)}" style="background:#0d1020;border-color:rgba(251,191,36,0.4);color:#fbbf24;">s</label>
+                    <label style="display:flex;align-items:center;gap:3px;color:#4ade80;" title="文案语音匹配相似度阈值">阈值 <input data-role="quick-min-score" class="input ae-quick-param-input" type="number" step="0.01" min="0.1" max="1" value="${currentMinScore.toFixed(2)}" style="background:#0d1020;border-color:rgba(74,222,128,0.4);color:#4ade80;"></label>
+                    <button data-action="apply-current-recalc" class="btn btn-secondary" style="padding:2px 7px;font-size:11px;color:#93c5fd;border-color:rgba(96,165,250,0.45);" title="按当前前/后留白重新计算当前选中片段的入出点">⚡ 重算当前段</button>
+                    <button data-action="apply-all-recalc" class="btn btn-secondary" style="padding:2px 7px;font-size:11px;color:#86efac;border-color:rgba(74,222,128,0.45);" title="按当前前/后留白重新计算全部片段的入出点">⚡ 全局重算</button>
+                    <button data-action="apply-all-v2" class="btn btn-secondary" style="padding:2px 7px;font-size:11px;color:#fde047;border-color:rgba(251,191,36,0.45);" title="所有片段采用 V2 智能切点算法">全用 V2</button>
+                    <button data-action="apply-all-classic" class="btn btn-secondary" style="padding:2px 7px;font-size:11px;color:#cbd5e1;border-color:rgba(148,163,184,0.35);" title="所有片段采用经典切点算法">全用 经典</button>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <button data-action="show-help" class="btn btn-secondary" style="padding:4px 11px;font-size:12px;color:#93c5fd;border-color:rgba(96,165,250,0.45);border-radius:6px;display:inline-flex;align-items:center;gap:4px;" title="查看时间线审核操作说明与快捷键 (快捷键: F1)">📖 帮助说明</button>
+                    <button data-action="close" class="btn btn-secondary" style="padding:4px 12px;font-size:12px;border-radius:6px;">✕ 关闭</button>
+                </div>
             </header>
-            <main style="display:grid;grid-template-columns:minmax(280px,1fr) minmax(360px,1.25fr);gap:18px;padding:18px;min-height:0;">
-                <aside style="overflow:auto;border-right:1px solid rgba(255,255,255,.08);padding-right:14px;">
-                    <div style="font-size:12px;color:#94a3b8;margin-bottom:8px;">剪辑顺序 · 点击片段切换审核对象</div>
-                    <div data-role="blocks" style="display:flex;gap:5px;align-items:center;min-height:56px;padding:8px;background:#0d1020;border-radius:8px;overflow-x:auto;">${blocks}</div>
-                    <div style="margin-top:16px;display:grid;gap:7px;">${rows.map((item, index) => `<button data-index="${index}" style="text-align:left;padding:9px;border-radius:6px;border:1px solid ${index === selected ? 'rgba(96,165,250,.65)' : 'rgba(255,255,255,.09)'};background:${index === selected ? 'rgba(37,99,235,.18)' : 'transparent'};color:#e5e7eb;cursor:pointer;"><strong>${index + 1}. ${escapeHtml(getSource(item).split(/[/\\]/).pop() || '未知片段')}</strong><br><span style="color:#94a3b8;font-size:11px;">${fmt(Number(item.querySelector('.ae-review-end')?.value) - Number(item.querySelector('.ae-review-start')?.value))} · ${(item.querySelector('.ae-review-script')?.value || '').slice(0, 52)}</span></button>`).join('')}</div>
+            <main style="display:grid;grid-template-columns:300px 1fr;gap:14px;padding:10px 18px;min-height:0;overflow:hidden;">
+                <aside style="display:flex;flex-direction:column;min-height:0;overflow:hidden;border-right:1px solid rgba(255,255,255,.08);padding-right:12px;">
+                    <div style="font-size:12px;font-weight:700;color:#94a3b8;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
+                        <span>📋 剪辑片段列表</span>
+                        <span style="font-size:11px;color:#64748b;">点击切换 · 右键菜单</span>
+                    </div>
+                    <div data-role="blocks" style="display:flex;gap:5px;align-items:center;padding:4px 0 8px;overflow-x:auto;scrollbar-width:none;flex-shrink:0;">${blocks}</div>
+                    <div style="display:flex;flex-direction:column;gap:6px;overflow-y:auto;flex:1;min-height:0;padding-right:4px;">${cards}</div>
                 </aside>
-                <section style="min-width:0;display:flex;flex-direction:column;gap:14px;">
-                    <div style="background:#05070e;border-radius:9px;overflow:hidden;border:1px solid rgba(255,255,255,.1);">
-                        <div style="position:relative;background:#000;">
-                            <video data-role="master-video" controls style="display:block;width:100%;max-height:210px;background:#000;"></video>
-                            <div data-role="master-subtitle" aria-live="off" style="position:absolute;left:6%;right:6%;bottom:46px;text-align:center;pointer-events:none;font-size:clamp(15px,2vw,24px);font-weight:800;line-height:1.35;color:#fff;text-shadow:0 2px 5px #000,0 0 12px #000;word-break:break-word;"></div>
+                <section style="min-width:0;min-height:0;display:flex;flex-direction:column;gap:8px;overflow-y:auto;overflow-x:hidden;max-height:100%;padding-right:6px;">
+                    <div style="background:#05070e;border-radius:10px;overflow:hidden;border:1px solid rgba(255,255,255,.12);box-shadow:0 8px 24px rgba(0,0,0,0.5);flex-shrink:0;">
+                        <div class="ae-video-wrap" style="position:relative;background:#000;display:flex;justify-content:center;align-items:center;height:clamp(160px,24vh,260px);min-height:140px;">
+                            <video data-role="master-video" style="display:block;max-width:100%;height:100%;object-fit:contain;background:#000;"></video>
+                            <div data-role="master-subtitle" aria-live="off" style="position:absolute;left:5%;right:5%;bottom:42px;text-align:center;pointer-events:none;font-size:clamp(16px,2.2vw,24px);font-weight:800;line-height:1.35;color:#fff;text-shadow:0 2px 6px #000,0 0 14px #000;word-break:break-word;"></div>
                         </div>
-                        <div style="padding:9px 11px;display:grid;grid-template-columns:auto 1fr auto;gap:9px;align-items:center;background:#0d1020;">
-                            <button data-action="play-all" class="btn btn-primary" style="padding:4px 10px;">▶ 整片播放</button>
-                            <input data-role="master-seek" type="range" min="0" max="${Math.max(.01, totalDuration)}" step="0.01" value="${Math.min(playback.outputTime, totalDuration)}" style="width:100%;accent-color:#60a5fa;">
-                            <span data-role="master-time" style="font-variant-numeric:tabular-nums;color:#cbd5e1;font-size:12px;">${fmt(playback.outputTime)} / ${fmt(totalDuration)}</span>
+                        <div style="padding:6px 12px;display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;background:#0b0d18;">
+                            <button data-action="play-all" class="btn btn-primary" style="padding:3px 12px;font-size:11px;border-radius:5px;">▶ 整片播放</button>
+                            <input data-role="master-seek" type="range" min="0" max="${Math.max(.01, totalDuration)}" step="0.01" value="${Math.min(playback.outputTime, totalDuration)}" style="width:100%;accent-color:#60a5fa;cursor:pointer;">
+                            <span data-role="master-time" style="font-family:ui-monospace,SFMono-Regular,monospace;font-size:11px;color:#94a3b8;font-variant-numeric:tabular-nums;">${fmt(playback.outputTime)} / ${fmt(totalDuration)}</span>
                         </div>
                     </div>
-                    <div data-role="reels-timeline" style="height:250px;min-height:250px;border:1px solid rgba(96,165,250,.28);border-radius:9px;overflow:hidden;background:#151827;"></div>
-                    <div><div style="font-size:12px;color:#94a3b8;">当前原片</div><strong>${escapeHtml(sourceName)}</strong></div>
-                    <div style="padding:12px;border-radius:8px;background:#0d1020;min-height:62px;line-height:1.55;white-space:pre-wrap;">${escapeHtml(script || '（没有分配文案）')}</div>
-                    <div style="padding:14px;border:1px solid rgba(96,165,250,.28);border-radius:9px;background:rgba(30,41,59,.35);">
-                        <div style="display:flex;justify-content:space-between;color:#93c5fd;font-size:12px;margin-bottom:7px;"><span>原片 0.000s</span><span>${fmt(sourceDuration)}</span></div>
-                        <input data-role="start" type="range" min="0" max="${sourceDuration}" step="0.01" value="${start}" style="width:100%;accent-color:#60a5fa;">
-                        <input data-role="end" type="range" min="0" max="${sourceDuration}" step="0.01" value="${end}" style="width:100%;accent-color:#fbbf24;">
-                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:9px;"><label>入点 <input data-role="start-number" class="input" type="number" min="0" step="0.01" value="${start.toFixed(3)}" style="width:100%;"></label><label>出点 <input data-role="end-number" class="input" type="number" min="0" step="0.01" value="${end.toFixed(3)}" style="width:100%;"></label></div>
-                        <div style="margin-top:9px;color:#cbd5e1;font-size:13px;">当前保留：<strong data-role="cut-duration">${fmt(end - start)}</strong></div>
+                    <!-- 时间线容器与精细缩放工具栏 -->
+                    <div style="border:1px solid rgba(255,255,255,.1);border-radius:9px;overflow:hidden;background:#0c0d17;flex-shrink:0;">
+                        <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 10px;background:rgba(255,255,255,0.03);border-bottom:1px solid rgba(255,255,255,.07);font-size:11px;flex-wrap:wrap;gap:4px;">
+                            <div style="display:flex;align-items:center;gap:6px;">
+                                <span style="font-weight:700;color:#94a3b8;">🎞️ 实时多轨时间线</span>
+                                <span style="font-size:10px;color:#64748b;">(拖拽两端红线微调 · 支持 Cmd+滚轮缩放)</span>
+                            </div>
+                            <div style="display:flex;align-items:center;gap:5px;">
+                                <button data-action="tl-zoom-out" class="btn btn-secondary" style="padding:1px 7px;font-size:11px;border-radius:4px;" title="缩小时间线 (Cmd + 滚轮向下)">🔍−</button>
+                                <button data-action="tl-zoom-in" class="btn btn-secondary" style="padding:1px 7px;font-size:11px;border-radius:4px;" title="放大时间线 (Cmd + 滚轮向上)">🔍➕</button>
+                                <button data-action="tl-zoom-focus" class="btn btn-secondary" style="padding:1px 9px;font-size:11px;color:#93c5fd;border-color:rgba(96,165,250,0.4);border-radius:4px;" title="将当前选中片段放大居中显示，便于毫米级精细调整切点">🎯 放大聚焦当前段</button>
+                                <button data-action="tl-zoom-fit" class="btn btn-secondary" style="padding:1px 9px;font-size:11px;border-radius:4px;" title="自适应显示整片全长">📐 自适应全长</button>
+                            </div>
+                        </div>
+                        <div data-role="reels-timeline" style="height:230px;min-height:205px;background:#0c0d17;"></div>
                     </div>
-                    <div style="display:flex;gap:8px;flex-wrap:wrap;"><button data-action="play" class="btn btn-primary">▶ 从入点试听到出点</button><button data-action="previous" class="btn btn-secondary">← 上一段</button><button data-action="next" class="btn btn-secondary">下一段 →</button><button data-action="locate" class="btn btn-secondary">在原审核列表定位</button></div>
+                    
+                    <!-- 智能质检与全能操作控制台 -->
+                    <div style="display:grid;grid-template-columns:1.2fr 1fr;gap:12px;">
+                        <!-- 左侧：文本比对与智能质检 -->
+                        <div style="padding:10px 12px;border:1px solid rgba(255,255,255,.08);border-radius:9px;background:#0a0c16;display:flex;flex-direction:column;gap:6px;">
+                            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:4px;">
+                                <div style="display:flex;align-items:center;gap:6px;">
+                                    <span style="font-size:11px;color:#94a3b8;">🎬 片段 <strong data-role="current-source-name" style="color:#60a5fa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px;display:inline-block;vertical-align:bottom;">${escapeHtml(sourceName)}</strong></span>
+                                    <span data-role="inspector-match-badge" style="font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;background:rgba(59,130,246,0.2);color:#60a5fa;">匹配 --%</span>
+                                </div>
+                                <span style="font-size:10px;color:#38bdf8;background:rgba(56,189,248,0.12);padding:1px 6px;border-radius:4px;">✏️ 可直接在此编辑字幕</span>
+                            </div>
+                            <!-- 实际识别语音 (ASR Diff) -->
+                            <div style="display:flex;flex-direction:column;gap:2px;">
+                                <div style="font-size:10px;color:#60a5fa;font-weight:700;display:flex;justify-content:space-between;">
+                                    <span>🎙️ 实际识别语音:</span>
+                                    <span style="color:#86efac;font-weight:500;">绿色 = 实际多读/不同</span>
+                                </div>
+                                <div data-role="diff-recognized" style="font-size:11px;line-height:1.6;padding:6px 8px;background:rgba(0,0,0,0.45);border-radius:6px;border:1px solid rgba(255,255,255,0.08);color:#d7defa;min-height:48px;max-height:60px;overflow-y:auto;white-space:pre-wrap;word-break:break-word;">(正在比对识别文字...)</div>
+                            </div>
+                            <!-- 目标文案与编辑 (Script Diff) -->
+                            <div style="display:flex;flex-direction:column;gap:2px;">
+                                <div style="font-size:10px;color:#a5b4fc;font-weight:700;display:flex;justify-content:space-between;">
+                                    <span>📝 目标文案 (字幕):</span>
+                                    <span style="color:#fca5a5;font-weight:500;">红色删除线 = 差异/漏读</span>
+                                </div>
+                                <textarea data-role="segment-script" class="input" style="flex:1;min-height:48px;max-height:60px;padding:6px 8px;border-radius:6px;background:rgba(0,0,0,.45);font-size:12px;line-height:1.5;color:#f1f5f9;word-break:break-word;white-space:normal;border:1px solid rgba(255,255,255,.08);resize:none;" placeholder="输入或修改此片段的字幕文案...">${escapeHtml(script || '')}</textarea>
+                            </div>
+                            <!-- 告警与诊断提示 -->
+                            <div data-role="diff-warning" style="display:none;font-size:11px;padding:4px 8px;border-radius:5px;background:rgba(245,158,11,0.15);color:#fcd34d;border:1px solid rgba(245,158,11,0.3);"></div>
+                        </div>
+
+                        <!-- 右侧：切点微调与操作工具箱 -->
+                        <div style="padding:10px 12px;border:1px solid rgba(96,165,250,.3);border-radius:9px;background:rgba(30,41,59,.3);display:flex;flex-direction:column;gap:6px;">
+                            <div style="display:flex;justify-content:space-between;align-items:center;">
+                                <div style="display:flex;align-items:center;gap:6px;">
+                                    <span style="font-size:11px;color:#93c5fd;font-weight:700;">✂️ 入出点微调 (原片 <span data-role="source-dur-label">${fmt(sourceDuration)}</span>)</span>
+                                    <span style="font-size:9.5px;color:#86efac;background:rgba(74,222,128,0.12);padding:1px 5px;border-radius:3px;display:inline-flex;align-items:center;gap:3px;"><span style="display:inline-block;width:5px;height:5px;border-radius:50%;background:#4ade80;"></span>实时已保存</span>
+                                </div>
+                                <span style="background:rgba(59,130,246,.25);color:#93c5fd;font-size:11px;font-weight:700;padding:1px 6px;border-radius:4px;">保留: <strong data-role="cut-duration">${fmt(end - start)}</strong></span>
+                            </div>
+                            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+                                <div>
+                                    <div style="display:flex;justify-content:space-between;font-size:10px;color:#38bdf8;margin-bottom:1px;"><span>入点 (In)</span><span>${fmt(start)}</span></div>
+                                    <input data-role="start" type="range" min="0" max="${sourceDuration}" step="0.01" value="${start}" style="width:100%;accent-color:#38bdf8;cursor:pointer;">
+                                </div>
+                                <div>
+                                    <div style="display:flex;justify-content:space-between;font-size:10px;color:#fbbf24;margin-bottom:1px;"><span>出点 (Out)</span><span>${fmt(end)}</span></div>
+                                    <input data-role="end" type="range" min="0" max="${sourceDuration}" step="0.01" value="${end}" style="width:100%;accent-color:#fbbf24;cursor:pointer;">
+                                </div>
+                            </div>
+                            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;align-items:center;">
+                                <label style="font-size:10px;color:#94a3b8;">入点: <input data-role="start-number" class="input" type="number" min="0" step="0.01" value="${start.toFixed(3)}" style="width:100%;padding:2px 4px;font-size:11px;background:#0f111e;"></label>
+                                <label style="font-size:10px;color:#94a3b8;">出点: <input data-role="end-number" class="input" type="number" min="0" step="0.01" value="${end.toFixed(3)}" style="width:100%;padding:2px 4px;font-size:11px;background:#0f111e;"></label>
+                                <label style="font-size:10px;color:#94a3b8;">速度: <input data-role="segment-speed" class="input" type="number" min="0.25" max="4" step="0.05" value="${Math.max(0.25, Math.min(4, Number(row.querySelector('.ae-review-speed')?.value) || 1))}" style="width:100%;padding:2px 4px;font-size:11px;background:#0f111e;color:#cbd5e1;"></label>
+                            </div>
+                            <!-- 友好温馨提示 -->
+                            <div style="font-size:9.5px;color:#94a3b8;display:flex;align-items:center;gap:4px;background:rgba(255,255,255,0.03);padding:3px 7px;border-radius:4px;border:1px solid rgba(255,255,255,0.06);margin-top:1px;">
+                                <span>💡 <b>手动微调实时生效</b>，无需点击重算；仅修改上方文案后才需点「⚡ 重算切点」</span>
+                            </div>
+                            <!-- 全功能操作工具箱 -->
+                            <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:5px;margin-top:2px;padding-top:5px;border-top:1px solid rgba(255,255,255,0.08);">
+                                <button data-action="single-recalc" class="btn btn-primary" style="padding:4px 4px;font-size:10.5px;" title="仅修改了文案时使用：AI将按文案重新识别切点并覆盖手动微调">⚡ 重算切点</button>
+                                <button data-action="merge-prev" class="btn btn-secondary" style="padding:4px 4px;font-size:10.5px;color:#93c5fd;border-color:rgba(96,165,250,0.4);" title="将当前片段文案合并归入上一段并重算切点">⬆️ 归上一段</button>
+                                <button data-action="merge-next" class="btn btn-secondary" style="padding:4px 4px;font-size:10.5px;color:#93c5fd;border-color:rgba(96,165,250,0.4);" title="将当前片段文案合并归入下一段并重算切点">⬇️ 归下一段</button>
+                                <button data-action="select-srt" class="btn btn-secondary" style="padding:4px 4px;font-size:10.5px;color:#86efac;border-color:rgba(74,222,128,0.4);" title="为当前原片指定人工校正 SRT">📄 替换SRT</button>
+                                <button data-action="retranscribe" class="btn btn-secondary" style="padding:4px 4px;font-size:10.5px;color:#fde047;border-color:rgba(251,191,36,0.4);" title="重新调用 ASR 转录此片段">🔄 重新转录</button>
+                                <button data-action="fix-missed" class="btn btn-secondary" style="padding:4px 4px;font-size:10.5px;color:#fca5a5;border-color:rgba(239,68,68,0.4);" title="原片有声音但 AI 漏识别时手动画选">🎙️ 漏识别处理</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding-top:2px;">
+                        <button data-action="play" class="btn btn-primary" style="padding:5px 14px;font-size:11px;border-radius:5px;">▶ 从入点试听到出点</button>
+                        <button data-action="play-raw" class="btn btn-secondary" style="padding:5px 11px;font-size:11px;border-radius:5px;">🎞️ 预览未剪切原片</button>
+                        <button data-action="previous" class="btn btn-secondary" style="padding:5px 11px;font-size:11px;border-radius:5px;">← 上一段</button>
+                        <button data-action="next" class="btn btn-secondary" style="padding:5px 11px;font-size:11px;border-radius:5px;">下一段 →</button>
+                        <button data-action="locate" class="btn btn-secondary" style="padding:5px 11px;font-size:11px;color:#93c5fd;border-color:rgba(96,165,250,.35);border-radius:5px;margin-left:auto;">🎯 在原审核列表定位</button>
+                    </div>
                 </section>
             </main>
-            <footer style="padding:11px 18px;border-top:1px solid rgba(255,255,255,.1);font-size:12px;color:#94a3b8;">修改已自动保存；关闭窗口不丢失。正式导出仍会使用这些审核入点、出点和启用状态。</footer>`;
-        panel.querySelectorAll('[data-index]').forEach(button => button.onclick = () => { selected = Number(button.dataset.index); render(); });
+            <footer style="padding:8px 18px;border-top:1px solid rgba(255,255,255,.08);font-size:11px;color:#94a3b8;background:rgba(255,255,255,0.01);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;flex-shrink:0;">
+                <span>💡 修改已实时自动保存到审核结果中，关闭窗口不丢失；正式导出将完整应用这些切点。</span>
+                <div style="display:flex;align-items:center;gap:12px;">
+                    <span style="color:#64748b;">快捷键: ESC 关闭 · Space 播放 · 右键切块可试听/预览原片</span>
+                    <button data-action="show-help-footer" style="background:none;border:none;color:#60a5fa;cursor:pointer;text-decoration:underline;padding:0;font-size:11px;display:inline-flex;align-items:center;gap:3px;">📖 查看使用指南与快捷键</button>
+                </div>
+            </footer>`;
+
+        const showReviewClipContextMenu = (e, rowIdx) => {
+            if (!Number.isFinite(rowIdx) || !rows[rowIdx]) return;
+            if (typeof selectSegment === 'function') {
+                selectSegment(rowIdx, true);
+            } else {
+                selected = rowIdx;
+                const item = sequence.find(candidate => candidate.row === rows[rowIdx]) || sequence[rowIdx];
+                if (item) loadOutputTime(item.inTimeline, false);
+                reflectActiveSegmentUi();
+            }
+
+            const row = rows[rowIdx];
+            const source = getSource(row);
+            const start = Number(row.querySelector('.ae-review-start')?.value) || 0;
+            const end = Number(row.querySelector('.ae-review-end')?.value) || start + 0.05;
+            const script = row.querySelector('.ae-review-script')?.value || '';
+            const wordTimeline = row.dataset.wordTimeline || '';
+            const speed = Number(row.querySelector('.ae-review-speed')?.value) || 1;
+            const sourceDuration = Number(row.dataset.sourceDuration) || 0;
+
+            document.querySelectorAll('.ae-context-menu').forEach(m => m.remove());
+
+            const menu = document.createElement('div');
+            menu.className = 'ae-context-menu';
+            Object.assign(menu.style, {
+                position: 'fixed',
+                left: `${Math.min(window.innerWidth - 240, Math.max(10, e.clientX || e.pageX || 100))}px`,
+                top: `${Math.min(window.innerHeight - 200, Math.max(10, e.clientY || e.pageY || 100))}px`,
+                zIndex: '999999',
+                background: 'rgba(15, 17, 26, 0.96)',
+                backdropFilter: 'blur(16px)',
+                border: '1px solid rgba(255, 255, 255, 0.16)',
+                borderRadius: '8px',
+                padding: '6px',
+                boxShadow: '0 12px 32px rgba(0, 0, 0, 0.75)',
+                color: '#f1f5f9',
+                fontSize: '12px',
+                minWidth: '220px',
+                userSelect: 'none',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '2px',
+            });
+
+            const menuItems = [
+                {
+                    icon: '▶️',
+                    text: `预览剪切后片段 (保留 ${fmt(end - start)})`,
+                    action: () => {
+                        playback.playing = false;
+                        const item = sequence.find(candidate => candidate.row === rows[rowIdx]) || sequence[rowIdx];
+                        if (item) {
+                            loadOutputTime(item.inTimeline, false);
+                            masterVideo.currentTime = start;
+                            masterVideo.play().then(() => { startPlaybackLoop(); }).catch(() => {});
+                        }
+                    },
+                },
+                {
+                    icon: '🎬',
+                    text: `独立窗口试听剪切 (${fmt(start)} ~ ${fmt(end)})`,
+                    action: () => {
+                        window.playVideoClip(source, start, end, script, wordTimeline, speed);
+                    },
+                },
+                {
+                    icon: '🎞️',
+                    text: `预览完整原片 (未剪切 ${sourceDuration > 0 ? fmt(sourceDuration) : ''})`,
+                    action: () => {
+                        window.playVideoClip(source, 0, 0, '', '', 1);
+                    },
+                },
+                {
+                    icon: '🎯',
+                    text: '在原审核列表中定位',
+                    action: () => {
+                        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        row.classList.add('ae-quick-locate-target');
+                    },
+                }
+            ];
+
+            menuItems.forEach(mi => {
+                const btn = document.createElement('div');
+                Object.assign(btn.style, {
+                    display: 'flex', alignItems: 'center', gap: '8px',
+                    padding: '7px 10px', borderRadius: '5px', cursor: 'pointer',
+                    transition: 'background 0.12s ease', color: '#e2e8f0', fontWeight: '500',
+                });
+                btn.innerHTML = `<span style="font-size:14px;">${mi.icon}</span><span>${escapeHtml(mi.text)}</span>`;
+                btn.onmouseenter = () => { btn.style.background = 'rgba(59, 130, 246, 0.22)'; btn.style.color = '#93c5fd'; };
+                btn.onmouseleave = () => { btn.style.background = 'transparent'; btn.style.color = '#e2e8f0'; };
+                btn.onclick = (ev) => {
+                    ev.stopPropagation();
+                    menu.remove();
+                    mi.action();
+                };
+                menu.appendChild(btn);
+            });
+
+            document.body.appendChild(menu);
+            const closeMenu = (ev) => {
+                if (!menu.contains(ev.target)) {
+                    menu.remove();
+                    document.removeEventListener('mousedown', closeMenu, true);
+                }
+            };
+            setTimeout(() => document.addEventListener('mousedown', closeMenu, true), 10);
+        };
+
+        panel.querySelectorAll('[data-index]').forEach(button => {
+            button.onclick = () => {
+                const idx = Number(button.dataset.index);
+                if (typeof selectSegment === 'function') {
+                    selectSegment(idx, true);
+                } else {
+                    selected = idx;
+                    render();
+                }
+            };
+            button.oncontextmenu = (e) => {
+                e.preventDefault();
+                const idx = Number(button.dataset.index);
+                showReviewClipContextMenu(e, idx);
+            };
+        });
         panel.querySelector('[data-action="close"]').onclick = close;
+        const btnHelp = panel.querySelector('[data-action="show-help"]');
+        if (btnHelp) btnHelp.onclick = openAutoEditHelpModal;
+        const btnHelpFooter = panel.querySelector('[data-action="show-help-footer"]');
+        if (btnHelpFooter) btnHelpFooter.onclick = openAutoEditHelpModal;
+
+        const updateOuterSetting = (kind, val) => {
+            if (kind === 'lead') {
+                const el1 = document.getElementById('autoedit-lead-pad'); if (el1) el1.value = String(val);
+                const el2 = document.getElementById('mtb-autoedit-lead'); if (el2) el2.value = String(val);
+            } else if (kind === 'tail') {
+                const el1 = document.getElementById('autoedit-tail-pad'); if (el1) el1.value = String(val);
+                const el2 = document.getElementById('mtb-autoedit-tail'); if (el2) el2.value = String(val);
+            } else if (kind === 'score') {
+                const el1 = document.getElementById('autoedit-min-score'); if (el1) el1.value = String(val);
+                const el2 = document.getElementById('mtb-autoedit-score'); if (el2) el2.value = String(val);
+            }
+        };
+        const quickLead = panel.querySelector('[data-role="quick-lead-pad"]');
+        if (quickLead) quickLead.onchange = e => updateOuterSetting('lead', parseFloat(e.target.value) || 0.12);
+        const quickTail = panel.querySelector('[data-role="quick-tail-pad"]');
+        if (quickTail) quickTail.onchange = e => updateOuterSetting('tail', parseFloat(e.target.value) || 0.22);
+        const quickScore = panel.querySelector('[data-role="quick-min-score"]');
+        if (quickScore) quickScore.onchange = e => updateOuterSetting('score', parseFloat(e.target.value) || 0.52);
+
+        const btnCurrentRecalc = panel.querySelector('[data-action="apply-current-recalc"]');
+        if (btnCurrentRecalc) {
+            btnCurrentRecalc.onclick = () => {
+                const cur = getRow();
+                const tl = cur?.dataset?.wordTimeline || '';
+                const ok = recalculateAutoEditCutFromScript(cur, tl);
+                if (ok) {
+                    render();
+                    showToast('已按新留白重新计算当前片段切点', 'success');
+                }
+            };
+        }
+
+        const btnAllRecalc = panel.querySelector('[data-action="apply-all-recalc"]');
+        if (btnAllRecalc) {
+            btnAllRecalc.onclick = () => {
+                let successCount = 0;
+                rows.forEach(r => {
+                    const tl = r?.dataset?.wordTimeline || '';
+                    if (recalculateAutoEditCutFromScript(r, tl, { silent: true })) successCount++;
+                });
+                render();
+                showToast(`已按新留白重新计算 ${successCount} 个片段切点`, 'success');
+            };
+        }
+
+        const btnAllV2 = panel.querySelector('[data-action="apply-all-v2"]');
+        if (btnAllV2) {
+            btnAllV2.onclick = () => {
+                selectAllAutoEditCuts('v2');
+                render();
+            };
+        }
+
+        const btnAllClassic = panel.querySelector('[data-action="apply-all-classic"]');
+        if (btnAllClassic) {
+            btnAllClassic.onclick = () => {
+                selectAllAutoEditCuts('classic');
+                render();
+            };
+        }
         const reflectCurrentCut = () => {
             const current = getRow();
             const currentStart = Number(current.querySelector('.ae-review-start')?.value) || 0;
@@ -15038,16 +15833,376 @@ function openAutoEditTimelineReview() {
             panel.querySelector('[data-role="start-number"]').value = currentStart.toFixed(3);
             panel.querySelector('[data-role="end-number"]').value = currentEnd.toFixed(3);
             panel.querySelector('[data-role="cut-duration"]').textContent = fmt(currentEnd - currentStart);
+
+            // 实时同步左侧卡片与顶部 Pill 的时长数字
+            const curCardDur = panel.querySelector(`aside button[data-role="card"][data-index="${selected}"] span:last-child`);
+            if (curCardDur) curCardDur.textContent = fmt(currentEnd - currentStart);
+            const curPillDur = panel.querySelector(`[data-role="pill"][data-index="${selected}"] span:last-child`);
+            if (curPillDur) curPillDur.textContent = fmt(currentEnd - currentStart);
+
+            if (editorInstance) {
+                const seq = buildSequence();
+                const item = seq[selected];
+                if (item) {
+                    editorInstance._tracks.forEach(track => {
+                        if (track.type === 'subs' || track.type === 'asr') {
+                            track.clips.forEach(c => {
+                                if (c._reviewRow === current) {
+                                    const cueStart = c._cue ? c._cue.start : (c._sourceStart !== undefined ? c._sourceStart : (c.start - item.sourceTimelineStart));
+                                    const cueEnd = c._cue ? c._cue.end : (c._sourceEnd !== undefined ? c._sourceEnd : (c.end - item.sourceTimelineStart));
+                                    c.start = item.sourceTimelineStart + cueStart;
+                                    c.end = item.sourceTimelineStart + cueEnd;
+                                    c._isTrimmed = (cueEnd <= currentStart + 0.05) || (cueStart >= currentEnd - 0.05);
+                                }
+                            });
+                        } else if (track.type === 'script') {
+                            const segScriptClips = track.clips.filter(c => c._reviewRow === current);
+                            const activeDur = Math.max(0.1, currentEnd - currentStart);
+                            if (segScriptClips.length > 0) {
+                                const perDur = activeDur / segScriptClips.length;
+                                segScriptClips.forEach((c, idx) => {
+                                    c.start = item.sourceTimelineStart + currentStart + idx * perDur;
+                                    c.end = item.sourceTimelineStart + currentStart + (idx + 1) * perDur;
+                                });
+                            }
+                        } else {
+                            const c = track.clips?.[selected];
+                            if (c) {
+                                c.start = item.sourceTimelineStart;
+                                c.end = item.sourceTimelineEnd;
+                                c.inT = currentStart;
+                                c.outT = currentEnd;
+                                c.sourceDuration = item.sourceDuration;
+                                c._trimHead = currentStart;
+                                c._trimTail = Math.max(0, item.sourceDuration - currentEnd);
+                            }
+                        }
+                    });
+                    editorInstance.setDuration(Math.max(1, seq[seq.length - 1].sourceTimelineEnd));
+                    editorInstance._render();
+                }
+            }
         };
+        const reflectActiveSegmentUi = () => {
+            const current = getRow();
+            if (!current) return;
+
+            // 1. 同步顶部 Pill 状态并自动横向滚动到可见区域
+            panel.querySelectorAll('aside [data-role="pill"]').forEach(btn => {
+                const isCur = Number(btn.dataset.index) === selected;
+                btn.classList.toggle('active', isCur);
+                if (isCur) btn.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' });
+            });
+
+            // 2. 同步左侧卡片列表选中状态并自动纵向滚动到可见区域
+            panel.querySelectorAll('aside [data-role="card"]').forEach(btn => {
+                const isCur = Number(btn.dataset.index) === selected;
+                btn.classList.toggle('active', isCur);
+                const titleEl = btn.querySelector('strong');
+                if (titleEl) titleEl.style.color = isCur ? '#93c5fd' : '#f1f5f9';
+                const textEl = btn.querySelector('div:last-child');
+                if (textEl) textEl.style.color = isCur ? '#e2e8f0' : '#94a3b8';
+                if (isCur) btn.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            });
+            if (editorInstance) {
+                editorInstance._selectedClips.clear();
+                editorInstance._tracks.forEach((t, ti) => {
+                    t.clips.forEach((c, ci) => {
+                        if (c._reviewRow === current) {
+                            editorInstance._selectedClips.add(editorInstance._clipKey(ti, ci));
+                        }
+                    });
+                });
+                editorInstance._render();
+            }
+            const sourceName = getSource(current).split(/[/\\]/).pop() || `片段 ${selected + 1}`;
+            const sourceNameEl = panel.querySelector('[data-role="current-source-name"]');
+            if (sourceNameEl) sourceNameEl.textContent = sourceName;
+            const scriptTextarea = panel.querySelector('[data-role="segment-script"]');
+            if (scriptTextarea && document.activeElement !== scriptTextarea) {
+                scriptTextarea.value = current.querySelector('.ae-review-script')?.value || '';
+            }
+
+            // 3. 计算并更新当前片段的 ASR 比对、匹配度与诊断警告
+            const reviewIdx = Number(current?.dataset?.reviewIndex ?? selected);
+            const seg = autoEditLastResult?.segments?.[reviewIdx] || {};
+            const curScript = current?.querySelector('.ae-review-script')?.value || seg.script || '';
+            const recognized = seg.recognized_text || '';
+            const textDiff = (typeof buildAutoEditTextDiffHtml === 'function')
+                ? buildAutoEditTextDiffHtml(curScript, recognized)
+                : { recognizedHtml: escapeHtml(recognized), targetHtml: escapeHtml(curScript), boundaryWarning: '' };
+
+            const diffRecEl = panel.querySelector('[data-role="diff-recognized"]');
+            if (diffRecEl) {
+                diffRecEl.innerHTML = textDiff.recognizedHtml || '<span style="color:#64748b;">（未识别到有效语音或未转录）</span>';
+            }
+
+            const matchPercent = Number.isFinite(Number(seg.similarity)) ? Math.round(Number(seg.similarity)) : Math.round((Number(seg.match_score) || 0) * 100);
+            const matchBadge = panel.querySelector('[data-role="inspector-match-badge"]');
+            if (matchBadge) {
+                const isCritical = matchPercent < 50;
+                const isLow = matchPercent >= 50 && matchPercent < 75;
+                matchBadge.textContent = `匹配 ${matchPercent}%`;
+                matchBadge.style.background = isCritical ? 'rgba(239,68,68,0.25)' : (isLow ? 'rgba(245,158,11,0.25)' : 'rgba(59,130,246,0.25)');
+                matchBadge.style.color = isCritical ? '#f87171' : (isLow ? '#fcd34d' : '#60a5fa');
+            }
+
+            const warningEl = panel.querySelector('[data-role="diff-warning"]');
+            if (warningEl) {
+                const isDup = current.dataset.duplicate === 'true';
+                const warnings = [];
+                if (isDup) warnings.push('⚠️ 此片段文案与列表中其他片段存在重复');
+                if (textDiff.boundaryWarning) warnings.push(`⚠️ ${textDiff.boundaryWarning}`);
+                if (seg.issue_reason) warnings.push(`⚠️ ${seg.issue_reason}`);
+                if (seg.ambiguity) warnings.push(`⚠️ ${seg.ambiguity}`);
+
+                if (warnings.length > 0) {
+                    warningEl.style.display = 'block';
+                    warningEl.innerHTML = warnings.map(w => escapeHtml(w)).join('<br>');
+                } else {
+                    warningEl.style.display = 'none';
+                }
+            }
+
+            const speedEl = panel.querySelector('[data-role="segment-speed"]');
+            if (speedEl) {
+                speedEl.value = Math.max(0.25, Math.min(4, Number(current.querySelector('.ae-review-speed')?.value) || 1)).toFixed(2);
+            }
+
+            reflectCurrentCut();
+        };
+
+        // 绑定全能操作工具箱按钮
+        const btnSingleRecalc = panel.querySelector('[data-action="single-recalc"]');
+        if (btnSingleRecalc) {
+            btnSingleRecalc.onclick = () => {
+                const cur = getRow();
+                const tl = cur?.dataset?.wordTimeline || '';
+                const ok = recalculateAutoEditCutFromScript(cur, tl);
+                if (ok) {
+                    reflectActiveSegmentUi();
+                    showToast('已按当前文案重新计算入出切点', 'success');
+                } else {
+                    showToast('未能可靠重算切点，请检查文案或手动调整滑块', 'warning');
+                }
+            };
+        }
+
+        const btnMergePrev = panel.querySelector('[data-action="merge-prev"]');
+        if (btnMergePrev) {
+            btnMergePrev.onclick = () => {
+                if (selected <= 0) return showToast('已经是第一段，无法归到上一段', 'warning');
+                const curRow = getRow();
+                const prevRow = rows[selected - 1];
+                const curScript = curRow.querySelector('.ae-review-script')?.value || '';
+                if (!curScript.trim()) return showToast('当前片段文案为空', 'warning');
+                const prevScriptEl = prevRow.querySelector('.ae-review-script');
+                if (prevScriptEl) {
+                    prevScriptEl.value = `${prevScriptEl.value.trim()} ${curScript.trim()}`.trim();
+                    markAutoEditCutManual(prevScriptEl);
+                    recalculateAutoEditCutFromScript(prevRow, prevRow.dataset?.wordTimeline || '');
+                }
+                const curScriptEl = curRow.querySelector('.ae-review-script');
+                if (curScriptEl) {
+                    curScriptEl.value = '';
+                    markAutoEditCutManual(curScriptEl);
+                }
+                if (typeof persistAutoEditBatchReview === 'function') persistAutoEditBatchReview();
+                showToast(`已将文案合并归入上一段（#${selected}）并重算切点`, 'success');
+                selected = selected - 1;
+                render();
+            };
+        }
+
+        const btnMergeNext = panel.querySelector('[data-action="merge-next"]');
+        if (btnMergeNext) {
+            btnMergeNext.onclick = () => {
+                if (selected >= rows.length - 1) return showToast('已经是最后一段，无法归到下一段', 'warning');
+                const curRow = getRow();
+                const nextRow = rows[selected + 1];
+                const curScript = curRow.querySelector('.ae-review-script')?.value || '';
+                if (!curScript.trim()) return showToast('当前片段文案为空', 'warning');
+                const nextScriptEl = nextRow.querySelector('.ae-review-script');
+                if (nextScriptEl) {
+                    nextScriptEl.value = `${curScript.trim()} ${nextScriptEl.value.trim()}`.trim();
+                    markAutoEditCutManual(nextScriptEl);
+                    recalculateAutoEditCutFromScript(nextRow, nextRow.dataset?.wordTimeline || '');
+                }
+                const curScriptEl = curRow.querySelector('.ae-review-script');
+                if (curScriptEl) {
+                    curScriptEl.value = '';
+                    markAutoEditCutManual(curScriptEl);
+                }
+                if (typeof persistAutoEditBatchReview === 'function') persistAutoEditBatchReview();
+                showToast(`已将文案合并归入下一段（#${selected + 2}）并重算切点`, 'success');
+                selected = selected + 1;
+                render();
+            };
+        }
+
+        const btnSelectSrt = panel.querySelector('[data-action="select-srt"]');
+        if (btnSelectSrt) {
+            btnSelectSrt.onclick = () => {
+                if (typeof selectAutoEditReviewSrt === 'function') {
+                    selectAutoEditReviewSrt(getRow());
+                }
+            };
+        }
+
+        const btnRetranscribe = panel.querySelector('[data-action="retranscribe"]');
+        if (btnRetranscribe) {
+            btnRetranscribe.onclick = () => {
+                if (typeof retranscribeAutoEditReviewRow === 'function') {
+                    retranscribeAutoEditReviewRow(getRow(), selected);
+                }
+            };
+        }
+
+        const btnFixMissed = panel.querySelector('[data-action="fix-missed"]');
+        if (btnFixMissed) {
+            btnFixMissed.onclick = () => {
+                if (typeof openAutoEditMissedSpeechFix === 'function') {
+                    openAutoEditMissedSpeechFix(getRow());
+                }
+            };
+        }
+
+        const speedInput = panel.querySelector('[data-role="segment-speed"]');
+        if (speedInput) {
+            speedInput.onchange = (e) => {
+                const val = Math.max(0.25, Math.min(4, parseFloat(e.target.value) || 1));
+                const curRow = getRow();
+                const rowSpeed = curRow?.querySelector('.ae-review-speed');
+                if (rowSpeed) {
+                    rowSpeed.value = String(val);
+                    if (typeof handleAutoEditReviewSpeedChanged === 'function') {
+                        handleAutoEditReviewSpeedChanged(rowSpeed);
+                    }
+                }
+            };
+        }
+
+        const btnPlayRaw = panel.querySelector('[data-action="play-raw"]');
+        if (btnPlayRaw) {
+            btnPlayRaw.onclick = () => {
+                const row = getRow();
+                const source = getSource(row);
+                if (source && typeof window.playVideoClip === 'function') {
+                    window.playVideoClip(source, 0, 0, '', '', 1);
+                }
+            };
+        }
+
         // input 而不是 change：拖动过程中就写回审核结果，但不重建弹窗 DOM，
         // 所以滑块可以连续拖动，不会跳手柄。
         panel.querySelector('[data-role="start"]').oninput = event => { sync('start', event.target.value); reflectCurrentCut(); };
         panel.querySelector('[data-role="end"]').oninput = event => { sync('end', event.target.value); reflectCurrentCut(); };
-        panel.querySelector('[data-role="start-number"]').onchange = event => { sync('start', event.target.value); render(); };
-        panel.querySelector('[data-role="end-number"]').onchange = event => { sync('end', event.target.value); render(); };
-        panel.querySelector('[data-action="play"]').onclick = () => window.playVideoClip(getSource(getRow()), Number(getRow().querySelector('.ae-review-start')?.value), Number(getRow().querySelector('.ae-review-end')?.value), getRow().querySelector('.ae-review-script')?.value || '', getRow().dataset.wordTimeline || '', Number(getRow().querySelector('.ae-review-speed')?.value) || 1);
-        panel.querySelector('[data-action="previous"]').onclick = () => { selected = Math.max(0, selected - 1); render(); };
-        panel.querySelector('[data-action="next"]').onclick = () => { selected = Math.min(rows.length - 1, selected + 1); render(); };
+        panel.querySelector('[data-role="start-number"]').onchange = event => { sync('start', event.target.value); reflectCurrentCut(); };
+        panel.querySelector('[data-role="end-number"]').onchange = event => { sync('end', event.target.value); reflectCurrentCut(); };
+        const scriptTextarea = panel.querySelector('[data-role="segment-script"]');
+        if (scriptTextarea) {
+            scriptTextarea.oninput = event => {
+                const current = getRow();
+                const val = event.target.value;
+                const scriptInput = current?.querySelector('.ae-review-script');
+                if (scriptInput) {
+                    scriptInput.value = val;
+                    markAutoEditCutManual(scriptInput);
+                }
+                const reviewIdx = Number(current?.dataset?.reviewIndex ?? selected);
+                if (autoEditLastResult?.segments?.[reviewIdx]) {
+                    autoEditLastResult.segments[reviewIdx].script = val;
+                }
+                if (typeof persistAutoEditBatchReview === 'function') {
+                    persistAutoEditBatchReview();
+                }
+                const cardSnippet = panel.querySelector(`aside button[data-index="${selected}"] div:last-child`);
+                if (cardSnippet) cardSnippet.textContent = val || '（无文案）';
+                if (editorInstance) {
+                    const subsTrack = editorInstance._tracks.find(t => t.type === 'subs');
+                    if (subsTrack) {
+                        const row = getRow();
+                        const rowClips = subsTrack.clips.filter(c => c._reviewRow === row);
+                        if (rowClips.length === 1) {
+                            rowClips[0].name = val || '字幕';
+                        } else if (rowClips.length > 1) {
+                            const cues = buildAutoEditAllTimelineCues(val, row?.dataset?.wordTimeline, Number(row?.querySelector('.ae-review-start')?.value) || 0, Number(row?.querySelector('.ae-review-end')?.value) || 0.05, 0);
+                            rowClips.forEach((c, idx) => {
+                                if (cues[idx]) c.name = cues[idx].text;
+                            });
+                        }
+                        editorInstance._render();
+                    }
+                }
+            };
+        }
+        let playbackRaf = null;
+        const stopPlaybackLoop = () => {
+            if (playbackRaf) { cancelAnimationFrame(playbackRaf); playbackRaf = null; }
+        };
+        const startPlaybackLoop = () => {
+            stopPlaybackLoop();
+            const tick = () => {
+                if (masterVideo.paused || masterVideo.ended) {
+                    stopPlaybackLoop();
+                    return;
+                }
+                const item = sequence.find(candidate => candidate.row === rows[selected]);
+                if (item) {
+                    if (masterVideo.currentTime < item.start - 0.04) {
+                        masterVideo.currentTime = item.start;
+                    } else if (masterVideo.currentTime >= item.end - 0.03) {
+                        if (playback.playing) {
+                            const curSeqIdx = sequence.indexOf(item);
+                            if (curSeqIdx !== -1 && curSeqIdx < sequence.length - 1) {
+                                const nextItem = sequence[curSeqIdx + 1];
+                                // 直接跳过中间裁掉的空档，瞬间跳跃到下一段入点！
+                                loadOutputTime(nextItem.inTimeline, true);
+                            } else {
+                                playback.playing = false;
+                                masterVideo.pause();
+                                playback.outputTime = item.outTimeline;
+                                updateMasterUi();
+                                stopPlaybackLoop();
+                                return;
+                            }
+                        } else {
+                            masterVideo.pause();
+                            masterVideo.currentTime = item.start;
+                            playback.outputTime = item.inTimeline;
+                            updateMasterUi();
+                            stopPlaybackLoop();
+                            return;
+                        }
+                    } else {
+                        playback.outputTime = item.sourceTimelineStart + masterVideo.currentTime;
+                        updateMasterUi();
+                    }
+                }
+                playbackRaf = requestAnimationFrame(tick);
+            };
+            playbackRaf = requestAnimationFrame(tick);
+        };
+
+        panel.querySelector('[data-action="play"]').onclick = () => {
+            const item = sequence.find(candidate => candidate.row === rows[selected]);
+            if (!item) return;
+            playback.playing = false;
+            playback.outputTime = item.inTimeline;
+            loadOutputTime(item.inTimeline, false);
+            masterVideo.currentTime = item.start;
+            masterVideo.play().then(() => {
+                startPlaybackLoop();
+            }).catch(() => {});
+        };
+        panel.querySelector('[data-action="previous"]').onclick = () => {
+            if (typeof selectSegment === 'function') selectSegment(Math.max(0, selected - 1), true);
+            else { selected = Math.max(0, selected - 1); render(); }
+        };
+        panel.querySelector('[data-action="next"]').onclick = () => {
+            if (typeof selectSegment === 'function') selectSegment(Math.min(rows.length - 1, selected + 1), true);
+            else { selected = Math.min(rows.length - 1, selected + 1); render(); }
+        };
         panel.querySelector('[data-action="locate"]').onclick = () => { getRow().scrollIntoView({ behavior: 'smooth', block: 'center' }); getRow().classList.add('ae-quick-locate-target'); };
         const masterVideo = panel.querySelector('[data-role="master-video"]');
         const masterSeek = panel.querySelector('[data-role="master-seek"]');
@@ -15059,48 +16214,68 @@ function openAutoEditTimelineReview() {
             if (!masterSubtitle || !item) return;
             const text = item.row.querySelector('.ae-review-script')?.value || '';
             if (!text.trim()) { masterSubtitle.textContent = ''; return; }
-            // word_timeline 使用原片时间码；审核播放器也正播放这段原片，
-            // 因而可直接用 currentTime 标出正在读的词。文案被人工改过且
-            // 无法逐词对应时，仍完整显示文案，绝不显示错误高亮。
-            let words = [];
-            try { words = JSON.parse(decodeURIComponent(item.row.dataset.wordTimeline || '')); } catch (_) {}
+
             const current = masterVideo.currentTime || item.start;
-            const hasTimedWords = Array.isArray(words) && words.length > 0
-                && words.every(word => Number.isFinite(Number(word.start)) && Number.isFinite(Number(word.end)));
-            if (!hasTimedWords) { masterSubtitle.textContent = text; return; }
-            const normalizedText = String(text).toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
-            const normalizedWords = words.map(word => String(word.word || '').toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')).filter(Boolean).join(' ');
-            if (!normalizedWords || !normalizedText.includes(normalizedWords.slice(0, Math.min(normalizedWords.length, 18)))) {
-                masterSubtitle.textContent = text;
+            const cues = buildAutoEditSrtCues(text, item.row.dataset.wordTimeline, item.start, item.end, item.inTimeline);
+            
+            let activeCue = cues.find(cue => current >= cue.start - 0.05 && current <= cue.end + 0.1);
+            if (!activeCue) {
+                if (current <= item.start + 0.1) activeCue = cues[0];
+                else {
+                    masterSubtitle.textContent = '';
+                    return;
+                }
+            }
+
+            if (!activeCue || !activeCue.text) {
+                masterSubtitle.textContent = '';
                 return;
             }
-            masterSubtitle.innerHTML = words.map(word => {
-                const active = current >= Number(word.start) && current <= Number(word.end);
-                return `<span style="color:${active ? '#facc15' : '#fff'};padding:0 2px;">${escapeHtml(String(word.word || ''))}</span>`;
-            }).join(' ');
+
+            masterSubtitle.textContent = activeCue.text;
         };
         const updateMasterUi = () => {
             masterSeek.value = Math.min(totalDuration, Math.max(0, playback.outputTime));
             masterTime.textContent = `${fmt(playback.outputTime)} / ${fmt(totalDuration)}`;
             masterPlay.textContent = playback.playing ? '⏸ 暂停整片' : '▶ 整片播放';
             updateTemporarySubtitle();
+            if (editorInstance) {
+                editorInstance.setPlayhead(playback.outputTime);
+            }
+            const activeIndex = sequence.findIndex(candidate => playback.outputTime >= candidate.sourceTimelineStart && playback.outputTime < candidate.sourceTimelineEnd);
+            if (activeIndex !== -1) {
+                const targetRow = sequence[activeIndex]?.row;
+                const targetSelected = rows.indexOf(targetRow);
+                if (targetSelected !== -1 && targetSelected !== selected) {
+                    selected = targetSelected;
+                    reflectActiveSegmentUi();
+                }
+            }
         };
         const loadOutputTime = (outputTime, shouldPlay = playback.playing) => {
             const safeTime = Math.max(0, Math.min(totalDuration, Number(outputTime) || 0));
-            const item = sequence.find(candidate => safeTime >= candidate.outputStart && safeTime < candidate.outputEnd) || sequence[sequence.length - 1];
+            const item = sequence.find(candidate => safeTime >= candidate.sourceTimelineStart && safeTime < candidate.sourceTimelineEnd) || sequence.find(candidate => safeTime <= candidate.sourceTimelineEnd) || sequence[sequence.length - 1];
             if (!item) return;
-            playback.outputTime = safeTime;
-            selected = Number(item.row.dataset.reviewIndex) || rows.indexOf(item.row);
-            const rawTime = item.start + Math.max(0, safeTime - item.outputStart);
+            const targetIdx = rows.indexOf(item.row);
+            if (targetIdx !== -1) selected = targetIdx;
+            const rawTime = Math.max(item.start, Math.min(item.end, safeTime - item.sourceTimelineStart));
+            playback.outputTime = item.sourceTimelineStart + rawTime;
             const source = getSource(item.row);
             const token = ++playback.token;
             const applyTime = () => {
                 if (token !== playback.token) return;
-                masterVideo.currentTime = Math.min(Math.max(item.start, rawTime), Math.max(item.start, item.end - .01));
+                masterVideo.currentTime = rawTime;
                 masterVideo.playbackRate = Math.max(.25, Math.min(4, Number(item.row.querySelector('.ae-review-speed')?.value) || 1));
                 playback.switching = false;
-                if (shouldPlay) masterVideo.play().catch(() => { playback.playing = false; updateMasterUi(); });
+                if (shouldPlay) {
+                    masterVideo.play().then(() => {
+                        startPlaybackLoop();
+                    }).catch(() => { playback.playing = false; updateMasterUi(); stopPlaybackLoop(); });
+                } else {
+                    stopPlaybackLoop();
+                }
                 updateMasterUi();
+                reflectActiveSegmentUi();
             };
             if (masterVideo.dataset.source !== source) {
                 playback.switching = true;
@@ -15110,54 +16285,312 @@ function openAutoEditTimelineReview() {
                 masterVideo.load();
             } else applyTime();
         };
-        masterVideo.ontimeupdate = () => {
-            const item = sequence.find(candidate => candidate.row === rows[selected]);
-            if (!item) return;
-            playback.outputTime = item.outputStart + Math.max(0, masterVideo.currentTime - item.start);
-            if (masterVideo.currentTime >= item.end - .025 && playback.playing) {
-                loadOutputTime(item.outputEnd + .001, true);
-                return;
+        selectSegment = (index, shouldScroll = true) => {
+            if (!Number.isFinite(index) || index < 0 || index >= rows.length) return;
+            selected = index;
+            const current = getRow();
+            const seq = buildSequence();
+            const item = seq.find(candidate => candidate.row === current) || seq[selected];
+            if (item) {
+                const targetTime = item.inTimeline;
+                playback.outputTime = targetTime;
+                loadOutputTime(targetTime, false);
+                if (editorInstance) {
+                    const videoTrack = editorInstance._tracks.find(t => t.type === 'video');
+                    const clip = videoTrack?.clips?.find(c => c._reviewRow === current);
+                    if (clip && shouldScroll) {
+                        if (typeof editorInstance.ensureClipVisible === 'function') {
+                            editorInstance.ensureClipVisible(clip);
+                        } else {
+                            editorInstance.ensureTimeVisible(clip.start);
+                        }
+                    }
+                }
             }
-            updateMasterUi();
+            reflectActiveSegmentUi();
         };
-        masterVideo.onpause = () => { if (!playback.switching && !masterVideo.ended) { playback.playing = false; updateMasterUi(); } };
-        masterVideo.onended = () => { if (playback.playing) loadOutputTime(playback.outputTime + .001, true); };
+
+        masterVideo.onplay = () => { startPlaybackLoop(); };
+        masterVideo.onpause = () => { stopPlaybackLoop(); if (!playback.switching && !masterVideo.ended) { playback.playing = false; updateMasterUi(); } };
+        masterVideo.onended = () => { stopPlaybackLoop(); if (playback.playing) loadOutputTime(playback.outputTime + .001, true); };
         masterPlay.onclick = () => {
-            if (playback.playing) { playback.playing = false; masterVideo.pause(); updateMasterUi(); }
-            else { playback.playing = true; loadOutputTime(playback.outputTime, true); }
+            if (playback.playing) {
+                playback.playing = false;
+                masterVideo.pause();
+                stopPlaybackLoop();
+                updateMasterUi();
+            } else {
+                playback.playing = true;
+                loadOutputTime(playback.outputTime, true);
+            }
         };
         masterSeek.oninput = event => loadOutputTime(event.target.value, playback.playing);
-        masterSeek.onchange = () => render();
+        masterSeek.onchange = () => updateMasterUi();
 
-        // 自动剪辑审核和批量 Reels 使用同一个 Canvas 时间线编辑器。审核阶段
-        // 只显示视频、绑定原声、字幕三轨，避免把 BGM/覆层包装混入切点审核。
+        // 自动剪辑审核和批量 Reels 使用同一个 Canvas 时间线编辑器。
+        // 支持视频、字幕、原声三轨联动，支持双击字幕直接编辑。
         const timelineHost = panel.querySelector('[data-role="reels-timeline"]');
         if (timelineHost && typeof window.ReelsTimelineEditor === 'function') {
-            const editor = new window.ReelsTimelineEditor(timelineHost);
-            const makeClip = (item, label, extra = {}) => ({
-                start: item.outputStart,
-                end: item.outputEnd,
-                name: label,
-                _reviewRow: item.row,
-                _lastStart: item.outputStart,
-                _lastEnd: item.outputEnd,
-                ...extra,
-            });
-            editor.setTracks([
-                { type: 'video', name: '视频（裁剪顺序）', clips: sequence.map(item => makeClip(item, getSource(item.row).split(/[/\\]/).pop() || '视频')), locked: false, visible: true, domain: 'visual' },
-                { type: 'subs', name: '字幕（文案定位）', clips: sequence.map(item => makeClip(item, (item.row.querySelector('.ae-review-script')?.value || '字幕').slice(0, 22))), locked: true, visible: true, domain: 'visual' },
-                { type: 'audio', name: '原声（绑定视频）', clips: sequence.map(item => makeClip(item, '原声')), locked: true, visible: true, domain: 'audio' },
-            ]);
-            editor.setDuration(Math.max(1, totalDuration), { fit: true });
-            editor.setPlayhead(playback.outputTime);
-            editor.onSeek = time => loadOutputTime(time, false);
-            editor.onClipSelect = (trackIndex, clipIndex, clip) => {
-                if (!clip?._reviewRow) return;
-                selected = rows.indexOf(clip._reviewRow);
-                loadOutputTime(clip.start, false);
+            editorInstance = new window.ReelsTimelineEditor(timelineHost);
+            const makeClip = (item, label, extra = {}) => {
+                const rawStart = item.start;
+                const rawEnd = item.end;
+                const sourceDur = item.sourceDuration;
+                return {
+                    start: item.sourceTimelineStart,
+                    end: item.sourceTimelineEnd,
+                    inT: rawStart,
+                    outT: rawEnd,
+                    sourceDuration: sourceDur,
+                    name: label,
+                    _reviewRow: item.row,
+                    _lastStart: item.sourceTimelineStart,
+                    _lastEnd: item.sourceTimelineEnd,
+                    _sourceStart: rawStart,
+                    _sourceEnd: rawEnd,
+                    _sourceDuration: sourceDur,
+                    _trimHead: rawStart,
+                    _trimTail: Math.max(0, sourceDur - rawEnd),
+                    ...extra,
+                };
             };
-            editor.onClipChange = (trackIndex, clipIndex, clip) => {
-                if (editor._tracks[trackIndex]?.type !== 'video' || !clip?._reviewRow) return;
+            // 1. AI 语音识别原文轨 (ASR 原声听写)
+            const asrClips = [];
+            sequence.forEach(item => {
+                const cues = buildAutoEditAllTimelineCues('', item.row.dataset.wordTimeline, item.start, item.end, item.sourceTimelineStart);
+                cues.forEach(cue => {
+                    asrClips.push({
+                        start: cue.outputStart,
+                        end: cue.outputEnd,
+                        name: cue.text,
+                        _reviewRow: item.row,
+                        _cue: cue,
+                        _isTrimmed: cue.isTrimmed === true,
+                        _sourceStart: cue.start,
+                        _sourceEnd: cue.end,
+                        _lastStart: cue.outputStart,
+                        _lastEnd: cue.outputEnd,
+                    });
+                });
+            });
+
+            // 2. 用户提供的脚本参考轨 (Prompt/文案)
+            const scriptClips = [];
+            sequence.forEach(item => {
+                const origScript = decodeURIComponent(item.row.dataset.originalScript || '') || item.row.querySelector('.ae-review-script')?.value || '';
+                const scriptLines = origScript.split(/\r?\n+/).map(s => s.trim()).filter(Boolean);
+                const activeDur = Math.max(0.1, item.end - item.start);
+                if (scriptLines.length > 1) {
+                    const perDur = activeDur / scriptLines.length;
+                    scriptLines.forEach((line, lIdx) => {
+                        scriptClips.push({
+                            start: item.sourceTimelineStart + item.start + lIdx * perDur,
+                            end: item.sourceTimelineStart + item.start + (lIdx + 1) * perDur,
+                            name: line,
+                            _reviewRow: item.row,
+                            _isTrimmed: false,
+                            _sourceStart: item.start + lIdx * perDur,
+                            _sourceEnd: item.start + (lIdx + 1) * perDur,
+                            _lastStart: item.sourceTimelineStart + item.start + lIdx * perDur,
+                            _lastEnd: item.sourceTimelineStart + item.start + (lIdx + 1) * perDur,
+                        });
+                    });
+                } else if (origScript.trim()) {
+                    scriptClips.push({
+                        start: item.sourceTimelineStart + item.start,
+                        end: item.sourceTimelineStart + item.end,
+                        name: origScript.trim(),
+                        _reviewRow: item.row,
+                        _isTrimmed: false,
+                        _sourceStart: item.start,
+                        _sourceEnd: item.end,
+                        _lastStart: item.sourceTimelineStart + item.start,
+                        _lastEnd: item.sourceTimelineStart + item.end,
+                    });
+                }
+            });
+
+            // 3. 最终对齐字幕轨 (用于最终导出和播放的 SRT 分句)
+            const subClips = [];
+            sequence.forEach(item => {
+                const scriptText = item.row.querySelector('.ae-review-script')?.value || '';
+                const cues = buildAutoEditAllTimelineCues(scriptText, item.row.dataset.wordTimeline, item.start, item.end, item.sourceTimelineStart);
+                cues.forEach(cue => {
+                    subClips.push({
+                        start: cue.outputStart,
+                        end: cue.outputEnd,
+                        name: cue.text,
+                        _reviewRow: item.row,
+                        _cue: cue,
+                        _isTrimmed: cue.isTrimmed === true,
+                        _sourceStart: cue.start,
+                        _sourceEnd: cue.end,
+                        _lastStart: cue.outputStart,
+                        _lastEnd: cue.outputEnd
+                    });
+                });
+            });
+
+            editorInstance.setTracks([
+                { type: 'video', name: '视频（裁剪顺序）', clips: sequence.map(item => makeClip(item, getSource(item.row).split(/[/\\]/).pop() || '视频')), locked: false, visible: true, domain: 'visual' },
+                { type: 'asr', name: '🎙️ AI 语音识别', clips: asrClips, locked: true, visible: true, domain: 'visual' },
+                { type: 'script', name: '📝 我提供的文案', clips: scriptClips, locked: true, visible: true, domain: 'visual' },
+                { type: 'subs', name: '✨ 最终导出字幕', clips: subClips, locked: false, visible: true, domain: 'visual' },
+                { type: 'audio', name: '原声（绑定视频）', clips: sequence.map(item => makeClip(item, '原声')), locked: false, visible: true, domain: 'audio' },
+            ]);
+            editorInstance.setDuration(Math.max(1, totalDuration), { fit: true });
+            editorInstance.setPlayhead(playback.outputTime);
+            editorInstance.onSeek = time => loadOutputTime(time, false);
+            editorInstance.onClipSelect = (trackIndex, clipIndex, clip) => {
+                if (!clip?._reviewRow) return;
+                const idx = rows.indexOf(clip._reviewRow);
+                if (idx !== -1) selected = idx;
+                const targetTime = clip.start + (Number(clip.inT) || 0);
+                loadOutputTime(targetTime, false);
+                reflectActiveSegmentUi();
+            };
+            editorInstance.onClipContextMenu = (trackIndex, clipIndex, clip) => {
+                if (!clip?._reviewRow) return [];
+                const targetIdx = rows.indexOf(clip._reviewRow);
+                if (targetIdx !== -1) {
+                    selected = targetIdx;
+                    const targetTime = clip.start + (Number(clip.inT) || 0);
+                    loadOutputTime(targetTime, false);
+                    reflectActiveSegmentUi();
+                }
+                const row = clip._reviewRow;
+                const source = getSource(row);
+                const start = Number(row.querySelector('.ae-review-start')?.value) || 0;
+                const end = Number(row.querySelector('.ae-review-end')?.value) || start + 0.05;
+                const script = row.querySelector('.ae-review-script')?.value || '';
+                const wordTimeline = row.dataset.wordTimeline || '';
+                const speed = Number(row.querySelector('.ae-review-speed')?.value) || 1;
+                const sourceDuration = Number(row.dataset.sourceDuration) || 0;
+
+                return {
+                    override: true,
+                    items: [
+                        {
+                            icon: '▶️',
+                            text: `预览剪切后片段 (保留 ${fmt(end - start)})`,
+                            action: () => {
+                                playback.playing = false;
+                                loadOutputTime(clip.start, false);
+                                masterVideo.currentTime = start;
+                                masterVideo.play().then(() => {
+                                    startPlaybackLoop();
+                                }).catch(() => {});
+                            },
+                        },
+                        {
+                            icon: '🎬',
+                            text: `独立窗口试听剪切 (${fmt(start)} ~ ${fmt(end)})`,
+                            action: () => {
+                                window.playVideoClip(source, start, end, script, wordTimeline, speed);
+                            },
+                        },
+                        {
+                            icon: '🎞️',
+                            text: `预览完整原片 (未剪切 ${sourceDuration > 0 ? fmt(sourceDuration) : ''})`,
+                            action: () => {
+                                window.playVideoClip(source, 0, 0, '', '', 1);
+                            },
+                        },
+                        {
+                            icon: '🎯',
+                            text: '在原审核列表中定位',
+                            action: () => {
+                                row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                row.classList.add('ae-quick-locate-target');
+                            },
+                        }
+                    ]
+                };
+            };
+            reflectActiveSegmentUi();
+            editorInstance.onSubtitleEdit = (trackIndex, clipIndex, newText) => {
+                const clip = editorInstance._tracks[trackIndex]?.clips[clipIndex];
+                if (clip?._reviewRow) {
+                    const scriptInput = clip._reviewRow.querySelector('.ae-review-script');
+                    if (scriptInput) {
+                        scriptInput.value = newText;
+                        markAutoEditCutManual(scriptInput);
+                    }
+                    const reviewIdx = Number(clip._reviewRow.dataset?.reviewIndex ?? clipIndex);
+                    if (autoEditLastResult?.segments?.[reviewIdx]) {
+                        autoEditLastResult.segments[reviewIdx].script = newText;
+                    }
+                    if (typeof persistAutoEditBatchReview === 'function') {
+                        persistAutoEditBatchReview();
+                    }
+                    const scriptTextarea = panel.querySelector('[data-role="segment-script"]');
+                    if (scriptTextarea && clipIndex === selected) {
+                        scriptTextarea.value = newText;
+                    }
+                    const cardSnippet = panel.querySelector(`aside button[data-index="${clipIndex}"] div:nth-child(2)`);
+                    if (cardSnippet) cardSnippet.textContent = newText || '（无文案）';
+                }
+            };
+            editorInstance.onClipChange = (trackIndex, clipIndex, clip, extra = {}) => {
+                if (!clip?._reviewRow) return;
+
+                if (extra.editMode === 'cut_in' || extra.editMode === 'cut_out') {
+                    const row = clip._reviewRow;
+                    const sourceStart = Number(row.querySelector('.ae-review-start')?.value) || 0;
+                    const sourceEnd = Number(row.querySelector('.ae-review-end')?.value) || (sourceStart + 0.05);
+                    const newInT = clip.inT !== undefined ? clip.inT : (extra.inT !== undefined ? extra.inT : sourceStart);
+                    const newOutT = clip.outT !== undefined ? clip.outT : (extra.outT !== undefined ? extra.outT : sourceEnd);
+                    setRowCut(row, newInT, newOutT);
+                    
+                    // 同步右侧控制台的入点、出点数值及滑块
+                    const startInput = panel.querySelector('[data-role="start"]');
+                    const endInput = panel.querySelector('[data-role="end"]');
+                    const startNum = panel.querySelector('[data-role="start-number"]');
+                    const endNum = panel.querySelector('[data-role="end-number"]');
+                    const cutDurEl = panel.querySelector('[data-role="cut-duration"]');
+                    if (startInput) startInput.value = newInT;
+                    if (endInput) endInput.value = newOutT;
+                    if (startNum) startNum.value = newInT.toFixed(3);
+                    if (endNum) endNum.value = newOutT.toFixed(3);
+                    if (cutDurEl) cutDurEl.textContent = fmt(Math.max(0.05, newOutT - newInT));
+
+                    // 拖拽切点时实时在主播放器呈现对应帧画面
+                    if (!playback.playing) {
+                        const targetTime = extra.editMode === 'cut_in' ? newInT : newOutT;
+                        if (Number.isFinite(targetTime)) {
+                            masterVideo.currentTime = targetTime;
+                        }
+                    }
+                    // 实时动态更新该片段对应所有字幕切片的剪除状态 (_isTrimmed)
+                    editorInstance._tracks.forEach(track => {
+                        if (track.type === 'subs' || track.type === 'asr') {
+                            track.clips.forEach(c => {
+                                if (c._reviewRow === row) {
+                                    const cueStart = c._cue ? c._cue.start : (c._sourceStart !== undefined ? c._sourceStart : 0);
+                                    const cueEnd = c._cue ? c._cue.end : (c._sourceEnd !== undefined ? c._sourceEnd : 0);
+                                    c._isTrimmed = (cueEnd <= newInT + 0.05) || (cueStart >= newOutT - 0.05);
+                                }
+                            });
+                        } else if (track.type === 'script') {
+                            const segScriptClips = track.clips.filter(c => c._reviewRow === row);
+                            const activeDur = Math.max(0.1, newOutT - newInT);
+                            if (segScriptClips.length > 0) {
+                                const perDur = activeDur / segScriptClips.length;
+                                segScriptClips.forEach((c, idx) => {
+                                    c.start = (clip.start || 0) + newInT + idx * perDur;
+                                    c.end = (clip.start || 0) + newInT + (idx + 1) * perDur;
+                                });
+                            }
+                        }
+                    });
+
+                    if (extra.isEnd && typeof persistAutoEditBatchReview === 'function') {
+                        persistAutoEditBatchReview();
+                    }
+                    editorInstance._render();
+                    return;
+                }
+
                 const leftDelta = clip.start - clip._lastStart;
                 const rightDelta = clip.end - clip._lastEnd;
                 const oldDuration = clip._lastEnd - clip._lastStart;
@@ -15173,9 +16606,33 @@ function openAutoEditTimelineReview() {
                 }
                 clip._lastStart = clip.start;
                 clip._lastEnd = clip.end;
+
+                editorInstance._tracks.forEach(track => {
+                    if (track.type === 'subs' || track.type === 'asr' || track.type === 'script') {
+                        if (Math.abs(leftDelta) > 0.0001) {
+                            track.clips.forEach(c => {
+                                if (c._reviewRow === clip._reviewRow) {
+                                    c.start += leftDelta;
+                                    c.end += leftDelta;
+                                    c._lastStart = c.start;
+                                    c._lastEnd = c.end;
+                                }
+                            });
+                        }
+                    } else {
+                        const companion = track.clips?.[clipIndex];
+                        if (companion && companion !== clip) {
+                            companion.start = clip.start;
+                            companion.end = clip.end;
+                            companion._lastStart = clip.start;
+                            companion._lastEnd = clip.end;
+                        }
+                    }
+                });
+                editorInstance._render();
             };
-            editor.onEditEnd = () => {
-                const videoTrack = editor._tracks.find(track => track.type === 'video');
+            editorInstance.onEditEnd = () => {
+                const videoTrack = editorInstance._tracks.find(track => track.type === 'video');
                 const orderedRows = (videoTrack?.clips || []).slice().sort((a, b) => a.start - b.start).map(clip => clip._reviewRow).filter(Boolean);
                 const changedOrder = orderedRows.length === rows.length && orderedRows.some((row, index) => row !== rows[index]);
                 if (changedOrder) {
@@ -15196,11 +16653,62 @@ function openAutoEditTimelineReview() {
                 render();
             };
         }
+        // 绑定时间线缩放控制
+        const btnTlZoomIn = panel.querySelector('[data-action="tl-zoom-in"]');
+        if (btnTlZoomIn) {
+            btnTlZoomIn.onclick = () => {
+                if (editorInstance) editorInstance.zoomIn(playback.outputTime);
+            };
+        }
+
+        const btnTlZoomOut = panel.querySelector('[data-action="tl-zoom-out"]');
+        if (btnTlZoomOut) {
+            btnTlZoomOut.onclick = () => {
+                if (editorInstance) editorInstance.zoomOut(playback.outputTime);
+            };
+        }
+
+        const btnTlZoomFit = panel.querySelector('[data-action="tl-zoom-fit"]');
+        if (btnTlZoomFit) {
+            btnTlZoomFit.onclick = () => {
+                if (editorInstance) editorInstance.zoomFit();
+            };
+        }
+
+        const btnTlZoomFocus = panel.querySelector('[data-action="tl-zoom-focus"]');
+        if (btnTlZoomFocus) {
+            btnTlZoomFocus.onclick = () => {
+                if (editorInstance) {
+                    const videoTrack = editorInstance._tracks.find(t => t.type === 'video');
+                    const curClip = videoTrack?.clips?.[selected];
+                    if (curClip) {
+                        editorInstance.zoomToClip(curClip);
+                    }
+                }
+            };
+        }
+
         // 初始装载当前片段，同时保持上一次整片播放位置。
         loadOutputTime(playback.outputTime || (sequence.find(item => item.row === getRow())?.outputStart || 0), false);
     };
     modal.addEventListener('mousedown', event => { if (event.target === modal) close(); });
-    modal.addEventListener('keydown', event => { if (event.key === 'Escape') close(); });
+    modal.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+            close();
+        } else if (event.key === 'F1' || (event.key === '?' && !['INPUT', 'TEXTAREA'].includes(event.target?.tagName))) {
+            event.preventDefault();
+            openAutoEditHelpModal();
+        } else if ((event.metaKey || event.ctrlKey) && (event.key === '=' || event.key === '+')) {
+            event.preventDefault();
+            if (editorInstance) editorInstance.zoomIn(playback.outputTime);
+        } else if ((event.metaKey || event.ctrlKey) && (event.key === '-' || event.key === '_')) {
+            event.preventDefault();
+            if (editorInstance) editorInstance.zoomOut(playback.outputTime);
+        } else if ((event.metaKey || event.ctrlKey) && event.key === '0') {
+            event.preventDefault();
+            if (editorInstance) editorInstance.zoomFit();
+        }
+    });
     modal.tabIndex = -1;
     modal.appendChild(panel);
     document.body.appendChild(modal);
@@ -15313,6 +16821,8 @@ async function loadAutoEditProjectFile(file) {
 
 function moveAutoEditReviewRow(index, delta) {
     if (!autoEditLastResult?.analysis_only) return;
+    const currentSegments = collectAutoEditReviewSegments();
+    if (currentSegments.length) autoEditLastResult.segments = currentSegments;
     const next = index + delta;
     const list = autoEditLastResult.segments || [];
     if (next < 0 || next >= list.length) return;
@@ -15533,7 +17043,7 @@ function toggleAutoEditReviewDetails(button) {
 
 function openAutoEditLargeScriptEditor(sourceTextarea) {
     const overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.82);display:flex;align-items:center;justify-content:center;z-index:100001;padding:24px;';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.82);display:flex;align-items:center;justify-content:center;z-index:200000;padding:24px;';
     const modal = document.createElement('div');
     modal.style.cssText = 'width:min(900px,92vw);height:min(650px,86vh);background:#151526;border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:18px;display:flex;flex-direction:column;gap:12px;box-shadow:0 24px 70px rgba(0,0,0,.7);';
     const title = document.createElement('div');
@@ -15603,13 +17113,13 @@ async function retranscribeAutoEditReviewClip(filePath) {
     }
 }
 
-function recalculateAutoEditCutFromScript(button, encodedTimeline) {
-    const row = button.closest('.autoedit-review-row');
+function recalculateAutoEditCutFromScript(button, encodedTimeline, options = {}) {
+    const row = button?.closest?.('.autoedit-review-row') || button;
     if (!row) return false;
     let timeline = [];
     try { timeline = JSON.parse(decodeURIComponent(encodedTimeline || '')); } catch (_) {}
     if (!timeline.length) {
-        showToast('当前分析结果没有逐词时间轴，请重新执行快速分析', 'error');
+        if (!options.silent) showToast('当前分析结果没有逐词时间轴，请重新执行快速分析', 'error');
         return false;
     }
 
@@ -15625,7 +17135,7 @@ function recalculateAutoEditCutFromScript(button, encodedTimeline) {
         : targetText.split(/\s+/).map(normalize).filter(Boolean);
     const sourceTokens = timeline.map(item => normalize(item.word));
     if (!targetTokens.length) {
-        showToast('目标文案为空，无法重算切点', 'error');
+        if (!options.silent) showToast('目标文案为空，无法重算切点', 'error');
         return false;
     }
 
@@ -15660,8 +17170,8 @@ function recalculateAutoEditCutFromScript(button, encodedTimeline) {
 
     const first = timeline[best.start];
     const last = timeline[best.end];
-    const leadPad = Math.max(0, parseFloat(document.getElementById('autoedit-lead-pad')?.value || '0.12'));
-    const tailPad = Math.max(0, parseFloat(document.getElementById('autoedit-tail-pad')?.value || '0.22'));
+    const leadPad = Math.max(0, parseFloat(document.getElementById('autoedit-lead-pad')?.value || document.getElementById('mtb-autoedit-lead')?.value || '0.12'));
+    const tailPad = Math.max(0, parseFloat(document.getElementById('autoedit-tail-pad')?.value || document.getElementById('mtb-autoedit-tail')?.value || '0.22'));
     const startInput = row.querySelector('.ae-review-start');
     const endInput = row.querySelector('.ae-review-end');
     const sourceDuration = Number(row.dataset.sourceDuration || 0);
@@ -15670,7 +17180,9 @@ function recalculateAutoEditCutFromScript(button, encodedTimeline) {
     endInput.value = (sourceDuration > 0 ? Math.min(sourceDuration, paddedEnd) : paddedEnd).toFixed(3);
     row.dataset.modified = 'true';
     updateAutoEditCutSelection(row, 'manual');
-    showToast(`切点已更新为 ${startInput.value}s - ${endInput.value}s（定位相似度 ${Math.round(best.score*100)}%）`, best.score < .8 ? 'info' : 'success');
+    if (!options?.silent) {
+        showToast(`切点已更新为 ${startInput.value}s - ${endInput.value}s（定位相似度 ${Math.round(best.score*100)}%）`, best.score < .8 ? 'info' : 'success');
+    }
     return true;
 }
 
@@ -15682,6 +17194,8 @@ function autoEditReviewDragStart(event, index) {
 function autoEditReviewDrop(event, index) {
     event.preventDefault();
     if (autoEditReviewDragIndex < 0 || autoEditReviewDragIndex === index || !autoEditLastResult?.segments) return;
+    const currentSegments = collectAutoEditReviewSegments();
+    if (currentSegments.length) autoEditLastResult.segments = currentSegments;
     const [item] = autoEditLastResult.segments.splice(autoEditReviewDragIndex, 1);
     autoEditLastResult.segments.splice(index, 0, item);
     autoEditReviewDragIndex = -1;
@@ -15901,7 +17415,7 @@ window.playVideoClip = function(filePath, startVal = 0, endVal = 0, scriptText =
     
     // Create background overlay
     const overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;z-index:100000;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;z-index:200000;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;';
     
     const container = document.createElement('div');
     container.style.cssText = `background:#13132a;width:${scriptText ? '1000px' : '640px'};max-width:92vw;border-radius:14px;padding:20px;border:1px solid rgba(255,255,255,0.1);box-shadow:0 20px 60px rgba(0,0,0,0.7);display:flex;flex-direction:column;gap:14px;color:#e8ecff;position:relative;`;
@@ -15918,14 +17432,24 @@ window.playVideoClip = function(filePath, startVal = 0, endVal = 0, scriptText =
     
     const closeBtn = document.createElement('button');
     closeBtn.style.cssText = 'border:none;background:rgba(255,255,255,0.06);color:#999;border-radius:6px;padding:5px 12px;font-size:12px;cursor:pointer;line-height:1;transition:all 0.2s;';
-    closeBtn.textContent = '关闭';
+    closeBtn.textContent = '关闭 (ESC)';
     closeBtn.onmouseover = () => { closeBtn.style.background = 'rgba(255,255,255,0.1)'; closeBtn.style.color = '#fff'; };
     closeBtn.onmouseout = () => { closeBtn.style.background = 'rgba(255,255,255,0.06)'; closeBtn.style.color = '#999'; };
     
+    const onClipModalKeyDown = (e) => {
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+            destroy();
+        }
+    };
+    window.addEventListener('keydown', onClipModalKeyDown, true);
+
     const destroy = () => {
+        window.removeEventListener('keydown', onClipModalKeyDown, true);
         videoEl.pause();
         videoEl.src = '';
-        document.body.removeChild(overlay);
+        if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
     };
     closeBtn.onclick = destroy;
     
@@ -16553,9 +18077,16 @@ function openAutoEditOutputDir() {
 
 async function sendAutoEditResultToReels(result = null, options = {}) {
     const data = result || autoEditLastResult;
-    if (!data?.output_path || !data?.srt_path) {
-        const error = new Error('还没有可送入批量 Reels 的自动剪辑结果');
-        if (!options.silent) showToast(error.message, 'error');
+    if (data?.analysis_only || !data?.output_path || !data?.srt_path) {
+        if (data?.analysis_only && !options.silent) {
+            const shouldExport = confirm('当前任务还处于“审核时间线”阶段，尚未生成成片视频与字幕。\n\n是否立即按当前审核结果正式导出并自动送入批量 Reels？');
+            if (shouldExport) {
+                return exportReviewedAutoEdit();
+            }
+            return;
+        }
+        const error = new Error('还没有可送入批量 Reels 的成片结果，请先按审核结果完成正式导出');
+        if (!options.silent) showToast(error.message, 'warning');
         throw error;
     }
     if (typeof window.reelsCreateTaskFromAutoEditResult !== 'function') {
@@ -19454,8 +20985,9 @@ document.addEventListener('DOMContentLoaded', () => {
 // 在每个颜色选择器旁边添加一个🎯吸管按钮，点击后调用主进程截屏取色
 
 (function initGlobalEyeDropper() {
-    // 仅在 Electron 环境且支持 screenPickColor 时启用
-    if (!window.electronAPI?.screenPickColor) return;
+    const hasNativeEyeDropper = typeof window.EyeDropper === 'function';
+    const hasIpcEyeDropper = !!window.electronAPI?.screenPickColor;
+    if (!hasNativeEyeDropper && !hasIpcEyeDropper) return;
 
     const MARKER = '_eyedropper-attached';
     const BUTTON_CLASS = 'vk-eyedropper-btn';
@@ -19463,6 +20995,14 @@ document.addEventListener('DOMContentLoaded', () => {
     // 注入全局样式
     const style = document.createElement('style');
     style.textContent = `
+        .vk-color-picker-wrap {
+            display: inline-flex !important;
+            align-items: center !important;
+            gap: 3px !important;
+            flex-shrink: 0 !important;
+            vertical-align: middle !important;
+            white-space: nowrap !important;
+        }
         .vk-eyedropper-btn {
             display: inline-flex;
             align-items: center;
@@ -19470,7 +21010,6 @@ document.addEventListener('DOMContentLoaded', () => {
             width: 22px;
             height: 22px;
             padding: 0;
-            margin-left: 2px;
             border: 1px solid var(--border-color, rgba(255,255,255,0.15));
             border-radius: 4px;
             background: var(--bg-secondary, rgba(255,255,255,0.06));
@@ -19478,11 +21017,12 @@ document.addEventListener('DOMContentLoaded', () => {
             font-size: 12px;
             line-height: 1;
             vertical-align: middle;
-            transition: background 0.15s, border-color 0.15s;
+            transition: background 0.15s, border-color 0.15s, transform 0.1s;
             flex-shrink: 0;
+            user-select: none;
         }
         .vk-eyedropper-btn:hover {
-            background: var(--bg-hover, rgba(255,255,255,0.12));
+            background: var(--bg-hover, rgba(255,255,255,0.15));
             border-color: var(--accent, #4c9eff);
         }
         .vk-eyedropper-btn:active {
@@ -19501,13 +21041,20 @@ document.addEventListener('DOMContentLoaded', () => {
     document.head.appendChild(style);
 
     function attachEyedropper(input) {
-        if (input[MARKER]) return;
+        if (!input || input[MARKER] || input.closest?.('.vk-color-picker-wrap')) return;
         input[MARKER] = true;
+
+        const parent = input.parentNode;
+        if (!parent) return;
+
+        // 创建包装容器，确保 color input 与吸管按钮永远紧密贴合、绝不脱节换行
+        const wrapper = document.createElement('span');
+        wrapper.className = 'vk-color-picker-wrap';
 
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = BUTTON_CLASS;
-        btn.title = '屏幕取色 (可吸取窗口外颜色)';
+        btn.title = '屏幕吸管取色 (支持吸取屏幕上任意像素)';
         btn.textContent = '💉';
         btn.setAttribute('tabindex', '-1');
 
@@ -19517,13 +21064,35 @@ document.addEventListener('DOMContentLoaded', () => {
 
             btn.classList.add('picking');
             try {
-                const hex = await window.electronAPI.screenPickColor();
+                let hex = null;
+                // 优先使用浏览器/Chromium原生 EyeDropper API (带原生放大镜，零权限弹窗，响应极速)
+                if (typeof window.EyeDropper === 'function') {
+                    try {
+                        const eyeDropper = new window.EyeDropper();
+                        const result = await eyeDropper.open();
+                        hex = result?.sRGBHex;
+                    } catch (edErr) {
+                        // 用户按 ESC 或点击取消取色
+                        if (edErr && edErr.name !== 'AbortError') {
+                            console.warn('[EyeDropper] Native EyeDropper warning, fallback to IPC:', edErr);
+                        }
+                    }
+                }
+                // 如果原生未取到或环境不支持，回退到 Electron 主进程截屏取色
+                if (!hex && window.electronAPI?.screenPickColor) {
+                    hex = await window.electronAPI.screenPickColor();
+                }
+
                 if (hex) {
-                    // 更新 input 值
                     input.value = hex;
-                    // 触发 input 和 change 事件，确保所有监听器都能收到
                     input.dispatchEvent(new Event('input', { bubbles: true }));
                     input.dispatchEvent(new Event('change', { bubbles: true }));
+                    if (typeof input.onchange === 'function') {
+                        input.onchange(new Event('change'));
+                    }
+                    if (typeof input.oninput === 'function') {
+                        input.oninput(new Event('input'));
+                    }
                 }
             } catch (err) {
                 console.error('[EyeDropper] Error:', err);
@@ -19532,8 +21101,10 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
 
-        // 将按钮插入到 input 后面
-        input.insertAdjacentElement('afterend', btn);
+        // 将 input 包装进 wrapper
+        parent.insertBefore(wrapper, input);
+        wrapper.appendChild(input);
+        wrapper.appendChild(btn);
     }
 
     function scanAndAttach(root) {
@@ -19542,9 +21113,15 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // 初始扫描
-    document.addEventListener('DOMContentLoaded', () => {
-        setTimeout(() => scanAndAttach(), 500);
-    });
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => {
+            scanAndAttach();
+            setTimeout(scanAndAttach, 500);
+        });
+    } else {
+        scanAndAttach();
+        setTimeout(scanAndAttach, 500);
+    }
 
     // 监听动态添加的颜色输入框
     const observer = new MutationObserver((mutations) => {
@@ -19560,10 +21137,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // 页面加载后启动观察
     if (document.body) {
         observer.observe(document.body, { childList: true, subtree: true });
-        scanAndAttach();
     } else {
         document.addEventListener('DOMContentLoaded', () => {
             observer.observe(document.body, { childList: true, subtree: true });
