@@ -8,7 +8,7 @@ const RenderPlan = require('../src/reels-render-plan.js');
 test('image insert clips project as static image overlays with their own timeline duration', () => {
     const task = {
         insertClips: [{
-            id: 'still-1', sourcePath: '/tmp/reaction.png', sourceType: 'image',
+            id: 'still-1', sourcePath: path.join(os.tmpdir(), 'reaction.png'), sourceType: 'image',
             timelineStart: 4, duration: 2.25, transform: { scale: 80, rotation: 12, opacity: 75 },
         }],
     };

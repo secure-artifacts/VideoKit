@@ -190,9 +190,9 @@ function writeNativeMediaTimeline(outputPath, tasks, fps, resolution) {
 function generateResolveScript(manifestPath) {
     // Dependency-free: Resolve executes this inside its own Python runtime.
     return `# VideoKit native Resolve/Fusion importer (generated; do not edit)
-import json, os, traceback, math
+import json, os, traceback, math, tempfile
 
-LOG = '/tmp/VideoKit Import Fusion.log'
+LOG = os.path.join(tempfile.gettempdir(), 'VideoKit Import Fusion.log')
 def vlog(message):
     with open(LOG, 'a', encoding='utf-8') as f: f.write(str(message) + '\\n')
 open(LOG, 'w', encoding='utf-8').write('VideoKit native Fusion import started\\n')
@@ -534,9 +534,9 @@ function installResolveMenuScript(scriptPath) {
     const sharedDir = '/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion/Scripts/Comp';
     const sharedScript = path.join(sharedDir, 'VideoKit Import Fusion.py');
     const launcher = `# VideoKit Resolve launcher
-import os, traceback
+import os, traceback, tempfile
 latest = '/Users/Shared/VideoKit/Resolve/VideoKit Import Fusion Latest.py'
-log = '/tmp/VideoKit Menu Launcher.log'
+log = os.path.join(tempfile.gettempdir(), 'VideoKit Menu Launcher.log')
 with open(log, 'w', encoding='utf-8') as f: f.write('launcher started\\n' + latest + '\\n')
 try:
     if not os.path.isfile(latest): raise RuntimeError('请先从 VideoKit 导出 FCPXML 时间线。')
