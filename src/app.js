@@ -12347,9 +12347,12 @@ function getAutoEditBatchMatchSummary(data) {
         ready: Number.isFinite(Number(supplied.ready)) ? Number(supplied.ready) : count('ready'),
         warning: Number.isFinite(Number(supplied.warning)) ? Number(supplied.warning) : count('warning'),
         error: Number.isFinite(Number(supplied.error)) ? Number(supplied.error) : count('error'),
-        missingBlocks: Number.isFinite(Number(supplied.missing_blocks))
-            ? Number(supplied.missing_blocks)
-            : (Array.isArray(data?.missing_blocks) ? data.missing_blocks.length : 0),
+        // missing_blocks can be resolved interactively during review. Prefer the
+        // live list so a processed placeholder is reflected immediately instead
+        // of continuing to show the original backend count.
+        missingBlocks: Array.isArray(data?.missing_blocks)
+            ? data.missing_blocks.length
+            : (Number.isFinite(Number(supplied.missing_blocks)) ? Number(supplied.missing_blocks) : 0),
     };
 }
 
@@ -14479,6 +14482,7 @@ function renderAutoEditResult(data) {
                 <div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:7px;">
                     <button class="btn btn-primary" onclick="assignAutoEditMissingBlock(this,'previous')" style="padding:3px 9px;font-size:11px;">归到上一段</button>
                     <button class="btn btn-primary" onclick="assignAutoEditMissingBlock(this,'next')" style="padding:3px 9px;font-size:11px;">归到下一段</button>
+                    <button class="btn btn-secondary" onclick="addSupplementaryAutoEditReviewClip(this)" title="选择一段补录视频插在这个文案位置；不在当前任务文件夹的文件会自动移入" style="padding:3px 9px;font-size:11px;color:#86efac;border-color:rgba(74,222,128,.45);">＋ 补充片段</button>
                     <button class="btn btn-secondary" onclick="locateAutoEditScriptLine(${Math.max(1, block.start - 1)})" style="padding:3px 9px;font-size:11px;">↑ 核对上一个片段</button>
                     <button class="btn btn-secondary" onclick="locateAutoEditScriptLine(${Math.min(originalScriptLines.length, block.end + 1)})" style="padding:3px 9px;font-size:11px;">↓ 核对下一个片段</button>
                 </div>
@@ -14912,7 +14916,6 @@ function assignAutoEditMissingBlock(button, direction) {
     if (!target) return showToast(`没有找到可归入的${direction === 'previous' ? '上一' : '下一'}段`, 'error');
     const textarea = target.querySelector('.ae-review-script');
     if (!textarea) return;
-    const originalText = textarea.value;
     let cleanMissing = '';
     try { cleanMissing = decodeURIComponent(placeholder.dataset.missingText || '').trim(); } catch (_) { cleanMissing = ''; }
     textarea.value = direction === 'previous'
@@ -14922,20 +14925,62 @@ function assignAutoEditMissingBlock(button, direction) {
     target.dataset.modified = 'true';
     const recalcButton = Array.from(target.querySelectorAll('button')).find(item => item.textContent.includes('重算切点'));
     const cutUpdated = recalcButton ? recalculateAutoEditReviewRow(recalcButton) : false;
-    if (!cutUpdated) {
-        textarea.value = originalText;
-        textarea.dispatchEvent(new Event('input', { bubbles: true }));
-        showToast('没有可靠地定位到对应声音，本次归段已撤回。请重新转录，或先手动调整出点', 'warning', 8000);
-        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        return;
-    }
     placeholder.dataset.assigned = 'true';
     placeholder.style.opacity = '.65';
+    placeholder.style.borderStyle = 'solid';
+    placeholder.style.borderColor = 'rgba(81,207,102,.55)';
     const title = placeholder.querySelector('.ae-missing-placeholder-title');
     if (title && !title.textContent.includes('已归入')) title.textContent += ` · 已归入${direction === 'previous' ? '上一' : '下一'}段`;
+    const help = placeholder.querySelector('.ae-missing-placeholder-help');
+    if (help) help.textContent = cutUpdated
+        ? '已写入目标文案并根据识别结果更新切点；可试听该片段确认。'
+        : '已写入目标文案并完成归属确认；识别词不足以自动重算切点，请试听后按需手动调整入出点。';
+    placeholder.querySelectorAll('button').forEach(item => { item.disabled = true; });
+    const blockStart = Number(placeholder.dataset.scriptStartLine);
+    const blockEnd = Number(placeholder.dataset.scriptEndLine);
+    const removeAssignedBlock = result => {
+        if (!Array.isArray(result?.missing_blocks)) return;
+        result.missing_blocks = result.missing_blocks.filter(block => Number(block.startLine) + 1 !== blockStart || Number(block.endLine) + 1 !== blockEnd);
+    };
+    removeAssignedBlock(autoEditLastResult);
+    const activeTask = autoEditActiveBatchIndex >= 0 ? autoEditBatchTasks[autoEditActiveBatchIndex] : null;
+    removeAssignedBlock(activeTask?.result);
+    persistAutoEditBatchReview();
     target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    showToast(`已将缺失文案归到${direction === 'previous' ? '上一' : '下一'}段，并同步更新最终剪辑切点`, 'success');
+    showToast(cutUpdated
+        ? `已将文案归到${direction === 'previous' ? '上一' : '下一'}段，已写入目标文案并更新切点`
+        : `已将文案归到${direction === 'previous' ? '上一' : '下一'}段，已写入目标文案；请试听后确认切点`, 'success', 6500);
 }
+
+async function addSupplementaryAutoEditReviewClip(button, nextSourceIndexOverride = null) {
+    if (!window.electronAPI?.selectFiles) return showToast('当前环境不支持选择文件', 'error');
+    const task = autoEditActiveBatchIndex >= 0 ? autoEditBatchTasks[autoEditActiveBatchIndex] : null;
+    if (!task) return window.addSupplementaryClip?.(Number(button?.closest('.autoedit-missing-placeholder')?.dataset?.scriptStartLine) - 1);
+    const files = await window.electronAPI.selectFiles({
+        title: '选择补充视频片段（将插入当前位置）', properties: ['openFile', 'multiSelections'],
+        filters: [{ name: '视频文件', extensions: ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v'] }]
+    });
+    if (!files?.length) return;
+    const placeholder = button?.closest('.autoedit-missing-placeholder');
+    const nextSourceIndex = Number(nextSourceIndexOverride ?? placeholder?.dataset?.nextSourceIndex);
+    const imported = [];
+    for (const sourcePath of files) {
+        const result = await window.electronAPI.apiCall('media/move-file', { srcPath: sourcePath, destDir: task.folder });
+        const finalPath = result?.data?.path || result?.path;
+        if (!result?.success || !finalPath) return showToast(`导入补充片段失败：${result?.error || '未知错误'}`, 'error');
+        if (!task.clips.includes(finalPath)) imported.push(finalPath);
+    }
+    if (!imported.length) return showToast('所选片段已在当前任务中', 'info');
+    const insertion = nextSourceIndex > 0 ? Math.max(0, nextSourceIndex - 1) : task.clips.length;
+    task.clips.splice(insertion, 0, ...imported);
+    task.result = null; task.reviewSegments = null; task.status = 'waiting';
+    task.message = `已补充 ${imported.length} 个片段，正在重新分析`;
+    document.getElementById('autoedit-timeline-review-modal')?.remove();
+    renderAutoEditBatchTasks();
+    await analyzeAutoEditBatchTask(task);
+    showToast(`已补充 ${imported.length} 个片段，并已重新完成匹配`, 'success', 6000);
+}
+window.addSupplementaryAutoEditReviewClip = addSupplementaryAutoEditReviewClip;
 function playAutoEditResultSegment(index) {
     const segment = autoEditLastResult?.segments?.[index];
     if (segment?.source) window.playVideoClip(segment.source, Number(segment.start) || 0, Number(segment.end) || 0);
@@ -15609,6 +15654,7 @@ function openAutoEditTimelineReview() {
                                 <button data-action="single-recalc" class="btn btn-primary" style="padding:4px 4px;font-size:10.5px;" title="仅修改了文案时使用：AI将按文案重新识别切点并覆盖手动微调">⚡ 重算切点</button>
                                 <button data-action="merge-prev" class="btn btn-secondary" style="padding:4px 4px;font-size:10.5px;color:#93c5fd;border-color:rgba(96,165,250,0.4);" title="将当前片段文案合并归入上一段并重算切点">⬆️ 归上一段</button>
                                 <button data-action="merge-next" class="btn btn-secondary" style="padding:4px 4px;font-size:10.5px;color:#93c5fd;border-color:rgba(96,165,250,0.4);" title="将当前片段文案合并归入下一段并重算切点">⬇️ 归下一段</button>
+                                <button data-action="add-supplementary" class="btn btn-secondary" style="padding:4px 4px;font-size:10.5px;color:#86efac;border-color:rgba(74,222,128,0.4);" title="选择补录视频并插入当前片段之后；外部文件会自动移入当前任务文件夹">＋ 补充片段</button>
                                 <button data-action="select-srt" class="btn btn-secondary" style="padding:4px 4px;font-size:10.5px;color:#86efac;border-color:rgba(74,222,128,0.4);" title="为当前原片指定人工校正 SRT">📄 替换SRT</button>
                                 <button data-action="retranscribe" class="btn btn-secondary" style="padding:4px 4px;font-size:10.5px;color:#fde047;border-color:rgba(251,191,36,0.4);" title="重新调用 ASR 转录此片段">🔄 重新转录</button>
                                 <button data-action="fix-missed" class="btn btn-secondary" style="padding:4px 4px;font-size:10.5px;color:#fca5a5;border-color:rgba(239,68,68,0.4);" title="原片有声音但 AI 漏识别时手动画选">🎙️ 漏识别处理</button>
@@ -16037,6 +16083,15 @@ function openAutoEditTimelineReview() {
                 showToast(`已将文案合并归入下一段（#${selected + 2}）并重算切点`, 'success');
                 selected = selected + 1;
                 render();
+            };
+        }
+
+        const btnAddSupplementary = panel.querySelector('[data-action="add-supplementary"]');
+        if (btnAddSupplementary) {
+            btnAddSupplementary.onclick = () => {
+                const current = getRow();
+                const currentSourceIndex = Number(current?.dataset?.sourceIndex) || selected + 1;
+                addSupplementaryAutoEditReviewClip(null, currentSourceIndex + 1);
             };
         }
 
@@ -17854,9 +17909,9 @@ window.addSupplementaryClip = async function(targetLineIdx) {
         }
 
         let finalPath = filePath;
-        // If the directory differs from the majority directory, copy it
+        // Keep all inputs together so later export/reopen never depends on an external folder.
         if (majorityDir && fileDir !== majorityDir) {
-            const copyResult = await window.electronAPI.apiCall('media/copy-file', {
+            const copyResult = await window.electronAPI.apiCall('media/move-file', {
                 srcPath: filePath,
                 destDir: majorityDir,
                 destFileName: baseName

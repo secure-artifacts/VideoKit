@@ -175,7 +175,10 @@ function _syncGroupedProjectionToTabs(activeTasks) {
         if (!grouped.has(task._batchTabId)) grouped.set(task._batchTabId, []);
         grouped.get(task._batchTabId).push(task);
     }
-    for (const tabId of (_batchTableState.appliedTabIds || [])) {
+    // A task may have just arrived from another workflow while the external
+    // queue is a merged projection.  Include every group present in that queue,
+    // not only the groups that were part of the older projection snapshot.
+    for (const tabId of new Set([...( _batchTableState.appliedTabIds || []), ...grouped.keys()])) {
         const tab = _batchTableState.tabs.find(t => t.id === tabId);
         if (!tab) continue;
         tab.tasks = (grouped.get(tabId) || [])
@@ -183,6 +186,31 @@ function _syncGroupedProjectionToTabs(activeTasks) {
             .map(_stripBatchGroupMeta);
     }
 }
+
+// Importers (for example 文案自动剪辑) add a task directly to the Reels queue.
+// Archive it immediately in the active batch tab as well; otherwise opening the
+// batch table can reload the tab and discard this ungrouped in-memory task.
+function reelsArchiveTaskToActiveBatchTab(task) {
+    if (!task) return null;
+    const tab = _getActiveTab();
+    if (!tab) return null;
+    _ensureTaskId(task);
+    const previousTasks = _cloneBatchTasks(tab.tasks || []);
+    task._batchTabId = tab.id;
+    task._batchTabName = tab.name || '未命名分组';
+    if (_isBatchGroupedProjection(window._reelsState?.tasks || [])) {
+        task._batchProjection = true;
+    }
+    const archivedTask = _cloneBatchTasks([task])[0];
+    const existingIndex = (tab.tasks || []).findIndex(item => item?.id === task.id);
+    if (existingIndex >= 0) tab.tasks.splice(existingIndex, 1, archivedTask);
+    else tab.tasks.push(archivedTask);
+    return {
+        tabId: tab.id,
+        rollback: () => { tab.tasks = previousTasks; },
+    };
+}
+window.reelsArchiveTaskToActiveBatchTab = reelsArchiveTaskToActiveBatchTab;
 
 function _syncTasksToActiveTab() {
     const tab = _getActiveTab();

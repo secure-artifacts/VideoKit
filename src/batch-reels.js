@@ -6701,9 +6701,13 @@ async function reelsCreateTaskFromAutoEditResult(autoEditResult = {}, opts = {})
     const previousSelectedIdx = _reelsState.selectedIdx;
     const workMode = document.getElementById('reels-work-mode');
     const previousWorkMode = workMode?.value;
+    let batchArchive = null;
     try {
         _reelsState.tasks.push(task);
         _reelsState.selectedIdx = _reelsState.tasks.length - 1;
+        // Persist into the active batch tab before any table/list rerender. This
+        // is essential when the current Reels queue is a multi-tab projection.
+        batchArchive = window.reelsArchiveTaskToActiveBatchTab?.(task) || null;
 
         if (workMode) {
             workMode.value = 'voiced_bg';
@@ -6717,6 +6721,7 @@ async function reelsCreateTaskFromAutoEditResult(autoEditResult = {}, opts = {})
     } catch (error) {
         _reelsState.tasks.splice(previousTaskCount);
         _reelsState.selectedIdx = previousSelectedIdx;
+        batchArchive?.rollback?.();
         if (workMode && previousWorkMode) workMode.value = previousWorkMode;
         throw error;
     }

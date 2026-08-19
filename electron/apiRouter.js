@@ -894,6 +894,31 @@ async function routeAPI(endpoint, data, progressSender = null, sender = null) {
             return { success: true, path: targetPath, copied: true };
         }
 
+        case 'media/move-file': {
+            const { srcPath, destDir, destFileName } = data;
+            if (!srcPath || !destDir) throw new Error('缺少文件路径或目标目录参数');
+            if (!fs.existsSync(srcPath)) throw new Error(`源文件不存在: ${srcPath}`);
+            fs.mkdirSync(destDir, { recursive: true });
+            if (path.normalize(path.dirname(srcPath)) === path.normalize(destDir)) {
+                return { success: true, path: srcPath, moved: false };
+            }
+            const requestedName = destFileName || path.basename(srcPath);
+            let targetPath = path.join(destDir, requestedName);
+            if (fs.existsSync(targetPath)) {
+                const parsed = path.parse(requestedName);
+                targetPath = path.join(destDir, `${parsed.name}_added_${Date.now()}${parsed.ext}`);
+            }
+            try {
+                fs.renameSync(srcPath, targetPath);
+            } catch (_) {
+                // Cross-volume moves cannot rename atomically; remove only after a successful copy.
+                fs.copyFileSync(srcPath, targetPath);
+                fs.unlinkSync(srcPath);
+            }
+            console.log(`[Move File] Moved ${srcPath} -> ${targetPath}`);
+            return { success: true, path: targetPath, moved: true };
+        }
+
         case 'media/auto-edit-by-script':
         case 'media/auto-edit':
         case 'auto-edit-by-script':
