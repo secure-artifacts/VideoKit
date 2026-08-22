@@ -84,6 +84,31 @@ function _rbtFileExists(filePath) {
     return true;
 }
 
+function _rbtGetNativeFilePath(file) {
+    if (file?._nativePath) return String(file._nativePath).trim();
+    const filePath = (typeof getFileNativePath === 'function')
+        ? getFileNativePath(file)
+        : (file?.path || '');
+    const value = String(filePath || '').trim();
+    // 批量任务需要可跨预览、识别和导出使用的绝对本地路径；单独的文件名
+    // 只能在 FileReader 中临时读取，不能存入任务。
+    if (!value || (!value.includes('/') && !value.includes('\\'))) return '';
+    return value;
+}
+
+function _rbtNativePathFile(filePath) {
+    const value = String(filePath || '').trim();
+    const name = value.split(/[\\/]/).pop() || value;
+    // 仅用于背景/音频这类不需要读取浏览器 File 内容的批量素材。
+    // 路径来自原生 dialog，避免 macOS 上从 File 对象反查路径不稳定。
+    return { name, path: value, _nativePath: value };
+}
+
+function _rbtShowNativePathError(files) {
+    const names = Array.from(files || []).slice(0, 5).map(f => f?.name).filter(Boolean).join('、');
+    alert(`未能取得所选素材的完整本地路径${names ? `：${names}` : ''}。\n\n请关闭后重新打开 VideoKit，再通过“选择文件”重新添加素材。为避免之后对齐或导出错配，本次不会保存只有文件名的素材记录。`);
+}
+
 function _rbtMediaUrl(filePath) {
     if (!filePath || typeof filePath !== 'string') return '';
     if (/^(local-media:|file:|blob:|data:|https?:)/i.test(filePath)) return filePath;
@@ -1629,7 +1654,14 @@ function _findBatchOverlayByIdOrIdx(task, id, name, idx, type) {
     const list = (task.overlays || []).filter(o => o && !o.fixed_text && (type === 'scroll' ? o.type === 'scroll' : (o.type === 'textcard' || !o.type || o.type === '')));
     if (list.length === 0) return null;
     if (id && id !== 'default') {
-        const found = list.find(o => o.id === id);
+        // 派生任务的实例 ID 必须唯一；_templateOverlayId 用来保持批量表格
+        // “同一模板图层”列的稳定定位，不再依赖跨任务重复的运行时 ID。
+        const state = window._reelsState;
+        const templateTask = state?.tasks?.[state.selectedIdx] || state?.tasks?.[0];
+        const derivation = window.ReelsTaskDerivation;
+        const found = derivation?.overlayMatchesTemplateSlot
+            ? list.find(o => derivation.overlayMatchesTemplateSlot(o, id, templateTask?.overlays || []))
+            : list.find(o => o.id === id || o._templateOverlayId === id);
         if (found) return found;
     }
     if (name) {
@@ -1647,6 +1679,11 @@ function _createTaskFromTemplate(state, taskName) {
     const templateTask = state.tasks[state.selectedIdx] || state.tasks[0];
     if (templateTask) {
         const newTask = _cloneBatchTasks([templateTask])[0];
+        const derivation = window.ReelsTaskDerivation;
+        if (!derivation) throw new Error('任务派生模块未加载，请完全重启 VideoKit 后重试');
+        // 此阶段先生成唯一任务 ID 并清空内容来源。覆层需要等调用方填入
+        // 新文字卡片/滚动层后统一改 ID，才能完整重映射层间绑定。
+        derivation.prepareDerivedTask(newTask, { overlays: false });
         newTask.baseName = taskName;
         newTask.fileName = `${taskName}.mp4`;
         newTask.bgPath = null;
@@ -1670,6 +1707,7 @@ function _createTaskFromTemplate(state, taskName) {
         return newTask;
     } else {
         return {
+            id: window.ReelsTaskDerivation?.createId?.('task'),
             baseName: taskName,
             fileName: `${taskName}.mp4`,
             bgPath: null, bgSrcUrl: null,
@@ -1680,6 +1718,21 @@ function _createTaskFromTemplate(state, taskName) {
             aligned: false, bgScale: 100, bgDurScale: 100, audioDurScale: 100
         };
     }
+}
+
+function _finalizeDerivedTaskInstances(task) {
+    const derivation = window.ReelsTaskDerivation;
+    if (!derivation || !task) return task;
+    derivation.rekeyOverlays(task);
+    derivation.resolveOverlayBindings(task);
+    return task;
+}
+
+function _cloneDerivedOverlay(templateOverlay) {
+    const derivation = window.ReelsTaskDerivation;
+    return derivation?.cloneOverlay
+        ? derivation.cloneOverlay(templateOverlay)
+        : JSON.parse(JSON.stringify(templateOverlay));
 }
 
 function _collectBatchOverlayTextSlots(overlays) {
@@ -1736,11 +1789,12 @@ function _applyOverlayField(task, fieldCategory, str) {
             const templateList = templateTask ? (templateTask.overlays || []).filter(o => o && !o.fixed_text && o.type === 'scroll') : [];
             const templateOv = targetId ? templateList.find(o => o.id === targetId) : templateList[0];
             if (templateOv) {
-                ov = JSON.parse(JSON.stringify(templateOv));
+                ov = _cloneDerivedOverlay(templateOv);
                 ov.scroll_title = '';
                 ov.content = '';
                 ov.fixed_text = false;
                 task.overlays.push(ov);
+                window.ReelsTaskDerivation?.resolveOverlayBindings?.(task);
             } else {
                 ov = window.ReelsOverlay ? window.ReelsOverlay.createScrollOverlay({ start: 0, end: 9999 }) : { scroll_title: '', content: '', type: 'scroll' };
                 ov.scroll_title = '';
@@ -1760,12 +1814,13 @@ function _applyOverlayField(task, fieldCategory, str) {
             const templateList = templateTask ? (templateTask.overlays || []).filter(o => o && !o.fixed_text && (o.type === 'textcard' || !o.type || o.type === '')) : [];
             const templateOv = targetId ? templateList.find(o => o.id === targetId) : templateList[0];
             if (templateOv) {
-                ov = JSON.parse(JSON.stringify(templateOv));
+                ov = _cloneDerivedOverlay(templateOv);
                 ov.title_text = '';
                 ov.body_text = '';
                 ov.footer_text = '';
                 ov.fixed_text = false;
                 task.overlays.push(ov);
+                window.ReelsTaskDerivation?.resolveOverlayBindings?.(task);
             } else {
                 ov = window.ReelsOverlay ? window.ReelsOverlay.createTextCardOverlay({ start: 0, end: 9999 }) : { title_text: '', body_text: '', footer_text: '', type: 'textcard' };
                 ov.title_text = '';
@@ -3935,10 +3990,10 @@ function _bindBatchTableEvents() {
 
     // ── 批量上传按钮 ──
     container.querySelector('#rbt-upload-bg')?.addEventListener('click', () => {
-        container.querySelector('#rbt-file-bg').click();
+        _rbtPickNativeMediaFiles('bg');
     });
     container.querySelector('#rbt-upload-audio')?.addEventListener('click', () => {
-        container.querySelector('#rbt-file-audio').click();
+        _rbtPickNativeMediaFiles('audio');
     });
     container.querySelector('#rbt-upload-srt')?.addEventListener('click', () => {
         container.querySelector('#rbt-file-srt').click();
@@ -4409,8 +4464,17 @@ function _bindBatchTableEvents() {
         if (!files.length) return;
         e.preventDefault();
 
+        // In Electron with context isolation, a File passed from the renderer
+        // to preload may no longer be accepted by webUtils.getPathForFile().
+        // Preload captures native paths from the original drop event; attach
+        // them to these renderer-side File objects before any routing occurs.
+        const droppedPaths = window.electronAPI?.consumeDroppedFilePaths?.() || [];
+        files.forEach((file, index) => {
+            if (droppedPaths[index]) file._nativePath = droppedPaths[index];
+        });
+
         // ── Check if any directory was dropped ──
-        const paths = files.map(f => (typeof getFileNativePath === 'function') ? getFileNativePath(f) : (f.path || f.name)).filter(Boolean);
+        const paths = files.map(_rbtGetNativeFilePath).filter(Boolean);
         const dirs = paths.filter(p => _isDirectoryPath(p));
         if (dirs.length > 0) {
             await _importFoldersAsFileTaskTabs(dirs);
@@ -5056,6 +5120,7 @@ function _bindBatchTableEvents() {
                     else if (fieldCategory.startsWith('overlay_') || fieldCategory.startsWith('scroll_')) {
                         _applyOverlayField(newTask, fieldCategory, str);
                     }
+                    _finalizeDerivedTaskInstances(newTask);
                     state.tasks.push(newTask);
                     created++;
                 }
@@ -5888,6 +5953,24 @@ function _bindBatchTableEvents() {
             }
         });
     }
+}
+
+async function _rbtPickNativeMediaFiles(field) {
+    const isBackground = field === 'bg';
+    if (!window.electronAPI?.selectFiles) {
+        // 浏览器版仍使用原有输入控件；桌面版必须优先走原生选择器。
+        _batchTableState.container?.querySelector(isBackground ? '#rbt-file-bg' : '#rbt-file-audio')?.click();
+        return;
+    }
+    const filePaths = await window.electronAPI.selectFiles({
+        title: isBackground ? '选择背景素材文件' : '选择人声音频文件',
+        multiple: true,
+        filters: isBackground
+            ? [{ name: '视频和图片', extensions: ['mp4', 'mov', 'mkv', 'avi', 'wmv', 'flv', 'webm', 'jpg', 'jpeg', 'png', 'webp'] }]
+            : [{ name: '音频和视频', extensions: ['mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg', 'wma', 'mp4', 'mov', 'mkv', 'avi', 'wmv', 'flv', 'webm'] }],
+    });
+    if (!filePaths?.length) return;
+    await _batchAssignFiles(filePaths.map(_rbtNativePathFile), field);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -9753,12 +9836,13 @@ function _setTaskText(task, title, body, ReelsOverlay, footer, targetId = null, 
         const templateList = templateTask ? (templateTask.overlays || []).filter(o => o && !o.fixed_text && (o.type === 'textcard' || !o.type || o.type === '')) : [];
         const templateOv = targetId ? templateList.find(o => o.id === targetId) : (targetIdx != null && targetIdx >= 0 && targetIdx < templateList.length ? templateList[targetIdx] : templateList[0]);
         if (templateOv) {
-            ov = JSON.parse(JSON.stringify(templateOv));
+            ov = _cloneDerivedOverlay(templateOv);
             ov.title_text = '';
             ov.body_text = '';
             ov.footer_text = '';
             ov.fixed_text = false;
             task.overlays.push(ov);
+            window.ReelsTaskDerivation?.resolveOverlayBindings?.(task);
         } else {
             ov = ReelsOverlay.createTextCardOverlay({
                 title_text: '', body_text: '', footer_text: '',
@@ -9780,6 +9864,7 @@ function _createNewTextRow(state, title, body, ReelsOverlay, footer, targetId = 
     const taskName = _generateUniqueCardName(state.tasks, 'card');
     const newTask = _createTaskFromTemplate(state, taskName);
     _setTaskText(newTask, title, body, ReelsOverlay, footer, targetId, targetIdx);
+    _finalizeDerivedTaskInstances(newTask);
     state.tasks.push(newTask);
 }
 
@@ -9794,11 +9879,12 @@ function _setTaskScrollText(task, title, body, ReelsOverlay, targetId = null, ta
         const templateList = templateTask ? (templateTask.overlays || []).filter(o => o && !o.fixed_text && o.type === 'scroll') : [];
         const templateOv = targetId ? templateList.find(o => o.id === targetId) : (targetIdx != null && targetIdx >= 0 && targetIdx < templateList.length ? templateList[targetIdx] : templateList[0]);
         if (templateOv) {
-            scrollOv = JSON.parse(JSON.stringify(templateOv));
+            scrollOv = _cloneDerivedOverlay(templateOv);
             scrollOv.scroll_title = '';
             scrollOv.content = '';
             scrollOv.fixed_text = false;
             task.overlays.push(scrollOv);
+            window.ReelsTaskDerivation?.resolveOverlayBindings?.(task);
         } else {
             scrollOv = ReelsOverlay.createScrollOverlay({
                 scroll_title: title, content: body,
@@ -9807,10 +9893,10 @@ function _setTaskScrollText(task, title, body, ReelsOverlay, targetId = null, ta
             scrollOv.fixed_text = false;
             task.overlays.push(scrollOv);
         }
-    } else {
-        scrollOv.scroll_title = title;
-        scrollOv.content = body;
     }
+    // 无论是刚从模板创建，还是已经存在，都必须写入当前行的新文案。
+    scrollOv.scroll_title = title;
+    scrollOv.content = body;
 }
 
 // ── 辅助：新建一行并填入滚动字幕 ──
@@ -9818,6 +9904,7 @@ function _createNewScrollRow(state, title, body, ReelsOverlay, targetId = null, 
     const taskName = _generateUniqueCardName(state.tasks, 'scroll');
     const newTask = _createTaskFromTemplate(state, taskName);
     _setTaskScrollText(newTask, title, body, ReelsOverlay, targetId, targetIdx);
+    _finalizeDerivedTaskInstances(newTask);
     state.tasks.push(newTask);
 }
 
@@ -10651,7 +10738,8 @@ function _batchAddEmptyRow() {
     newTask.ttsVoiceId = '';
     newTask.pipPath = '';
     newTask.status = '';
-    
+
+    _finalizeDerivedTaskInstances(newTask);
     state.tasks.push(newTask);
 }
 
@@ -12436,7 +12524,8 @@ function _showBatchModeDialog(fileCount, field) {
 
 /** 将文件应用到任务 */
 function _assignFileToTask(task, file, field) {
-    const filePath = (typeof getFileNativePath === 'function') ? getFileNativePath(file) : (file.path || file.name);
+    const filePath = _rbtGetNativeFilePath(file);
+    if (!filePath) return false;
     if (field === 'hook') {
         task.hookFile = filePath;
         if (task.hookSpeed == null) task.hookSpeed = 1;
@@ -12473,6 +12562,7 @@ function _assignFileToTask(task, file, field) {
             task.bgmPath = filePath;
         }
     }
+    return true;
 }
 
 /** 创建空行 */
@@ -12498,6 +12588,12 @@ function _createEmptyTask() {
 async function _batchAssignFiles(files, field) {
     const state = window._reelsState;
     if (!state || !files || files.length === 0) return;
+
+    const invalidFiles = files.filter(file => !_rbtGetNativeFilePath(file));
+    if (invalidFiles.length > 0) {
+        _rbtShowNativePathError(invalidFiles);
+        return;
+    }
 
     files.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
@@ -12636,6 +12732,11 @@ function _batchAssignTxtFiles(files) {
     const state = window._reelsState;
     if (!state) return;
     const ReelsOverlay = window.ReelsOverlay;
+    const invalidFiles = files.filter(file => !_rbtGetNativeFilePath(file));
+    if (invalidFiles.length > 0) {
+        _rbtShowNativePathError(invalidFiles);
+        return;
+    }
 
     function getMatchKey(name) {
         if (typeof window._buildAudioSubtitleMatchKey === 'function') {
@@ -12650,7 +12751,7 @@ function _batchAssignTxtFiles(files) {
 
     let fallbackIdx = 0;
     for (const file of files) {
-        const filePath = (typeof getFileNativePath === 'function') ? getFileNativePath(file) : (file.path || file.name);
+        const filePath = _rbtGetNativeFilePath(file);
         const key = getMatchKey(file.name);
 
         // 尝试按名字匹配已有行（用 matchKey 比较）
@@ -12739,7 +12840,11 @@ function _assignSingleFile(idx, field, file) {
     const state = window._reelsState;
     if (!state || !state.tasks[idx]) return;
     const task = state.tasks[idx];
-    const filePath = (typeof getFileNativePath === 'function') ? getFileNativePath(file) : (file.path || file.name);
+    const filePath = _rbtGetNativeFilePath(file);
+    if (!filePath) {
+        _rbtShowNativePathError([file]);
+        return;
+    }
 
     console.log(`[BatchTable] _assignSingleFile idx=${idx} field=${field} filePath=${filePath} file.name=${file.name}`);
 
@@ -13695,11 +13800,29 @@ async function _batchAlignAllTasks(overrideForce = false) {
 
     const getAlignAudioPath = (t) => {
         if (!t) return '';
-        if (alignOptions.forceAudioSource === true) return t.audioPath || '';
+        let raw = '';
+        if (alignOptions.forceAudioSource === true) raw = t.audioPath || '';
         // 严格模式：只使用用户明确选择的源，不做静默 fallback
-        if (alignSource === 'video') return t.bgPath || t.videoPath || '';
+        else if (alignSource === 'video') raw = t.bgPath || t.videoPath || '';
         // alignSource === 'audio' (默认)：只用人声-音频文件
-        return t.audioPath || '';
+        else raw = t.audioPath || '';
+
+        if (!raw) return '';
+        let p = String(raw).trim();
+        if (p.startsWith('file://')) {
+            try { p = decodeURIComponent(p.replace(/^file:\/\//i, '')); } catch (_) { p = p.replace(/^file:\/\//i, ''); }
+        }
+        // 如果是相对文件名且设置了素材文件夹，尝试从素材文件夹补全完整路径
+        if (p && !p.startsWith('/') && !/^[A-Z]:\\/i.test(p)) {
+            const activeTab = typeof _getActiveTab === 'function' ? _getActiveTab() : null;
+            const matDir = activeTab?.materialDir || (typeof _batchTableState !== 'undefined' && _batchTableState?.tabs?.[0]?.materialDir) || '';
+            if (matDir) {
+                const sep = matDir.includes('\\') ? '\\' : '/';
+                const candidate = `${matDir.replace(/[\\/]+$/, '')}${sep}${p}`;
+                p = candidate;
+            }
+        }
+        return p;
     };
 
     const allSourceTextCandidates = _buildBatchAlignSourceTextCandidates(state.tasks || [], 16);
@@ -14353,21 +14476,30 @@ async function _batchAlignAllTasks(overrideForce = false) {
                 calibrationDetails.push(`${taskName}: ${_formatTimingCalibration(data.timing_calibration)}`);
             }
 
-            // 保存 SRT 路径并解析 segments
-            if (data.files && data.files.length > 0) {
-                const srtFile = data.files.find(f => f.endsWith('_source.srt')) || data.files[0];
-                task.srtPath = srtFile;
+            // 保存 SRT 路径并解析 segments。不能仅凭接口 200 就标记“已对齐”：
+            // 后端偶发未返回生成文件时，旧逻辑会显示成功，却没有把 SRT 链接到任务。
+            const generatedSrtFiles = Array.isArray(data.files)
+                ? data.files.filter(f => typeof f === 'string' && /\.srt$/i.test(f))
+                : [];
+            const srtFile = generatedSrtFiles.find(f => /_source\.srt$/i.test(f)) || generatedSrtFiles[0];
+            if (!srtFile) {
+                throw new Error('对齐未返回可链接的 SRT 文件；本任务未标记为已对齐，请重试。');
+            }
+            task.srtPath = srtFile;
 
-                if (window.electronAPI && window.electronAPI.readFileText) {
-                    const srtContent = await window.electronAPI.readFileText(srtFile);
-                    const srtPlainText = _extractPlainTextFromSrtContent(srtContent);
-                    const rawSegs = (typeof parseSRT === 'function' ? parseSRT(srtContent) : []).map(seg => ({ ...seg, _timeUnit: 'sec' }));
-                    task.segments = window.ReelsSubtitleProcessor
-                        ? ReelsSubtitleProcessor.srtToSegmentsWithWords(rawSegs)
-                        : rawSegs;
-                    _rbtApplyPendingFirstSubtitleStyle(task);
+            if (window.electronAPI && window.electronAPI.readFileText) {
+                const srtContent = await window.electronAPI.readFileText(srtFile);
+                if (!String(srtContent || '').trim()) {
+                    throw new Error(`生成的 SRT 为空或无法读取：${srtFile}`);
+                }
+                const srtPlainText = _extractPlainTextFromSrtContent(srtContent);
+                const rawSegs = (typeof parseSRT === 'function' ? parseSRT(srtContent) : []).map(seg => ({ ...seg, _timeUnit: 'sec' }));
+                task.segments = window.ReelsSubtitleProcessor
+                    ? ReelsSubtitleProcessor.srtToSegmentsWithWords(rawSegs)
+                    : rawSegs;
+                _rbtApplyPendingFirstSubtitleStyle(task);
 
-                    if (isRealignRedo && confirmedMatchedCandidate) {
+                if (isRealignRedo && confirmedMatchedCandidate) {
                         const recognizedForReport = confirmedRecognizedText || data.recognized_text || sourceText;
                         const triple = _buildBatchAlignTripleTableRow(
                             taskName,
@@ -14404,7 +14536,6 @@ async function _batchAlignAllTasks(overrideForce = false) {
                             task.alignRecognitionDifference = true;
                             console.warn(`[BatchAlign] 识别稿与来源文案存在差异，但 SRT 已按已确认文案生成: ${taskName}`);
                         }
-                    }
                 }
             }
 

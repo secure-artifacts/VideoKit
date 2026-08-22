@@ -18,6 +18,11 @@ let latestRendererCrashReport = null;
 
 // 保留不含任务内容的崩溃诊断，用户可将该文件反馈给开发者定位问题。
 function writeRendererCrashReport(details = {}) {
+    const reason = String(details?.reason || '');
+    // 正常退出、开发者热重载、进程主动终止 (killed/clean-exit/code 15) 不属于异常崩溃，不写入日志
+    if (reason === 'clean-exit' || reason === 'killed' || details?.exitCode === 0 || details?.exitCode === 15) {
+        return null;
+    }
     try {
         const dir = path.join(app.getPath('userData'), 'diagnostics');
         fs.mkdirSync(dir, { recursive: true });
@@ -43,13 +48,23 @@ function writeRendererCrashReport(details = {}) {
 }
 
 function getLatestRendererCrashReport() {
-    if (latestRendererCrashReport) return latestRendererCrashReport;
+    if (latestRendererCrashReport) {
+        const reason = String(latestRendererCrashReport.reason || '');
+        if (reason === 'clean-exit' || reason === 'killed') return null;
+        return latestRendererCrashReport;
+    }
     try {
         const diagnosticFile = path.join(app.getPath('userData'), 'diagnostics', 'renderer-crashes.jsonl');
         if (!fs.existsSync(diagnosticFile)) return null;
-        const lines = fs.readFileSync(diagnosticFile, 'utf8').trim().split('\n');
-        if (!lines.length || !lines[lines.length - 1]) return null;
-        latestRendererCrashReport = { ...JSON.parse(lines[lines.length - 1]), diagnosticFile };
+        const lines = fs.readFileSync(diagnosticFile, 'utf8').trim().split('\n').filter(Boolean);
+        if (!lines.length) return null;
+        const last = JSON.parse(lines[lines.length - 1]);
+        const reason = String(last?.reason || '');
+        if (reason === 'clean-exit' || reason === 'killed') return null;
+        // 只有 60 秒内发生的真实崩溃（比如异常闪退后刚拉起恢复）才返回给前端展示，避免冷启动翻出历史旧账
+        const reportTime = new Date(last?.timestamp).getTime();
+        if (isNaN(reportTime) || Date.now() - reportTime > 60000) return null;
+        latestRendererCrashReport = { ...last, diagnosticFile };
         return latestRendererCrashReport;
     } catch (error) {
         log(`[CrashReport] 读取失败: ${error.message}`);
@@ -601,6 +616,8 @@ function createWindow() {
     mainWindow = new BrowserWindow(windowOptions);
     // renderer 异常退出时，beforeunload 不一定会运行；由主进程记录原因。
     mainWindow.webContents.on('render-process-gone', (_event, details) => {
+        // 忽略正常退出以及开发者热重启/系统 SIGTERM(15) 终止，不作为异常崩溃记录
+        if (isQuitting || details?.reason === 'clean-exit' || details?.exitCode === 15) return;
         writeRendererCrashReport({
             process: details?.process || 'renderer',
             reason: details?.reason || 'unknown',

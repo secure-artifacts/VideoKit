@@ -1513,14 +1513,25 @@ async function routeAPI(endpoint, data, progressSender = null, sender = null) {
 
         case 'subtitle/generate': {
             if (!data.audio_path && !data.audio_file_path) throw new Error('缺少音频文件路径');
-            const audioPath = data.audio_path || data.audio_file_path;
-            if (!fs.existsSync(audioPath)) {
-                throw new Error(`音频文件不存在或无法读取: ${audioPath}`);
+            let audioPath = data.audio_path || data.audio_file_path;
+            if (typeof audioPath === 'string' && audioPath.startsWith('file://')) {
+                try { audioPath = decodeURIComponent(audioPath.replace(/^file:\/\//i, '')); } catch (_) { audioPath = audioPath.replace(/^file:\/\//i, ''); }
             }
             try {
-                if (!fs.statSync(audioPath).isFile()) throw new Error('选择的不是文件');
+                // existsSync 会把 EACCES/EPERM 同样表现为 false，导致 macOS
+                // 用户看到“文件不存在”。使用 statSync 保留真实原因。
+                if (!path.isAbsolute(audioPath)) {
+                    throw new Error(`素材路径缺少完整本地目录（${audioPath}），请在表格中重新选择或重新拖入该文件`);
+                }
+                if (!fs.statSync(audioPath).isFile()) throw new Error(`选择的路径不是文件（${audioPath}）`);
             } catch (error) {
-                throw new Error(`无法读取音频文件: ${error.message}`);
+                if (error?.code === 'ENOENT') {
+                    throw new Error(`音频/视频文件不存在或已被移动：${audioPath}。请检查文件位置或在表格中重新选择`);
+                }
+                if (error?.code === 'EACCES' || error?.code === 'EPERM') {
+                    throw new Error(`没有读取该素材的系统权限（${audioPath}）。请在 macOS“系统设置 -> 隐私与安全性 -> 完全磁盘访问权限”中允许 VideoKit 访问`);
+                }
+                throw new Error(`无法读取音频文件（${audioPath}）: ${error.message}`);
             }
             const gladiaKeysData = settingsService.loadGladiaKeys();
             let gladiaKeys = gladiaKeysData.keys || [];

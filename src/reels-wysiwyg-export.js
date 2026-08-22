@@ -141,6 +141,7 @@ function _cloneOverlaysForWysiwygExport(overlays) {
         '_allOverlays',
         '_cachedUrl',
         '_currentFrameImage',
+        '_exportImage',
         '_dirty',
         '_exportDuration',
         '_exporting',
@@ -185,29 +186,10 @@ function _cloneOverlaysForWysiwygExport(overlays) {
 async function _resolveMissingOverlayPath(ov, taskOverlays, log) {
     const opath = _normalizeOverlayLocalPath(ov?.content || '');
     if (await _overlayLocalPathExists(opath)) return opath;
-
-    const fileName = _overlayPathBaseName(ov?.content || '');
-    if (!fileName || !window.electronAPI || typeof window.electronAPI.searchFilesRecursive !== 'function') {
-        return opath;
-    }
-
-    const dirs = _collectOverlaySearchDirs(taskOverlays);
-    const key = fileName.toLowerCase();
-    for (const dir of dirs) {
-        try {
-            const foundMap = await window.electronAPI.searchFilesRecursive(dir, [fileName], 5);
-            const foundPath = foundMap && foundMap[key];
-            if (foundPath) {
-                if (log) log(`已自动找回覆层素材: ${fileName} → ${foundPath}`);
-                if (window.electronAPI && typeof window.electronAPI.toFileUrl === 'function') {
-                    ov.content = window.electronAPI.toFileUrl(foundPath) || foundPath;
-                } else {
-                    ov.content = foundPath;
-                }
-                return foundPath;
-            }
-        } catch (_) { }
-    }
+    // 导出时禁止在其他任务/素材目录中按文件名猜测。不同任务很容易都有
+    // overlay.mp4、logo.png 等同名文件，旧逻辑取第一个搜索结果会生成内容
+    // 完整但绑定错误的成片。素材丢失应明确失败，由用户重新关联。
+    if (log) log(`覆层素材路径无效，停止自动同名搜索: ${ov?.name || ov?.content || '(空)'}`);
     return opath;
 }
 
@@ -314,7 +296,7 @@ function _drawImageFlipped(ctx, img, arg1, arg2, arg3, arg4, arg5, arg6, arg7, a
     ctx.restore();
 }
 
-function _drawCroppedVideoCover(ctx, videoEl, cropX, cropY, cropW, cropH, targetW, targetH, scalePct, offsetX = 0, offsetY = 0, flipH = false, flipV = false) {
+function _drawCroppedVideoCover(ctx, videoEl, cropX, cropY, cropW, cropH, targetW, targetH, scalePct, offsetX = 0, offsetY = 0, flipH = false, flipV = false, rotation = 0) {
     if (!ctx || !videoEl || !(targetW > 0) || !(targetH > 0)) return;
     const srcW = videoEl.videoWidth || videoEl.naturalWidth || targetW;
     const srcH = videoEl.videoHeight || videoEl.naturalHeight || targetH;
@@ -328,14 +310,31 @@ function _drawCroppedVideoCover(ctx, videoEl, cropX, cropY, cropW, cropH, target
     const sHeight = srcH * cropH;
 
     const userScale = (scalePct || 100) / 100;
-    const scale = Math.max(targetW / sWidth, targetH / sHeight) * userScale;
+    let scale = Math.max(targetW / sWidth, targetH / sHeight) * userScale;
+    // A quarter-turn swaps the drawn bounds.  Increase the scale enough to
+    // keep the canvas filled, matching the interactive preview behaviour.
+    const radians = Math.abs((Number(rotation) || 0) % 180) * Math.PI / 180;
+    const preRotateW = sWidth * scale;
+    const preRotateH = sHeight * scale;
+    scale *= Math.max(1,
+        targetW / (Math.abs(preRotateW * Math.cos(radians)) + Math.abs(preRotateH * Math.sin(radians))),
+        targetH / (Math.abs(preRotateW * Math.sin(radians)) + Math.abs(preRotateH * Math.cos(radians))));
     const drawW = sWidth * scale;
     const drawH = sHeight * scale;
     const maxShiftX = Math.abs(targetW - drawW) / 2;
     const maxShiftY = Math.abs(targetH - drawH) / 2;
     const drawX = (targetW - drawW) / 2 + maxShiftX * (offsetX / 100);
     const drawY = (targetH - drawH) / 2 + maxShiftY * (offsetY / 100);
-    _drawImageFlipped(ctx, videoEl, sx, sy, sWidth, sHeight, drawX, drawY, drawW, drawH, flipH, flipV);
+    if (!rotation) {
+        _drawImageFlipped(ctx, videoEl, sx, sy, sWidth, sHeight, drawX, drawY, drawW, drawH, flipH, flipV);
+        return;
+    }
+    ctx.save();
+    ctx.translate(targetW / 2, targetH / 2);
+    ctx.rotate((Number(rotation) || 0) * Math.PI / 180);
+    ctx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
+    ctx.drawImage(videoEl, sx, sy, sWidth, sHeight, -drawW / 2 + (drawX + drawW / 2 - targetW / 2), -drawH / 2 + (drawY + drawH / 2 - targetH / 2), drawW, drawH);
+    ctx.restore();
 }
 
 
@@ -391,6 +390,7 @@ async function reelsWysiwygExport(params) {
         bgScale = 100,       // 背景图片缩放 (50~300%)
         bgX = 0,
         bgY = 0,
+        bgRotation = 0,
         bgFlipH = false,
         bgFlipV = false,
         contentVideoFlipH = false,
@@ -443,6 +443,32 @@ async function reelsWysiwygExport(params) {
 
     const log = (msg) => { if (onLog) onLog(msg); console.log(`[WYSIWYG] ${msg}`); };
     const progress = (v) => { if (onProgress) onProgress(v); };
+
+    // 媒体覆层必须使用本任务中保存的确切路径。预览可继续显示内存中的
+    // blob/已解码元素，但隐藏导出窗口无法安全复用它们；更不能跨任务按同名
+    // 文件猜测，否则会把另一任务的图片/GIF/视频覆层烧进成片。
+    const overlayMediaBindings = [];
+    for (const ov of (taskOverlays || [])) {
+        if (!ov || ov.disabled || !['image', 'video'].includes(ov.type)) continue;
+        const mediaPath = await _resolveMissingOverlayPath(ov, taskOverlays, log);
+        if (!mediaPath || /^blob:/i.test(mediaPath) || !(await _overlayLocalPathExists(mediaPath))) {
+            throw new Error(`覆层「${ov.name || ov.id || '未命名媒体'}」缺少有效本地路径，请重新选择该覆层素材后再导出：${ov.content || '(空)'}`);
+        }
+        // 导出快照必须只保留一种来源标识。此前这里虽然用解析后的绝对路径
+        // 校验成功，但实际绘制仍使用 local-media:// / file:// 形式的旧 content，
+        // 使图片缓存的 key 与校验路径脱节；连续任务时可能复用到前一任务的图。
+        // taskOverlays 已是本次 job 的深拷贝，改写不会影响编辑器预览或其他任务。
+        ov.content = mediaPath;
+        // 静态图片必须在导出开始前绑定到本 job 的私有 Image 对象。不要让
+        // 逐帧绘制回落到跨任务常驻的预览图片缓存。
+        if (ov.type === 'image') {
+            ov._exportImage = await _loadImage(mediaPath);
+        }
+        overlayMediaBindings.push(`${ov.name || ov.id || '未命名覆层'}=${mediaPath}`);
+    }
+    if (overlayMediaBindings.length) {
+        log(`覆层媒体绑定: ${overlayMediaBindings.join(' | ')}`);
+    }
 
     // ── 确保所有覆层与字幕使用的字体全部预加载完成 ──
     if (window.getFontManager) {
@@ -695,6 +721,7 @@ async function reelsWysiwygExport(params) {
             loopFade: isMultiClip ? false : loopFade,
             loopFadeDur,
             bgScale: bgScale || 100,
+            bgRotation: bgRotation || 0,
             bgX: bgX || 0,
             bgY: bgY || 0,
             bgFlipH: bgFlipH || false,
@@ -840,6 +867,7 @@ async function reelsWysiwygExport(params) {
         bgmVolume: bgmVolume || 0,
         bgmStart: Math.max(0, parseFloat(bgmStart) || 0),
         bgScale: bgScale || 100,
+        bgRotation: bgRotation || 0,
         bgX: bgX || 0,
         bgY: bgY || 0,
         bgDurScale: bgDurScale || 100,
@@ -1051,11 +1079,11 @@ async function reelsWysiwygExport(params) {
                     const brightnessVal = (contentVideoBrightness != null ? contentVideoBrightness : 60) / 100;
                     ctx.save();
                     ctx.filter = `blur(${blurVal}px) brightness(${brightnessVal})`;
-                    _drawCroppedVideoCover(ctx, currentCvImg, cropX, cropY, cropW, cropH, targetWidth, targetHeight, bgScale, bgX, bgY, bgFlipH, bgFlipV);
+                    _drawCroppedVideoCover(ctx, currentCvImg, cropX, cropY, cropW, cropH, targetWidth, targetHeight, bgScale, bgX, bgY, bgFlipH, bgFlipV, bgRotation);
                     ctx.restore();
                 } else if (contentVideoDirectBg && currentCvImg) {
                     const { cropX, cropY, cropW, cropH } = _parseCropString(contentVideoCrop);
-                    _drawCroppedVideoCover(ctx, currentCvImg, cropX, cropY, cropW, cropH, targetWidth, targetHeight, bgScale, bgX, bgY, bgFlipH, bgFlipV);
+                    _drawCroppedVideoCover(ctx, currentCvImg, cropX, cropY, cropW, cropH, targetWidth, targetHeight, bgScale, bgX, bgY, bgFlipH, bgFlipV, bgRotation);
                 } else if (currentBgImg) {
                     // 直接绘制（FFmpeg 预处理时已完成缩放与裁切）
                     ctx.drawImage(currentBgImg, 0, 0, targetWidth, targetHeight);
@@ -1202,6 +1230,8 @@ async function reelsWysiwygExport(params) {
         currentBgImg = null;
         currentCvImg = null;
         for (const ov of taskOverlays || []) {
+            if (ov._exportImage) ov._exportImage.src = '';
+            delete ov._exportImage;
             if (ov._currentFrameImage) ov._currentFrameImage.src = '';
             delete ov._currentFrameImage;
             delete ov._allOverlays;
@@ -1234,6 +1264,8 @@ async function reelsWysiwygExport(params) {
         currentBgImg = null;
         currentCvImg = null;
         for (const ov of taskOverlays || []) {
+            if (ov._exportImage) ov._exportImage.src = '';
+            delete ov._exportImage;
             if (ov._currentFrameImage) ov._currentFrameImage.src = '';
             delete ov._currentFrameImage;
             delete ov._allOverlays;

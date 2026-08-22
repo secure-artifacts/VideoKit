@@ -386,7 +386,10 @@
         // ── 覆层卡片轨（文字卡片、滚动字幕、图片覆层等）：每个覆层独立一条轨道 ──
         // 覆层渲染顺序从底到顶 (index 0 是底层，index N 是顶层)；
         // 时间线视觉轨道从上到下显示 (最上方轨道是顶层)，因此反向投影 overlays。
-        const activeOverlays = (typeof window !== 'undefined' && window._reelsState?.overlayProxy?.overlayMgr?.overlays) || task.overlays || [];
+        const isCurrentTask = typeof window !== 'undefined'
+            && window._reelsState?.tasks
+            && window._reelsState.tasks[window._reelsState.selectedIdx] === task;
+        const activeOverlays = (isCurrentTask && window._reelsState?.overlayProxy?.overlayMgr?.overlays) || task.overlays || [];
         const nonInsertOverlays = activeOverlays.filter(ov => !ov._insertClip);
         const totalDuration = options.duration || (taskDuration(task, options) || 10);
         if (nonInsertOverlays.length > 0) {
@@ -461,14 +464,17 @@
 
     function applyEditorClip(task, editorClip, options = {}) {
         if (editorClip?._timelineRole === 'overlay' || editorClip?._overlayId) {
-            const activeOverlays = (typeof window !== 'undefined' && window._reelsState?.overlayProxy?.overlayMgr?.overlays) || task.overlays || [];
+            const isCurrentTask = typeof window !== 'undefined'
+                && window._reelsState?.tasks
+                && window._reelsState.tasks[window._reelsState.selectedIdx] === task;
+            const activeOverlays = (isCurrentTask && window._reelsState?.overlayProxy?.overlayMgr?.overlays) || task.overlays || [];
             const ov = activeOverlays.find(o => o.id === editorClip._overlayId || o.id === editorClip._timelineClipId);
             if (ov) {
                 const newStart = Math.max(0, finite(editorClip.start));
                 const newEnd = Math.max(newStart + 0.1, finite(editorClip.end));
                 ov.start = newStart;
                 ov.end = newEnd;
-                if (typeof window !== 'undefined' && window._reelsState?.overlayProxy?.overlayMgr) {
+                if (isCurrentTask && typeof window !== 'undefined' && window._reelsState?.overlayProxy?.overlayMgr) {
                     if (typeof window._reelsState.overlayProxy.overlayMgr._notify === 'function') {
                         window._reelsState.overlayProxy.overlayMgr._notify();
                     }
@@ -718,7 +724,12 @@
     // 这个顺序是唯一的合成事实：数组从底到顶，预览与导出均使用它。
     function getCompositedOverlays(task, options = {}) {
         const inserts = getInsertOverlays(task, options);
-        const base = ((typeof window !== 'undefined' && window._reelsState?.overlayProxy?.overlayMgr?.overlays) || task?.overlays || [])
+        const isCurrentTask = typeof window !== 'undefined'
+            && window._reelsState?.tasks
+            && window._reelsState.tasks[window._reelsState.selectedIdx] === task;
+        // 导出时（options.forExport === true）或处理非界面当前选中任务时，
+        // 必须严格使用 task.overlays，绝对禁止读取全局/其他任务的 overlayMgr！
+        const base = ((!options?.forExport && isCurrentTask && window._reelsState?.overlayProxy?.overlayMgr?.overlays) || task?.overlays || [])
             .filter(ov => ov && !ov._insertClip);
         const entries = [
             ...inserts.map((ov, index) => ({ key: `insert:${ov.id}`, overlay: ov, fallback: index })),

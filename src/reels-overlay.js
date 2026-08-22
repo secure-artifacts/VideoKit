@@ -1284,7 +1284,9 @@ function _drawImageOverlay(ctx, ov, x, y, w, h) {
     const imgPath = ov.content || '';
     if (!imgPath) return;
 
-    const img = _getCachedImage(imgPath);
+    // 导出时使用 job 私有的预加载图片。预览才走全局缓存；否则连续导出
+    // 的不同任务可能在异步加载/缓存复用期间错误地画出上一任务的图片。
+    const img = (ov._exporting && ov._exportImage) || _getCachedImage(imgPath);
     if (!img) return;
 
     const scale = parseFloat(ov.scale || 1);

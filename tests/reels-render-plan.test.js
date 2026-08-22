@@ -164,3 +164,36 @@ test('trimming start or end of video clip trims linked original audio companion 
     assert.equal(firstAudio.inT, 1);
     assert.equal(firstAudio.effectiveDuration, 2);
 });
+
+test('getCompositedOverlays strictly isolates overlays per task during export and does not leak global UI overlays', () => {
+    const taskA = { id: 'task-a', overlays: [{ id: 'ov-a', type: 'text', content: 'Task A Overlay' }] };
+    const taskB = { id: 'task-b', overlays: [{ id: 'ov-b', type: 'text', content: 'Task B Overlay' }] };
+
+    // Simulate active UI state pointing to taskA
+    global.window = {
+        _reelsState: {
+            selectedIdx: 0,
+            tasks: [taskA, taskB],
+            overlayProxy: {
+                overlayMgr: {
+                    overlays: [{ id: 'ov-a-ui', type: 'text', content: 'Task A Live UI Overlay' }],
+                },
+            },
+        },
+    };
+
+    // For taskB (not current task), it must read taskB.overlays even if live UI overlay exists
+    const bOverlays = RenderPlan.getCompositedOverlays(taskB);
+    assert.equal(bOverlays.length, 1);
+    assert.equal(bOverlays[0].id, 'ov-b');
+    assert.equal(bOverlays[0].content, 'Task B Overlay');
+
+    // During export (forExport: true), even taskA must strictly use taskA.overlays snapshot
+    const aExportOverlays = RenderPlan.getCompositedOverlays(taskA, { forExport: true });
+    assert.equal(aExportOverlays.length, 1);
+    assert.equal(aExportOverlays[0].id, 'ov-a');
+    assert.equal(aExportOverlays[0].content, 'Task A Overlay');
+
+    delete global.window;
+});
+

@@ -1,4 +1,21 @@
 const { contextBridge, ipcRenderer, webUtils, webFrame, clipboard } = require('electron');
+
+// File objects passed through contextBridge can lose the identity required by
+// webUtils.getPathForFile().  Capture paths in the preload world while handling
+// the original drop event, then let the renderer consume that one drop's paths.
+// This is especially important for the batch Reels table, which must persist
+// absolute paths instead of only file names.
+let _lastDroppedFilePaths = [];
+window.addEventListener('drop', (event) => {
+    try {
+        _lastDroppedFilePaths = Array.from(event.dataTransfer?.files || [])
+            .map((file) => webUtils.getPathForFile(file))
+            .filter(Boolean);
+    } catch (error) {
+        _lastDroppedFilePaths = [];
+        console.warn('[preload] unable to capture dropped file paths:', error?.message);
+    }
+}, true);
 const fs = require('fs');
 const path = require('path');
 const { pathToFileURL, fileURLToPath } = require('url');
@@ -109,6 +126,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
             console.error('[preload.getFilePath] FAILED:', e.message, 'file:', typeof file, file?.name);
             return '';
         }
+    },
+    consumeDroppedFilePaths: () => {
+        const paths = _lastDroppedFilePaths;
+        _lastDroppedFilePaths = [];
+        return paths;
     },
     isDirectory: (filePath) => {
         try {

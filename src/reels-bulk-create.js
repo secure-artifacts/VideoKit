@@ -1699,6 +1699,12 @@ function _bcGenerateTasks() {
 
     const created = tasksByTemplate.reduce((s, arr) => s + arr.length, 0);
     if (created === 0) return 0;
+    const srtErrors = tasksByTemplate.flat().filter(task => task?._bulkCreateSrtError);
+    if (srtErrors.length > 0) {
+        const preview = srtErrors.slice(0, 5).map(task => `${task.fileName}: ${task._bulkCreateSrtError}`).join('\n');
+        const remaining = srtErrors.length > 5 ? `\n另有 ${srtErrors.length - 5} 条` : '';
+        alert(`有 ${srtErrors.length} 条任务的 SRT 无法读取或解析，已自动取消这些任务的导出勾选：\n\n${preview}${remaining}`);
+    }
 
     // ═══ 输出：根据模式放到不同容器 ═══
     if (separateTabs && typeof _batchTableState !== 'undefined') {
@@ -1760,13 +1766,15 @@ function _bcGenerateTasks() {
 
 function _bcBuildTask(tpl, row, rowIdx, taskNum, cols) {
     const task = JSON.parse(JSON.stringify(tpl.task));
+    const derivation = window.ReelsTaskDerivation;
+    if (!derivation) throw new Error('任务派生模块未加载，请完全重启 VideoKit 后重试');
+    // 新任务只继承模板的样式、素材设置与覆层结构。字幕片段、来源文案、
+    // 对齐状态和所有实例 ID 都必须重新建立，不能携带模板任务的运行数据。
+    derivation.prepareDerivedTask(task);
     const prefix = _bulkState.templates.length > 1 ? `${tpl.label}_` : 'bulk_';
     task.baseName = `${prefix}${String(taskNum).padStart(3, '0')}`;
     task.fileName = task.baseName + '.mp4';
     task.status = ''; task.bgSrcUrl = null; task.srcUrl = null;
-    task.ttsText = '';
-    task.txtContent = '';
-    task.aiScript = '';
 
     // Automatic Background Cycling (Unified Mode)
     // If we have a bgCycle array and the user hasn't explicitly mapped a background column
@@ -1810,7 +1818,18 @@ function _bcBuildTask(tpl, row, rowIdx, taskNum, cols) {
 
         if (f.key === '__bg__') { _bcApplySingleBackground(task, val); }
         else if (f.key === '__audio__') { task.audioPath = val; }
-        else if (f.key === '__srt__') { task.srtPath = val; }
+        else if (f.key === '__srt__') {
+            derivation.bindSrt(task, val, {
+                readFileText: path => window.electronAPI?.readFileText?.(path) || '',
+                parseSrt: content => {
+                    const parser = typeof parseSRT === 'function' ? parseSRT : window.parseSRT;
+                    return parser ? parser(content) : [];
+                },
+                toWordSegments: rawSegments => window.ReelsSubtitleProcessor
+                    ? window.ReelsSubtitleProcessor.srtToSegmentsWithWords(rawSegments)
+                    : rawSegments,
+            });
+        }
         else if (f.key === '__cv__') { task.contentVideoPath = val; }
         else if (f.key === '__ai__') { task.aiScript = val; }
         else if (f.key === '__txt__') { task.txtContent = val; }

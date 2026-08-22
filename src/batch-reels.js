@@ -2378,19 +2378,18 @@ function _getNamedSubtitlePresetStyle(name) {
 
 function _resolveSubtitleStyleForTask(task) {
     const globalStyle = _reelsState.globalSubtitleStyle;
-    // “全部任务”必须真的只读全局样式。此前任务残留的预设会抢在全局样式
-    // 前面生效，用户一切换任务就像是全局样式自己变了。
-    if (_isStyleApplyAllEnabled()) {
-        return _cloneSubtitleStyle(globalStyle) || _readStyleFromUI();
-    }
     // ── 最高优先级：批量表格中设置的字幕模板预设 ──
-    // 仅在“当前/分组”独立调整时，任务级预设才可以覆盖其独立样式。
     if (task && task._subtitlePreset && window.ReelsStyleEngine) {
         const presetStyle = _getNamedSubtitlePresetStyle(task._subtitlePreset);
         if (presetStyle) return presetStyle;
         task._subtitlePreset = '';
     }
-    if (task && task.subtitleStyle && typeof task.subtitleStyle === 'object') {
+    // “全部任务”模式：若未指定独立预设，读取全局/UI样式
+    if (_isStyleApplyAllEnabled()) {
+        return _cloneSubtitleStyle(globalStyle) || _readStyleFromUI();
+    }
+    // ── 任务级独立字幕样式 ──
+    if (task && task.subtitleStyle && typeof task.subtitleStyle === 'object' && Object.keys(task.subtitleStyle).length > 0) {
         return _cloneSubtitleStyle(task.subtitleStyle);
     }
     // 旧工程/旧队列模板把完整字幕样式保存在 task.style。
@@ -5425,9 +5424,11 @@ function _getAudioDuration(task) {
     if (_reelsState._mediaDurations && _reelsState._mediaDurations[task.audioPath] > 0) {
         return _reelsState._mediaDurations[task.audioPath];
     }
-    const audio = document.getElementById('reels-preview-audio');
-    if (audio && isFinite(audio.duration) && audio.duration > 0) {
-        return audio.duration;
+    if (task === _getSelectedTask()) {
+        const audio = document.getElementById('reels-preview-audio');
+        if (audio && isFinite(audio.duration) && audio.duration > 0) {
+            return audio.duration;
+        }
     }
     if (task.segments && task.segments.length > 0) {
         return task.segments[task.segments.length - 1].end || 0;
@@ -5443,9 +5444,11 @@ function _getVideoDuration(task) {
     if (_reelsState._mediaDurations && _reelsState._mediaDurations[bgPath] > 0) {
         return _reelsState._mediaDurations[bgPath];
     }
-    const video = document.getElementById('reels-preview-video');
-    if (video && isFinite(video.duration) && video.duration > 0) {
-        return video.duration;
+    if (task === _getSelectedTask()) {
+        const video = document.getElementById('reels-preview-video');
+        if (video && isFinite(video.duration) && video.duration > 0) {
+            return video.duration;
+        }
     }
     return 0;
 }
@@ -5461,14 +5464,16 @@ function _getContentVideoDuration(task) {
         }
         return Math.max(0, fullDur - trimStart);
     }
-    const cvVideo = document.getElementById('reels-preview-contentvideo');
-    if (cvVideo && cvVideo.src && isFinite(cvVideo.duration) && cvVideo.duration > 0) {
-        const trimStart = parseFloat(task.contentVideoTrimStart) || 0;
-        const trimEnd = parseFloat(task.contentVideoTrimEnd) || 0;
-        if (trimEnd > trimStart && trimStart >= 0) {
-            return trimEnd - trimStart;
+    if (task === _getSelectedTask()) {
+        const cvVideo = document.getElementById('reels-preview-contentvideo');
+        if (cvVideo && cvVideo.src && isFinite(cvVideo.duration) && cvVideo.duration > 0) {
+            const trimStart = parseFloat(task.contentVideoTrimStart) || 0;
+            const trimEnd = parseFloat(task.contentVideoTrimEnd) || 0;
+            if (trimEnd > trimStart && trimStart >= 0) {
+                return trimEnd - trimStart;
+            }
+            return Math.max(0, cvVideo.duration - trimStart);
         }
-        return Math.max(0, cvVideo.duration - trimStart);
     }
     if (_reelsState.cvSequence && _reelsState.cvSequence.path === task.contentVideoPath && _reelsState.cvSequence.files.length > 0) {
         return _reelsState.cvSequence.files.length / 30;
@@ -8039,6 +8044,9 @@ async function _preFetchTaskMediaDurations(task) {
                 console.error('[Preview] Pre-fetch duration failed for', p, e);
             }
         }
+        // 读取媒体元数据是异步的。用户若在此期间切换了任务，不能让旧任务
+        // 的回调重建当前时间线，否则预览会显示旧字幕/覆层轨而导出仍使用新任务。
+        if (_getSelectedTask() !== task) return;
         _updateTimelineForTask(task);
         _updatePreviewTimeUI(_getPreviewCurrentTime(), _getPreviewDuration());
     }
@@ -9594,11 +9602,17 @@ function _initReelsCrashDiagnostics() {
     const api = window.electronAPI;
     if (!api) return;
     if (api.onReelsCrashDiagnostic) {
-        api.onReelsCrashDiagnostic(report => _showReelsCrashDiagnostic(report));
+        api.onReelsCrashDiagnostic(report => {
+            if (!report || report.reason === 'clean-exit' || report.reason === 'killed') return;
+            _showReelsCrashDiagnostic(report);
+        });
     }
     if (api.getLatestCrashDiagnostic) {
         api.getLatestCrashDiagnostic().then(report => {
-            if (!report || report.timestamp === localStorage.getItem('reels-dismissed-crash-timestamp')) return;
+            if (!report || !report.timestamp) return;
+            const reason = String(report.reason || '');
+            if (reason === 'clean-exit' || reason === 'killed') return;
+            if (report.timestamp === localStorage.getItem('reels-dismissed-crash-timestamp')) return;
             _showReelsCrashDiagnostic(report, { restored: true });
         }).catch(() => {});
     }
@@ -10400,6 +10414,79 @@ function _cloneTaskWithPreset(task, presetName) {
     return clone;
 }
 
+/**
+ * 导出队列只能持有任务快照，不能持有界面中的可变任务对象。
+ * 字体加载、媒体探测和隐藏渲染窗口启动都是异步的；如果期间表格自动保存、
+ * 覆层面板回写或时间线同步修改了原对象，同一 job 的视频路径和字幕/覆层就可能
+ * 来自不同时间点。这里保留全部普通字段（包括任务/分组私有标记），仅剥离
+ * DOM、函数和循环运行时缓存。
+ */
+function _cloneReelsTaskForExport(task) {
+    const seen = new WeakSet();
+    const cloneValue = (value) => {
+        if (value === null || value === undefined) return value;
+        if (['string', 'number', 'boolean'].includes(typeof value)) return value;
+        if (typeof value === 'function' || typeof value === 'symbol' || typeof value === 'bigint') return undefined;
+        if (typeof Element !== 'undefined' && value instanceof Element) return undefined;
+        if (typeof HTMLCanvasElement !== 'undefined' && value instanceof HTMLCanvasElement) return undefined;
+        if (typeof HTMLImageElement !== 'undefined' && value instanceof HTMLImageElement) return undefined;
+        if (typeof HTMLVideoElement !== 'undefined' && value instanceof HTMLVideoElement) return undefined;
+        if (typeof Blob !== 'undefined' && value instanceof Blob) return undefined;
+        if (value instanceof Date) return value.toISOString();
+        if (typeof value !== 'object' || seen.has(value)) return undefined;
+        seen.add(value);
+        if (typeof value.toJSON === 'function') {
+            const jsonValue = cloneValue(value.toJSON());
+            seen.delete(value);
+            return jsonValue;
+        }
+        if (Array.isArray(value)) {
+            const result = value.map(cloneValue).filter(item => item !== undefined);
+            seen.delete(value);
+            return result;
+        }
+        const result = {};
+        for (const [key, item] of Object.entries(value)) {
+            // These fields contain decoded media/Canvas state and must be rebuilt per renderer.
+            if (['_allOverlays', '_imageEl', '_videoEl', '_img', '_currentFrameImage', 'canvas', 'ctx'].includes(key)) continue;
+            const cloned = cloneValue(item);
+            if (cloned !== undefined) result[key] = cloned;
+        }
+        seen.delete(value);
+        return result;
+    };
+    const snapshot = cloneValue(task) || {};
+    if (snapshot.bgSrcUrl && String(snapshot.bgSrcUrl).startsWith('blob:')) snapshot.bgSrcUrl = null;
+    if (snapshot.srcUrl && String(snapshot.srcUrl).startsWith('blob:')) snapshot.srcUrl = null;
+    return snapshot;
+}
+
+function _isAbsoluteReelsMediaPath(filePath) {
+    const value = String(filePath || '');
+    return value.startsWith('/') || /^[A-Za-z]:[\\/]/.test(value) || /^\\\\[^\\]+\\[^\\]+/.test(value);
+}
+
+function _resolveTaskExportBackgroundPath(task) {
+    const configured = task?.bgPath || task?.videoPath || '';
+    if (_isAbsoluteReelsMediaPath(configured)) return configured;
+    const sourceUrl = task?.bgSrcUrl || task?.srcUrl || '';
+    if (sourceUrl && !String(sourceUrl).startsWith('blob:')) {
+        const decoded = _normalizeLocalMediaPath(sourceUrl);
+        if (_isAbsoluteReelsMediaPath(decoded)) return decoded;
+    }
+    return configured;
+}
+
+function _summarizeExportBinding(task) {
+    const firstSegment = Array.isArray(task?.segments) ? task.segments.find(seg => String(seg?.text || '').trim()) : null;
+    const firstOverlay = Array.isArray(task?.overlays) ? task.overlays.find(ov => ov && !ov.disabled) : null;
+    const overlayText = firstOverlay
+        ? (firstOverlay.title_text || firstOverlay.body_text || firstOverlay.content || firstOverlay.name || '')
+        : '';
+    const compact = value => String(value || '').replace(/\s+/g, ' ').trim().slice(0, 36);
+    return `id=${task?.id || '-'} | video=${String(task?.bgPath || task?.videoPath || '-').split(/[\\/]/).pop()} | subtitle="${compact(firstSegment?.text)}" | overlay="${compact(overlayText)}"`;
+}
+
 // 初始化（需要在 DOM 就绪后调用）
 setTimeout(() => _initMultiPresetUI(), 200);
 
@@ -10564,7 +10651,11 @@ async function reelsStartExport(options = {}) {
     if (exportEngine === 'experimental') exportEngine = 'hardware';
     const suffix = document.getElementById('reels-suffix').value || '_subtitled';
     const namingMode = (document.getElementById('reels-export-naming-mode-outer') || {}).value || (document.getElementById('reels-naming-mode') || {}).value || localStorage.getItem('reels_naming_mode') || 'text';
-    _persistSubtitleStyleByScope(_readStyleFromUI());
+    // 导出前只同步当前界面选中任务在 UI 中的微调，切勿跨任务强行覆盖其他任务的独立样式与模板
+    const currentTaskForSync = _getSelectedTask();
+    if (currentTaskForSync) {
+        currentTaskForSync.subtitleStyle = _cloneSubtitleStyle(_readStyleFromUI());
+    }
     const crfMap = { high: 15, medium: 18, low: 23, ultrafast: 26 };
     const presetMap = { high: 'medium', medium: 'fast', low: 'faster', ultrafast: 'ultrafast' };
     const crf = crfMap[quality] || 23;
@@ -10642,6 +10733,9 @@ async function reelsStartExport(options = {}) {
         ? Math.max(1, parseInt(resumeState.requestedConcurrency) || 1)
         : (concurrencyInput ? Math.max(1, parseInt(concurrencyInput.value) || 1) : 1);
 
+    // ═══ 导出前并行预提取所有任务的音视频时长，确保循环计算与时长判断精确 ═══
+    await Promise.all(tasks.map(t => _preFetchTaskMediaDurations(t)));
+
     // ═══ 自动补齐背景循环检查（杜绝导出画面不足或黑屏） ═══
     for (const task of tasks) {
         const subtitleDuration = Array.isArray(task.segments) && task.segments.length
@@ -10658,16 +10752,28 @@ async function reelsStartExport(options = {}) {
     const exportJobs = [];
     if (multiPresetCfg) {
         // 矩阵模式：tasks × presets
-        for (const task of tasks) {
+        for (const sourceTask of tasks) {
             for (const presetName of multiPresetCfg.presets) {
-                exportJobs.push({ task, presetName, naming: multiPresetCfg.naming });
+                let task = _cloneReelsTaskForExport(sourceTask);
+                task = _cloneTaskWithPreset(task, presetName);
+                exportJobs.push({
+                    task,
+                    subtitleStyle: _cloneSubtitleStyle(_resolveSubtitleStyleForTask(sourceTask)),
+                    presetName,
+                    naming: multiPresetCfg.naming,
+                });
             }
         }
         console.log(`[Reels] 多模板矩阵导出: ${tasks.length} 任务 × ${multiPresetCfg.presets.length} 模板 = ${exportJobs.length} 个视频`);
     } else {
         // 常规模式：每任务一个 job
-        for (const task of tasks) {
-            exportJobs.push({ task, presetName: null, naming: null });
+        for (const sourceTask of tasks) {
+            exportJobs.push({
+                task: _cloneReelsTaskForExport(sourceTask),
+                subtitleStyle: _cloneSubtitleStyle(_resolveSubtitleStyleForTask(sourceTask)),
+                presetName: null,
+                naming: null,
+            });
         }
     }
     const totalJobs = exportJobs.length;
@@ -10834,7 +10940,10 @@ async function reelsStartExport(options = {}) {
             }
             const i = currentIndex++;
             const job = exportJobs[i];
-            const task = job.task;
+            // 每个导出 job 都必须拥有独立的任务快照。多模板矩阵会为同一
+            // 原任务同时创建多个 job；若直接临时改写 task.overlays，并发导出
+            // 时不同模板会互相覆盖，导致成片的字幕/覆层与预览不一致。
+            let task = job.task;
             // 与 V2 预览使用同一个渲染计划入口。导出不读取时间线编辑器的
             // 临时显示数据，避免“预览一套、导出另一套”。
             if (window.ReelsRenderPlan?.syncLegacyFields) {
@@ -10846,15 +10955,7 @@ async function reelsStartExport(options = {}) {
             const tw = _reelsState.targetWidth || 1080;
             const th = _reelsState.targetHeight || 1920;
 
-            // ── 多模板模式：临时覆盖 task.overlays ──
-            let originalOverlays = null;
-            if (job.presetName) {
-                originalOverlays = task.overlays ? [...task.overlays] : [];
-                const tempTask = _cloneTaskWithPreset(task, job.presetName);
-                task.overlays = tempTask.overlays;
-            }
-
-        const taskStyle = _resolveSubtitleStyleForTask(task);
+        const taskStyle = job.subtitleStyle || _resolveSubtitleStyleForTask(task);
         const presetLabel = job.presetName ? ` [${job.presetName}]` : '';
 
         // ── 确保当前任务的所有覆层与字幕使用的字体全部预加载完成 ──
@@ -10876,6 +10977,7 @@ async function reelsStartExport(options = {}) {
         _reelsUpdateJobProgressUI(i, Math.max(1, jobProgress[i] || 0), '准备导出', 'running');
         if (statusEl) statusEl.textContent = `导出中 ${i + 1}/${totalJobs}: ${task.fileName}${presetLabel}`;
         _reelsAppendExportLogUI(`任务 ${i + 1}/${totalJobs}：开始处理 ${task.fileName}${presetLabel}`);
+        _reelsAppendExportLogUI(`[绑定核验] ${_summarizeExportBinding(task)}`);
 
         try {
             let baseName = _exportResolvedNames[i] || _resolveReelsExportBaseName(task, namingMode);
@@ -10913,78 +11015,11 @@ async function reelsStartExport(options = {}) {
                     throw new Error(`创建输出目录失败: ${dirResult.error || jobOutputDir}`);
                 }
             }
-            let bgPath = task.bgPath || task.videoPath;
-            
-            // ── 路径修复：如果 bgPath 仅为文件名（非绝对路径），尝试自动补全 ──
-            if (bgPath && !bgPath.startsWith('/') && !/^[A-Z]:\\/i.test(bgPath)) {
-                const bareFileName = bgPath.replace(/\\/g, '/').split('/').pop();
-                let fixedPath = null;
-                
-                // 策略1: 从背景素材库中找同名文件的完整路径
-                const library = _reelsState.backgroundLibrary || [];
-                for (const bg of library) {
-                    if (bg.path && (bg.path.startsWith('/') || /^[A-Z]:\\/i.test(bg.path))) {
-                        const libName = bg.path.replace(/\\/g, '/').split('/').pop();
-                        if (libName === bareFileName) { fixedPath = bg.path; break; }
-                    }
-                }
-                
-                // 策略2: 从其他任务中找同文件名的绝对路径
-                if (!fixedPath) {
-                    for (const t of _reelsState.tasks) {
-                        const p = t.bgPath || t.videoPath;
-                        if (p && (p.startsWith('/') || /^[A-Z]:\\/i.test(p))) {
-                            const tName = p.replace(/\\/g, '/').split('/').pop();
-                            if (tName === bareFileName) { fixedPath = p; break; }
-                        }
-                    }
-                }
-                
-                // 策略3: 如果找到了任何绝对路径的任务，取其目录 + 当前文件名
-                if (!fixedPath) {
-                    for (const t of _reelsState.tasks) {
-                        const p = t.bgPath || t.videoPath;
-                        if (p && (p.startsWith('/') || /^[A-Z]:\\/i.test(p))) {
-                            const dir = p.replace(/\\/g, '/').replace(/\/[^/]+$/, '');
-                            fixedPath = `${dir}/${bareFileName}`;
-                            break;
-                        }
-                    }
-                }
-                
-                // 策略4: 从批量表格的素材文件夹 materialDir 中搜索
-                if (!fixedPath && typeof _batchTableState !== 'undefined' && _batchTableState.tabs) {
-                    const sourceTab = task._batchTabId
-                        ? _batchTableState.tabs.find(t => t.id === task._batchTabId)
-                        : ((typeof _getActiveTab === 'function')
-                            ? _getActiveTab()
-                            : (_batchTableState.tabs.find(t => t.id === _batchTableState.activeTabId) || _batchTableState.tabs[0]));
-                    const matDir = sourceTab?.materialDir;
-                    if (matDir) {
-                        // 拼接 materialDir + bareFileName
-                        const candidate = matDir.replace(/\\/g, '/').replace(/\/$/, '') + '/' + bareFileName;
-                        fixedPath = candidate;
-                        console.log(`[Reels] 策略4: 尝试素材文件夹路径: "${fixedPath}"`);
-                    }
-                }
-                
-                // 策略5: 从输出目录的父级目录搜索
-                if (!fixedPath && outputDirTrimmed) {
-                    const parentDir = outputDirTrimmed.replace(/\\/g, '/').replace(/\/[^/]+$/, '');
-                    if (parentDir) {
-                        fixedPath = parentDir + '/' + bareFileName;
-                        console.log(`[Reels] 策略5: 尝试输出目录同级路径: "${fixedPath}"`);
-                    }
-                }
-                
-                if (fixedPath) {
-                    console.warn(`[Reels] 自动修复 bgPath: "${bgPath}" → "${fixedPath}"`);
-                    bgPath = fixedPath;
-                    task.bgPath = fixedPath;
-                    task.videoPath = fixedPath;
-                } else {
-                    console.error(`[Reels] bgPath 不是绝对路径且无法自动修复: "${bgPath}"`);
-                }
+            let bgPath = _resolveTaskExportBackgroundPath(task);
+            // 绝不能跨任务按文件名猜素材。多个账号/文件夹常出现同名视频，
+            // 猜错后成片看起来就像“视频 A 配了任务 B 的字幕和覆层”。
+            if (bgPath && !_isAbsoluteReelsMediaPath(bgPath)) {
+                throw new Error(`任务「${task.fileName || task.baseName || i + 1}」的背景素材缺少完整本地路径：${bgPath}。请重新选择该视频后再导出；为防止串用其他任务的同名素材，本次已停止。`);
             }
             
             const hasVoiceAudio = !!task.audioPath || workMode === 'voiced_bg';
@@ -11783,10 +11818,6 @@ async function reelsStartExport(options = {}) {
             _reelsUpdateJobProgressUI(i, jobProgress[i], '失败', 'failed');
             if (statusEl) statusEl.textContent = `❌ 导出失败: ${task.fileName}${presetLabel} - ${errMsg}`;
             _reelsUpdateLastErrorUI(`${task.fileName}${presetLabel}: ${errMsg}`);
-        }
-        // ── 多模板模式：恢复原始覆层 ──
-        if (originalOverlays !== null) {
-            task.overlays = originalOverlays;
         }
         updateConcurrentOverallProgress(i, 100);
         completedOutOfOrder.add(i);
@@ -12753,10 +12784,12 @@ async function _pickSingleFile(title, extensions) {
     });
 }
 
-function _getTaskRenderOverlays(task) {
+function _getTaskRenderOverlays(task, customOptions = {}) {
     const options = {
         width: _reelsState?.targetWidth || 1080,
         height: _reelsState?.targetHeight || 1920,
+        forExport: true,
+        ...customOptions,
     };
     if (typeof window.ReelsRenderPlan?.getCompositedOverlays === 'function') {
         return window.ReelsRenderPlan.getCompositedOverlays(task, options);

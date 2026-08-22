@@ -501,8 +501,15 @@ class ReelsCanvasRenderer {
 
         // 描边/扩展描边超出文字边界的额外量
         let strokeExtra = 0;
-        if (s.use_stroke !== false && (s.border_width || 3) > 0) {
-            strokeExtra = Math.max(strokeExtra, (s.border_width || 3));
+        // `0` is a deliberate “no outline” setting from the per-subtitle
+        // editor.  Using `|| 3` converted it back to a 3px outline reserve,
+        // leaving unwanted space beneath a bottom padding of 0.
+        const configuredBorderWidth = Number(s.border_width);
+        const borderWidth = Number.isFinite(configuredBorderWidth)
+            ? Math.max(0, configuredBorderWidth)
+            : (s.use_stroke === false ? 0 : 3);
+        if (s.use_stroke !== false && borderWidth > 0) {
+            strokeExtra = Math.max(strokeExtra, borderWidth);
         }
         if (s.stroke_expand_enabled) {
             const seLayers = parseInt(s.stroke_expand_layers) || 3;

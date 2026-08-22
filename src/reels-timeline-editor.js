@@ -1410,10 +1410,12 @@ class ReelsTimelineEditor {
                 return;
             } else if (this._drag.type === 'trim_start') {
                 const maxTrim = (this._drag.origEnd - this._drag.origStart) - 0.05;
-                const dtTrim = Math.max(0, Math.min(dt, maxTrim));
-                this._drag.lastTrimOffset = dtTrim;
                 
                 if (this._drag.isSequenced) {
+                    // 连续背景轨的左手柄只表示从开头裁短；向左扩展会破坏
+                    // 无缝序列，因此仍限制为非负裁切量。
+                    const dtTrim = Math.max(0, Math.min(dt, maxTrim));
+                    this._drag.lastTrimOffset = dtTrim;
                     const newEnd = Math.max(this._drag.origStart + 0.05, this._drag.origEnd - dtTrim);
                     clip.start = this._drag.origStart;
                     clip.end = newEnd;
@@ -1431,7 +1433,11 @@ class ReelsTimelineEditor {
                     }
                     return;
                 } else {
-                    const newStart = this._drag.origStart + dtTrim;
+                    // 独立片段（尤其是字幕）需要能把入点向前延长到 0 秒。
+                    // 之前复用了背景裁切的 dtTrim（被锁为 >= 0），使左手柄
+                    // 完全无法往左拖。
+                    const newStart = Math.max(0, Math.min(this._drag.origEnd - 0.05, this._drag.origStart + dt));
+                    this._drag.lastTrimOffset = newStart - this._drag.origStart;
                     clip.start = newStart;
                     clip.end = this._drag.origEnd;
                     if (Array.isArray(this._drag.linked)) {

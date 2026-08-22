@@ -381,7 +381,8 @@ async function portableCheckForUpdates() {
         });
 
         // 弹窗提示
-        const detail = `绿色版将直接覆盖当前目录更新。\n下载大小: ${(info.zipSize / 1024 / 1024).toFixed(1)} MB\n\n更新内容：\n${info.releaseNotes || '无更新说明'}`;
+        const cautionNotice = '【温馨提醒】\n新版本可能包含较多新特性或存在未预期的不稳定因素。如果当前老版本使用顺畅且满足日常制作需求，不建议频繁更新；若升级新版本后遇到任何异常，请换回老版本继续制作。\n';
+        const detail = `${cautionNotice}\n绿色版将直接覆盖当前目录更新。\n下载大小: ${(info.zipSize / 1024 / 1024).toFixed(1)} MB\n\n更新内容：\n${info.releaseNotes || '无更新说明'}\n\n是否立即下载更新？`;
         const { response } = await dialog.showMessageBox(mainWindow, {
             type: 'info',
             title: `发现${isBeta ? '测试' : '新'}版本`,
@@ -538,9 +539,10 @@ function initAutoUpdater(win, logFn) {
         });
 
         // 弹窗提示用户
+        const cautionNotice = '【温馨提醒】\n新版本可能包含较多新特性或存在未预期的不稳定因素。如果当前老版本使用顺畅且满足日常制作需求，不建议频繁更新；若升级新版本后遇到任何异常，请换回老版本继续制作。\n';
         const detail = (isBeta
-            ? '这是一个测试版本，可能包含未完善的功能。\n'
-            : '') + `更新内容：\n${notesText}\n\n是否立即下载更新？`;
+            ? '🧪 这是一个测试版本，可能包含未完善的功能。\n\n'
+            : '') + `${cautionNotice}\n更新内容：\n${notesText}\n\n是否立即下载更新？`;
         dialog.showMessageBox(mainWindow, {
             type: 'info',
             title: `发现${isBeta ? '测试' : '新'}版本`,

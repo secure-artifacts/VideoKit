@@ -25,7 +25,8 @@ function formatMediaError(stderr, options = {}) {
     const action = options.action || '媒体处理';
     const code = options.code;
     const missingLabel = options.missingLabel || '素材文件';
-    const missingPath = extractMissingPath(raw);
+    const mediaPath = options.mediaPath || options.audioPath || options.targetPath || '';
+    const missingPath = extractMissingPath(raw) || mediaPath;
 
     if (missingPath || /No such file or directory|ENOENT/i.test(raw)) {
         const target = missingPath ? `：${missingPath}` : '';
@@ -53,7 +54,8 @@ function formatMediaError(stderr, options = {}) {
         return `${action}失败：滤镜或特效参数不兼容，请调整导出设置后重试`;
     }
     if (/Invalid argument/i.test(raw)) {
-        return `${action}失败：导出参数或文件路径无效`;
+        const target = missingPath ? `（${missingPath}）` : '';
+        return `${action}失败：导出参数或文件路径无效${target}`;
     }
 
     const codeText = code === undefined || code === null ? '' : `（错误码 ${code}）`;

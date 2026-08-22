@@ -172,13 +172,20 @@ async function extractAudioFromVideo(videoPath, outputDir, audioFormat = 'wav') 
 
 /** 将任意 FFmpeg 可读的音/视频媒体标准化为语音识别用的 PCM WAV。 */
 async function normalizeMediaForTranscription(mediaPath, outputDir) {
-    if (!mediaPath || !fs.existsSync(mediaPath)) {
-        throw new Error(`音频文件不存在或无法读取: ${mediaPath || '未选择文件'}`);
+    if (!mediaPath) {
+        throw new Error('缺少音频或视频文件路径');
+    }
+    let cleanPath = String(mediaPath).trim();
+    if (cleanPath.startsWith('file://')) {
+        try { cleanPath = decodeURIComponent(cleanPath.replace(/^file:\/\//i, '')); } catch (_) { cleanPath = cleanPath.replace(/^file:\/\//i, ''); }
+    }
+    if (!fs.existsSync(cleanPath)) {
+        throw new Error(`音频/视频文件不存在或已被移动：${cleanPath}`);
     }
     fs.mkdirSync(outputDir, { recursive: true });
     const outputPath = path.join(outputDir, 'transcription_input.wav');
     const args = [
-        '-y', '-v', 'error', '-i', mediaPath,
+        '-y', '-v', 'error', '-i', cleanPath,
         '-map', '0:a:0?', '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le',
         outputPath,
     ];
@@ -187,9 +194,12 @@ async function normalizeMediaForTranscription(mediaPath, outputDir) {
             if (err || !fs.existsSync(outputPath) || fs.statSync(outputPath).size < 44) {
                 const detail = String(stderr || err?.message || '').trim();
                 console.error(`[Gladia] 标准化音频失败:\n${detail}`);
+                if (!detail && (!fs.existsSync(outputPath) || fs.statSync(outputPath).size < 44)) {
+                    return reject(new Error(`素材「${path.basename(cleanPath)}」中未检测到有效音轨。如果该卡片是静音/无声视频，请在“人声-音频”列添加配音音频(MP3)或切换识别源为有声音的视频。`));
+                }
                 return reject(new Error(detail
-                    ? formatMediaError(detail, { action: '读取或转换音频', code: err?.code })
-                    : '读取或转换音频失败：素材中没有可用音轨，或文件已损坏'));
+                    ? formatMediaError(detail, { action: '读取或转换音频', code: err?.code, missingLabel: '音频文件', mediaPath: cleanPath })
+                    : `读取或转换音频失败：素材「${path.basename(cleanPath)}」中没有可用音轨，或文件已损坏`));
             }
             resolve(outputPath);
         });

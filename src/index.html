@@ -6675,7 +6675,10 @@ THE HOLY	This is no coincidence...</div>
                 }
             } catch (e) { console.warn('[getFileNativePath] electron webUtils error:', e); }
         }
-        return file.path || file.name;
+        // 文件名不是可供主进程读取的路径。此前返回 file.name 会把
+        // `card_001.mp4` 这类相对路径保存到任务中，之后批量对齐会被
+        // 误判为“素材不存在”。获取不到原生路径时必须让调用方明确处理。
+        return file.path || '';
     }
     window.getFileNativePath = getFileNativePath;
   </script>
@@ -6704,6 +6707,7 @@ THE HOLY	This is no coincidence...</div>
   <script src="reels-richtext-editor.js"></script>
   <script src="reels-timeline-editor.js"></script>
   <script src="reels-overlay-panel.js"></script>
+  <script src="reels-task-derivation.js"></script>
   <script src="reels-bulk-create.js"></script>
   <script src="reels-batch-table.js"></script>
   <script src="batch-reels.js"></script>

@@ -100,7 +100,9 @@ function getFileNativePath(file) {
         const p = window.electronAPI.getFilePath(file);
         if (p) return p;
     }
-    return file.path || file.name;
+    // 不要降级成 file.name：它不是本地完整路径，保存后会造成后续
+    // 对齐/导出在不同工作目录下找不到素材。
+    return file.path || '';
 }
 
 // 当前选中的文件路径
