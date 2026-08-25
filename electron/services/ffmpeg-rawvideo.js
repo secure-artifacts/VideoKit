@@ -1079,6 +1079,11 @@ function normalizeDisplayAspectFilter() {
     return 'scale=trunc(iw*sar/2)*2:ih:flags=lanczos,setsar=1';
 }
 
+function normalizedDirectBackgroundFilter(inputIndex, scaleCropFilter, ptsFilter, fps, outputLabel) {
+    const safeFps = Math.max(1, Number(fps) || 30);
+    return `[${inputIndex}:v]${scaleCropFilter},${ptsFilter},fps=${safeFps},format=yuv420p,settb=AVTB,setpts=PTS-STARTPTS[${outputLabel}]`;
+}
+
 async function prepareOverlay(opts) {
     let {
         overlayPath,
@@ -1400,7 +1405,7 @@ async function startSession(opts) {
         if (useDirectLoopFade) {
             const parts = [];
             for (let i = 0; i < bgInputCount; i++) {
-                parts.push(`[${i}:v]${scaleCropFilter},${ptsFilter},fps=${fps},format=yuv420p,settb=AVTB,setpts=PTS-STARTPTS[bg${i}]`);
+                parts.push(normalizedDirectBackgroundFilter(i, scaleCropFilter, ptsFilter, fps, `bg${i}`));
             }
             let previous = 'bg0';
             const step = scaledBgDuration - fadeDur;
@@ -1411,7 +1416,12 @@ async function startSession(opts) {
             }
             bgFilter = parts.join(';');
         } else {
-            bgFilter = `[0:v]${scaleCropFilter},${ptsFilter}[bg]`;
+            // Single/stream-loop backgrounds used to reach overlay with their
+            // source frame cadence and pixel format intact. A 10-bit VFR clip
+            // could therefore feed tens of thousands of surplus frames into
+            // the graph (drop=... in FFmpeg), then miss the finalization wait.
+            // Normalize before overlay just like the xfade branch already did.
+            bgFilter = normalizedDirectBackgroundFilter(0, scaleCropFilter, ptsFilter, fps, 'bg');
         }
         const fgInput = bgInputCount;
         const filterComplex = `${bgFilter};[${fgInput}:v]scale=in_range=full:in_color_matrix=bt709:out_range=limited:out_color_matrix=bt709,format=yuva420p[fg];[bg][fg]overlay=0:0:format=auto:shortest=1,fps=${fps}[outv]`;
@@ -1460,7 +1470,7 @@ async function startSession(opts) {
         totalFrames,
         width, height, fps,
         stderr: '', frameCount: 0, bytesWritten: 0,
-        closed: false, encoderExited: false, encoderExitCode: null,
+        closed: false, encoderExited: false, encoderExitCode: null, encoderExitSignal: null,
         gpuFallback: gpuFailed,  // 记录是否发生了 GPU 回退
     };
 
@@ -1485,10 +1495,11 @@ async function startSession(opts) {
         session.encoderExited = true;
         session.encoderExitCode = -1;
     });
-    proc.on('close', (code) => {
+    proc.on('close', (code, signal) => {
         session.encoderExited = true;
         session.encoderExitCode = code;
-        console.log(`[WYSIWYG] FFmpeg 编码退出 (code=${code}), 帧: ${session.frameCount}`);
+        session.encoderExitSignal = signal || null;
+        console.log(`[WYSIWYG] FFmpeg 编码退出 (code=${code}, signal=${signal || 'none'}), 帧: ${session.frameCount}`);
         if (code !== 0) {
             console.error(`[WYSIWYG] FFmpeg stderr: ${session.stderr.slice(-800)}`);
         }
@@ -1692,16 +1703,38 @@ async function finishSession(sessionId) {
     console.log(`[WYSIWYG] 完成编码... 帧: ${session.frameCount}, 数据: ${mb}MB`);
 
     // 等待编码器完成
+    let finalizeTimedOut = false;
     if (!session.encoderExited) {
         await new Promise((resolve) => {
-            try { session.proc.stdin.end(); } catch (_) { }
-            const check = () => {
-                if (session.encoderExited) { resolve(); return; }
-                setTimeout(check, 200);
+            let settled = false;
+            const finishWait = (timedOut = false) => {
+                if (settled) return;
+                settled = true;
+                finalizeTimedOut = timedOut;
+                clearTimeout(timer);
+                session.proc.removeListener('close', onClose);
+                resolve();
             };
-            check();
-            setTimeout(resolve, 120000);
+            const onClose = () => finishWait(false);
+            const timer = setTimeout(() => finishWait(true), 120000);
+            session.proc.once('close', onClose);
+            try { session.proc.stdin.end(); } catch (_) { }
+            if (session.encoderExited) finishWait(false);
         });
+    }
+
+    if (finalizeTimedOut && !session.encoderExited) {
+        console.error(`[WYSIWYG] 编码收尾超时，正在终止 FFmpeg。帧: ${session.frameCount}/${session.totalFrames}`);
+        try { session.proc.kill('SIGKILL'); } catch (_) { }
+        await new Promise(resolve => {
+            if (session.encoderExited) { resolve(); return; }
+            const timer = setTimeout(resolve, 5000);
+            session.proc.once('close', () => { clearTimeout(timer); resolve(); });
+        });
+        cleanup(session);
+        return {
+            error: '视频编码收尾超时：源素材的帧率或时间戳异常。建议先转为固定帧率 8-bit MP4 后重试',
+        };
     }
 
     if (session.encoderExitCode !== 0) {
@@ -2794,5 +2827,6 @@ module.exports = {
         validateRawFrameSize,
         validateFrameCompletion,
         normalizeDisplayAspectFilter,
+        normalizedDirectBackgroundFilter,
     },
 };

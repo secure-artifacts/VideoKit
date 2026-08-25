@@ -5,6 +5,9 @@ const { Readable } = require('stream');
 const ffmpegService = require('./services/ffmpeg');
 const { initAutoUpdater } = require('./updater');
 
+const DEV_SERVER_PORT = Number(process.env.VITE_PORT) || 5173;
+const DEV_SERVER_URL = `http://localhost:${DEV_SERVER_PORT}`;
+
 // Node.js API 路由器 —— 替代 Python Flask 后端
 const { registerAPIHandlers } = require('./apiRouter');
 
@@ -86,7 +89,7 @@ function _savedBatchTaskCount(raw) {
 }
 
 /**
- * 开发版由旧 file:// 页面切到 http://localhost:5173 后，Chromium 会使用另一套
+ * 开发版由旧 file:// 页面切到本地 Vite 服务后，Chromium 会使用另一套
  * localStorage origin。仅在 localhost 没有有效任务时，把旧 file:// 数据复制过来；
  * 当前开发数据始终优先，避免覆盖用户刚做的新工程。
  */
@@ -629,11 +632,11 @@ function createWindow() {
         let loadRetries = 0;
         const loadDevServer = () => {
             if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.loadURL('http://localhost:5173').catch(() => {});
+                mainWindow.loadURL(DEV_SERVER_URL).catch(() => {});
             }
         };
         mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
-            if (validatedURL && validatedURL.includes('localhost:5173') && loadRetries < 25) {
+            if (validatedURL && validatedURL.includes(`localhost:${DEV_SERVER_PORT}`) && loadRetries < 25) {
                 loadRetries++;
                 setTimeout(() => {
                     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -1787,7 +1790,7 @@ app.whenReady().then(async () => {
 
         // 通过 URL hash 传递模板 ID，前端启动时读取
         if (!app.isPackaged) {
-            win.loadURL(`http://localhost:5173/#template=${templateId}`);
+            win.loadURL(`${DEV_SERVER_URL}/#template=${templateId}`);
             win.webContents.openDevTools();
         } else {
             win.loadFile(path.join(__dirname, '../dist/index.html'), {

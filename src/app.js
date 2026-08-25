@@ -15018,14 +15018,20 @@ function buildAutoEditSrtCues(text, rawWords, cutStart, cutEnd, outputStart = 0)
 
     // 1. 如果用户提供了明确文案（优先严格按用户文案和换行断句）
     if (rawLines.length > 0) {
+        let speechStart = cutStart;
+        let speechEnd = cutEnd;
+        if (validWords.length > 0) {
+            speechStart = Math.max(cutStart, Number(validWords[0].start));
+            speechEnd = Math.min(cutEnd, Math.max(speechStart + 0.1, Number(validWords[validWords.length - 1].end)));
+        }
+        const speechDur = Math.max(0.1, speechEnd - speechStart);
+
         if (rawLines.length === 1) {
-            const cStart = validWords.length > 0 ? Math.max(cutStart, Number(validWords[0].start)) : cutStart;
-            const cEnd = validWords.length > 0 ? Math.min(cutEnd, Math.max(cStart + 0.1, Number(validWords[validWords.length - 1].end))) : cutEnd;
             return [{
-                start: cStart,
-                end: cEnd,
-                outputStart: outputStart + Math.max(0, cStart - cutStart),
-                outputEnd: outputStart + Math.max(0.1, cEnd - cutStart),
+                start: speechStart,
+                end: speechEnd,
+                outputStart: outputStart + Math.max(0, speechStart - cutStart),
+                outputEnd: outputStart + Math.max(0.1, speechEnd - cutStart),
                 text: rawLines[0],
                 words: validWords
             }];
@@ -15033,16 +15039,16 @@ function buildAutoEditSrtCues(text, rawWords, cutStart, cutEnd, outputStart = 0)
 
         // 多行断句：按行字符数比例分配时长
         const totalChars = rawLines.reduce((acc, l) => acc + l.length, 0) || 1;
-        let curStart = cutStart;
+        let curStart = speechStart;
         return rawLines.map((line, idx) => {
             const lineFraction = line.length / totalChars;
-            const lineDur = Math.max(0.1, clipDur * lineFraction);
-            const lineEnd = (idx === rawLines.length - 1) ? cutEnd : Math.min(cutEnd, curStart + lineDur);
+            const lineDur = Math.max(0.08, speechDur * lineFraction);
+            const lineEnd = (idx === rawLines.length - 1) ? speechEnd : Math.min(speechEnd, curStart + lineDur);
             const cue = {
                 start: curStart,
                 end: lineEnd,
                 outputStart: outputStart + Math.max(0, curStart - cutStart),
-                outputEnd: outputStart + Math.max(0.1, lineEnd - cutStart),
+                outputEnd: outputStart + Math.max(0.08, lineEnd - cutStart),
                 text: line,
                 words: []
             };
@@ -15137,12 +15143,48 @@ function buildAutoEditAllTimelineCues(text, rawWords, cutStart, cutEnd, timeline
         return Number.isFinite(ws) && Number.isFinite(we) && we > ws;
     });
 
-    const clipDur = Math.max(0.1, cutEnd - cutStart);
+    // 1. 如果没有文案（ASR 原声轨），按 ASR 真实词句在原片完整时间轴上展示
+    if (rawLines.length === 0) {
+        if (validWords.length > 0) {
+            const allCues = groupAutoEditWordsIntoCues(validWords);
+            return allCues.map(c => {
+                const isTrimmed = (c.end <= cutStart + 0.05) || (c.start >= cutEnd - 0.05);
+                return {
+                    start: c.start,
+                    end: c.end,
+                    outputStart: timelineBase + c.start,
+                    outputEnd: timelineBase + c.end,
+                    text: c.text,
+                    words: c.words || [],
+                    isTrimmed: isTrimmed
+                };
+            }).sort((a, b) => a.start - b.start);
+        }
+        return [{
+            start: cutStart,
+            end: cutEnd,
+            outputStart: timelineBase + cutStart,
+            outputEnd: timelineBase + cutEnd,
+            text: '',
+            words: [],
+            isTrimmed: false
+        }];
+    }
 
-    // 提取被剪除的头部与尾部词段 (保留在时间线上标红展示)
-    const headWords = validWords.filter(w => Number(w.end) <= cutStart + 0.05);
-    const tailWords = validWords.filter(w => Number(w.start) >= cutEnd - 0.05);
-    const activeWords = validWords.filter(w => Number(w.end) > cutStart + 0.05 && Number(w.start) < cutEnd - 0.05);
+    // 2. 如果提供了文案（最终字幕轨 / 文案参考轨）
+    let speechStart = cutStart;
+    let speechEnd = cutEnd;
+    if (validWords.length > 0) {
+        speechStart = Number(validWords[0].start);
+        speechEnd = Number(validWords[validWords.length - 1].end);
+    }
+    speechStart = Math.max(0, speechStart);
+    speechEnd = Math.max(speechStart + 0.1, speechEnd);
+    const speechDur = speechEnd - speechStart;
+
+    // 提取被完全裁掉的头部和尾部 ASR 词句（在时间轴上作为裁切部分红显，不拉长文案）
+    const headWords = validWords.filter(w => Number(w.end) <= speechStart + 0.01);
+    const tailWords = validWords.filter(w => Number(w.start) >= speechEnd - 0.01);
 
     const headCues = groupAutoEditWordsIntoCues(headWords).map(c => ({
         ...c,
@@ -15159,61 +15201,41 @@ function buildAutoEditAllTimelineCues(text, rawWords, cutStart, cutEnd, timeline
     }));
 
     let activeCues = [];
-
-    // 1. 如果用户提供了明确文案（优先严格按用户文案和换行断句）
-    if (rawLines.length > 0) {
-        if (rawLines.length === 1) {
-            const cStart = activeWords.length > 0 ? Math.max(cutStart, Number(activeWords[0].start)) : cutStart;
-            const cEnd = activeWords.length > 0 ? Math.min(cutEnd, Math.max(cStart + 0.1, Number(activeWords[activeWords.length - 1].end))) : cutEnd;
-            activeCues = [{
-                start: cStart,
-                end: cEnd,
-                outputStart: timelineBase + cStart,
-                outputEnd: timelineBase + cEnd,
-                text: rawLines[0],
-                words: activeWords,
-                isTrimmed: false
-            }];
-        } else {
-            const totalChars = rawLines.reduce((acc, l) => acc + l.length, 0) || 1;
-            let curStart = cutStart;
-            activeCues = rawLines.map((line, idx) => {
-                const lineFraction = line.length / totalChars;
-                const lineDur = Math.max(0.1, clipDur * lineFraction);
-                const lineEnd = (idx === rawLines.length - 1) ? cutEnd : Math.min(cutEnd, curStart + lineDur);
-                const cue = {
-                    start: curStart,
-                    end: lineEnd,
-                    outputStart: timelineBase + curStart,
-                    outputEnd: timelineBase + lineEnd,
-                    text: line,
-                    words: [],
-                    isTrimmed: false
-                };
-                curStart = lineEnd;
-                return cue;
-            });
-        }
-    } else if (activeWords.length > 0) {
-        activeCues = groupAutoEditWordsIntoCues(activeWords).map(c => ({
-            ...c,
-            outputStart: timelineBase + c.start,
-            outputEnd: timelineBase + c.end,
-            isTrimmed: false
-        }));
-    } else {
+    if (rawLines.length === 1) {
+        const isTrimmed = (speechEnd <= cutStart + 0.05) || (speechStart >= cutEnd - 0.05);
         activeCues = [{
-            start: cutStart,
-            end: cutEnd,
-            outputStart: timelineBase + cutStart,
-            outputEnd: timelineBase + cutEnd,
-            text: String(text || '').trim(),
-            words: [],
-            isTrimmed: false
+            start: speechStart,
+            end: speechEnd,
+            outputStart: timelineBase + speechStart,
+            outputEnd: timelineBase + speechEnd,
+            text: rawLines[0],
+            words: validWords,
+            isTrimmed: isTrimmed
         }];
+    } else {
+        const totalChars = rawLines.reduce((acc, l) => acc + l.length, 0) || 1;
+        let curStart = speechStart;
+        activeCues = rawLines.map((line, idx) => {
+            const lineFraction = line.length / totalChars;
+            const lineDur = Math.max(0.08, speechDur * lineFraction);
+            const lineEnd = (idx === rawLines.length - 1) ? speechEnd : Math.min(speechEnd, curStart + lineDur);
+            const isTrimmed = (lineEnd <= cutStart + 0.05) || (curStart >= cutEnd - 0.05);
+            const cue = {
+                start: curStart,
+                end: lineEnd,
+                outputStart: timelineBase + curStart,
+                outputEnd: timelineBase + lineEnd,
+                text: line,
+                words: [],
+                isTrimmed: isTrimmed
+            };
+            curStart = lineEnd;
+            return cue;
+        });
     }
 
-    return [...headCues, ...activeCues, ...tailCues].sort((a, b) => a.start - b.start);
+    const allCues = [...headCues.filter(hc => hc.end <= speechStart + 0.05), ...activeCues, ...tailCues.filter(tc => tc.start >= speechEnd - 0.05)];
+    return allCues.sort((a, b) => a.start - b.start);
 }
 
 function openAutoEditHelpModal() {
@@ -15350,6 +15372,29 @@ function openAutoEditTimelineReview() {
     }
     document.getElementById('autoedit-timeline-review-modal')?.remove();
     let selected = 0;
+    // 审核弹窗拥有独立的编辑历史。它编辑的是自动剪辑审核行，而不是 Reels
+    // 工程的任务模型，因此不能借用后者的撤销栈。
+    const reviewHistory = [];
+    let pendingTimelineView = null;
+    const captureReviewState = () => rows.map(row => ({
+        start: row.querySelector('.ae-review-start')?.value || '0',
+        end: row.querySelector('.ae-review-end')?.value || '0.05',
+        script: row.querySelector('.ae-review-script')?.value || '',
+        enabled: row.querySelector('.ae-review-enabled')?.checked !== false,
+    }));
+    const saveReviewHistory = () => {
+        const next = JSON.stringify(captureReviewState());
+        if (reviewHistory.length && reviewHistory[reviewHistory.length - 1] === next) return;
+        reviewHistory.push(next);
+        if (reviewHistory.length > 100) reviewHistory.shift();
+    };
+    const captureTimelineView = () => editorInstance ? ({
+        pxPerSec: editorInstance._pxPerSec,
+        scrollX: editorInstance._scrollX,
+        scrollY: editorInstance._scrollY,
+        autoFitDuration: editorInstance._autoFitDuration,
+        hasManualTimelineView: editorInstance._hasManualTimelineView,
+    }) : null;
     // 不是播放已经导出的旧文件，而是按当前审核切点实时串起原片；这样改动
     // 入/出点后，马上看到“将要导出的整片”而无需先导出一次。
     let editorInstance = null;
@@ -15360,7 +15405,17 @@ function openAutoEditTimelineReview() {
     const panel = document.createElement('section');
     panel.dataset.role = 'review-panel';
     panel.style.cssText = 'width:min(1420px,98vw);max-width:98vw;height:min(950px,96vh);max-height:96vh;background:linear-gradient(180deg,#121422 0%,#0c0d16 100%);border:1px solid rgba(255,255,255,.14);border-radius:16px;box-shadow:0 30px 100px rgba(0,0,0,.85);display:grid;grid-template-rows:auto 1fr auto;overflow:hidden;color:#e5e7eb;';
-    const close = () => modal.remove();
+    const close = () => {
+        // 审核弹窗会反复打开；先停止媒体与时间线的全局监听/rAF，
+        // 再移除 DOM，避免旧实例在后台持续渲染或响应鼠标事件。
+        const video = panel.querySelector('[data-role="master-video"]');
+        if (video) video.pause();
+        if (editorInstance) {
+            editorInstance.destroy?.();
+            editorInstance = null;
+        }
+        modal.remove();
+    };
     const fmt = value => `${Math.max(0, Number(value) || 0).toFixed(3)}s`;
     const getRow = () => rows[selected];
     const getSource = row => { try { return decodeURIComponent(row.dataset.source || ''); } catch (_) { return ''; } };
@@ -15413,7 +15468,36 @@ function openAutoEditTimelineReview() {
     const fileUrl = source => (window.electronAPI && typeof window.electronAPI.toFileUrl === 'function')
         ? window.electronAPI.toFileUrl(source)
         : normalizeFilePath(source);
+    function undoReview() {
+        // 栈尾是当前状态；弹出它以后恢复前一个状态。
+        if (reviewHistory.length < 2) {
+            showToast('没有可撤销的审核修改', 'info');
+            return;
+        }
+        reviewHistory.pop();
+        const previous = JSON.parse(reviewHistory[reviewHistory.length - 1]);
+        previous.forEach((state, index) => {
+            const row = rows[index];
+            if (!row) return;
+            const start = row.querySelector('.ae-review-start');
+            const end = row.querySelector('.ae-review-end');
+            const script = row.querySelector('.ae-review-script');
+            const enabled = row.querySelector('.ae-review-enabled');
+            if (start) { start.value = state.start; markAutoEditCutManual(start); }
+            if (end) end.value = state.end;
+            if (script) script.value = state.script;
+            if (enabled) enabled.checked = state.enabled;
+            const reviewIdx = Number(row.dataset.reviewIndex ?? index);
+            if (autoEditLastResult?.segments?.[reviewIdx]) autoEditLastResult.segments[reviewIdx].script = state.script;
+        });
+        if (typeof persistAutoEditBatchReview === 'function') persistAutoEditBatchReview();
+        pendingTimelineView = captureTimelineView();
+        render();
+        showToast('已撤销审核修改', 'success');
+    }
     const render = () => {
+        const restoredTimelineView = pendingTimelineView || captureTimelineView();
+        pendingTimelineView = null;
         let selectSegment = null;
         const row = getRow();
         const start = Number(row.querySelector('.ae-review-start')?.value) || 0;
@@ -15550,6 +15634,7 @@ function openAutoEditTimelineReview() {
                     <button data-action="apply-all-classic" class="btn btn-secondary" style="padding:2px 7px;font-size:11px;color:#cbd5e1;border-color:rgba(148,163,184,0.35);" title="所有片段采用经典切点算法">全用 经典</button>
                 </div>
                 <div style="display:flex;align-items:center;gap:6px;">
+                    <button data-action="undo-review" class="btn btn-secondary" style="padding:4px 11px;font-size:12px;color:#fde68a;border-color:rgba(251,191,36,0.45);border-radius:6px;" title="撤销上一次切点或文案修改 (Cmd/Ctrl+Z)">↶ 撤销</button>
                     <button data-action="show-help" class="btn btn-secondary" style="padding:4px 11px;font-size:12px;color:#93c5fd;border-color:rgba(96,165,250,0.45);border-radius:6px;display:inline-flex;align-items:center;gap:4px;" title="查看时间线审核操作说明与快捷键 (快捷键: F1)">📖 帮助说明</button>
                     <button data-action="close" class="btn btn-secondary" style="padding:4px 12px;font-size:12px;border-radius:6px;">✕ 关闭</button>
                 </div>
@@ -15807,6 +15892,8 @@ function openAutoEditTimelineReview() {
             };
         });
         panel.querySelector('[data-action="close"]').onclick = close;
+        const btnUndoReview = panel.querySelector('[data-action="undo-review"]');
+        if (btnUndoReview) btnUndoReview.onclick = undoReview;
         const btnHelp = panel.querySelector('[data-action="show-help"]');
         if (btnHelp) btnHelp.onclick = openAutoEditHelpModal;
         const btnHelpFooter = panel.querySelector('[data-action="show-help-footer"]');
@@ -15904,15 +15991,14 @@ function openAutoEditTimelineReview() {
                                 }
                             });
                         } else if (track.type === 'script') {
-                            const segScriptClips = track.clips.filter(c => c._reviewRow === current);
-                            const activeDur = Math.max(0.1, currentEnd - currentStart);
-                            if (segScriptClips.length > 0) {
-                                const perDur = activeDur / segScriptClips.length;
-                                segScriptClips.forEach((c, idx) => {
-                                    c.start = item.sourceTimelineStart + currentStart + idx * perDur;
-                                    c.end = item.sourceTimelineStart + currentStart + (idx + 1) * perDur;
-                                });
-                            }
+                            // 文案参考轨沿用原始时间位置；裁切只影响可见范围，
+                            // 不能把多行文案按新的保留时长平均拉伸。
+                            track.clips.forEach(c => {
+                                if (c._reviewRow !== current) return;
+                                const cueStart = c._sourceStart ?? 0;
+                                const cueEnd = c._sourceEnd ?? cueStart;
+                                c._isTrimmed = (cueEnd <= currentStart + 0.05) || (cueStart >= currentEnd - 0.05);
+                            });
                         } else {
                             const c = track.clips?.[selected];
                             if (c) {
@@ -16152,12 +16238,21 @@ function openAutoEditTimelineReview() {
 
         // input 而不是 change：拖动过程中就写回审核结果，但不重建弹窗 DOM，
         // 所以滑块可以连续拖动，不会跳手柄。
-        panel.querySelector('[data-role="start"]').oninput = event => { sync('start', event.target.value); reflectCurrentCut(); };
-        panel.querySelector('[data-role="end"]').oninput = event => { sync('end', event.target.value); reflectCurrentCut(); };
-        panel.querySelector('[data-role="start-number"]').onchange = event => { sync('start', event.target.value); reflectCurrentCut(); };
-        panel.querySelector('[data-role="end-number"]').onchange = event => { sync('end', event.target.value); reflectCurrentCut(); };
+        const startRange = panel.querySelector('[data-role="start"]');
+        const endRange = panel.querySelector('[data-role="end"]');
+        const startNumber = panel.querySelector('[data-role="start-number"]');
+        const endNumber = panel.querySelector('[data-role="end-number"]');
+        [startRange, endRange].forEach(input => input?.addEventListener('pointerdown', saveReviewHistory));
+        startRange.oninput = event => { sync('start', event.target.value); reflectCurrentCut(); };
+        endRange.oninput = event => { sync('end', event.target.value); reflectCurrentCut(); };
+        startRange.onchange = () => saveReviewHistory();
+        endRange.onchange = () => saveReviewHistory();
+        [startNumber, endNumber].forEach(input => input?.addEventListener('focus', saveReviewHistory));
+        startNumber.onchange = event => { sync('start', event.target.value); reflectCurrentCut(); saveReviewHistory(); };
+        endNumber.onchange = event => { sync('end', event.target.value); reflectCurrentCut(); saveReviewHistory(); };
         const scriptTextarea = panel.querySelector('[data-role="segment-script"]');
         if (scriptTextarea) {
+            scriptTextarea.addEventListener('focus', saveReviewHistory);
             scriptTextarea.oninput = event => {
                 const current = getRow();
                 const val = event.target.value;
@@ -16192,6 +16287,7 @@ function openAutoEditTimelineReview() {
                     }
                 }
             };
+            scriptTextarea.addEventListener('change', saveReviewHistory);
         }
         let playbackRaf = null;
         const stopPlaybackLoop = () => {
@@ -16436,33 +16532,53 @@ function openAutoEditTimelineReview() {
             sequence.forEach(item => {
                 const origScript = decodeURIComponent(item.row.dataset.originalScript || '') || item.row.querySelector('.ae-review-script')?.value || '';
                 const scriptLines = origScript.split(/\r?\n+/).map(s => s.trim()).filter(Boolean);
-                const activeDur = Math.max(0.1, item.end - item.start);
+                let words = [];
+                try { words = item.row.dataset.wordTimeline ? JSON.parse(decodeURIComponent(item.row.dataset.wordTimeline)) : []; } catch (_) {}
+                const validWords = (Array.isArray(words) ? words : []).filter(w => Number.isFinite(Number(w.start)) && Number.isFinite(Number(w.end)) && Number(w.end) > Number(w.start));
+                
+                let speechStart = item.start;
+                let speechEnd = item.end;
+                if (validWords.length > 0) {
+                    speechStart = Number(validWords[0].start);
+                    speechEnd = Number(validWords[validWords.length - 1].end);
+                }
+                speechStart = Math.max(0, speechStart);
+                speechEnd = Math.max(speechStart + 0.1, speechEnd);
+                const speechDur = speechEnd - speechStart;
+
                 if (scriptLines.length > 1) {
-                    const perDur = activeDur / scriptLines.length;
+                    const totalChars = scriptLines.reduce((acc, l) => acc + l.length, 0) || 1;
+                    let curStart = speechStart;
                     scriptLines.forEach((line, lIdx) => {
+                        const lineFraction = line.length / totalChars;
+                        const lineDur = Math.max(0.08, speechDur * lineFraction);
+                        const lineEnd = (lIdx === scriptLines.length - 1) ? speechEnd : Math.min(speechEnd, curStart + lineDur);
+                        const isTrimmed = (lineEnd <= item.start + 0.05) || (curStart >= item.end - 0.05);
                         scriptClips.push({
-                            start: item.sourceTimelineStart + item.start + lIdx * perDur,
-                            end: item.sourceTimelineStart + item.start + (lIdx + 1) * perDur,
+                            start: item.sourceTimelineStart + curStart,
+                            end: item.sourceTimelineStart + lineEnd,
                             name: line,
                             _reviewRow: item.row,
-                            _isTrimmed: false,
-                            _sourceStart: item.start + lIdx * perDur,
-                            _sourceEnd: item.start + (lIdx + 1) * perDur,
-                            _lastStart: item.sourceTimelineStart + item.start + lIdx * perDur,
-                            _lastEnd: item.sourceTimelineStart + item.start + (lIdx + 1) * perDur,
+                            _isTrimmed: isTrimmed,
+                            _sourceStart: curStart,
+                            _sourceEnd: lineEnd,
+                            _lastStart: item.sourceTimelineStart + curStart,
+                            _lastEnd: item.sourceTimelineStart + lineEnd,
                         });
+                        curStart = lineEnd;
                     });
                 } else if (origScript.trim()) {
+                    const isTrimmed = (speechEnd <= item.start + 0.05) || (speechStart >= item.end - 0.05);
                     scriptClips.push({
-                        start: item.sourceTimelineStart + item.start,
-                        end: item.sourceTimelineStart + item.end,
+                        start: item.sourceTimelineStart + speechStart,
+                        end: item.sourceTimelineStart + speechEnd,
                         name: origScript.trim(),
                         _reviewRow: item.row,
-                        _isTrimmed: false,
-                        _sourceStart: item.start,
-                        _sourceEnd: item.end,
-                        _lastStart: item.sourceTimelineStart + item.start,
-                        _lastEnd: item.sourceTimelineStart + item.end,
+                        _isTrimmed: isTrimmed,
+                        _sourceStart: speechStart,
+                        _sourceEnd: speechEnd,
+                        _lastStart: item.sourceTimelineStart + speechStart,
+                        _lastEnd: item.sourceTimelineStart + speechEnd,
                     });
                 }
             });
@@ -16495,7 +16611,17 @@ function openAutoEditTimelineReview() {
                 { type: 'subs', name: '✨ 最终导出字幕', clips: subClips, locked: false, visible: true, domain: 'visual' },
                 { type: 'audio', name: '原声（绑定视频）', clips: sequence.map(item => makeClip(item, '原声')), locked: false, visible: true, domain: 'audio' },
             ]);
-            editorInstance.setDuration(Math.max(1, totalDuration), { fit: true });
+            // 重建审核轨道（例如调整切点后）也保留当前的放大比例与滚动位置；
+            // 只有首次打开窗口才自适应整片。
+            editorInstance.setDuration(Math.max(1, totalDuration), { fit: !restoredTimelineView });
+            if (restoredTimelineView) {
+                editorInstance._pxPerSec = restoredTimelineView.pxPerSec;
+                editorInstance._scrollX = restoredTimelineView.scrollX;
+                editorInstance._scrollY = restoredTimelineView.scrollY;
+                editorInstance._autoFitDuration = restoredTimelineView.autoFitDuration;
+                editorInstance._hasManualTimelineView = restoredTimelineView.hasManualTimelineView;
+                editorInstance._render();
+            }
             editorInstance.setPlayhead(playback.outputTime);
             editorInstance.onSeek = time => loadOutputTime(time, false);
             editorInstance.onClipSelect = (trackIndex, clipIndex, clip) => {
@@ -16629,15 +16755,15 @@ function openAutoEditTimelineReview() {
                                 }
                             });
                         } else if (track.type === 'script') {
-                            const segScriptClips = track.clips.filter(c => c._reviewRow === row);
-                            const activeDur = Math.max(0.1, newOutT - newInT);
-                            if (segScriptClips.length > 0) {
-                                const perDur = activeDur / segScriptClips.length;
-                                segScriptClips.forEach((c, idx) => {
-                                    c.start = (clip.start || 0) + newInT + idx * perDur;
-                                    c.end = (clip.start || 0) + newInT + (idx + 1) * perDur;
-                                });
-                            }
+                            // 文案行是原片时间轴上的显示参考，不是可随裁切长度
+                            // 均分的橡皮筋。仅隐藏落在新入/出点外的行，保留每行
+                            // 原来的时间位置和时长，避免字幕被错误拉长/压缩。
+                            track.clips.forEach(c => {
+                                if (c._reviewRow !== row) return;
+                                const cueStart = c._sourceStart ?? 0;
+                                const cueEnd = c._sourceEnd ?? cueStart;
+                                c._isTrimmed = (cueEnd <= newInT + 0.05) || (cueStart >= newOutT - 0.05);
+                            });
                         }
                     });
 
@@ -16688,6 +16814,10 @@ function openAutoEditTimelineReview() {
                 });
                 editorInstance._render();
             };
+            editorInstance.onEditStart = () => {
+                // 一次鼠标拖动只记录一个“拖前”快照。
+                saveReviewHistory();
+            };
             editorInstance.onEditEnd = () => {
                 const videoTrack = editorInstance._tracks.find(track => track.type === 'video');
                 const orderedRows = (videoTrack?.clips || []).slice().sort((a, b) => a.start - b.start).map(clip => clip._reviewRow).filter(Boolean);
@@ -16706,7 +16836,9 @@ function openAutoEditTimelineReview() {
                     persistAutoEditBatchReview();
                 }
                 selected = Math.max(0, Math.min(rows.length - 1, selected));
-                // 重建可让裁剪后的长度立即触发“后续片段自动推进”的波纹结果。
+                // 重建以刷新后续片段的序列数据，但必须带回用户正在使用的缩放视图。
+                saveReviewHistory();
+                pendingTimelineView = captureTimelineView();
                 render();
             };
         }
@@ -16752,6 +16884,12 @@ function openAutoEditTimelineReview() {
     modal.addEventListener('keydown', event => {
         if (event.key === 'Escape') {
             close();
+        } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z' && !event.shiftKey) {
+            const isTextInput = ['INPUT', 'TEXTAREA'].includes(event.target?.tagName) || event.target?.isContentEditable;
+            if (!isTextInput) {
+                event.preventDefault();
+                undoReview();
+            }
         } else if (event.key === 'F1' || (event.key === '?' && !['INPUT', 'TEXTAREA'].includes(event.target?.tagName))) {
             event.preventDefault();
             openAutoEditHelpModal();
@@ -16769,6 +16907,7 @@ function openAutoEditTimelineReview() {
     modal.tabIndex = -1;
     modal.appendChild(panel);
     document.body.appendChild(modal);
+    saveReviewHistory();
     render();
     modal.focus();
 }

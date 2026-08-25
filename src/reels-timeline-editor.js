@@ -182,8 +182,10 @@ class ReelsTimelineEditor {
         this.canvas.addEventListener('keydown', (e) => this._onKeyDown(e));
         
         // 绑定到 window 以防止鼠标移出画布后拖拽断开/卡住
-        window.addEventListener('mousemove', (e) => this._onMouseMove(e));
-        window.addEventListener('mouseup', (e) => this._onMouseUp(e));
+        this._boundMouseMove = (e) => this._onMouseMove(e);
+        this._boundMouseUp = (e) => this._onMouseUp(e);
+        window.addEventListener('mousemove', this._boundMouseMove);
+        window.addEventListener('mouseup', this._boundMouseUp);
         
         this.canvas.addEventListener('mouseleave', () => {
             this._hoveredClip = null;
@@ -200,18 +202,42 @@ class ReelsTimelineEditor {
         });
 
         // 点击画布其他区域时关闭编辑器
-        document.addEventListener('mousedown', (e) => {
+        this._boundDocMouseDown = (e) => {
             if (this._rtEditor && this._rtEditor.popup && !this._rtEditor.popup.contains(e.target) && e.target !== this.canvas) {
                 this._rtEditor.close(true);
             }
-        });
+        };
+        document.addEventListener('mousedown', this._boundDocMouseDown);
 
         // 尺寸
         this._resize();
-        const ro = new ResizeObserver(() => this._resize());
-        ro.observe(this.container);
+        this._ro = new ResizeObserver(() => this._resize());
+        this._ro.observe(this.container);
 
         this._renderLoop();
+    }
+
+    destroy() {
+        this._destroyed = true;
+        if (this._rafId) {
+            cancelAnimationFrame(this._rafId);
+            this._rafId = null;
+        }
+        if (this._boundMouseMove) window.removeEventListener('mousemove', this._boundMouseMove);
+        if (this._boundMouseUp) window.removeEventListener('mouseup', this._boundMouseUp);
+        if (this._boundDocMouseDown) document.removeEventListener('mousedown', this._boundDocMouseDown);
+        if (this._ro) {
+            this._ro.disconnect();
+            this._ro = null;
+        }
+        if (this._tooltipEl && this._tooltipEl.parentNode) {
+            this._tooltipEl.parentNode.removeChild(this._tooltipEl);
+            this._tooltipEl = null;
+        }
+        if (this.canvas && this.canvas.parentNode) {
+            this.canvas.parentNode.removeChild(this.canvas);
+        }
+        this._tracks = [];
     }
 
     _resize() {
@@ -445,8 +471,9 @@ class ReelsTimelineEditor {
     // ═══════════════════════════════════════════════
 
     _renderLoop() {
+        if (this._destroyed) return;
         this._render();
-        requestAnimationFrame(() => this._renderLoop());
+        this._rafId = requestAnimationFrame(() => this._renderLoop());
     }
 
     _render() {
@@ -675,6 +702,32 @@ class ReelsTimelineEditor {
 
         // 头部警示徽章
         let rightBadgeOffset = eyeX - 6;
+        // 视觉轨的层级不能只靠隐藏的右键菜单操作。把上/下移和更多菜单
+        // 固定放在轨道名右侧，符合“越上层越靠前”的 NLE 直觉。
+        const canReorder = track.domain === 'visual' && typeof this.onTrackOrderChange === 'function';
+        if (canReorder) {
+            const controls = [
+                { x: eyeX - 60, icon: '↑', title: '上移（更高层）' },
+                { x: eyeX - 40, icon: '↓', title: '下移（更低层）' },
+                { x: eyeX - 20, icon: '⋯', title: '更多轨道操作' },
+            ];
+            controls.forEach(control => {
+                ctx.fillStyle = 'rgba(255,255,255,0.06)';
+                ctx.strokeStyle = 'rgba(255,255,255,0.16)';
+                ctx.lineWidth = 1;
+                if (typeof ctx.roundRect === 'function') {
+                    ctx.beginPath(); ctx.roundRect(control.x, eyeY, 16, eyeSize, 3); ctx.fill(); ctx.stroke();
+                } else {
+                    ctx.fillRect(control.x, eyeY, 16, eyeSize); ctx.strokeRect(control.x, eyeY, 16, eyeSize);
+                }
+                ctx.font = control.icon === '⋯' ? 'bold 14px system-ui' : 'bold 13px system-ui';
+                ctx.fillStyle = '#cbd5e1';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(control.icon, control.x + 8, eyeY + eyeSize / 2 - (control.icon === '⋯' ? 2 : 0));
+            });
+            rightBadgeOffset = eyeX - 66;
+        }
         const isInsert = track.role === 'insert_video' || (track.name && track.name.includes('插入')) || track.clips?.some(c => c._timelineRole === 'insert_video');
         const isBg = !isInsert && (track.role === 'background' || (track.name && track.name.includes('背景')) || (track.type === 'video' && !track.name?.includes('插入')));
         if (isBg && track.clips && track.clips.length > 0) {
@@ -1163,6 +1216,29 @@ class ReelsTimelineEditor {
                     }
                     this._render();
                     return;
+                }
+                if (track.domain === 'visual' && typeof this.onTrackOrderChange === 'function') {
+                    const controlY = y => y + (TL_TRACK_HEIGHT - 18) / 2;
+                    let trackY = TL_RULER_H - this._scrollY;
+                    for (let ti = 0; ti < trackIdx; ti++) {
+                        if (this._tracks[ti].domain === 'visual' && this._tracks[ti + 1]?.domain === 'audio') trackY += 4;
+                        trackY += TL_TRACK_HEIGHT + 1;
+                    }
+                    const cy = controlY(trackY);
+                    const inControlY = my >= cy && my <= cy + 18;
+                    const eyeX = TL_HEADER_W - 24;
+                    if (inControlY && mx >= eyeX - 60 && mx < eyeX - 44) {
+                        this.moveTrack(trackIdx, 'up');
+                        return;
+                    }
+                    if (inControlY && mx >= eyeX - 40 && mx < eyeX - 24) {
+                        this.moveTrack(trackIdx, 'down');
+                        return;
+                    }
+                    if (inControlY && mx >= eyeX - 20 && mx < eyeX - 4) {
+                        this._onContextMenu({ clientX: e.clientX, clientY: e.clientY });
+                        return;
+                    }
                 }
             }
             return;

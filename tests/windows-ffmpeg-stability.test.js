@@ -19,6 +19,19 @@ test('non-Windows encoders retain normal FFmpeg threading', () => {
     assert.equal(rawVideo._test.stableJpegEncoderArgs('linux').includes('-threads'), false);
 });
 
+test('direct 10-bit or VFR backgrounds are normalized before overlay composition', () => {
+    assert.equal(
+        rawVideo._test.normalizedDirectBackgroundFilter(
+            0,
+            'scale=1080:1920,setsar=1',
+            'setpts=PTS-STARTPTS',
+            30,
+            'bg',
+        ),
+        '[0:v]scale=1080:1920,setsar=1,setpts=PTS-STARTPTS,fps=30,format=yuv420p,settb=AVTB,setpts=PTS-STARTPTS[bg]'
+    );
+});
+
 test('Reels quality levels use stable capped bitrate targets', () => {
     assert.deepEqual(rawVideo._test.h264RateControlArgs(15), [
         '-b:v', '12M', '-maxrate', '12M', '-bufsize', '24M',

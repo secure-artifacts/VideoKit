@@ -90,6 +90,7 @@ const DEFAULT_SUBTITLE_STYLE = {
 
     // ── Text wrapping ──
     wrap_width_percent: 90,
+    auto_wrap: true,
     wrap_lines: 2,
     wrap_left: 0,
     wrap_right: 0,
@@ -343,6 +344,101 @@ function extractStyleKeys(obj) {
                 : typeof obj[key] === 'object' && obj[key] !== null
                     ? JSON.parse(JSON.stringify(obj[key]))
                     : obj[key];
+        }
+    }
+    return result;
+}
+
+function _stableStyleValue(value) {
+    if (Array.isArray(value)) return value.map(_stableStyleValue);
+    if (!value || typeof value !== 'object') return value;
+    const result = {};
+    for (const key of Object.keys(value).sort()) result[key] = _stableStyleValue(value[key]);
+    return result;
+}
+
+/**
+ * Build a deterministic fingerprint for semantic preset comparison.
+ * Missing keys are filled from defaults, so a compact preset and an equivalent
+ * fully-expanded preset are treated as the same style.
+ */
+function subtitleStyleFingerprint(style) {
+    return JSON.stringify(_stableStyleValue(mergeStyle(extractStyleKeys(style))));
+}
+
+/**
+ * Merge multiple parsed preset files before writing them to localStorage.
+ * The first selected file/name wins inside the batch. Identical styles are
+ * removed even when their names differ; actual same-name style changes remain
+ * in `conflicts` so the UI can ask once whether to overwrite them.
+ */
+function prepareSubtitlePresetBatchImport(bundles, existingPresets = {}) {
+    const result = {
+        payload: { presets: {} },
+        duplicates: [],
+        batchConflicts: [],
+        conflicts: [],
+        invalid: [],
+    };
+    const selectedNames = new Map();
+    const selectedContent = new Map();
+
+    for (const bundle of Array.isArray(bundles) ? bundles : []) {
+        const source = String(bundle?.source || '未命名文件');
+        const incoming = bundle?.data;
+        if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)
+            || !incoming.presets || typeof incoming.presets !== 'object' || Array.isArray(incoming.presets)) {
+            result.invalid.push(source);
+            continue;
+        }
+        if (!result.payload.default && incoming.default && typeof incoming.default === 'object') {
+            result.payload.default = extractStyleKeys(incoming.default);
+        }
+        for (const [rawName, style] of Object.entries(incoming.presets)) {
+            const name = String(rawName || '').trim();
+            if (!name || !style || typeof style !== 'object' || Array.isArray(style)) {
+                result.invalid.push(`${source}: ${name || '空名称'}`);
+                continue;
+            }
+            const normalized = extractStyleKeys(style);
+            const fingerprint = subtitleStyleFingerprint(normalized);
+            if (selectedNames.has(name)) {
+                if (selectedNames.get(name) === fingerprint) result.duplicates.push(name);
+                else result.batchConflicts.push(name);
+                continue;
+            }
+            if (selectedContent.has(fingerprint)) {
+                result.duplicates.push(name);
+                continue;
+            }
+            selectedNames.set(name, fingerprint);
+            selectedContent.set(fingerprint, name);
+            result.payload.presets[name] = normalized;
+        }
+    }
+
+    const existingContent = new Map();
+    for (const [name, style] of Object.entries(existingPresets || {})) {
+        const fingerprint = subtitleStyleFingerprint(style);
+        if (!existingContent.has(fingerprint)) existingContent.set(fingerprint, name);
+    }
+    for (const [name, style] of Object.entries({ ...result.payload.presets })) {
+        const fingerprint = subtitleStyleFingerprint(style);
+        if (Object.prototype.hasOwnProperty.call(existingPresets || {}, name)) {
+            if (subtitleStyleFingerprint(existingPresets[name]) === fingerprint) {
+                delete result.payload.presets[name];
+                result.duplicates.push(name);
+            } else if (existingContent.has(fingerprint) && existingContent.get(fingerprint) !== name) {
+                delete result.payload.presets[name];
+                result.duplicates.push(name);
+            } else {
+                result.conflicts.push(name);
+            }
+            continue;
+        }
+        if (existingContent.has(fingerprint)) {
+            delete result.payload.presets[name];
+            result.duplicates.push(name);
         }
     }
     return result;
@@ -801,7 +897,7 @@ function exportSubtitlePresets() {
 }
 
 function importSubtitlePresets(jsonString, overwriteConflicts = false) {
-    const result = { added: [], conflicts: [], skipped: [] };
+    const result = { added: [], conflicts: [], skipped: [], duplicates: [] };
     try {
         const incoming = JSON.parse(jsonString);
         if (typeof incoming !== 'object') return result;
@@ -810,9 +906,17 @@ function importSubtitlePresets(jsonString, overwriteConflicts = false) {
             data.default = extractStyleKeys(incoming.default);
         }
         const presets = data.presets || {};
+        const allExistingPresets = loadSubtitlePresets().presets || {};
+        const existingContent = new Map();
+        for (const [existingName, existingStyle] of Object.entries(allExistingPresets)) {
+            const fingerprint = subtitleStyleFingerprint(existingStyle);
+            if (!existingContent.has(fingerprint)) existingContent.set(fingerprint, existingName);
+        }
         // 收集内置预设名，导入时跳过纯内置预设（避免污染用户存储）
         const builtinNames = new Set(Object.keys(BUILTIN_PRESETS));
         for (const [name, style] of Object.entries(incoming.presets || {})) {
+            const normalizedStyle = extractStyleKeys(style);
+            const fingerprint = subtitleStyleFingerprint(normalizedStyle);
             // 如果是内置预设且本地没有用户覆盖版本，跳过
             if (builtinNames.has(name) && !(name in presets)) {
                 result.skipped.push(name);
@@ -823,15 +927,35 @@ function importSubtitlePresets(jsonString, overwriteConflicts = false) {
                 continue;
             }
             if (name in presets) {
+                if (subtitleStyleFingerprint(presets[name]) === fingerprint) {
+                    result.duplicates.push(name);
+                    continue;
+                }
+                if (existingContent.has(fingerprint) && existingContent.get(fingerprint) !== name) {
+                    result.duplicates.push(name);
+                    continue;
+                }
                 if (overwriteConflicts) {
-                    presets[name] = extractStyleKeys(style);
+                    presets[name] = normalizedStyle;
+                    allExistingPresets[name] = normalizedStyle;
+                    existingContent.clear();
+                    for (const [existingName, existingStyle] of Object.entries(allExistingPresets)) {
+                        const currentFingerprint = subtitleStyleFingerprint(existingStyle);
+                        if (!existingContent.has(currentFingerprint)) existingContent.set(currentFingerprint, existingName);
+                    }
                     result.conflicts.push(name);
                 } else {
                     result.skipped.push(name);
                 }
                 continue;
             }
-            presets[name] = extractStyleKeys(style);
+            if (existingContent.has(fingerprint)) {
+                result.duplicates.push(name);
+                continue;
+            }
+            presets[name] = normalizedStyle;
+            allExistingPresets[name] = normalizedStyle;
+            existingContent.set(fingerprint, name);
             result.added.push(name);
         }
         data.presets = presets;
@@ -854,6 +978,8 @@ const ReelsStyleEngine = {
     copyStyle,
     mergeStyle,
     extractStyleKeys,
+    subtitleStyleFingerprint,
+    prepareSubtitlePresetBatchImport,
     // Presets
     loadSubtitlePresets,
     saveDefaultSubtitleStyle,

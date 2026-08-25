@@ -22,11 +22,62 @@
  * - 打字机、逐字弹跳、节奏逐词等特效
  */
 
+// Only the animation that is actually selected may reserve extra layout
+// space. The style always carries defaults for every animation (including
+// letter_jump_scale=1.5); taking their unconditional maximum made ordinary
+// fade/static subtitles taller and left the surplus below the final line.
+function getSubtitleLayoutMaxScale(style) {
+    const s = style || {};
+    const type = s.anim_in_type || 'none';
+    let value = 1;
+    if (type === 'word_pop_random') value = Number(s.word_pop_random_max_scale ?? 1.34);
+    else if (type === 'word_pop_random_pulse') value = Number(s.word_pop_random_pulse_max_scale ?? 1.38);
+    else if (type === 'letter_jump') value = Number(s.letter_jump_scale ?? 1.5);
+    return Number.isFinite(value) ? Math.max(1, value) : 1;
+}
+
+function getTopBaselineGlyphBounds(metrics, fontSize, lineHeight) {
+    const safeFontSize = Math.max(1, Number(fontSize) || 1);
+    const safeLineHeight = Math.max(1, Number(lineHeight) || safeFontSize * 1.2);
+    const actualAscent = Number(metrics?.actualBoundingBoxAscent);
+    const actualDescent = Number(metrics?.actualBoundingBoxDescent);
+
+    if (!Number.isFinite(actualAscent) || !Number.isFinite(actualDescent)) {
+        return { top: 0, bottom: safeLineHeight, height: safeLineHeight };
+    }
+
+    // TextMetrics are relative to the currently selected textBaseline. These
+    // subtitles use "top", so glyph top is -ascent and glyph bottom is
+    // descent from the draw Y. Re-basing through fontBoundingBoxAscent shifts
+    // accented capitals below the box and clips their diacritics.
+    const top = Math.max(0, Math.min(safeLineHeight, -actualAscent));
+    const bottom = Math.max(top, Math.min(safeLineHeight, actualDescent));
+    return { top, bottom, height: Math.max(0, bottom - top) };
+}
+
+// Canvas calls the Photoshop-style "Linear Dodge" blend operation "lighter".
+// Keep this normalization at the render boundary so preview canvases and the
+// off-screen canvas used for MP4 export cannot interpret the UI value
+// differently.
+function getAmbientGlowCompositeOperation(style) {
+    const requested = String(style?.ambient_glow_blend_mode || 'lighter').toLowerCase();
+    const aliases = {
+        'linear-dodge': 'lighter',
+        'linear_dodge': 'lighter',
+        'lineardodge': 'lighter',
+    };
+    const operation = aliases[requested] || requested;
+    return ['lighter', 'screen', 'soft-light', 'overlay', 'source-over'].includes(operation)
+        ? operation
+        : 'lighter';
+}
+
 class ReelsCanvasRenderer {
     constructor(canvas) {
         this.canvas = canvas;
         this.ctx = canvas.getContext('2d');
         this._seCache = { key: null, img: null }; // stroke expand cache
+        this._ambientLightingLayer = null;
     }
 
     setContextSegments(segments) {
@@ -55,6 +106,62 @@ class ReelsCanvasRenderer {
         const innerR = videoW * (darkRadiusRatio * 0.15);
         const outerR = videoW * (darkRadiusRatio * 0.95);
 
+        // Render the dark environment on its own layer.  This lets the active
+        // light aperture lower the *dark layer's* alpha rather than merely
+        // painting a brighter colour over a blackened background.
+        const layer = this._getAmbientLightingLayer(videoW, videoH);
+        if (!layer) return this._renderAmbientLightingDirect(ctx, centerX, centerY, innerR, outerR,
+            rVal, gVal, bVal, centerOpacity, outerOpacity, videoW, videoH);
+        const layerCtx = layer.getContext('2d');
+        layerCtx.clearRect(0, 0, videoW, videoH);
+        layerCtx.globalCompositeOperation = 'source-over';
+        const vigGrad = layerCtx.createRadialGradient(centerX, centerY, innerR, centerX, centerY, outerR);
+        vigGrad.addColorStop(0, `rgba(${rVal}, ${gVal}, ${bVal}, ${centerOpacity.toFixed(3)})`);
+        vigGrad.addColorStop(0.35, `rgba(${rVal}, ${gVal}, ${bVal}, ${(centerOpacity + (outerOpacity - centerOpacity) * 0.45).toFixed(3)})`);
+        vigGrad.addColorStop(0.70, `rgba(${rVal}, ${gVal}, ${bVal}, ${(centerOpacity + (outerOpacity - centerOpacity) * 0.82).toFixed(3)})`);
+        vigGrad.addColorStop(1, `rgba(${rVal}, ${gVal}, ${bVal}, ${outerOpacity.toFixed(3)})`);
+        layerCtx.fillStyle = vigGrad;
+        layerCtx.fillRect(0, 0, videoW, videoH);
+
+        // The aperture uses the same radius and intensity controls as the
+        // optical glow.  At the centre, glow opacity directly determines how
+        // much of the dark environment is removed; it smoothly returns to the
+        // configured vignette at the edge of the glow range.
+        if (style?.ambient_glow_enabled) {
+            const glowRadius = Math.max(60, Number(style.ambient_glow_radius) || 360) * 1.35;
+            const glowOpacity = Math.max(0, Math.min(1, Number(style.ambient_glow_opacity ?? .55)));
+            if (glowOpacity > 0.005) {
+                layerCtx.save();
+                layerCtx.globalCompositeOperation = 'destination-out';
+                const aperture = layerCtx.createRadialGradient(centerX, centerY, 0, centerX, centerY, glowRadius);
+                aperture.addColorStop(0, `rgba(0, 0, 0, ${glowOpacity.toFixed(3)})`);
+                aperture.addColorStop(0.30, `rgba(0, 0, 0, ${(glowOpacity * .82).toFixed(3)})`);
+                aperture.addColorStop(0.65, `rgba(0, 0, 0, ${(glowOpacity * .35).toFixed(3)})`);
+                aperture.addColorStop(1, 'rgba(0, 0, 0, 0)');
+                layerCtx.fillStyle = aperture;
+                layerCtx.fillRect(centerX - glowRadius, centerY - glowRadius, glowRadius * 2, glowRadius * 2);
+                layerCtx.restore();
+            }
+        }
+
+        ctx.save();
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.drawImage(layer, 0, 0, videoW, videoH);
+        ctx.restore();
+    }
+
+    _getAmbientLightingLayer(width, height) {
+        if (typeof document === 'undefined') return null;
+        if (!this._ambientLightingLayer) this._ambientLightingLayer = document.createElement('canvas');
+        if (this._ambientLightingLayer.width !== width || this._ambientLightingLayer.height !== height) {
+            this._ambientLightingLayer.width = width;
+            this._ambientLightingLayer.height = height;
+        }
+        return this._ambientLightingLayer;
+    }
+
+    _renderAmbientLightingDirect(ctx, centerX, centerY, innerR, outerR,
+        rVal, gVal, bVal, centerOpacity, outerOpacity, videoW, videoH) {
         ctx.save();
         ctx.globalCompositeOperation = 'source-over';
         const vigGrad = ctx.createRadialGradient(centerX, centerY, innerR, centerX, centerY, outerR);
@@ -258,6 +365,7 @@ class ReelsCanvasRenderer {
         const advY = parseFloat(s.advanced_textbox_y) || 0;
         const advW = Math.max(80, parseFloat(s.advanced_textbox_w) || videoW * 0.8);
         const advH = Math.max(40, parseFloat(s.advanced_textbox_h) || 200);
+        const autoWrap = s.auto_wrap !== false;
 
         // ── 文字换行计算 ──
         let maxWidth;
@@ -333,18 +441,14 @@ class ReelsCanvasRenderer {
             paraWordsGroups[pIdx].push(flatWords[w]);
         }
 
-        const popMaxScaleGlobal = Math.max(1.0,
-            Number(s.word_pop_random_max_scale ?? 1.0),
-            Number(s.word_pop_random_pulse_max_scale ?? 1.0),
-            Number(s.letter_jump_scale ?? 1.0)
-        );
+        const popMaxScaleGlobal = getSubtitleLayoutMaxScale(s);
         const antiCollisionPaddingGlobal = (popMaxScaleGlobal > 1.05) ? ((ctx.measureText(' ').width + wordSpacing) * (popMaxScaleGlobal - 1.0) * 1.2) : 0;
 
         for (let i = 0; i < paragraphs.length; i++) {
             const paraWords = paraWordsGroups[i];
             if (paraWords.length > 0) {
                 const wrapWordSpacing = wordSpacing + randomWordSpacingMax + antiCollisionPaddingGlobal;
-                const paraLines = this._wrapTokensByPixelWidth(paraWords, maxWidth, joiner, letterSpacing, wrapWordSpacing);
+                const paraLines = this._wrapTokensByPixelWidth(paraWords, autoWrap ? maxWidth : Infinity, joiner, letterSpacing, wrapWordSpacing);
                 lines.push(...paraLines);
             } else {
                 const isLast = (i === paragraphs.length - 1);
@@ -380,13 +484,26 @@ class ReelsCanvasRenderer {
             maxLineW = Math.max(maxLineW, w);
             return w;
         });
-        const lineScales = lineWidths.map((w) => {
-            if (!blockTypography) return 1.0;
+        const lineGlyphBounds = visibleLines.map((line) => {
+            if (!line || !line.trim()) return { top: 0, bottom: lineH, height: lineH };
+            return getTopBaselineGlyphBounds(ctx.measureText(line), fontSize, lineH);
+        });
+        const lineScales = lineWidths.map((w, lineIndex) => {
+            const lineTokens = visibleLines[lineIndex].split(/\s+/).filter(Boolean);
+            let maxAnimatedTokenW = 0;
+            for (const token of lineTokens) {
+                maxAnimatedTokenW = Math.max(
+                    maxAnimatedTokenW,
+                    this._measureTextWithSpacing(ctx, token, letterSpacing) * popMaxScaleGlobal,
+                );
+            }
+            const overflowFit = maxAnimatedTokenW > maxWidth ? maxWidth / maxAnimatedTokenW : 1.0;
+            if (!blockTypography) return Math.min(1.0, overflowFit);
             const safeW = Math.max(1, w);
             const fit = blockTargetWidth / safeW;
-            return Math.max(blockScaleMin, Math.min(blockScaleMax, fit));
+            return Math.min(overflowFit, Math.max(blockScaleMin, Math.min(blockScaleMax, fit)));
         });
-        const lineHeights = lineScales.map(sc => lineH * sc * Math.max(1.0, popMaxScaleGlobal * 0.95));
+        const lineHeights = lineScales.map(sc => lineH * sc * popMaxScaleGlobal);
         const lineSpacings = visibleLines.map((_, i) => {
             if (i >= visibleLines.length - 1) return 0;
             const verticalCushion = (popMaxScaleGlobal > 1.05) ? (lineH * (popMaxScaleGlobal - 1.0) * 0.35) : 0;
@@ -399,6 +516,10 @@ class ReelsCanvasRenderer {
             accumY += lineHeights[i];
             if (i < visibleLines.length - 1) accumY += lineSpacings[i];
         }
+        const lineTextTopOffsets = lineTopOffsets.map((slotTop, i) => {
+            const renderedLineH = lineH * (lineScales[i] || 1);
+            return slotTop + Math.max(0, ((lineHeights[i] || renderedLineH) - renderedLineH) / 2);
+        });
         const totalH = accumY;
 
         // ── 精确计算每行实际渲染宽度（模拟渲染循环的 currX 推进） ──
@@ -408,11 +529,7 @@ class ReelsCanvasRenderer {
         const _isLJ_ = animInType_ === 'letter_jump';
         const segDur_ = Math.max(0.001, segEnd - segStart);
         const baseSpaceW_ = ctx.measureText(' ').width + wordSpacing;
-        const popMaxScale_ = Math.max(1.0,
-            Number(s.word_pop_random_max_scale ?? 1.0),
-            Number(s.word_pop_random_pulse_max_scale ?? 1.0),
-            Number(s.letter_jump_scale ?? 1.0)
-        );
+        const popMaxScale_ = popMaxScaleGlobal;
         const antiCollisionPadding_ = (popMaxScale_ > 1.05) ? (baseSpaceW_ * (popMaxScale_ - 1.0) * 1.2) : 0;
         const safeBaseSpaceW_ = baseSpaceW_ + antiCollisionPadding_;
 
@@ -521,14 +638,27 @@ class ReelsCanvasRenderer {
         const effectivePadRight = padRight + strokeExtra;
         const effectivePadTop = padTop + strokeExtra;
         const effectivePadBottom = padBottom + strokeExtra;
+        const canTightFitGlyphs = popMaxScaleGlobal <= 1.05
+            && !blockTypography
+            && randomLineSpacingMax <= 0
+            && lineScales.every(scale => Math.abs(scale - 1) < 0.001);
+        const textBlockStartY = cy - totalH / 2;
+        const tightContentTop = canTightFitGlyphs
+            ? textBlockStartY + (lineGlyphBounds[0]?.top || 0)
+            : textBlockStartY;
+        const lastLineIndex = Math.max(0, visibleLines.length - 1);
+        const lastLineTop = textBlockStartY + (lineTextTopOffsets[lastLineIndex] || 0);
+        const tightContentBottom = canTightFitGlyphs
+            ? lastLineTop + (lineGlyphBounds[lastLineIndex]?.bottom ?? lineH)
+            : textBlockStartY + totalH;
         let rectX, rectY, rectW, rectH;
         if (advEnabled) {
             rectX = advX; rectY = advY; rectW = advW; rectH = advH;
         } else {
             rectX = cx - renderMaxLineW / 2 - effectivePadLeft;
-            rectY = cy - totalH / 2 - effectivePadTop;
+            rectY = tightContentTop - effectivePadTop;
             rectW = renderMaxLineW + effectivePadLeft + effectivePadRight;
-            rectH = totalH + effectivePadTop + effectivePadBottom;
+            rectH = Math.max(1, tightContentBottom - tightContentTop) + effectivePadTop + effectivePadBottom;
         }
 
         ctx.save();
@@ -685,11 +815,14 @@ class ReelsCanvasRenderer {
                         const lineW = lineWidths[i];
                         const effectiveLineW = (actualLineWidths[i] != null && actualLineWidths[i] > lineW) ? actualLineWidths[i] : lineW;
                         let xStart = cx - effectiveLineW / 2; // Usually center
-                        const y = tempStartY + (blockTypography ? lineTopOffsets[i] : (i * lineStep));
+                        const y = tempStartY + (lineTopOffsets[i] || 0);
                         const lRectX = xStart - effectivePadLeft - expand;
-                        const lRectY = y - effectivePadTop - expand;
+                        const glyphBounds = lineGlyphBounds[i] || { top: 0, bottom: lineH, height: lineH };
+                        const tightLine = canTightFitGlyphs;
+                        const lRectY = y + (tightLine ? glyphBounds.top : 0) - effectivePadTop - expand;
                         const lRectW = effectiveLineW + effectivePadLeft + effectivePadRight + expand * 2;
-                        const lRectH = lineH + effectivePadTop + effectivePadBottom + expand * 2;
+                        const contentH = tightLine ? glyphBounds.height : (lineHeights[i] || lineH);
+                        const lRectH = contentH + effectivePadTop + effectivePadBottom + expand * 2;
                         
                         let r = rad + expand * 0.3;
                         r = Math.min(r, lRectW / 2, lRectH / 2);
@@ -842,7 +975,10 @@ class ReelsCanvasRenderer {
         const highColor = s.color_high || '#FFD700';
         const outlineColor = s.color_outline || '#3E2723';
         const outlineAlpha = (s.opacity_outline || 255) / 255;
-        const borderW = s.border_width || 3;
+        const configuredDrawBorderWidth = Number(s.border_width);
+        const borderW = Number.isFinite(configuredDrawBorderWidth)
+            ? Math.max(0, configuredDrawBorderWidth)
+            : (s.use_stroke === false ? 0 : 3);
         const useStroke = s.use_stroke !== false;
         const shadowBlur = s.shadow_blur || 0;
         const shadowOffX = s.shadow_offset_x || 0;
@@ -896,7 +1032,7 @@ class ReelsCanvasRenderer {
                 xStart = cx - anchorLineW / 2;
             }
 
-            const y = startY + (blockTypography || randomLineSpacingMax > 0 ? lineTopOffsets[i] : (i * lineStep));
+            const y = startY + (lineTextTopOffsets[i] || 0);
 
             // Bullet reveal: per-line alpha
             let lineAlpha = 1.0;
@@ -1183,14 +1319,15 @@ class ReelsCanvasRenderer {
                         const rawRadius = Number(s.ambient_glow_radius) || 360;
                         const baseRadius = Math.max(60, rawRadius);
                         const wordAlpha = Math.max(0.1, Math.min(1.0, Number(s.ambient_glow_opacity ?? 0.55))) * animOpacity;
+                        const blendOperation = getAmbientGlowCompositeOperation(s);
 
                         const hex = String(ambColor).replace('#', '');
                         const rVal = parseInt(hex.slice(0, 2), 16) || 255;
                         const gVal = parseInt(hex.slice(2, 4), 16) || 230;
                         const bVal = parseInt(hex.slice(4, 6), 16) || 120;
 
-                        // ── Pass 1: 广域温和曝光减淡 (Color-Dodge: 扩大光圈范围，降低中心峰值，柔和提亮不爆光) ──
-                        ctx.globalCompositeOperation = 'color-dodge';
+                        // ── Pass 1: 广域温和曝光减淡 ──
+                        ctx.globalCompositeOperation = blendOperation;
                         const dodgeGrad = ctx.createRadialGradient(wordCenterX, wordCenterY, 0, wordCenterX, wordCenterY, baseRadius);
                         dodgeGrad.addColorStop(0, `rgba(${Math.round(rVal * 0.55)}, ${Math.round(gVal * 0.55)}, ${Math.round(bVal * 0.55)}, ${(wordAlpha * 0.48).toFixed(3)})`);
                         dodgeGrad.addColorStop(0.3, `rgba(${Math.round(rVal * 0.38)}, ${Math.round(gVal * 0.38)}, ${Math.round(bVal * 0.38)}, ${(wordAlpha * 0.32).toFixed(3)})`);
@@ -1199,8 +1336,8 @@ class ReelsCanvasRenderer {
                         ctx.fillStyle = dodgeGrad;
                         ctx.fillRect(wordCenterX - baseRadius, wordCenterY - baseRadius, baseRadius * 2, baseRadius * 2);
 
-                        // ── Pass 2: 大范围暖调色温弥散 (Soft-Light: 广角柔和铺光，增强环境包围感) ──
-                        ctx.globalCompositeOperation = 'soft-light';
+                        // ── Pass 2: 大范围暖调色温弥散 ──
+                        ctx.globalCompositeOperation = blendOperation;
                         const toneRadius = baseRadius * 1.35;
                         const toneGrad = ctx.createRadialGradient(wordCenterX, wordCenterY, 0, wordCenterX, wordCenterY, toneRadius);
                         toneGrad.addColorStop(0, `rgba(${rVal}, ${gVal}, ${bVal}, ${(wordAlpha * 0.75).toFixed(3)})`);
@@ -1210,8 +1347,8 @@ class ReelsCanvasRenderer {
                         ctx.fillStyle = toneGrad;
                         ctx.fillRect(wordCenterX - toneRadius, wordCenterY - toneRadius, toneRadius * 2, toneRadius * 2);
 
-                        // ── Pass 3: 柔美边缘光学微光 (Screen: 消除光斑生硬边界) ──
-                        ctx.globalCompositeOperation = 'screen';
+                        // ── Pass 3: 柔美边缘光学微光 ──
+                        ctx.globalCompositeOperation = blendOperation;
                         const screenRadius = baseRadius * 0.75;
                         const screenGrad = ctx.createRadialGradient(wordCenterX, wordCenterY, 0, wordCenterX, wordCenterY, screenRadius);
                         screenGrad.addColorStop(0, `rgba(${rVal}, ${gVal}, ${bVal}, ${(wordAlpha * 0.18).toFixed(3)})`);
@@ -1738,8 +1875,39 @@ class ReelsCanvasRenderer {
         let currentLine = '';
         let currentLineW = 0;
         const joinerW = ctx.measureText(joiner).width + wordSpacing;
+
+        // A subtitle from Chinese ASR often arrives as one uninterrupted token.
+        // It must still obey the selected layout width; otherwise it extends
+        // beyond the video instead of becoming multiple subtitle lines.
+        const appendOversizeToken = (token) => {
+            for (const char of Array.from(token)) {
+                const charW = this._measureTextWithSpacing(ctx, char, letterSpacing);
+                if (currentLine && currentLineW + charW > maxWidth) {
+                    lines.push(currentLine);
+                    currentLine = char;
+                    currentLineW = charW;
+                } else {
+                    currentLine += char;
+                    currentLineW += charW;
+                }
+            }
+        };
+
         for (const word of words) {
             const wordW = this._measureTextWithSpacing(ctx, word, letterSpacing);
+            // Keep normal words intact where possible. Only split a token that
+            // cannot fit on an otherwise empty line (notably CJK text without
+            // spaces), so very long subtitles wrap automatically without
+            // reducing their font size.
+            if (wordW > maxWidth) {
+                if (currentLine) {
+                    lines.push(currentLine);
+                    currentLine = '';
+                    currentLineW = 0;
+                }
+                appendOversizeToken(word);
+                continue;
+            }
             const testW = currentLine ? currentLineW + joinerW + wordW : wordW;
             if (testW > maxWidth && currentLine) {
                 lines.push(currentLine);
@@ -1836,6 +2004,7 @@ class ReelsCanvasRenderer {
         const advY = parseFloat(s.advanced_textbox_y) || 0;
         const advW = Math.max(80, parseFloat(s.advanced_textbox_w) || videoW * 0.8);
         const advH = Math.max(40, parseFloat(s.advanced_textbox_h) || 200);
+        const autoWrap = s.auto_wrap !== false;
 
         let maxWidth;
         if (advEnabled) {
@@ -1893,7 +2062,7 @@ class ReelsCanvasRenderer {
             }
 
             // 检查宽度是否超过 maxWidth
-            if (currentLine.w + mw > maxWidth && currentLine.tokens.length > 0 && tok.text !== ' ') {
+            if (autoWrap && currentLine.w + mw > maxWidth && currentLine.tokens.length > 0 && tok.text !== ' ') {
                 // 折行前，剔除行尾空格
                 if (currentLine.tokens.length > 0 && currentLine.tokens[currentLine.tokens.length-1].text === ' ') {
                    const popSpace = currentLine.tokens.pop();
@@ -1952,7 +2121,10 @@ class ReelsCanvasRenderer {
         const padTop = parsePadding(s.box_padding_top, parsePadding(s.box_padding_y, 8));
         const padBottom = parsePadding(s.box_padding_bottom, parsePadding(s.box_padding_y, 8));
 
-        const borderW = s.border_width || 3;
+        const configuredRichBorderWidth = Number(s.border_width);
+        const borderW = Number.isFinite(configuredRichBorderWidth)
+            ? Math.max(0, configuredRichBorderWidth)
+            : (s.use_stroke === false ? 0 : 3);
         const effectivePadLeft = padLeft + borderW;
         const effectivePadRight = padRight + borderW;
         const effectivePadTop = padTop + borderW;
@@ -2265,6 +2437,7 @@ class ReelsCanvasRenderer {
         const advY = parseFloat(s.advanced_textbox_y) || 0;
         const advW = Math.max(80, parseFloat(s.advanced_textbox_w) || videoW * 0.8);
         const advH = Math.max(40, parseFloat(s.advanced_textbox_h) || 200);
+        const autoWrap = s.auto_wrap !== false;
 
         let maxWidth;
         if (advEnabled) {
@@ -2345,7 +2518,7 @@ class ReelsCanvasRenderer {
             const wrapTokW = this._measureTextWithSpacing(ctx, wrapTok.text, letterSpacing);
             const isWhitespace = /^\s+$/.test(wrapTok.text);
 
-            if (currentWrapLineW + wrapTokW > maxWidth && currentWrapLine.length > 0 && !isWhitespace) {
+            if (autoWrap && currentWrapLineW + wrapTokW > maxWidth && currentWrapLine.length > 0 && !isWhitespace) {
                 wrapLines.push(currentWrapLine);
                 currentWrapLine = [wrapTok];
                 currentWrapLineW = wrapTokW;
@@ -3163,5 +3336,13 @@ if (typeof window !== 'undefined') {
     window.generateASS = generateASS;
 }
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { ReelsCanvasRenderer, parseSRT, formatSRTTime, generateASS };
+    module.exports = {
+        ReelsCanvasRenderer,
+        parseSRT,
+        formatSRTTime,
+        generateASS,
+        getSubtitleLayoutMaxScale,
+        getTopBaselineGlyphBounds,
+        getAmbientGlowCompositeOperation,
+    };
 }

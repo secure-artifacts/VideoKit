@@ -5,10 +5,54 @@ const os = require('node:os');
 const fs = require('node:fs');
 
 const { createFusionPackage } = require('../electron/services/davinciFusionExport.js');
-const { ReelsCanvasRenderer } = require('../src/reels-canvas-renderer.js');
+const {
+    ReelsCanvasRenderer,
+    getSubtitleLayoutMaxScale,
+    getTopBaselineGlyphBounds,
+    getAmbientGlowCompositeOperation,
+} = require('../src/reels-canvas-renderer.js');
 const ReelsAnimEngine = require('../src/reels-anim-engine.js');
 global.ReelsAnimEngine = ReelsAnimEngine;
 const ReelsExportEngine = require('../src/reels-export-engine.js');
+
+test('inactive animation settings do not inflate subtitle wrapping or box height', () => {
+    const styleWithAllAnimationDefaults = {
+        anim_in_type: 'fade',
+        word_pop_random_max_scale: 1.34,
+        word_pop_random_pulse_max_scale: 1.38,
+        letter_jump_scale: 1.5,
+    };
+    assert.equal(getSubtitleLayoutMaxScale(styleWithAllAnimationDefaults), 1);
+});
+
+test('selected scale animation still reserves its configured layout scale', () => {
+    assert.equal(getSubtitleLayoutMaxScale({ anim_in_type: 'letter_jump', letter_jump_scale: 1.5 }), 1.5);
+    assert.equal(getSubtitleLayoutMaxScale({ anim_in_type: 'word_pop_random', word_pop_random_max_scale: 1.34 }), 1.34);
+    assert.equal(getSubtitleLayoutMaxScale({ anim_in_type: 'word_pop_random_pulse', word_pop_random_pulse_max_scale: 1.38 }), 1.38);
+});
+
+test('zero vertical padding can fit the box to actual glyph bounds', () => {
+    const bounds = getTopBaselineGlyphBounds({
+        actualBoundingBoxAscent: -6,
+        actualBoundingBoxDescent: 90,
+    }, 80, 96);
+    assert.deepEqual(bounds, { top: 6, bottom: 90, height: 84 });
+    assert.ok(bounds.height < 96, 'unused font line-height must not remain inside a zero-padding box');
+});
+
+test('glyph-bound fallback preserves legacy line height on unsupported canvases', () => {
+    assert.deepEqual(getTopBaselineGlyphBounds({}, 80, 96), { top: 0, bottom: 96, height: 96 });
+});
+
+test('ambient-glow blend selection maps to a Canvas operation for preview and MP4 export', () => {
+    assert.equal(getAmbientGlowCompositeOperation({ ambient_glow_blend_mode: 'lighter' }), 'lighter');
+    assert.equal(getAmbientGlowCompositeOperation({ ambient_glow_blend_mode: 'screen' }), 'screen');
+    assert.equal(getAmbientGlowCompositeOperation({ ambient_glow_blend_mode: 'soft-light' }), 'soft-light');
+    assert.equal(getAmbientGlowCompositeOperation({ ambient_glow_blend_mode: 'overlay' }), 'overlay');
+    assert.equal(getAmbientGlowCompositeOperation({ ambient_glow_blend_mode: 'source-over' }), 'source-over');
+    assert.equal(getAmbientGlowCompositeOperation({ ambient_glow_blend_mode: 'linear-dodge' }), 'lighter');
+    assert.equal(getAmbientGlowCompositeOperation({ ambient_glow_blend_mode: 'unsupported-mode' }), 'lighter');
+});
 
 test('DaVinci Fusion cues preserve per-segment style overrides', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'videokit-fusion-test-'));

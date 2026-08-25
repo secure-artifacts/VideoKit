@@ -160,7 +160,8 @@
                 const sourceIn = Math.max(0, finite(item.sourceTrimStart));
                 const requestedDuration = Math.max(.05, finite(item.duration, 1.5));
                 const sourceOut = Math.max(sourceIn + .05, finite(item.sourceTrimEnd, sourceIn + requestedDuration));
-                const sourceId = sourceFor(timeline, item.sourcePath, sourceOut, 'insert_video');
+                const sourceDuration = Math.max(sourceOut, finite(item.sourceDuration, sourceOut));
+                const sourceId = sourceFor(timeline, item.sourcePath, sourceDuration, 'insert_video');
                 const clip = new TimelineLib.Clip(sourceId, sourceIn, sourceOut, start);
                 clip._extra.role = 'insert_video';
                 clip._extra.insertId = item.id || `insert_${index + 1}`;
@@ -357,12 +358,15 @@
                 }).map((clip) => ({
                     start: clip.startT,
                     end: clip.startT + clip.effectiveDuration,
-                    name: `${timeline.sources[clip.sourceId]?.path?.split(/[\\/]/).pop() || track._extra.label || track.type}${clip._extra?.loopIndex != null ? ` #${clip._extra.loopIndex + 1}` : ''}`,
+                    name: `${timeline.sources[clip.sourceId]?.path?.split(/[\\/]/).pop() || track._extra.label || track.type}${clip._extra?.loopIndex != null ? ` #${clip._extra.loopIndex + 1}` : ''}${role === 'insert_video' ? ` · 显示${clip.effectiveDuration.toFixed(1)}s/原始${(timeline.sources[clip.sourceId]?.duration || clip.outT).toFixed(1)}s` : ''}`,
                     color: undefined,
                     _timelineClipId: clip.id,
                     _timelineRole: clip._extra.role || '',
                     _insertId: clip._extra?.insertId || '',
                     _linkGroupId: clip.linkGroupId || '',
+                    inT: clip.inT,
+                    outT: clip.outT,
+                    sourceDuration: timeline.sources[clip.sourceId]?.duration || clip.outT,
                     _loopIndex: clip._extra?.loopIndex,
                     _isLoopInstance: clip._extra?.loopIndex != null,
                 })),
@@ -450,14 +454,21 @@
         ]));
         const entryKey = (track) => track._overlayId ? `overlay:${track._overlayId}`
             : (track.role === 'insert_video' ? 'insert:track' : '');
+        // 预览/导出会根据 overlayAboveSubtitle 决定“覆层（含插入素材）”和
+        // 字幕的先后。时间线也必须使用完全相同的层级，否则会出现字幕轨在
+        // 背景下面、但实际画面却盖在背景上的视觉误导。
+        const overlayAboveSubtitle = task.overlayAboveSubtitle !== false;
+        const layerRank = (track) => {
+            const compositeRank = rank.get(entryKey(track));
+            if (compositeRank != null) return (overlayAboveSubtitle ? 3000 : 1000) + compositeRank;
+            if (track.type === 'subs') return 2000;
+            return 0;
+        };
         const indexed = tracks.map((track, index) => ({ track, index }));
         indexed.sort((a, b) => {
-            const ra = rank.get(entryKey(a.track));
-            const rb = rank.get(entryKey(b.track));
-            if (ra == null && rb == null) return a.index - b.index;
-            if (ra == null) return 1;
-            if (rb == null) return -1;
-            return rb - ra; // 顶层在时间线最上方
+            const layerDelta = layerRank(b.track) - layerRank(a.track);
+            if (layerDelta) return layerDelta; // 顶层在时间线最上方
+            return a.index - b.index;
         });
         return indexed.map(item => item.track);
     }
@@ -664,6 +675,7 @@
             id, sourcePath: data.sourcePath, sourceType: data.sourceType || 'video',
             timelineStart: Math.max(0, finite(data.timelineStart)), duration,
             sourceTrimStart: sourceStart, sourceTrimEnd: finite(data.sourceTrimEnd, sourceStart + duration),
+            sourceDuration: Math.max(0, finite(data.sourceDuration)),
             mode: data.mode || 'replace-video-keep-main-audio', audioMode: data.audioMode || 'keep-main',
             generatedBy: data.generatedBy || 'manual', locked: !!data.locked,
             volume: data.volume == null ? 0 : data.volume,

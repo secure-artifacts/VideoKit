@@ -929,7 +929,11 @@ function _initReelsModule() {
                     const task = _getSelectedTask();
                     if (!task) return;
                     task.overlayAboveSubtitle = value !== false;
+                    // 预览、导出和时间线必须同用这个层级开关。以前这里只重绘
+                    // 预览，时间线仍沿用切换前的轨道顺序，看起来像开关失效。
+                    _updateTimelineForTask(task);
                     reelsUpdatePreview();
+                    if (typeof window.reelsSaveHistory === 'function') window.reelsSaveHistory();
                 },
                 onOverlayChange() {
                     _syncCurrentOverlayEditorToSelectedTask();
@@ -2558,6 +2562,7 @@ function _readStyleFromUI() {
         pos_x: num('reels-pos-x', 50) / 100,
         pos_y: num('reels-pos-y', 85) / 100,
         wrap_width_percent: num('reels-wrap-width', 90),
+        auto_wrap: chk('reels-auto-wrap'),
         wrap_lines: 2,
         wrap_left: 0,
         wrap_right: 0,
@@ -2948,6 +2953,7 @@ function _writeStyleToUI(style) {
     set('reels-pos-x', Math.round((style.pos_x || 0.5) * 100));
     set('reels-pos-y', Math.round((style.pos_y || 0.5) * 100));
     set('reels-wrap-width', style.wrap_width_percent || 90);
+    setChk('reels-auto-wrap', style.auto_wrap !== false);
     set('reels-random-position-height', style.random_position_height_percent || 35);
     set('reels-random-position-height-range', style.random_position_height_percent || 35);
     set('reels-line-spacing', style.line_spacing ?? 4);
@@ -9473,38 +9479,52 @@ function reelsImportPresets() {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = '.json';
-    input.onchange = (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = (ev) => {
-            if (window.ReelsStyleEngine) {
-                let overwriteConflicts = false;
-                try {
-                    const incoming = JSON.parse(ev.target.result);
-                    if (incoming && typeof incoming === 'object' && incoming.presets) {
-                        const data = ReelsStyleEngine.loadSubtitlePresets();
-                        const existingPresets = data.presets || {};
-                        const conflicts = [];
-                        for (const name of Object.keys(incoming.presets)) {
-                            if (name in existingPresets) {
-                                conflicts.push(name);
-                            }
-                        }
-                        if (conflicts.length > 0) {
-                            overwriteConflicts = confirm(`导入的预设中包含以下已存在的字幕预设：\n${conflicts.join(', ')}\n\n是否覆盖它们？(点击「取消」将跳过这些冲突的预设)`);
-                        }
-                    }
-                } catch(err) {
-                    console.error('解析导入预设JSON出错:', err);
-                }
+    input.multiple = true;
+    input.onchange = async (e) => {
+        const files = Array.from(e.target.files || []);
+        if (files.length === 0 || !window.ReelsStyleEngine) return;
 
-                const result = ReelsStyleEngine.importSubtitlePresets(ev.target.result, overwriteConflicts);
-                _reelsRefreshPresetList();
-                alert(`✅ 导入完成：新增 ${result.added.length} 个，覆盖 ${result.conflicts.length} 个，跳过 ${result.skipped.length} 个`);
+        const bundles = [];
+        const unreadable = [];
+        for (const file of files) {
+            try {
+                bundles.push({ source: file.name, data: JSON.parse(await file.text()) });
+            } catch (err) {
+                unreadable.push(file.name);
+                console.error(`[预设] 无法读取 ${file.name}:`, err);
             }
-        };
-        reader.readAsText(file);
+        }
+
+        const existingPresets = ReelsStyleEngine.loadSubtitlePresets().presets || {};
+        const prepared = ReelsStyleEngine.prepareSubtitlePresetBatchImport(bundles, existingPresets);
+        let overwriteConflicts = false;
+        if (prepared.conflicts.length > 0) {
+            overwriteConflicts = confirm(
+                `发现 ${prepared.conflicts.length} 个同名但内容不同的预设：\n`
+                + `${prepared.conflicts.join(', ')}\n\n是否覆盖？（取消将保留现有预设）`
+            );
+        }
+
+        const result = ReelsStyleEngine.importSubtitlePresets(
+            JSON.stringify(prepared.payload),
+            overwriteConflicts
+        );
+        _reelsRefreshPresetList();
+
+        const duplicateCount = prepared.duplicates.length + (result.duplicates?.length || 0);
+        const invalidItems = [...unreadable, ...prepared.invalid];
+        const skippedCount = result.skipped.length + prepared.batchConflicts.length;
+        const details = [];
+        if (duplicateCount > 0) details.push(`自动排重 ${duplicateCount} 个`);
+        if (skippedCount > 0) details.push(`跳过 ${skippedCount} 个`);
+        if (prepared.batchConflicts.length > 0) details.push(`批内同名异内容 ${prepared.batchConflicts.length} 个（保留先选文件）`);
+        if (invalidItems.length > 0) details.push(`无效文件/条目 ${invalidItems.length} 个`);
+        alert(
+            `✅ 批量导入完成（已选择 ${files.length} 个文件）\n`
+            + `新增 ${result.added.length} 个，覆盖 ${result.conflicts.length} 个`
+            + `${details.length ? `，${details.join('，')}` : ''}`
+            + `${invalidItems.length ? `\n\n未导入：${invalidItems.slice(0, 8).join('、')}` : ''}`
+        );
     };
     input.click();
 }
@@ -12815,6 +12835,39 @@ window.reelsChooseInsertMediaFolder = async function() {
     if (!task) { if (typeof showToast === 'function') showToast('请先选择一条任务', 'warning'); return; }
     return window.reelsSetInsertFolderForTasks([task]);
 };
+async function _getInsertMediaSourceDuration(path, sourceType) {
+    if (sourceType === 'image' || sourceType === 'gif' || !window.electronAPI?.getMediaDuration) return 0;
+    try {
+        const duration = Number(await window.electronAPI.getMediaDuration(path));
+        return Number.isFinite(duration) && duration > 0 ? duration : 0;
+    } catch (_) {
+        return 0;
+    }
+}
+// 单次临时 B-Roll：不依赖素材库，也不会改写任务的公共素材文件夹。
+window.reelsInsertSingleMediaAtPlayhead = async function() {
+    const task = _getSelectedTask();
+    if (!task || !window.ReelsRenderPlan) {
+        if (typeof showToast === 'function') showToast('请先选择一条任务', 'warning');
+        return;
+    }
+    const selected = await _pickSingleFile('选择要临时插入的素材', [
+        'mp4', 'mov', 'mkv', 'webm', 'avi', 'm4v', 'gif', 'png', 'jpg', 'jpeg', 'webp'
+    ]);
+    if (!selected) return;
+    const playhead = _reelsState.timelineEditor?._playheadPos || 0;
+    const sourceType = _getInsertMediaSourceType(selected);
+    window.ReelsRenderPlan.addInsertClip(task, {
+        sourcePath: selected,
+        sourceType,
+        sourceDuration: await _getInsertMediaSourceDuration(selected, sourceType),
+        timelineStart: playhead,
+    });
+    _updateTimelineForTask(task);
+    if (typeof window.reelsSaveHistory === 'function') window.reelsSaveHistory();
+    if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
+    if (typeof showToast === 'function') showToast('已临时插入到当前播放头，可在“插入素材”轨拖动或裁切', 'success');
+};
 window.reelsSetInsertFolderForTasks = async function(tasks = []) {
     if (!tasks.length) return;
     const folder = await window.electronAPI?.selectDirectory?.();
@@ -12839,7 +12892,12 @@ window.reelsInsertMediaAtPlayhead = async function() {
     if (!selected) return;
     const playhead = _reelsState.timelineEditor?._playheadPos || 0;
     const sourceType = _getInsertMediaSourceType(selected);
-    window.ReelsRenderPlan.addInsertClip(task, { sourcePath: selected, sourceType, timelineStart: playhead });
+    window.ReelsRenderPlan.addInsertClip(task, {
+        sourcePath: selected,
+        sourceType,
+        sourceDuration: await _getInsertMediaSourceDuration(selected, sourceType),
+        timelineStart: playhead,
+    });
     _updateTimelineForTask(task);
     if (typeof window.reelsSaveHistory === 'function') window.reelsSaveHistory();
     if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
@@ -12941,15 +12999,45 @@ async function _chooseInsertMediaFromFolder(task) {
         Object.assign(modal.style, { position: 'fixed', inset: '0', zIndex: '999999', background: 'rgba(0,0,0,.6)', display: 'flex', alignItems: 'center', justifyContent: 'center' });
         const panel = document.createElement('div');
         Object.assign(panel.style, { width: 'min(720px,90vw)', maxHeight: '70vh', overflow: 'auto', padding: '16px', borderRadius: '10px', background: '#1d1d25', border: '1px solid #4b5563', color: '#f3f4f6' });
-        panel.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><b>选择插入素材</b><button style="cursor:pointer">取消</button></div>';
+        panel.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div><b>选择插入素材</b><div style="font-size:11px;color:#9ca3af;margin-top:3px">图片显示缩略图，视频显示首帧</div></div><button style="cursor:pointer">取消</button></div>';
         panel.querySelector('button').onclick = () => { modal.remove(); resolve(null); };
         const list = document.createElement('div');
         Object.assign(list.style, { display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(150px,1fr))', gap: '8px' });
+        const toPreviewUrl = path => window.electronAPI?.toFileUrl?.(path) || normalizeFilePath(path);
         files.forEach(path => {
             const button = document.createElement('button');
             button.title = path;
-            button.textContent = String(path).split(/[\\/]/).pop();
-            Object.assign(button.style, { minHeight: '52px', padding: '7px', cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#d1fae5', background: '#16352e', border: '1px solid #2d6a55', borderRadius: '6px' });
+            Object.assign(button.style, { minHeight: '138px', padding: '6px', cursor: 'pointer', overflow: 'hidden', color: '#d1fae5', background: '#16352e', border: '1px solid #2d6a55', borderRadius: '6px', display: 'flex', flexDirection: 'column', gap: '6px', textAlign: 'left' });
+            const preview = document.createElement('div');
+            Object.assign(preview.style, { height: '92px', borderRadius: '4px', overflow: 'hidden', background: '#0b1714', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#86efac', fontSize: '28px', flexShrink: '0' });
+            const sourceType = _getInsertMediaSourceType(path);
+            const fallback = sourceType === 'image' ? '🖼️' : (sourceType === 'gif' ? 'GIF' : '🎬');
+            const showFallback = () => { preview.textContent = fallback; };
+            const previewUrl = toPreviewUrl(path);
+            if (sourceType === 'image' || sourceType === 'gif') {
+                const image = document.createElement('img');
+                image.src = previewUrl;
+                image.alt = '';
+                image.loading = 'lazy';
+                Object.assign(image.style, { width: '100%', height: '100%', objectFit: 'cover', display: 'block' });
+                image.onerror = showFallback;
+                preview.appendChild(image);
+            } else {
+                const video = document.createElement('video');
+                video.src = previewUrl;
+                video.muted = true;
+                video.playsInline = true;
+                video.preload = 'metadata';
+                Object.assign(video.style, { width: '100%', height: '100%', objectFit: 'cover', display: 'block' });
+                video.onloadedmetadata = () => { try { video.currentTime = Math.min(0.1, Math.max(0, video.duration / 2)); } catch (_) {} };
+                video.onloadeddata = () => { video.style.visibility = 'visible'; };
+                video.onerror = showFallback;
+                preview.appendChild(video);
+            }
+            const name = document.createElement('span');
+            name.textContent = String(path).split(/[\\/]/).pop();
+            Object.assign(name.style, { width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '11px', lineHeight: '1.25' });
+            button.append(preview, name);
             button.onclick = () => { modal.remove(); resolve(path); };
             list.appendChild(button);
         });
@@ -12994,6 +13082,14 @@ function _showInsertClipInspector(editorClip) {
     if (!item.transitionOut) item.transitionOut = { type: 'fade', duration: 0.35 };
     const isImage = item.sourceType === 'image' || /\.(png|jpe?g|webp)$/i.test(item.sourcePath || '');
     const filename = (item.sourcePath || '').split(/[/\\]/).pop() || '素材片段';
+    const shownDuration = Math.max(.05, Number(item.duration) || 1.5);
+    const sourceDuration = Math.max(0, Number(item.sourceDuration) || 0);
+    const loopCount = sourceDuration > .05 ? Math.ceil(shownDuration / sourceDuration) : 0;
+    const durationInfo = isImage
+        ? `图片显示 ${shownDuration.toFixed(2)} 秒`
+        : (sourceDuration > .05
+            ? `显示 ${shownDuration.toFixed(2)} 秒 / 原始 ${sourceDuration.toFixed(2)} 秒${loopCount > 1 ? `（循环 ${loopCount} 轮）` : ''}`
+            : `显示 ${shownDuration.toFixed(2)} 秒（原始时长读取中/不可用）`);
     const canvasW = _reelsState?.targetWidth || 1080;
     const canvasH = _reelsState?.targetHeight || 1920;
     const isPip = item.mode === 'pip' || item.mode === 'overlay';
@@ -13014,6 +13110,7 @@ function _showInsertClipInspector(editorClip) {
         </div>
         <button id="reels-insert-close-btn" style="background:none;border:none;color:#9ca3af;cursor:pointer;font-size:16px;line-height:1;padding:2px 6px;border-radius:4px">✕</button>
       </div>
+      <div style="margin:-3px 0 10px;padding:6px 8px;border-radius:6px;background:rgba(16,185,129,.10);border:1px solid rgba(16,185,129,.25);font-size:11px;color:#a7f3d0">⏱ ${durationInfo}</div>
 
       <!-- 模式与音量 -->
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
