@@ -2656,11 +2656,9 @@ function _bindBatchTableEvents() {
             // Clear all tabs
             if (e.target.closest('.rbt-tab-clear-all')) {
                 if (!confirm(`确定清空删除所有 ${_batchTableState.tabs.length} 个标签页及全部任务？\n\n此操作不可撤销！`)) return;
-                window._reelsState.tasks = [];
-                _batchTableState.tabs = [];
-                _batchTableState.activeTabId = null;
-                _batchTableState.appliedTabIds = [];
-                _addTab('默认');
+                window.reelsClearPersistedBatchTasks();
+                _skipNextApply = true;
+                _renderBatchTable();
                 return;
             }
             // ★ 应用标签页 → 合并到当前任务列表
@@ -3605,6 +3603,11 @@ function _bindBatchTableEvents() {
     container.querySelector('#rbt-clear-btn')?.addEventListener('click', () => {
         if (confirm('确定清空所有任务？')) {
             window._reelsState.tasks = [];
+            const activeTab = _getActiveTab();
+            if (activeTab) activeTab.tasks = [];
+            _batchTableState.appliedTabIds = [];
+            _batchAutoSave({ skipSync: true });
+            _skipNextApply = true;
             _renderBatchTable();
         }
     });
@@ -12092,8 +12095,30 @@ async function _importFoldersAsFileTaskTabs(dirs) {
             else if (_MAT_BG_EXTS.has(ext)) group.visuals.push(f);
         }
 
+        // A common folder layout is one voice-over/SRT named after the folder,
+        // plus several differently-named background clips.  Exact filename
+        // matching cannot pair those companions with the clips, so when there
+        // is exactly one *unmatched* audio or SRT, use it for every visual task
+        // in this folder.  A companion that already matches a visual keeps the
+        // normal per-file pairing behaviour.
+        const groups = [...byBase.values()];
+        const visualGroups = groups.filter(group => group.visuals.length > 0);
+        const unmatchedAudioGroups = groups.filter(group => group.audio && group.visuals.length === 0);
+        const unmatchedSrtGroups = groups.filter(group => group.srt && group.visuals.length === 0);
+        const sharedAudio = visualGroups.length > 0 && !visualGroups.some(group => group.audio)
+            && unmatchedAudioGroups.length === 1
+            ? unmatchedAudioGroups[0].audio
+            : null;
+        const sharedSrt = visualGroups.length > 0 && !visualGroups.some(group => group.srt)
+            && unmatchedSrtGroups.length === 1
+            ? unmatchedSrtGroups[0].srt
+            : null;
+
         const tasks = [];
         for (const [base, group] of byBase) {
+            // Do not create a separate audio-only/SRT-only row for a companion
+            // file that was promoted to the folder's shared media.
+            if (!group.visuals.length && (group.audio === sharedAudio || group.srt === sharedSrt)) continue;
             const primaries = group.visuals.length ? group.visuals : (group.audio ? [group.audio] : []);
             for (let primaryIndex = 0; primaryIndex < primaries.length; primaryIndex++) {
                 const primary = primaries[primaryIndex];
@@ -12103,13 +12128,14 @@ async function _importFoldersAsFileTaskTabs(dirs) {
                 task.fileName = `${task.baseName}.mp4`;
                 if (group.visuals.length) {
                     _setTaskSingleBackground(task, primary.path, { clearBgSrcUrl: true, detectImage: true });
-                    if (group.audio) task.audioPath = group.audio.path;
+                    if (group.audio || sharedAudio) task.audioPath = (group.audio || sharedAudio).path;
                 } else {
                     task.audioPath = primary.path;
                 }
-                if (group.srt) {
-                    task.srtPath = group.srt.path;
-                    _readSrtViaElectronAPI(task, group.srt.path);
+                const subtitleFile = group.srt || sharedSrt;
+                if (subtitleFile) {
+                    task.srtPath = subtitleFile.path;
+                    _readSrtViaElectronAPI(task, subtitleFile.path);
                 }
                 if (group.txt) {
                     task.txtPath = group.txt.path;
@@ -15861,6 +15887,25 @@ function _batchAutoSave(options = {}) {
         console.warn('[BatchTable] Auto-save failed:', e.message);
     }
 }
+
+// Single source of truth for destructive clearing. Both the main Reels “清空”
+// button and the batch-table “清空全部标签” action use this, so an older tab or
+// localStorage snapshot cannot resurrect deleted tasks after a reload.
+function reelsClearPersistedBatchTasks() {
+    if (window._reelsState) {
+        window._reelsState.tasks = [];
+        window._reelsState.selectedIdx = -1;
+    }
+    const emptyTab = { id: 'tab_1', name: '默认', materialDir: '', lastRefreshTime: null, tasks: [] };
+    _batchTableState.tabs = [emptyTab];
+    _batchTableState.activeTabId = emptyTab.id;
+    _batchTableState.appliedTabIds = [];
+    _batchTableState.selectedRows = new Set();
+    _batchTableState.nextTabId = 2;
+    _batchTableState.openSnapshotTasks = [];
+    _batchAutoSave({ skipSync: true });
+}
+window.reelsClearPersistedBatchTasks = reelsClearPersistedBatchTasks;
 
 /** 自动恢复 */
 function _batchAutoRestore() {

@@ -12119,6 +12119,8 @@ if (origSubTabHandler) {
 
 let autoEditBatchTasks = [];
 let autoEditBatchScriptCells = [];
+let autoEditBatchUnmatchedScripts = [];
+let autoEditBatchSmartPairingComplete = false;
 let autoEditActiveBatchIndex = -1;
 let autoEditBatchRunning = false;
 let autoEditBatchInputTimer = null;
@@ -12129,7 +12131,10 @@ function sanitizeAutoEditBatchOutputName(value, fallback = 'auto_edit') {
 }
 
 function syncAutoEditBatchParallelLists() {
-    autoEditBatchScriptCells = autoEditBatchTasks.map(task => task.script || '');
+    autoEditBatchScriptCells = [
+        ...autoEditBatchTasks.map(task => task.script || ''),
+        ...autoEditBatchUnmatchedScripts.map(item => item.script || '')
+    ];
     const scripts = document.getElementById('autoedit-batch-paste');
     if (scripts) {
         scripts.value = autoEditBatchScriptCells.map(value => {
@@ -12187,7 +12192,7 @@ function autoEditBatchDrop(event, index) {
 
 function setAutoEditBatchRunning(running) {
     autoEditBatchRunning = Boolean(running);
-    for (const id of ['autoedit-batch-analyze-btn', 'autoedit-batch-export-btn', 'autoedit-batch-export-only-btn']) {
+    for (const id of ['autoedit-batch-smart-pair-btn', 'autoedit-batch-analyze-btn', 'autoedit-batch-export-btn', 'autoedit-batch-export-only-btn']) {
         const button = document.getElementById(id);
         if (button) button.disabled = autoEditBatchRunning;
     }
@@ -12277,6 +12282,8 @@ function parseAutoEditBatchPaste() {
 }
 function applyAutoEditBatchScripts(cells, options = {}) {
     autoEditBatchScriptCells = Array.isArray(cells) ? cells.slice() : [];
+    autoEditBatchUnmatchedScripts = [];
+    autoEditBatchSmartPairingComplete = false;
     autoEditBatchTasks.forEach((task, i) => setAutoEditBatchTaskScript(task, cells[i] || ''));
     renderAutoEditBatchTasks();
     if (!options.silent) showToast(`已自动识别 ${cells.length} 个文案单元格`, !autoEditBatchTasks.length || cells.length === autoEditBatchTasks.length ? 'success' : 'info');
@@ -12285,12 +12292,45 @@ function applyAutoEditBatchScripts(cells, options = {}) {
 async function selectAutoEditBatchFolders() {
     const dirs = await window.electronAPI?.selectDirectories?.();
     if (!Array.isArray(dirs) || !dirs.length) return;
+    await loadAutoEditBatchFolders(dirs, { replace: true });
+}
+
+async function scanAutoEditBatchFolderRecursive(folder) {
+    const options = { maxDepth: 20, excludedNames: ['_auto_edit', 'backup_clips'] };
+    if (window.electronAPI?.scanDirectoryRecursive) {
+        return window.electronAPI.scanDirectoryRecursive(folder, options);
+    }
+    // Hot-reload fallback: preload APIs require an Electron restart, so keep the
+    // feature working immediately by walking with the existing one-level API.
+    const excluded = new Set(options.excludedNames.map(name => name.toLocaleLowerCase()));
+    const queue = [{ path: folder, depth: 0 }];
+    const files = [];
+    while (queue.length) {
+        const current = queue.shift();
+        const entries = await window.electronAPI.scanDirectory(current.path);
+        for (const entry of entries || []) {
+            if (entry.isDirectory) {
+                if (current.depth < options.maxDepth && !excluded.has(String(entry.name).toLocaleLowerCase())) {
+                    queue.push({ path: entry.path, depth: current.depth + 1 });
+                }
+            } else {
+                files.push(entry);
+            }
+        }
+    }
+    return files;
+}
+
+async function loadAutoEditBatchFolders(dirs, { replace = false } = {}) {
     const videoExt = /\.(mp4|mov|mkv|avi|wmv|flv|webm|m4v)$/i;
-    autoEditBatchTasks = [];
+    const sourceScripts = autoEditBatchScriptCells.slice();
+    if (replace) autoEditBatchTasks = [];
+    autoEditBatchSmartPairingComplete = false;
+    const existingFolders = new Set(autoEditBatchTasks.map(task => String(task.folder || '').toLocaleLowerCase()));
     // Native multi-folder dialogs do not guarantee click order (macOS commonly
     // returns Finder order). Use one deterministic natural order so task N,
     // pasted script cell N and Reels task N always refer to the same folder.
-    const orderedDirs = dirs.map((folder, selectionIndex) => ({ folder, selectionIndex }))
+    const orderedDirs = [...new Set(dirs.filter(Boolean))].map((folder, selectionIndex) => ({ folder, selectionIndex }))
         .sort((a, b) => {
             const aName = window.electronAPI.pathBasename(a.folder);
             const bName = window.electronAPI.pathBasename(b.folder);
@@ -12298,24 +12338,88 @@ async function selectAutoEditBatchFolders() {
             return compared || a.selectionIndex - b.selectionIndex;
         })
         .map(item => item.folder);
+    let added = 0;
     for (const folder of orderedDirs) {
-        const entries = await window.electronAPI.scanDirectory(folder);
+        const folderKey = String(folder).toLocaleLowerCase();
+        if (existingFolders.has(folderKey)) continue;
+        const entries = await scanAutoEditBatchFolderRecursive(folder);
         const clips = entries.filter(x => !x.isDirectory && videoExt.test(x.name))
-            .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })).map(x => x.path);
+            .sort((a, b) => String(a.relativePath || a.name).localeCompare(String(b.relativePath || b.name), undefined, { numeric: true, sensitivity: 'base' }))
+            .map(x => x.path);
         const index = autoEditBatchTasks.length;
-        const script = autoEditBatchScriptCells[index] || '';
+        const script = sourceScripts[index] || '';
         const name = window.electronAPI.pathBasename(folder);
-        autoEditBatchTasks.push({ taskOrder: index, folder, name, outputName: name, clips, script, thumbnail: '', manualSubtitleMap: {}, status: clips.length ? 'waiting' : 'error', message: clips.length ? (script ? '文案已配对' : '等待文案') : '没有视频', result: null });
+        autoEditBatchTasks.push({ taskOrder: index, folder, name, outputName: name, sendToReels: true, clips, script, thumbnail: '', manualSubtitleMap: {}, status: clips.length ? 'waiting' : 'error', message: clips.length ? (script ? `文案已配对 · 含子文件夹 ${clips.length} 个视频` : `等待文案 · 含子文件夹 ${clips.length} 个视频`) : '父文件夹及子文件夹中没有视频', result: null });
+        existingFolders.add(folderKey);
+        added++;
     }
+    autoEditBatchUnmatchedScripts = sourceScripts.slice(autoEditBatchTasks.length).map((script, index) => ({
+        script,
+        originalIndex: autoEditBatchTasks.length + index,
+        confirmed: false
+    }));
     syncAutoEditBatchParallelLists();
     renderAutoEditBatchTasks();
-    for (const task of autoEditBatchTasks) {
+    const tasksNeedingThumbnail = replace ? autoEditBatchTasks : autoEditBatchTasks.slice(-added);
+    for (const task of tasksNeedingThumbnail) {
         if (task.clips[0]) { task.thumbnail = await batchCutGenThumb(task.clips[0]); renderAutoEditBatchTasks(); }
     }
+    return added;
+}
+
+let autoEditBatchFolderDragDepth = 0;
+function setAutoEditBatchFolderDropActive(active) {
+    const zone = document.getElementById('autoedit-batch-folder-drop-zone');
+    const title = document.getElementById('autoedit-batch-folder-drop-title');
+    if (!zone) return;
+    zone.style.borderColor = active ? '#60a5fa' : 'rgba(96,165,250,.6)';
+    zone.style.background = active ? 'rgba(59,130,246,.18)' : 'rgba(59,130,246,.06)';
+    zone.style.boxShadow = active ? '0 0 0 3px rgba(59,130,246,.18)' : 'none';
+    if (title) title.textContent = active ? '松开鼠标，添加这些文件夹' : '把一个或多个任务文件夹拖到这里';
+}
+function autoEditBatchDragHasFiles(event) {
+    return Array.from(event.dataTransfer?.types || []).includes('Files');
+}
+function handleAutoEditBatchFolderDragEnter(event) {
+    if (!autoEditBatchDragHasFiles(event)) return;
+    event.preventDefault();
+    autoEditBatchFolderDragDepth++;
+    setAutoEditBatchFolderDropActive(true);
+}
+function handleAutoEditBatchFolderDragOver(event) {
+    if (!autoEditBatchDragHasFiles(event)) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+}
+function handleAutoEditBatchFolderDragLeave(event) {
+    if (!autoEditBatchDragHasFiles(event)) return;
+    autoEditBatchFolderDragDepth = Math.max(0, autoEditBatchFolderDragDepth - 1);
+    if (!autoEditBatchFolderDragDepth) setAutoEditBatchFolderDropActive(false);
+}
+async function handleAutoEditBatchFolderDrop(event) {
+    if (!autoEditBatchDragHasFiles(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    autoEditBatchFolderDragDepth = 0;
+    setAutoEditBatchFolderDropActive(false);
+    if (autoEditBatchRunning) return showToast('批量任务正在运行，请稍候', 'info');
+    const capturedPaths = window.electronAPI?.consumeDroppedFilePaths?.() || [];
+    const fallbackPaths = Array.from(event.dataTransfer?.files || []).map(file => {
+        try { return window.electronAPI?.getFilePath?.(file) || file.path || ''; } catch (_) { return ''; }
+    });
+    const droppedPaths = (capturedPaths.length ? capturedPaths : fallbackPaths).filter(Boolean);
+    const dirs = [...new Set(droppedPaths)].filter(path => window.electronAPI?.isDirectory?.(path));
+    if (!dirs.length) return showToast('请拖入文件夹，不是视频文件', 'error');
+    const rejectedCount = droppedPaths.length - dirs.length;
+    const added = await loadAutoEditBatchFolders(dirs, { replace: false });
+    if (!added) return showToast('这些文件夹已经在任务列表中', 'info');
+    showToast(`已拖入 ${added} 个文件夹${rejectedCount ? `，忽略 ${rejectedCount} 个非文件夹项目` : ''}`, 'success');
 }
 function clearAutoEditBatchTasks() {
     autoEditBatchTasks = [];
     autoEditBatchScriptCells = [];
+    autoEditBatchUnmatchedScripts = [];
+    autoEditBatchSmartPairingComplete = false;
     const el = document.getElementById('autoedit-batch-paste'); if (el) el.value = '';
     const names = document.getElementById('autoedit-batch-output-names'); if (names) names.value = '';
     renderAutoEditBatchTasks();
@@ -12324,6 +12428,15 @@ function updateAutoEditBatchScript(index, value) {
     if (!autoEditBatchTasks[index]) return;
     setAutoEditBatchTaskScript(autoEditBatchTasks[index], value);
     autoEditBatchScriptCells[index] = value;
+}
+function updateAutoEditBatchSendToReels(index, checked) {
+    if (!autoEditBatchTasks[index]) return;
+    autoEditBatchTasks[index].sendToReels = Boolean(checked);
+    renderAutoEditBatchTasks();
+}
+function setAllAutoEditBatchSendToReels(checked) {
+    autoEditBatchTasks.forEach(task => { task.sendToReels = Boolean(checked); });
+    renderAutoEditBatchTasks();
 }
 
 function setAutoEditBatchTaskScript(task, value) {
@@ -12407,10 +12520,16 @@ function renderAutoEditBatchTasks() {
     }
     const matchHint = document.getElementById('autoedit-batch-match-hint');
     if (matchHint) {
+        const extraCount = Math.max(0, scriptCount - autoEditBatchTasks.length);
+        const missingCount = Math.max(0, autoEditBatchTasks.length - scriptCount);
         matchHint.textContent = !autoEditBatchTasks.length
             ? (scriptCount ? `已识别 ${scriptCount} 个文案；请选择 ${scriptCount} 个文件夹自动配对。` : '粘贴后自动识别；第 N 个单元格对应第 N 个文件夹。')
-            : (scriptCount === autoEditBatchTasks.length ? `✅ ${scriptCount} 个文案与文件夹已一一配对` : `⚠️ 文件夹 ${autoEditBatchTasks.length} 个，文案 ${scriptCount} 个，数量不一致`);
-        matchHint.style.color = autoEditBatchTasks.length && scriptCount !== autoEditBatchTasks.length ? '#ff9f43' : '';
+            : (autoEditBatchSmartPairingComplete
+                ? `✅ ${autoEditBatchTasks.length} 个任务已智能配对${extraCount ? ` · ${extraCount} 个文案未匹配（不参与处理）` : ''}`
+                : (extraCount
+                    ? `⚠️ 文案比任务多 ${extraCount} 个；点击「智能配对」自动选出最匹配的 ${autoEditBatchTasks.length} 个`
+                    : (missingCount ? `⚠️ 缺少 ${missingCount} 个文案，无法完成配对` : `✅ ${scriptCount} 个文案与文件夹已一一配对`)));
+        matchHint.style.color = autoEditBatchTasks.length && (missingCount || (extraCount && !autoEditBatchSmartPairingComplete)) ? '#ff9f43' : '';
     }
     if (!autoEditBatchTasks.length) {
         if (!autoEditBatchScriptCells.length) { root.innerHTML = '<div class="hint">先粘贴 Google Sheets 单元格，或先选择多个文件夹。</div>'; return; }
@@ -12421,15 +12540,29 @@ function renderAutoEditBatchTasks() {
         return;
     }
     const colors = { waiting:'#8b95c0', analyzing:'#4dabf7', ready:'#51cf66', warning:'#ff9f43', error:'#ff6b6b' };
-    root.innerHTML = autoEditBatchTasks.map((task, i) => {
+    const taskCards = autoEditBatchTasks.map((task, i) => {
         const lines = task.script.split(/\r?\n/).filter(x => x.trim()).length;
         const first = task.clips[0]?.split(/[/\\]/).pop() || '没有视频';
         const analysisResultHtml = renderAutoEditBatchMatchResult(task);
+        const smartPairHtml = Number.isFinite(task.smartPairScore)
+            ? `<span title="原粘贴文案 #${Number(task.smartPairScriptIndex) + 1}；分数综合词汇与相邻词顺序" style="color:${task.smartPairScore >= .55 ? '#86efac' : (task.smartPairScore >= .35 ? '#fcd34d' : '#fca5a5')};font-weight:700;">🧠 文案 #${Number(task.smartPairScriptIndex) + 1} · ${Math.round(task.smartPairScore * 100)}%</span>`
+            : '';
+        const outputSourceHtml = task.result?.output_path && !task.result?.analysis_only
+            ? `<div title="${escapeHtml(task.result.output_path)}" style="margin-top:6px;padding:5px 7px;border-radius:5px;background:rgba(59,130,246,.08);color:#93c5fd;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">📍 Reels 成片来源：${escapeHtml(task.result.output_path)}</div>${(task.reviewSegments?.length || task.result?.review_segments?.length) ? `<button class="btn btn-primary" onclick="openAutoEditBatchTimelineReview(${i})" ${autoEditBatchRunning?'disabled':''} style="margin-top:6px;">⏱ 继续时间线审核</button>` : ''}`
+            : '';
         return `<div class="autoedit-batch-task" ondragover="event.preventDefault()" ondrop="autoEditBatchDrop(event,${i})" style="border:1px solid var(--border-color);border-radius:8px;padding:10px;background:var(--bg-tertiary);display:grid;grid-template-columns:128px 1fr;gap:10px;">
           <div style="width:128px;align-self:start;">${task.thumbnail ? `<div style="width:128px;display:flex;justify-content:center;align-items:center;background:#111;border-radius:6px;overflow:hidden;"><img src="${task.thumbnail}" onclick="playAutoEditBatchSource(${i})" style="display:block;max-width:128px;width:auto;height:auto;max-height:180px;object-fit:contain;cursor:pointer;" title="按原始视频比例显示，点击预览"></div>` : '<div style="width:128px;height:82px;background:#111;border-radius:6px;display:grid;place-items:center;color:#777;">无缩略图</div>'}<div title="${escapeHtml(first)}" style="font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:4px;">${escapeHtml(first)}</div></div>
-          <div><div style="display:flex;justify-content:space-between;gap:8px;align-items:center;"><div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;"><label title="输入目标顺序编号后回车或点击空白处" style="display:inline-flex;align-items:center;gap:4px;padding:3px 6px;border:1px solid rgba(99,102,241,.5);border-radius:6px;background:rgba(99,102,241,.12);font-size:11px;color:#c7d2fe;">顺序 <input type="number" min="1" max="${autoEditBatchTasks.length}" value="${i+1}" onchange="setAutoEditBatchTaskOrder(${i},this.value)" onkeydown="if(event.key==='Enter'){this.blur()}" ${autoEditBatchRunning?'disabled':''} style="width:46px;background:#111225;color:#fff;border:1px solid rgba(255,255,255,.18);border-radius:4px;padding:2px 4px;text-align:center;"></label><span draggable="true" ondragstart="autoEditBatchDragStart(event,${i})" title="拖动排序" style="cursor:grab;font-size:18px;">☰</span><button class="btn btn-secondary" title="上移一位" onclick="nudgeAutoEditBatchTask(${i},-1)" ${autoEditBatchRunning||i===0?'disabled':''} style="padding:1px 5px;">↑</button><button class="btn btn-secondary" title="下移一位" onclick="nudgeAutoEditBatchTask(${i},1)" ${autoEditBatchRunning||i===autoEditBatchTasks.length-1?'disabled':''} style="padding:1px 5px;">↓</button><strong>${escapeHtml(task.name)}</strong></div><span title="${escapeHtml(task.reelsTransferError || task.message)}" style="color:${colors[task.status] || '#8b95c0'}">${escapeHtml(task.message)}</span></div><div class="hint">直接修改顺序编号可快速移动 · ${task.clips.length} 个视频 · ${lines} 行断行文案</div><label style="display:flex;align-items:center;gap:7px;margin-top:7px;font-size:11px;"><strong style="min-width:76px;color:#c7d2fe;">🏷️ 导出名称</strong><input class="input" value="${escapeHtml(task.outputName || task.name)}" placeholder="Reels 中的任务名和最终文件名" onchange="updateAutoEditBatchOutputName(${i},this.value)" ${autoEditBatchRunning?'disabled':''} style="flex:1;"></label><label style="display:block;margin-top:8px;"><strong style="display:block;font-size:11px;color:#bfdbfe;margin-bottom:4px;">📝 当前任务的完整断行后文案 <span class="hint" style="font-weight:400;">（用于字幕匹配和自动剪辑）</span></strong><textarea class="input" rows="3" placeholder="在这里输入或修改已经断好行的完整文案……" onchange="updateAutoEditBatchScript(${i},this.value)" ${autoEditBatchRunning?'disabled':''} style="width:100%;resize:vertical;background:var(--bg-secondary);">${escapeHtml(task.script)}</textarea></label>${analysisResultHtml}${task.result?.analysis_only ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;align-items:center;"><button class="btn btn-primary" onclick="openAutoEditBatchTimelineReview(${i})" ${autoEditBatchRunning?'disabled':''} style="font-size:12px;padding:4px 10px;">⏱ 时间线审核</button><button class="btn btn-secondary" onclick="openAutoEditBatchReview(${i})" ${autoEditBatchRunning?'disabled':''} style="font-size:12px;padding:4px 10px;">📋 列表审核</button><button class="btn btn-primary" onclick="exportAutoEditBatchTask(${i})" ${autoEditBatchRunning||task.status==='analyzing'?'disabled':''} style="font-size:12px;padding:4px 10px;">正式导出</button><button class="btn btn-secondary" onclick="exportAutoEditBatchTask(${i},{skipReels:true})" ${autoEditBatchRunning||task.status==='analyzing'?'disabled':''} style="font-size:12px;padding:4px 10px;">仅视频 + 字幕</button></div>` : ''}${task.result?.output_path && !task.result?.analysis_only ? `<button class="btn btn-secondary" onclick="showAutoEditBatchOutput(${i})" style="margin-top:6px;">📁 查看成片</button>${task.reelsTransferError ? `<button class="btn btn-secondary" onclick="retryAutoEditBatchTaskToReels(${i})" ${autoEditBatchRunning?'disabled':''} style="margin:6px 0 0 6px;">重送 Reels</button>` : ''}` : ''}</div>
+          <div><div style="display:flex;justify-content:space-between;gap:8px;align-items:center;"><div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;"><label title="输入目标顺序编号后回车或点击空白处" style="display:inline-flex;align-items:center;gap:4px;padding:3px 6px;border:1px solid rgba(99,102,241,.5);border-radius:6px;background:rgba(99,102,241,.12);font-size:11px;color:#c7d2fe;">顺序 <input type="number" min="1" max="${autoEditBatchTasks.length}" value="${i+1}" onchange="setAutoEditBatchTaskOrder(${i},this.value)" onkeydown="if(event.key==='Enter'){this.blur()}" ${autoEditBatchRunning?'disabled':''} style="width:46px;background:#111225;color:#fff;border:1px solid rgba(255,255,255,.18);border-radius:4px;padding:2px 4px;text-align:center;"></label><span draggable="true" ondragstart="autoEditBatchDragStart(event,${i})" title="拖动排序" style="cursor:grab;font-size:18px;">☰</span><button class="btn btn-secondary" title="上移一位" onclick="nudgeAutoEditBatchTask(${i},-1)" ${autoEditBatchRunning||i===0?'disabled':''} style="padding:1px 5px;">↑</button><button class="btn btn-secondary" title="下移一位" onclick="nudgeAutoEditBatchTask(${i},1)" ${autoEditBatchRunning||i===autoEditBatchTasks.length-1?'disabled':''} style="padding:1px 5px;">↓</button><strong>${escapeHtml(task.name)}</strong>${smartPairHtml}</div><span title="${escapeHtml(task.reelsTransferError || task.message)}" style="color:${colors[task.status] || '#8b95c0'}">${escapeHtml(task.message)}</span></div><div class="hint">直接修改顺序编号可快速移动 · ${task.clips.length} 个视频 · ${lines} 行断行文案</div><div style="display:flex;align-items:center;gap:12px;margin-top:7px;flex-wrap:wrap;"><label style="display:flex;align-items:center;gap:7px;font-size:11px;flex:1;min-width:250px;"><strong style="min-width:76px;color:#c7d2fe;">🏷️ 导出名称</strong><input class="input" value="${escapeHtml(task.outputName || task.name)}" placeholder="Reels 中的任务名和最终文件名" onchange="updateAutoEditBatchOutputName(${i},this.value)" ${autoEditBatchRunning?'disabled':''} style="flex:1;"></label><label title="未勾选的任务不会裁切、不会生成视频或字幕，也不会送入 Reels" style="display:inline-flex;align-items:center;gap:5px;color:#a7f3d0;font-size:11px;white-space:nowrap;"><input type="checkbox" onchange="updateAutoEditBatchSendToReels(${i},this.checked)" ${task.sendToReels === false ? '' : 'checked'} ${autoEditBatchRunning?'disabled':''}> 参与本次导出</label></div><label style="display:block;margin-top:8px;"><strong style="display:block;font-size:11px;color:#bfdbfe;margin-bottom:4px;">📝 当前任务的完整断行后文案 <span class="hint" style="font-weight:400;">（用于字幕匹配和自动剪辑）</span></strong><textarea class="input" rows="3" placeholder="在这里输入或修改已经断好行的完整文案……" onchange="updateAutoEditBatchScript(${i},this.value)" ${autoEditBatchRunning?'disabled':''} style="width:100%;resize:vertical;background:var(--bg-secondary);">${escapeHtml(task.script)}</textarea></label>${analysisResultHtml}${outputSourceHtml}${task.result?.analysis_only ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;align-items:center;"><button class="btn btn-primary" onclick="openAutoEditBatchTimelineReview(${i})" ${autoEditBatchRunning?'disabled':''} style="font-size:12px;padding:4px 10px;">⏱ 时间线审核</button><button class="btn btn-secondary" onclick="openAutoEditBatchReview(${i})" ${autoEditBatchRunning?'disabled':''} style="font-size:12px;padding:4px 10px;">📋 列表审核</button><button class="btn btn-primary" onclick="exportAutoEditBatchTask(${i})" ${autoEditBatchRunning||task.status==='analyzing'?'disabled':''} style="font-size:12px;padding:4px 10px;">正式导出</button><button class="btn btn-secondary" onclick="exportAutoEditBatchTask(${i},{skipReels:true})" ${autoEditBatchRunning||task.status==='analyzing'?'disabled':''} style="font-size:12px;padding:4px 10px;">仅视频 + 字幕</button></div>` : ''}${task.result?.output_path && !task.result?.analysis_only ? `<button class="btn btn-secondary" onclick="showAutoEditBatchOutput(${i})" style="margin-top:6px;">📁 查看成片</button>${task.reelsTransferError ? `<button class="btn btn-secondary" onclick="retryAutoEditBatchTaskToReels(${i})" ${autoEditBatchRunning?'disabled':''} style="margin:6px 0 0 6px;">重送 Reels</button>` : ''}` : ''}</div>
         </div>`;
     }).join('');
+    const unmatchedCards = autoEditBatchUnmatchedScripts.length ? `<section style="grid-column:1/-1;border:1px solid rgba(251,191,36,.45);border-radius:9px;padding:12px;background:rgba(251,191,36,.06);">
+        <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:8px;"><strong style="color:#fcd34d;">📄 未匹配文案（${autoEditBatchUnmatchedScripts.length}）</strong><span class="hint">保留但不分析、不裁切、不导出</span></div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:8px;">${autoEditBatchUnmatchedScripts.map((item, index) => {
+            const script = String(item.script || '');
+            const lines = script.split(/\r?\n/).filter(line => line.trim()).length;
+            return `<div style="border:1px solid rgba(251,191,36,.25);border-radius:7px;padding:8px;background:rgba(0,0,0,.16);"><div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:5px;"><strong style="color:#fde68a;">原文案 #${Number(item.originalIndex) + 1}</strong><span class="hint">${lines} 行</span></div><div style="white-space:pre-wrap;line-height:1.45;max-height:100px;overflow:auto;">${escapeHtml(script)}</div></div>`;
+        }).join('')}</div></section>` : '';
+    root.innerHTML = taskCards + unmatchedCards;
 }
 function playAutoEditBatchSource(index) {
     const source = autoEditBatchTasks[index]?.clips?.[0];
@@ -12447,6 +12580,10 @@ async function analyzeAutoEditBatchTask(task, settings = task.settings || getAut
         task.settings={...settings};
         const response = await apiFetch(`${API_BASE}/media/convert`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ files:task.clips, clips:task.clips, mode:'auto_edit', request_id:requestId, analysis_only:true, script_text:task.script, output_dir:window.electronAPI.pathJoin(task.folder,'_auto_edit'), manual_subtitle_map: task.manualSubtitleMap || {}, ...task.settings }) });
         const data = await response.json(); if (!response.ok) throw new Error(data.error || '分析失败');
+        // A fresh analysis invalidates the previously edited timeline snapshot.
+        // Keeping it would make the review screen overlay stale sources, ASR and
+        // cuts on top of this new result.
+        task.reviewSegments = null;
         task.result=data;
         const match = getAutoEditBatchMatchSummary(data);
         task.status = match.error > 0 ? 'error' : ((match.warning > 0 || match.missingBlocks > 0) ? 'warning' : 'ready');
@@ -12459,10 +12596,158 @@ async function analyzeAutoEditBatchTask(task, settings = task.settings || getAut
     finally { if(typeof unsubscribe==='function')unsubscribe(); }
     renderAutoEditBatchTasks();
 }
+
+function scoreAutoEditBatchSmartPair(transcript, script) {
+    const normalize = text => autoEditWords(text).map(word => String(word).toLocaleLowerCase().normalize('NFKC').replace(/[^\p{L}\p{N}]/gu, '')).filter(Boolean);
+    const a = normalize(transcript), b = normalize(script);
+    if (!a.length || !b.length) return 0;
+    const counts = words => words.reduce((map, word) => (map.set(word, (map.get(word) || 0) + 1), map), new Map());
+    const ac = counts(a), bc = counts(b);
+    let dot = 0, aa = 0, bb = 0;
+    ac.forEach(value => { aa += value * value; });
+    ac.forEach((value, key) => { dot += value * (bc.get(key) || 0); });
+    bc.forEach(value => { bb += value * value; });
+    const cosine = dot / Math.max(1, Math.sqrt(aa * bb));
+    const bigrams = words => {
+        const map = new Map();
+        for (let i = 0; i + 1 < words.length; i++) {
+            const key = `${words[i]}\u0001${words[i + 1]}`;
+            map.set(key, (map.get(key) || 0) + 1);
+        }
+        return map;
+    };
+    const ab = bigrams(a), bbm = bigrams(b);
+    let overlap = 0, totalA = 0, totalB = 0;
+    ab.forEach((value, key) => { totalA += value; overlap += Math.min(value, bbm.get(key) || 0); });
+    bbm.forEach(value => { totalB += value; });
+    const dice = totalA + totalB ? (2 * overlap / (totalA + totalB)) : cosine;
+    const lengthRatio = Math.min(a.length, b.length) / Math.max(a.length, b.length);
+    return Math.max(0, Math.min(1, (.62 * cosine + .38 * dice) * (.82 + .18 * lengthRatio)));
+}
+
+// Hungarian assignment: returns the script index chosen for every task while
+// maximizing the complete matrix score, rather than greedily stealing the best
+// script from a later task.
+function solveAutoEditBatchSmartAssignment(scores) {
+    const rowCount = scores.length;
+    const columnCount = scores.reduce((max, row) => Math.max(max, row.length), 0);
+    if (!rowCount) return [];
+    if (columnCount < rowCount) throw new Error('可用文案少于任务数量');
+    const u = new Float64Array(rowCount + 1), v = new Float64Array(columnCount + 1);
+    const p = new Int32Array(columnCount + 1), way = new Int32Array(columnCount + 1);
+    for (let i = 1; i <= rowCount; i++) {
+        p[0] = i;
+        let j0 = 0;
+        const minv = new Float64Array(columnCount + 1); minv.fill(Infinity);
+        const used = new Uint8Array(columnCount + 1);
+        do {
+            used[j0] = 1;
+            const i0 = p[j0];
+            let delta = Infinity, j1 = 0;
+            for (let j = 1; j <= columnCount; j++) if (!used[j]) {
+                const cur = (1 - scores[i0 - 1][j - 1]) - u[i0] - v[j];
+                if (cur < minv[j]) { minv[j] = cur; way[j] = j0; }
+                if (minv[j] < delta) { delta = minv[j]; j1 = j; }
+            }
+            for (let j = 0; j <= columnCount; j++) {
+                if (used[j]) { u[p[j]] += delta; v[j] -= delta; }
+                else minv[j] -= delta;
+            }
+            j0 = j1;
+        } while (p[j0] !== 0);
+        do { const j1 = way[j0]; p[j0] = p[j1]; j0 = j1; } while (j0);
+    }
+    const assignment = new Array(rowCount).fill(-1);
+    for (let j = 1; j <= columnCount; j++) if (p[j]) assignment[p[j] - 1] = j - 1;
+    return assignment;
+}
+
+async function startAutoEditBatchSmartPairing() {
+    if (autoEditBatchRunning) return showToast('批量任务正在运行，请稍候', 'info');
+    const scripts = autoEditBatchScriptCells.slice();
+    if (!autoEditBatchTasks.length) return showToast('请先添加任务文件夹', 'error');
+    if (scripts.length < autoEditBatchTasks.length) return showToast(`文案少于任务：当前 ${autoEditBatchTasks.length} 个任务、${scripts.length} 个文案，还缺 ${autoEditBatchTasks.length - scripts.length} 个`, 'error', 6500);
+    if (scripts.some(script => !String(script).trim())) return showToast('文案中存在空单元格，请补充或删除空单元格后再智能配对', 'error', 6500);
+    if (autoEditBatchTasks.some(task => !task.clips.length)) return showToast('存在没有视频的文件夹，无法智能配对', 'error');
+    const concurrency = Math.max(1, Math.min(4, parseInt(document.getElementById('autoedit-batch-concurrency')?.value || '2', 10)));
+    const settings = { ...getAutoEditRequestSettings() };
+    setAutoEditBatchRunning(true);
+    showToast('智能配对：正在取得每个文件夹的识别全文…', 'info', 5000);
+    try {
+        const transcriptForTask = task => (task.result?.segments || [])
+            .slice()
+            .sort((a, b) => Number(a.source_index || a.index) - Number(b.source_index || b.index))
+            .map(segment => segment.recognized_text || '').join(' ').trim();
+        const analyzedScripts = autoEditBatchTasks.map(task => task.script);
+        let cursor = 0;
+        const transcribeWorker = async () => {
+            while (cursor < autoEditBatchTasks.length) {
+                const task = autoEditBatchTasks[cursor++];
+                // Recognition text is independent from the pasted script. Reuse
+                // it when available instead of running every task from scratch.
+                if (transcriptForTask(task)) {
+                    task.message = '智能配对 · 已复用现有识别结果';
+                    renderAutoEditBatchTasks();
+                    continue;
+                }
+                task.message = '智能配对 · 正在识别全文';
+                await analyzeAutoEditBatchTask(task, settings);
+            }
+        };
+        await Promise.all(Array.from({ length: Math.min(concurrency, autoEditBatchTasks.length) }, transcribeWorker));
+        const transcripts = autoEditBatchTasks.map(transcriptForTask);
+        const missingTranscript = transcripts.findIndex(text => !text);
+        if (missingTranscript >= 0) throw new Error(`${autoEditBatchTasks[missingTranscript].name} 没有取得有效识别文字`);
+        const scores = transcripts.map(transcript => scripts.map(script => scoreAutoEditBatchSmartPair(transcript, script)));
+        const assignment = solveAutoEditBatchSmartAssignment(scores);
+        const assignedScriptIndexes = new Set(assignment);
+        const tasksNeedingVerification = [];
+        autoEditBatchTasks.forEach((task, index) => {
+            const scriptIndex = assignment[index];
+            const assignedScript = scripts[scriptIndex];
+            const canReuseAnalysis = task.result?.analysis_only === true && analyzedScripts[index] === assignedScript;
+            task.script = assignedScript;
+            task.smartPairScriptIndex = scriptIndex;
+            task.smartPairScore = scores[index][scriptIndex];
+            if (canReuseAnalysis) {
+                task.message = `智能配对到文案 #${scriptIndex + 1} · ${Math.round(task.smartPairScore * 100)}% · 已复用分析`;
+            } else {
+                task.reviewSegments = null;
+                task.result = null;
+                task.status = 'waiting';
+                task.message = `智能配对到文案 #${scriptIndex + 1} · ${Math.round(task.smartPairScore * 100)}% · 等待复核`;
+                tasksNeedingVerification.push(task);
+            }
+        });
+        autoEditBatchUnmatchedScripts = scripts.map((script, originalIndex) => ({ script, originalIndex, confirmed: true }))
+            .filter(item => !assignedScriptIndexes.has(item.originalIndex));
+        autoEditBatchSmartPairingComplete = true;
+        syncAutoEditBatchParallelLists();
+        renderAutoEditBatchTasks();
+        showToast(tasksNeedingVerification.length
+            ? `文案已重新分配；${autoEditBatchTasks.length - tasksNeedingVerification.length} 个任务直接复用，正在复核 ${tasksNeedingVerification.length} 个变化任务…`
+            : '智能配对完成；全部任务均复用现有分析，无需重新运行', 'info', 6000);
+        cursor = 0;
+        const verifyWorker = async () => {
+            while (cursor < tasksNeedingVerification.length) await analyzeAutoEditBatchTask(tasksNeedingVerification[cursor++], settings);
+        };
+        await Promise.all(Array.from({ length: Math.min(concurrency, tasksNeedingVerification.length) }, verifyWorker));
+        const lowConfidence = autoEditBatchTasks.filter(task => task.smartPairScore < .35).length;
+        const unmatchedCount = autoEditBatchUnmatchedScripts.length;
+        showToast(lowConfidence
+            ? `智能配对完成；${lowConfidence} 组置信度较低，请人工确认${unmatchedCount ? `；${unmatchedCount} 个文案未匹配` : ''}`
+            : `智能配对并复核完成${unmatchedCount ? `；${unmatchedCount} 个多余文案已列为未匹配` : ''}`, lowConfidence ? 'warning' : 'success', 7000);
+    } catch (error) {
+        showToast(`智能配对失败：${error?.message || error}`, 'error', 7000);
+    } finally {
+        setAutoEditBatchRunning(false);
+    }
+}
 async function startAutoEditBatchAnalysis() {
     if(autoEditBatchRunning)return showToast('批量任务正在运行，请稍候','info');
     if (!autoEditBatchTasks.length) return showToast('请先选择多个文件夹','error');
-    if (autoEditBatchScriptCells.length && autoEditBatchScriptCells.length !== autoEditBatchTasks.length) return showToast(`文件夹 ${autoEditBatchTasks.length} 个，文案单元格 ${autoEditBatchScriptCells.length} 个，请确保数量一致`,'error');
+    if (autoEditBatchScriptCells.length < autoEditBatchTasks.length) return showToast(`文案少于任务，还缺 ${autoEditBatchTasks.length - autoEditBatchScriptCells.length} 个文案`,'error');
+    if (autoEditBatchScriptCells.length > autoEditBatchTasks.length && !autoEditBatchSmartPairingComplete) return showToast(`多出 ${autoEditBatchScriptCells.length - autoEditBatchTasks.length} 个文案，请先点击「智能配对」选择最匹配的文案`,'error',6500);
     if (autoEditBatchTasks.some(t=>!t.script.trim())) return showToast('文案单元格数量与文件夹数量不一致','error');
     if (autoEditBatchTasks.some(t=>!t.clips.length)) return showToast('存在没有视频的文件夹','error');
     const n=Math.max(1,Math.min(4,parseInt(document.getElementById('autoedit-batch-concurrency')?.value||'2',10))); let cursor=0;
@@ -12481,6 +12766,7 @@ async function startAutoEditBatchAnalysis() {
         },{ready:0,warning:0,error:0,missing:0});
         const detail=`${totals.ready} 个片段通过，${totals.warning} 个警告，${totals.error} 个失败${totals.missing?`，${totals.missing} 段文案缺失`:''}`;
         showToast(`批量分析完成：${detail}`,taskErrors?'error':(taskWarnings?'warning':'success'));
+        playAutoEditBatchCompletionSound(taskErrors === 0);
     } finally { setAutoEditBatchRunning(false); }
 }
 async function exportAutoEditBatchTask(index, options = {}) {
@@ -12503,6 +12789,7 @@ async function exportAutoEditBatchTask(index, options = {}) {
             const reviewSegments=task.reviewSegments||(task.result.segments||[]).map(seg=>({
                 segment_id:seg.segment_id,
                 source:seg.source,
+                source_index:Number(seg.source_index),
                 enabled:true,
                 script:seg.script,
                 start:Number(seg.start),
@@ -12512,7 +12799,8 @@ async function exportAutoEditBatchTask(index, options = {}) {
                 classic_end:Number(seg.legacy_end??seg.end),
                 v2_start:Number(seg.v2_start??seg.start),
                 v2_end:Number(seg.v2_end??seg.end),
-                speed:Number(seg.speed)||1
+                speed:Number(seg.speed)||1,
+                manual_subtitles:Array.isArray(seg.manual_subtitles) ? seg.manual_subtitles : []
             }));
             exportStage = '调用自动剪辑导出接口';
             const outputName = sanitizeAutoEditBatchOutputName(task.outputName, task.name || `task_${index + 1}`);
@@ -12520,7 +12808,9 @@ async function exportAutoEditBatchTask(index, options = {}) {
             const response=await apiFetch(`${API_BASE}/media/convert`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({files:task.clips,clips:task.clips,mode:'auto_edit',request_id:requestId,analysis_only:false,review_segments:reviewSegments,ignore_mismatch:true,force_mismatch:false,script_text:task.script,output_dir:outputDir,output_path:window.electronAPI.pathJoin(outputDir,`${outputName}.mp4`),...(task.settings||getAutoEditRequestSettings()),force_transcribe:false})});
             exportStage = '读取导出结果';
             const data=await response.json(); if(!response.ok) throw new Error(data.error||'导出失败');
+            data.review_segments = reviewSegments.map(segment => ({ ...segment }));
             exportedData = data;
+            task.reviewSegments = data.review_segments;
             task.result=data; task.status='ready'; task.message='导出完成';
             task.reelsTransferError = '';
         } catch (e) {
@@ -12529,7 +12819,7 @@ async function exportAutoEditBatchTask(index, options = {}) {
         }
         // “导出视频”和“送入 Reels”是两个独立步骤。Reels 页面接收失败时，
         // 不能把已经成功生成在磁盘上的视频误报为“导出失败”。
-        if (exportedData && document.getElementById('autoedit-send-reels')?.checked && options.deferReels !== true && options.skipReels !== true) {
+        if (exportedData && task.sendToReels !== false && document.getElementById('autoedit-send-reels')?.checked && options.deferReels !== true && options.skipReels !== true) {
             try {
                 await sendAutoEditResultToReels(exportedData, { silent: true, baseName: task.outputName || task.name });
                 task.message = '导出完成 · 已送入 Reels';
@@ -12548,8 +12838,8 @@ async function exportAutoEditBatchTask(index, options = {}) {
 }
 async function startAutoEditBatchExport(options = {}) {
     if(autoEditBatchRunning)return showToast('批量任务正在运行，请稍候','info');
-    const ready=autoEditBatchTasks.map((task,index)=>({task,index})).filter(x=>x.task.result?.analysis_only);
-    if(!ready.length) return showToast('请先完成批量分析','error');
+    const ready=autoEditBatchTasks.map((task,index)=>({task,index})).filter(x=>x.task.sendToReels !== false && x.task.result?.analysis_only);
+    if(!ready.length) return showToast('没有已勾选且完成分析的任务','error');
     const risky=ready.filter(x=>(x.task.result.segments||[]).some(s=>s.status==='warning'));
     if(risky.length && !confirm(`${risky.length} 个任务仍有待审核项目。继续将按当前分析结果导出；建议先逐套审核。确定继续吗？`)) return;
     const n=Math.max(1,Math.min(4,parseInt(document.getElementById('autoedit-batch-concurrency')?.value||'2',10))); let cursor=0;
@@ -12583,10 +12873,33 @@ async function startAutoEditBatchExport(options = {}) {
             ? `批量导出完成，${failed} 个导出失败${reelsFailed ? `，${reelsFailed} 个 Reels 接收失败` : ''}`
             : (reelsFailed ? `视频全部导出完成，${reelsFailed} 个未送入 Reels` : '批量导出完成');
         showToast(summary,failed?'error':(reelsFailed?'info':'success'));
+        if (shouldSendReels) playAutoEditBatchCompletionSound(failed === 0 && reelsFailed === 0);
     } finally { setAutoEditBatchRunning(false); }
 }
 function startAutoEditBatchExportOnly() {
     return startAutoEditBatchExport({ skipReels: true });
+}
+function playAutoEditBatchCompletionSound(success = true) {
+    try {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContextClass) return;
+        const context = new AudioContextClass();
+        context.resume?.().catch(() => {});
+        const tones = success ? [660, 880, 1040] : [520, 390];
+        const start = context.currentTime + .03;
+        tones.forEach((frequency, index) => {
+            const oscillator = context.createOscillator();
+            const gain = context.createGain();
+            oscillator.frequency.value = frequency;
+            oscillator.type = 'sine';
+            gain.gain.setValueAtTime(.0001, start + index * .15);
+            gain.gain.exponentialRampToValueAtTime(.14, start + index * .15 + .02);
+            gain.gain.exponentialRampToValueAtTime(.0001, start + index * .15 + .13);
+            oscillator.connect(gain); gain.connect(context.destination);
+            oscillator.start(start + index * .15); oscillator.stop(start + index * .15 + .14);
+        });
+        setTimeout(() => context.close().catch(() => {}), 900);
+    } catch (_) {}
 }
 function showAutoEditBatchOutput(index) {
     const outputPath = autoEditBatchTasks[index]?.result?.output_path;
@@ -12625,6 +12938,7 @@ function openAutoEditBatchReview(index) {
     const originalById = new Map(originals.map(segment => [segment.segment_id, segment]));
     const reviewResult = savedReviews.length ? {
         ...task.result,
+        analysis_only: true,
         segments: savedReviews.map(review => ({
             ...(originalById.get(review.segment_id) || originals.find(segment => segment.source === review.source) || {}),
             ...review,
@@ -14069,6 +14383,11 @@ async function startAutoEditByScript(isRetry = false, options = {}) {
 
         const data = await resp.json();
         if (!resp.ok) throw new Error(data.error || '文案自动剪辑失败');
+        // 正式导出后也要保留审核时间线：用户送入 Reels 后发现问题时，
+        // 可以回到原始素材继续精修并再次导出，而不是只能重跑分析。
+        if (!data.analysis_only && Array.isArray(options.reviewSegments) && options.reviewSegments.length) {
+            data.review_segments = options.reviewSegments.map(segment => ({ ...segment }));
+        }
 
         // 标记最终播放顺序，但保留用户选择/文件名排序后的输入顺序。
         // 后续重新匹配仍会使用这个稳定输入顺序，避免上一次输出顺序反过来影响下一次匹配结果。
@@ -14102,6 +14421,8 @@ async function startAutoEditByScript(isRetry = false, options = {}) {
         autoEditOutputDir = data.output_dir || '';
         autoEditLastResult = data;
 
+        if (data.analysis_only) playAutoEditBatchCompletionSound(true);
+
         const mainReportBtn = document.getElementById('autoedit-main-view-report-btn');
         if (mainReportBtn) mainReportBtn.style.display = 'inline-block';
         const mainReopenBtn = document.getElementById('autoedit-main-reopen-dialog-btn');
@@ -14129,6 +14450,9 @@ async function startAutoEditByScript(isRetry = false, options = {}) {
         autoEditIgnoreMismatch = false;
         if (autoEditActiveBatchIndex >= 0 && autoEditBatchTasks[autoEditActiveBatchIndex]) {
             const task = autoEditBatchTasks[autoEditActiveBatchIndex];
+            if (data.analysis_only && !(options.reviewSegments?.length > 0)) {
+                task.reviewSegments = null;
+            }
             task.result = data;
             const warnings = (data.segments || []).filter(segment => segment.status === 'warning').length;
             task.status = data.analysis_only && warnings ? 'warning' : 'ready';
@@ -14548,21 +14872,21 @@ function renderAutoEditResult(data) {
                     : 'display: grid; grid-template-columns: 70px 90px 70px 80px 60px 1fr 100px; gap: 8px; align-items: center; padding: 5px 8px; border-bottom: 1px solid var(--border-color); font-size: 12px;';
                 
                 if (isReview) return `
-                    <div class="autoedit-review-row ${duplicateText ? 'ae-duplicate-row' : ''} ${reviewWarning && !duplicateText ? 'ae-warning-row' : ''} ${isCriticalMatch ? 'ae-critical-match-row' : ''}" data-review-index="${reviewIndex}" data-source-index="${Number(seg.source_index || seg.index) || reviewIndex + 1}" data-source-label="${escapeHtml(formatSegmentSourceLabel(seg.source_index))}" data-script-start-line="${Number(seg.script_start_line) || 0}" data-script-end-line="${Number(seg.script_end_line || seg.script_start_line) || 0}" data-source-duration="${Number(seg.source_duration || 0)}" data-source="${escapeHtml(encodeURIComponent(seg.source || ''))}" data-word-timeline="${escapeHtml(encodeURIComponent(JSON.stringify(seg.word_timeline || [])))}" data-original-text-key="${escapeHtml(reviewTextKey(seg.script))}" data-original-script="${escapeHtml(encodeURIComponent(seg.script || ''))}" data-warning="${reviewWarning}" data-critical-match="${isCriticalMatch}" data-duplicate="${duplicateText}" data-unmatched="${reviewUnmatched}" data-classic-start="${Number(seg.legacy_start ?? seg.start ?? 0)}" data-classic-end="${Number(seg.legacy_end ?? seg.end ?? 0)}" data-v2-start="${Number(seg.v2_start ?? seg.start ?? 0)}" data-v2-end="${Number(seg.v2_end ?? seg.end ?? 0)}" data-v2-available="${seg.v2_cut_available === true}" data-cut-selection="${seg.cut_selection || (isMultilingualV2 ? 'v2' : 'classic')}" draggable="true" ondragstart="autoEditReviewDragStart(event,${reviewIndex})" ondragover="event.preventDefault()" ondrop="autoEditReviewDrop(event,${reviewIndex})" style="display:grid;grid-template-columns:42px 38px 1fr 112px 112px 90px;gap:8px;align-items:center;padding:10px 8px;border-bottom:1px solid ${duplicateText ? '#ff6b6b' : 'var(--border-color)'};cursor:grab;">
+                    <div class="autoedit-review-row ${duplicateText ? 'ae-duplicate-row' : ''} ${reviewWarning && !duplicateText ? 'ae-warning-row' : ''} ${isCriticalMatch ? 'ae-critical-match-row' : ''}" data-review-index="${reviewIndex}" data-source-index="${Number(seg.source_index || seg.index) || reviewIndex + 1}" data-source-label="${escapeHtml(formatSegmentSourceLabel(seg.source_index))}" data-script-start-line="${Number(seg.script_start_line) || 0}" data-script-end-line="${Number(seg.script_end_line || seg.script_start_line) || 0}" data-source-duration="${Number(seg.source_duration || 0)}" data-source="${escapeHtml(encodeURIComponent(seg.source || ''))}" data-word-timeline="${escapeHtml(encodeURIComponent(JSON.stringify(seg.word_timeline || [])))}" data-manual-subtitles="${escapeHtml(encodeURIComponent(JSON.stringify(seg.manual_subtitles || [])))}" data-visual-remove-ranges="${escapeHtml(encodeURIComponent(JSON.stringify(seg.visual_remove_ranges || [])))}" data-needs-replacement="${seg.needs_replacement === true}" data-original-text-key="${escapeHtml(reviewTextKey(seg.script))}" data-original-script="${escapeHtml(encodeURIComponent(seg.script || ''))}" data-warning="${reviewWarning}" data-critical-match="${isCriticalMatch}" data-duplicate="${duplicateText}" data-unmatched="${reviewUnmatched}" data-classic-start="${Number(seg.legacy_start ?? seg.start ?? 0)}" data-classic-end="${Number(seg.legacy_end ?? seg.end ?? 0)}" data-v2-start="${Number(seg.v2_start ?? seg.start ?? 0)}" data-v2-end="${Number(seg.v2_end ?? seg.end ?? 0)}" data-v2-available="${seg.v2_cut_available === true}" data-cut-selection="${seg.cut_selection || (isMultilingualV2 ? 'v2' : 'classic')}" draggable="true" ondragstart="autoEditReviewDragStart(event,${reviewIndex})" ondragover="event.preventDefault()" ondrop="autoEditReviewDrop(event,${reviewIndex})" style="display:grid;grid-template-columns:42px 38px 1fr 112px 112px 90px;gap:8px;align-items:center;padding:10px 8px;border-bottom:1px solid ${duplicateText ? '#ff6b6b' : 'var(--border-color)'};cursor:grab;">
                         <input type="checkbox" class="ae-review-enabled" ${seg.enabled === false ? '' : 'checked'} title="是否导出" onchange="handleAutoEditReviewEnabled(this)">
                         <div style="display:flex;flex-direction:column;gap:2px;"><button class="btn btn-secondary" onclick="moveAutoEditReviewRow(${reviewIndex},-1)" style="padding:1px 5px;">↑</button><button class="btn btn-secondary" onclick="moveAutoEditReviewRow(${reviewIndex},1)" style="padding:1px 5px;">↓</button></div>
                         <div><div style="font-size:11px;color:var(--text-muted);display:flex;gap:6px;align-items:center;flex-wrap:wrap;">${escapeHtml(formatSegmentSourceLabel(seg.source_index))} ${cutBadge} ${timingBadge} ${matchRiskBadge || `<span>匹配 ${matchPercent}%</span>`}${duplicateText ? ` · <strong class="ae-live-duplicate-badge" style="color:#ff6b6b;">⚠ ${escapeHtml(duplicateMembers.map(formatSegmentSourceLabel).join(' 与 '))} 重复</strong>` : ''}${seg.issue_reason ? ` · <strong style="color:${usesMultilingualV2 ? '#fbbf24' : '#ff6b6b'};">⚠ ${escapeHtml(seg.issue_reason)}</strong>` : (seg.ambiguity ? ` · ⚠️ ${escapeHtml(seg.ambiguity)}` : '')} · 双击放大编辑</div><textarea class="input ae-review-script" rows="2" ondblclick="openAutoEditLargeScriptEditor(this)" oninput="handleAutoEditScriptChanged(this)" style="width:100%;resize:vertical;">${escapeHtml(seg.script || '')}</textarea><div class="ae-missing-words-status"></div></div>
                         <label style="font-size:11px;">入点<div><button class="btn btn-secondary" onclick="nudgeAutoEditTime(this,'.ae-review-start',-.1)" style="padding:1px 4px;">−</button><input type="number" class="input ae-review-start" value="${Number(seg.start || 0).toFixed(3)}" min="0" step="0.01" onchange="markAutoEditCutManual(this)" style="width:72px;"><button class="btn btn-secondary" onclick="nudgeAutoEditTime(this,'.ae-review-start',.1)" style="padding:1px 4px;">+</button></div></label>
                         <label style="font-size:11px;">出点<div><button class="btn btn-secondary" onclick="nudgeAutoEditTime(this,'.ae-review-end',-.1)" style="padding:1px 4px;">−</button><input type="number" class="input ae-review-end" value="${Number(seg.end || 0).toFixed(3)}" min="0" step="0.01" onchange="markAutoEditCutManual(this)" style="width:72px;"><button class="btn btn-secondary" onclick="nudgeAutoEditTime(this,'.ae-review-end',.1)" style="padding:1px 4px;">+</button></div></label>
-                        <div style="display:flex;flex-direction:column;gap:5px;"><button class="btn btn-primary" title="按照当前入点和出点播放裁切后的内容" onclick="playAutoEditReviewSource(this,true)" style="font-size:11px;padding:4px 8px;">▶ 剪后预览</button><button class="btn btn-secondary" title="播放未裁切的完整原始视频" onclick="playAutoEditReviewSource(this,false)" style="font-size:11px;padding:3px 8px;">原片预览</button><button class="btn btn-secondary" onclick="toggleAutoEditReviewDetails(this)" style="font-size:11px;padding:3px 8px;">${detailsOpen ? '收起详情' : '展开详情'}</button></div>
+                        <div style="display:flex;flex-direction:column;gap:5px;"><button class="btn btn-primary" title="按照当前入点和出点播放裁切后的内容" onclick="playAutoEditReviewSource(this,true)" style="font-size:11px;padding:4px 8px;">▶ 剪后预览</button><button class="btn btn-secondary" title="播放未裁切的完整原始视频" onclick="playAutoEditReviewSource(this,false)" style="font-size:11px;padding:3px 8px;">原片预览</button><button class="btn btn-secondary" title="在 Finder / 文件资源管理器中定位当前原视频" onclick="openAutoEditReviewSourceInFolder(this)" style="font-size:11px;padding:3px 8px;">📁 打开所在文件夹</button><button class="btn btn-secondary" onclick="toggleAutoEditReviewDetails(this)" style="font-size:11px;padding:3px 8px;">${detailsOpen ? '收起详情' : '展开详情'}</button></div>
                         ${isCompareMode ? `<div class="ae-cut-compare" style="grid-column:3 / -1;display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:9px;border-radius:7px;background:rgba(59,130,246,.08);border:1px solid rgba(96,165,250,.28);cursor:default;">
                             <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;"><strong style="color:#a5b4fc;">经典 ${Number(seg.legacy_start ?? seg.start ?? 0).toFixed(3)}s–${Number(seg.legacy_end ?? seg.end ?? 0).toFixed(3)}s</strong><button class="btn btn-secondary" onclick="previewAutoEditComparisonCut(this,'classic')" style="padding:3px 8px;font-size:11px;">▶ 试听经典</button><button class="btn btn-secondary" onclick="selectAutoEditComparisonCut(this,'classic')" style="padding:3px 8px;font-size:11px;">采用经典</button></div>
                             <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;"><strong style="color:#fcd34d;">V2 ${Number(seg.v2_start ?? seg.start ?? 0).toFixed(3)}s–${Number(seg.v2_end ?? seg.end ?? 0).toFixed(3)}s · ${Math.round((Number(seg.cut_score) || 0) * 100)}%</strong><button class="btn btn-secondary" onclick="previewAutoEditComparisonCut(this,'v2')" ${seg.v2_cut_available === true ? '' : 'disabled'} style="padding:3px 8px;font-size:11px;">▶ 试听 V2</button><button class="btn btn-primary" onclick="selectAutoEditComparisonCut(this,'v2')" ${seg.v2_cut_available === true ? '' : 'disabled'} style="padding:3px 8px;font-size:11px;">采用 V2</button>${seg.v2_cut_available === true ? '' : '<span style="color:#ff9f43;font-size:11px;">V2 本段无法可靠定位</span>'}</div>
                         </div>` : ''}
                         <div class="ae-review-details" style="grid-column:3 / -1;display:${detailsOpen ? 'grid' : 'none'};grid-template-columns:1fr 1fr;gap:10px;padding:10px;border-radius:7px;background:rgba(0,0,0,.18);cursor:default;">
                             <div><div style="font-size:11px;color:#60a5fa;font-weight:700;margin-bottom:5px;">实际识别文字 <span style="color:#86efac;font-weight:500;">绿色=多读/不同</span></div><div style="white-space:pre-wrap;word-break:break-word;line-height:1.75;min-height:54px;padding:8px;background:#111225;border-radius:5px;color:#d7defa;">${textDiff.recognizedHtml || '(没有识别到有效语音)'}</div></div>
-                            <div><div style="font-size:11px;color:#a5b4fc;font-weight:700;margin-bottom:5px;">目标文案 <span style="color:#fca5a5;font-weight:500;">${usesMultilingualV2 ? '红色删除线=识别差异，需试听' : '红色删除线=漏读'}</span></div><div style="white-space:pre-wrap;word-break:break-word;line-height:1.75;min-height:54px;padding:8px;background:#111225;border-radius:5px;color:#fff;">${textDiff.targetHtml || '(尚未匹配文案)'}</div></div>
-                            ${textDiff.boundaryWarning ? `<div style="grid-column:1 / -1;padding:7px 9px;border-radius:5px;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.3);color:#fcd34d;font-size:11px;">⚠️ ${escapeHtml(textDiff.boundaryWarning)}</div>` : ''}
+                            <div><div style="font-size:11px;color:#a5b4fc;font-weight:700;margin-bottom:5px;">目标文案 <span style="color:#fca5a5;font-weight:500;">${usesMultilingualV2 ? '红色删除线=识别差异，需试听' : '红色删除线=漏读'}</span></div><div data-role="review-target-diff" style="white-space:pre-wrap;word-break:break-word;line-height:1.75;min-height:54px;padding:8px;background:#111225;border-radius:5px;color:#fff;">${textDiff.targetHtml || '(尚未匹配文案)'}</div></div>
+                            <div data-role="review-boundary-warning" style="grid-column:1 / -1;padding:7px 9px;border-radius:5px;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.3);color:#fcd34d;font-size:11px;display:${textDiff.boundaryWarning ? 'block' : 'none'};">${textDiff.boundaryWarning ? `⚠️ ${escapeHtml(textDiff.boundaryWarning)}` : ''}</div>
                             <div style="grid-column:1 / -1;display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-top:1px solid rgba(255,255,255,.06);padding-top:8px;">
                                 <span class="hint">更多操作:</span>
                                 <label style="font-size:11px;">速度 <input class="input ae-review-speed" type="number" value="${Math.max(0.25, Math.min(4, Number(seg.speed) || 1))}" min="0.25" max="4" step="0.05" onchange="handleAutoEditReviewSpeedChanged(this)" style="width:65px;"></label>
@@ -14613,6 +14937,7 @@ function renderAutoEditResult(data) {
         ${fileHtml || '<p class="hint">没有返回输出文件。</p>'}
         <div style="margin-top: 10px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
             ${isReview ? '<button class="btn btn-primary" onclick="exportReviewedAutoEdit()" style="padding:7px 16px;">③ 按审核结果正式导出</button>' : ''}
+            ${!isReview && ((Array.isArray(data.review_segments) && data.review_segments.length) || (Array.isArray(data.segments) && data.segments.length)) ? '<button class="btn btn-primary" onclick="reopenExportedAutoEditTimelineReview()" style="padding:5px 12px;font-size:12px;">⏱ 继续时间线审核</button>' : ''}
             ${isReview && usesMultilingualV2 ? '<button class="btn btn-secondary" onclick="rerunAutoEditWithLegacy()" style="padding:5px 12px;font-size:12px;">↩ 使用经典版重新分析</button>' : ''}
             <button class="btn btn-primary" onclick="sendAutoEditResultToReels()" style="padding: 5px 12px; font-size: 12px;">🎬 送入批量 Reels</button>
             <button class="btn btn-secondary" id="autoedit-rename-btn" onclick="renameAutoEditOriginalClips()" style="padding: 5px 12px; font-size: 12px; background: rgba(79, 70, 229, 0.1); border: 1px solid rgba(79, 70, 229, 0.3); color: #818cf8;">✏️ 一键重命名本地原视频</button>
@@ -14625,6 +14950,24 @@ function renderAutoEditResult(data) {
         refreshAutoEditDuplicateMarks();
     }
 }
+
+// 已导出的成片仍可回到原审核时间线。此操作只恢复可编辑状态，不会覆盖
+// 已送入 Reels 的成片；用户完成修改后可再次正式导出并重新送入 Reels。
+function reopenExportedAutoEditTimelineReview() {
+    const exported = autoEditLastResult;
+    const reviewSegments = Array.isArray(exported?.review_segments) && exported.review_segments.length
+        ? exported.review_segments : (Array.isArray(exported?.segments) ? exported.segments : []);
+    if (!reviewSegments.length) return showToast('这个导出结果没有可恢复的审核时间线', 'error');
+    autoEditLastResult = {
+        ...exported,
+        analysis_only: true,
+        segments: reviewSegments.map(segment => ({ ...segment })),
+    };
+    renderAutoEditResult(autoEditLastResult);
+    document.getElementById('autoedit-result-section')?.classList.remove('hidden');
+    openAutoEditTimelineReview();
+}
+window.reopenExportedAutoEditTimelineReview = reopenExportedAutoEditTimelineReview;
 
 function positionAutoEditMissingPlaceholders() {
     const rows = Array.from(document.querySelectorAll('.autoedit-review-row'));
@@ -14703,6 +15046,9 @@ function collectAutoEditReviewSegments() {
             v2_start: Number(row.dataset.v2Start),
             v2_end: Number(row.dataset.v2End),
             speed: Number(row.querySelector('.ae-review-speed')?.value || 1),
+            manual_subtitles: (() => { try { const value = JSON.parse(decodeURIComponent(row.dataset.manualSubtitles || '')); return Array.isArray(value) ? value : []; } catch (_) { return []; } })(),
+            visual_remove_ranges: (() => { try { const value = JSON.parse(decodeURIComponent(row.dataset.visualRemoveRanges || '')); return Array.isArray(value) ? value : []; } catch (_) { return []; } })(),
+            needs_replacement: row.dataset.needsReplacement === 'true',
         };
     });
 }
@@ -14811,9 +15157,188 @@ function replaceAutoEditReviewRow(button, sourceIndex) {
     const source = getAutoEditReviewRowSource(button);
     if (source) window.replaceAutoEditClip(source, sourceIndex);
 }
+function openAutoEditReviewSourceInFolder(button) {
+    const source = getAutoEditReviewRowSource(button);
+    if (!source || !window.electronAPI?.showItemInFolder) {
+        showToast('当前环境无法定位该原视频', 'warning');
+        return;
+    }
+    window.electronAPI.showItemInFolder(source);
+}
 function recalculateAutoEditReviewRow(button) {
     const timeline = button?.closest('.autoedit-review-row')?.dataset?.wordTimeline || '';
     return recalculateAutoEditCutFromScript(button, timeline);
+}
+
+// AI 漏词时，补一条独立的“手工字幕”而不是拖动或重排后续字幕。
+// 时间记录为原片时间；正式导出时后端会按当前裁切和速度换算到成片时间轴。
+async function addAutoEditManualSubtitle(row, atTime, options = {}) {
+    if (!row) return;
+    const cutStart = Number(row.querySelector('.ae-review-start')?.value) || 0;
+    const cutEnd = Number(row.querySelector('.ae-review-end')?.value) || cutStart + 0.1;
+    const start = Math.max(cutStart, Math.min(cutEnd - 0.1, Number(atTime) || cutStart));
+    const text = await _showInputDialog(`补充字幕（从 ${start.toFixed(3)}s 开始）`, '输入漏识别的字幕文字');
+    if (text === null || !text.trim()) return;
+    const fixedEnd = Number(options.end);
+    const rawDuration = Number.isFinite(fixedEnd) && fixedEnd > start + 0.05
+        ? null
+        : await _showInputDialog('补充字幕显示时长', '单位：秒', '2.00');
+    if (rawDuration === null && !(Number.isFinite(fixedEnd) && fixedEnd > start + 0.05)) return;
+    const end = Number.isFinite(fixedEnd) && fixedEnd > start + 0.05
+        ? Math.min(cutEnd, fixedEnd)
+        : Math.min(cutEnd, start + Math.max(0.1, Number(rawDuration) || 2));
+    let items = [];
+    try { items = JSON.parse(decodeURIComponent(row.dataset.manualSubtitles || '')); } catch (_) {}
+    if (!Array.isArray(items)) items = [];
+    items.push({ start, end, text: text.trim() });
+    items.sort((a, b) => Number(a.start) - Number(b.start));
+    row.dataset.manualSubtitles = encodeURIComponent(JSON.stringify(items));
+    if (options.removeFromScript) {
+        const scriptInput = row.querySelector('.ae-review-script');
+        if (scriptInput) {
+            // 用户补进独立字幕的漏读文字不能继续留在普通文案里，否则自动
+            // 对齐会再次把它挤入后续字幕。只移除第一次完整出现的位置。
+            scriptInput.value = scriptInput.value.replace(text.trim(), '').replace(/\n{2,}/g, '\n').trim();
+            markAutoEditCutManual(scriptInput);
+        }
+    }
+    persistAutoEditBatchReview();
+    showToast('已补一条漏读字幕，并从普通文案中移出；后面的字幕不会移动', 'success');
+}
+
+function findAutoEditLargestAsrGap(row) {
+    const cutStart = Number(row?.querySelector('.ae-review-start')?.value) || 0;
+    const cutEnd = Number(row?.querySelector('.ae-review-end')?.value) || cutStart + 0.1;
+    let words = [];
+    try { words = JSON.parse(decodeURIComponent(row?.dataset?.wordTimeline || '')); } catch (_) {}
+    const valid = (Array.isArray(words) ? words : [])
+        .filter(word => Number(word.end) > cutStart && Number(word.start) < cutEnd)
+        .sort((a, b) => Number(a.start) - Number(b.start));
+    const gaps = [];
+    let cursor = cutStart;
+    for (const word of valid) {
+        const wordStart = Math.max(cutStart, Number(word.start) || cursor);
+        if (wordStart > cursor + 0.12) gaps.push({ start: cursor, end: wordStart });
+        cursor = Math.max(cursor, Math.min(cutEnd, Number(word.end) || cursor));
+    }
+    if (cutEnd > cursor + 0.12) gaps.push({ start: cursor, end: cutEnd });
+    return gaps.sort((a, b) => (b.end - b.start) - (a.end - a.start))[0]
+        || { start: cutStart, end: Math.min(cutEnd, cutStart + 2) };
+}
+
+// 依据“目标文案”的顺序与 ASR 逐词时间，找出 AI 漏读的连续文字，并把
+// 它们插入相邻已识别文字之间。不会按“最大空白”猜位置。
+function buildAutoEditOrderedMissingSubtitles(row) {
+    const targetText = row?.querySelector('.ae-review-script')?.value || '';
+    const target = autoEditWords(targetText);
+    let asr = [];
+    try { asr = JSON.parse(decodeURIComponent(row?.dataset?.wordTimeline || '')); } catch (_) {}
+    const source = (Array.isArray(asr) ? asr : []).filter(word => String(word.word || '').trim());
+    const norm = value => String(value || '').toLocaleLowerCase().normalize('NFKC').replace(/[^\p{L}\p{N}]/gu, '');
+    const a = target.map(norm), b = source.map(word => norm(word.word));
+    const dp = Array.from({ length: a.length + 1 }, () => new Uint16Array(b.length + 1));
+    for (let i = a.length - 1; i >= 0; i--) for (let j = b.length - 1; j >= 0; j--) {
+        dp[i][j] = a[i] && a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+    const matches = [];
+    let i = 0, j = 0;
+    while (i < a.length && j < b.length) {
+        if (a[i] && a[i] === b[j]) { matches.push({ target: i++, source: j++ }); }
+        else if (dp[i + 1][j] >= dp[i][j + 1]) i++; else j++;
+    }
+    if (!target.length || !matches.length) return [];
+    const matchedByTarget = new Map(matches.map(item => [item.target, item.source]));
+    const missing = [];
+    for (let start = 0; start < target.length;) {
+        if (matchedByTarget.has(start)) { start++; continue; }
+        let end = start + 1;
+        while (end < target.length && !matchedByTarget.has(end)) end++;
+        const before = matches.filter(item => item.target < start).at(-1);
+        const after = matches.find(item => item.target >= end);
+        missing.push({ start, end, before, after, text: target.slice(start, end).join(/^[\u4e00-\u9fff]/.test(target[start] || '') ? '' : ' ') });
+        start = end;
+    }
+    const cutStart = Number(row.querySelector('.ae-review-start')?.value) || 0;
+    const cutEnd = Number(row.querySelector('.ae-review-end')?.value) || cutStart + .1;
+    const groups = new Map();
+    for (const item of missing) {
+        const key = `${item.before?.source ?? -1}:${item.after?.source ?? -1}`;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(item);
+    }
+    const result = [];
+    for (const group of groups.values()) {
+        const rangeStart = Math.max(cutStart, group[0].before ? Number(source[group[0].before.source]?.end) || cutStart : cutStart);
+        const rangeEnd = Math.min(cutEnd, group[0].after ? Number(source[group[0].after.source]?.start) || cutEnd : cutEnd);
+        const span = Math.max(.1, rangeEnd - rangeStart);
+        const totalWeight = group.reduce((sum, item) => sum + Math.max(1, item.text.length), 0);
+        let cursor = rangeStart;
+        group.forEach((item, index) => {
+            const end = index === group.length - 1 ? rangeEnd : Math.min(rangeEnd, cursor + span * Math.max(1, item.text.length) / totalWeight);
+            result.push({ start: cursor, end: Math.max(cursor + .1, end), text: item.text });
+            cursor = end;
+        });
+    }
+    return result.filter(item => item.text && item.end > item.start);
+}
+
+function getAutoEditTimedScript(row) {
+    let text = row?.querySelector('.ae-review-script')?.value || '';
+    let manual = [];
+    try { manual = JSON.parse(decodeURIComponent(row?.dataset?.manualSubtitles || '')); } catch (_) {}
+    for (const cue of Array.isArray(manual) ? manual : []) {
+        const tokens = autoEditWords(cue.text);
+        // 手工漏读字幕由词序差异推断，文本会丢掉原文中的冒号、逗号等标点。
+        // 因此要用“词之间允许任意标点/空白”的规则剔除，不能只做字符串全等。
+        const escaped = tokens.map(token => token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[^\\p{L}\\p{N}]+');
+        if (escaped) text = text.replace(new RegExp(escaped, 'iu'), '').replace(/\n{2,}/g, '\n').trim();
+    }
+    return text;
+}
+
+function clearAutoEditManualSubtitlesMovedWithText(row, movedText) {
+    if (!row || !movedText) return;
+    const normalizeWords = value => autoEditWords(value).map(word => word.toLocaleLowerCase()).join(' ');
+    const moved = normalizeWords(movedText);
+    if (!moved) return;
+    let items = [];
+    try { items = JSON.parse(decodeURIComponent(row.dataset.manualSubtitles || '')); } catch (_) {}
+    if (!Array.isArray(items)) return;
+    const remaining = items.filter(item => {
+        const caption = normalizeWords(item?.text || '');
+        // “归到上一/下一段”意味着这句已经交由目标段的普通字幕负责；
+        // 清掉与被移动文字重叠的手工补句，避免下一段出现重复字幕。
+        return !(caption && (moved.includes(caption) || caption.includes(moved)));
+    });
+    row.dataset.manualSubtitles = encodeURIComponent(JSON.stringify(remaining));
+}
+
+function transferAutoEditManualSubtitlesWithText(fromRow, toRow, movedText, position = 'start') {
+    if (!fromRow || !toRow || !movedText) return;
+    const normalizeWords = value => autoEditWords(value).map(word => word.toLocaleLowerCase()).join(' ');
+    const moved = normalizeWords(movedText);
+    let sourceItems = [];
+    let targetItems = [];
+    try { sourceItems = JSON.parse(decodeURIComponent(fromRow.dataset.manualSubtitles || '')); } catch (_) {}
+    try { targetItems = JSON.parse(decodeURIComponent(toRow.dataset.manualSubtitles || '')); } catch (_) {}
+    if (!Array.isArray(sourceItems)) return;
+    if (!Array.isArray(targetItems)) targetItems = [];
+    const targetStart = Number(toRow.querySelector('.ae-review-start')?.value) || 0;
+    const targetEnd = Number(toRow.querySelector('.ae-review-end')?.value) || targetStart + .1;
+    const retained = [];
+    for (const item of sourceItems) {
+        const caption = normalizeWords(item?.text || '');
+        if (!(caption && (moved.includes(caption) || caption.includes(moved)))) {
+            retained.push(item);
+            continue;
+        }
+        const duration = Math.max(.1, Number(item.end) - Number(item.start) || 1.5);
+        const start = position === 'end' ? Math.max(targetStart, targetEnd - duration) : targetStart;
+        const end = position === 'end' ? targetEnd : Math.min(targetEnd, start + duration);
+        targetItems.push({ ...item, start, end });
+    }
+    fromRow.dataset.manualSubtitles = encodeURIComponent(JSON.stringify(retained));
+    toRow.dataset.manualSubtitles = encodeURIComponent(JSON.stringify(targetItems));
 }
 
 async function openAutoEditMissedSpeechFix(button) {
@@ -14846,6 +15371,10 @@ async function openAutoEditMissedSpeechFix(button) {
             <button type="button" class="btn btn-secondary ae-missed-manual" style="height:auto;text-align:left;padding:13px;border-color:rgba(96,165,250,.45);">
                 <strong style="display:block;color:#93c5fd;margin-bottom:5px;">方式二：手动输入片段出点</strong>
                 <span style="font-size:11px;line-height:1.55;color:#b7c0df;">保留当前入点，由您填写声音实际结束的秒数。适合不想保留片尾空白。</span>
+            </button>
+            <button type="button" class="btn btn-secondary ae-missed-add-caption" style="grid-column:1 / -1;height:auto;text-align:left;padding:13px;border-color:rgba(250,204,21,.55);background:rgba(250,204,21,.08);">
+                <strong style="display:block;color:#fde68a;margin-bottom:5px;">方式三：按文案顺序自动补漏读</strong>
+                <span style="font-size:11px;line-height:1.55;color:#d8d3b1;">无需再次输入。系统比较当前段文案和 AI 实际识别，找出漏句，并按它位于前后已识别文字之间的位置分配空缺时间；后面的字幕不移动。</span>
             </button>
         </div>
         <div style="font-size:11px;color:#8b95c0;margin-top:11px;">当前范围：${Number(startInput.value || 0).toFixed(3)}s – ${Number(endInput.value || 0).toFixed(3)}s${sourceDuration > 0 ? ` · 原片时长 ${sourceDuration.toFixed(3)}s` : ''}</div>
@@ -14890,6 +15419,34 @@ async function openAutoEditMissedSpeechFix(button) {
         updateAutoEditCutSelection(row, 'manual');
         close();
         showToast(`出点已改为 ${manualEnd.toFixed(3)}s，请点击“剪后预览”确认声音完整`, 'success', 6000);
+    };
+    modal.querySelector('.ae-missed-add-caption').onclick = async () => {
+        // 方式三的默认范围是完整原片，而不是之前 AI 算出的短裁切范围；
+        // 漏读可能恰好在原裁切范围外，必须先把它保留下来。
+        if (sourceDuration > 0) {
+            startInput.value = '0.000';
+            endInput.value = sourceDuration.toFixed(3);
+            row.dataset.modified = 'true';
+            updateAutoEditCutSelection(row, 'manual');
+        }
+        const items = buildAutoEditOrderedMissingSubtitles(row);
+        if (!items.length) {
+            showToast('没有找到可按顺序补充的漏读文案；请确认这段已归入当前片段', 'info');
+            return;
+        }
+        close();
+        let existing = [];
+        try { existing = JSON.parse(decodeURIComponent(row.dataset.manualSubtitles || '')); } catch (_) {}
+        row.dataset.manualSubtitles = encodeURIComponent(JSON.stringify([...(Array.isArray(existing) ? existing : []), ...items]));
+        // 普通文案保留作审核依据；时间线/导出会把这些已转为手工字幕的漏句
+        // 过滤掉，不能再交给自动对齐器分配。
+        row.dataset.manualSubtitleExclusions = encodeURIComponent(JSON.stringify(items.map(item => item.text)));
+        persistAutoEditBatchReview();
+        showToast(`已按文案顺序补充 ${items.length} 条漏读字幕`, 'success');
+        if (document.getElementById('autoedit-timeline-review-modal')) {
+            window.__autoEditTimelineRestoreSource = source;
+            requestAnimationFrame(() => openAutoEditTimelineReview());
+        }
     };
 }
 function assignAutoEditMissingBlock(button, direction) {
@@ -14978,9 +15535,26 @@ async function addSupplementaryAutoEditReviewClip(button, nextSourceIndexOverrid
     task.result = null; task.reviewSegments = null; task.status = 'waiting';
     task.message = `已补充 ${imported.length} 个片段，正在重新分析`;
     document.getElementById('autoedit-timeline-review-modal')?.remove();
+    // The review screen keeps its own file/result snapshots. Update them before
+    // analysis so the newly inserted clip participates immediately instead of
+    // leaving the old missing placeholder visible until the whole batch is
+    // selected and analyzed again.
+    autoEditFiles = task.clips.map(path => ({
+        path,
+        name: path.split(/[/\\]/).pop(),
+        status: 'pending',
+        manualSubtitlePath: task.manualSubtitleMap?.[path] || null,
+    }));
+    renderAutoEditFiles();
     renderAutoEditBatchTasks();
     await analyzeAutoEditBatchTask(task);
-    showToast(`已补充 ${imported.length} 个片段，并已重新完成匹配`, 'success', 6000);
+    if (!task.result?.analysis_only) {
+        return showToast(`补充片段已加入，但重新分析失败：${task.message}`, 'error', 7000);
+    }
+    autoEditLastResult = task.result;
+    autoEditOutputDir = task.result.output_dir || window.electronAPI.pathJoin(task.folder, '_auto_edit');
+    showToast(`已补充 ${imported.length} 个片段，并已刷新当前任务匹配`, 'success', 6000);
+    openAutoEditBatchTimelineReview(autoEditActiveBatchIndex);
 }
 window.addSupplementaryAutoEditReviewClip = addSupplementaryAutoEditReviewClip;
 function playAutoEditResultSegment(index) {
@@ -15371,7 +15945,11 @@ function openAutoEditTimelineReview() {
         return;
     }
     document.getElementById('autoedit-timeline-review-modal')?.remove();
-    let selected = 0;
+    const restoreSource = window.__autoEditTimelineRestoreSource || '';
+    window.__autoEditTimelineRestoreSource = '';
+    let selected = Math.max(0, rows.findIndex(row => {
+        try { return decodeURIComponent(row.dataset.source || '') === restoreSource; } catch (_) { return false; }
+    }));
     // 审核弹窗拥有独立的编辑历史。它编辑的是自动剪辑审核行，而不是 Reels
     // 工程的任务模型，因此不能借用后者的撤销栈。
     const reviewHistory = [];
@@ -15399,6 +15977,7 @@ function openAutoEditTimelineReview() {
     // 入/出点后，马上看到“将要导出的整片”而无需先导出一次。
     let editorInstance = null;
     const playback = { outputTime: 0, playing: false, token: 0, switching: false };
+    let previewHeight = Math.max(140, Math.min(620, Number(localStorage.getItem('autoedit-review-preview-height')) || 260));
     const modal = document.createElement('div');
     modal.id = 'autoedit-timeline-review-modal';
     modal.style.cssText = 'position:fixed;inset:0;z-index:100001;background:rgba(0,0,0,.85);backdrop-filter:blur(16px);display:flex;align-items:center;justify-content:center;padding:10px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;overflow-y:auto;box-sizing:border-box;';
@@ -15512,7 +16091,8 @@ function openAutoEditTimelineReview() {
             const b = Number(item.querySelector('.ae-review-end')?.value) || a + .05;
             const disabled = item.querySelector('.ae-review-enabled')?.checked === false;
             const isCur = index === selected;
-            return `<button data-index="${index}" data-role="pill" class="ae-review-pill ${isCur ? 'active' : ''}" title="${escapeHtml(item.querySelector('.ae-review-script')?.value || '')}" style="${disabled ? 'opacity:0.4;' : ''}"><span>#${index + 1}</span><span style="font-size:10px;color:${isCur ? '#bfdbfe' : '#94a3b8'};">${fmt(b - a)}</span></button>`;
+            const needsReplacement = item.dataset.needsReplacement === 'true';
+            return `<button data-index="${index}" data-role="pill" class="ae-review-pill ${isCur ? 'active' : ''}" title="${escapeHtml(item.querySelector('.ae-review-script')?.value || '')}" style="${disabled ? 'opacity:0.4;' : ''}${needsReplacement ? 'border-color:#ef4444;background:rgba(239,68,68,.2);' : ''}"><span>${needsReplacement ? '🚩 ' : ''}#${index + 1}</span><span style="font-size:10px;color:${isCur ? '#bfdbfe' : '#94a3b8'};">${fmt(b - a)}</span></button>`;
         }).join('');
         const cards = rows.map((item, index) => {
             const a = Number(item.querySelector('.ae-review-start')?.value) || 0;
@@ -15528,8 +16108,9 @@ function openAutoEditTimelineReview() {
             const isLow = matchPercent >= 50 && matchPercent < 75;
             const isDup = item.dataset.duplicate === 'true';
             const issueReason = seg.issue_reason || seg.ambiguity || '';
+            const needsReplacement = item.dataset.needsReplacement === 'true';
 
-            return `<button data-index="${index}" data-role="card" class="ae-review-card ${isCur ? 'active' : ''}">
+            return `<button data-index="${index}" data-role="card" class="ae-review-card ${isCur ? 'active' : ''}" style="${needsReplacement ? 'border-color:#ef4444;box-shadow:inset 3px 0 #ef4444;' : ''}">
                 <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
                     <strong style="font-size:12px;color:${isCur ? '#93c5fd' : '#f1f5f9'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${index + 1}. ${escapeHtml(fileName)}</strong>
                     <span style="font-size:10px;font-weight:700;padding:1px 5px;border-radius:4px;background:${disabled ? 'rgba(239,68,68,0.15)' : 'rgba(59,130,246,0.18)'};color:${disabled ? '#f87171' : '#60a5fa'};font-variant-numeric:tabular-nums;flex-shrink:0;">${fmt(b - a)}</span>
@@ -15537,6 +16118,7 @@ function openAutoEditTimelineReview() {
                 <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin:1px 0;">
                     <span style="font-size:9.5px;font-weight:700;padding:0.5px 4px;border-radius:3px;background:${isCritical ? 'rgba(239,68,68,0.25)' : (isLow ? 'rgba(245,158,11,0.2)' : 'rgba(59,130,246,0.18)')};color:${isCritical ? '#f87171' : (isLow ? '#fbbf24' : '#60a5fa')};">匹配 ${matchPercent}%</span>
                     ${isDup ? '<span style="font-size:9.5px;font-weight:700;padding:0.5px 4px;border-radius:3px;background:rgba(239,68,68,0.25);color:#fca5a5;">⚠️重复</span>' : ''}
+                    ${needsReplacement ? '<span style="font-size:9.5px;font-weight:800;padding:0.5px 4px;border-radius:3px;background:rgba(239,68,68,.3);color:#fecaca;">🚩 需要替换素材</span>' : ''}
                     ${issueReason ? `<span style="font-size:9.5px;font-weight:600;padding:0.5px 4px;border-radius:3px;background:rgba(245,158,11,0.2);color:#fcd34d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:110px;" title="${escapeHtml(issueReason)}">⚠️ ${escapeHtml(issueReason)}</span>` : ''}
                 </div>
                 <div style="font-size:11px;color:${isCur ? '#e2e8f0' : '#94a3b8'};line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word;">${escapeHtml(text || '（无文案）')}</div>
@@ -15634,9 +16216,9 @@ function openAutoEditTimelineReview() {
                     <button data-action="apply-all-classic" class="btn btn-secondary" style="padding:2px 7px;font-size:11px;color:#cbd5e1;border-color:rgba(148,163,184,0.35);" title="所有片段采用经典切点算法">全用 经典</button>
                 </div>
                 <div style="display:flex;align-items:center;gap:6px;">
-                    <button data-action="undo-review" class="btn btn-secondary" style="padding:4px 11px;font-size:12px;color:#fde68a;border-color:rgba(251,191,36,0.45);border-radius:6px;" title="撤销上一次切点或文案修改 (Cmd/Ctrl+Z)">↶ 撤销</button>
-                    <button data-action="show-help" class="btn btn-secondary" style="padding:4px 11px;font-size:12px;color:#93c5fd;border-color:rgba(96,165,250,0.45);border-radius:6px;display:inline-flex;align-items:center;gap:4px;" title="查看时间线审核操作说明与快捷键 (快捷键: F1)">📖 帮助说明</button>
-                    <button data-action="close" class="btn btn-secondary" style="padding:4px 12px;font-size:12px;border-radius:6px;">✕ 关闭</button>
+                    <button data-action="undo-review" class="btn btn-secondary" style="padding:4px 11px;font-size:12px;background:#5b4310;color:#fff3b0;border:1px solid #d6a51c;border-radius:6px;text-shadow:none;" title="撤销上一次切点或文案修改 (Cmd/Ctrl+Z)">↶ 撤销</button>
+                    <button data-action="show-help" class="btn btn-secondary" style="padding:4px 11px;font-size:12px;background:#173b70;color:#dbeafe;border:1px solid #4f91ef;border-radius:6px;display:inline-flex;align-items:center;gap:4px;text-shadow:none;" title="查看时间线审核操作说明与快捷键 (快捷键: F1)">📖 帮助说明</button>
+                    <button data-action="close" class="btn btn-secondary" style="padding:4px 12px;font-size:12px;background:#3b2530;color:#ffe4e6;border:1px solid #d06b82;border-radius:6px;text-shadow:none;">✕ 关闭</button>
                 </div>
             </header>
             <main style="display:grid;grid-template-columns:300px 1fr;gap:14px;padding:10px 18px;min-height:0;overflow:hidden;">
@@ -15650,10 +16232,11 @@ function openAutoEditTimelineReview() {
                 </aside>
                 <section style="min-width:0;min-height:0;display:flex;flex-direction:column;gap:8px;overflow-y:auto;overflow-x:hidden;max-height:100%;padding-right:6px;">
                     <div style="background:#05070e;border-radius:10px;overflow:hidden;border:1px solid rgba(255,255,255,.12);box-shadow:0 8px 24px rgba(0,0,0,0.5);flex-shrink:0;">
-                        <div class="ae-video-wrap" style="position:relative;background:#000;display:flex;justify-content:center;align-items:center;height:clamp(160px,24vh,260px);min-height:140px;">
+                        <div class="ae-video-wrap" style="position:relative;background:#000;display:flex;justify-content:center;align-items:center;height:${previewHeight}px;min-height:140px;max-height:70vh;">
                             <video data-role="master-video" style="display:block;max-width:100%;height:100%;object-fit:contain;background:#000;"></video>
                             <div data-role="master-subtitle" aria-live="off" style="position:absolute;left:5%;right:5%;bottom:42px;text-align:center;pointer-events:none;font-size:clamp(16px,2.2vw,24px);font-weight:800;line-height:1.35;color:#fff;text-shadow:0 2px 6px #000,0 0 14px #000;word-break:break-word;"></div>
                         </div>
+                        <div data-role="preview-resize-handle" title="上下拖动调整预览大小" style="height:8px;cursor:ns-resize;background:linear-gradient(180deg,#111827,#0b0d18);display:grid;place-items:center;color:#64748b;font-size:9px;user-select:none;">••••• 上下拖动调整预览高度 •••••</div>
                         <div style="padding:6px 12px;display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;background:#0b0d18;">
                             <button data-action="play-all" class="btn btn-primary" style="padding:3px 12px;font-size:11px;border-radius:5px;">▶ 整片播放</button>
                             <input data-role="master-seek" type="range" min="0" max="${Math.max(.01, totalDuration)}" step="0.01" value="${Math.min(playback.outputTime, totalDuration)}" style="width:100%;accent-color:#60a5fa;cursor:pointer;">
@@ -15744,6 +16327,12 @@ function openAutoEditTimelineReview() {
                                 <button data-action="add-supplementary" class="btn btn-secondary" style="padding:4px 4px;font-size:10.5px;color:#86efac;border-color:rgba(74,222,128,0.4);" title="选择补录视频并插入当前片段之后；外部文件会自动移入当前任务文件夹">＋ 补充片段</button>
                                 <button data-action="select-srt" class="btn btn-secondary" style="padding:4px 4px;font-size:10.5px;color:#86efac;border-color:rgba(74,222,128,0.4);" title="为当前原片指定人工校正 SRT">📄 替换SRT</button>
                                 <button data-action="retranscribe" class="btn btn-secondary" style="padding:4px 4px;font-size:10.5px;color:#fde047;border-color:rgba(251,191,36,0.4);" title="重新调用 ASR 转录此片段">🔄 重新转录</button>
+                                <button data-action="replace-clip" class="btn btn-secondary" style="padding:4px 4px;font-size:10.5px;color:#fca5a5;border-color:rgba(239,68,68,0.4);" title="选择新视频替换当前原片；旧文件会备份后重新转录并对齐">🔁 替换片段</button>
+                                <button data-action="partial-replace-clip" class="btn btn-secondary" style="padding:4px 4px;font-size:10.5px;color:#fca5a5;border-color:rgba(239,68,68,0.4);" title="仅替换当前入点到出点之间的原片内容，前后原片保留">✂️ 局部替换</button>
+                                <button data-action="remove-visual-range" class="btn btn-secondary" style="padding:4px 4px;font-size:10.5px;color:#fca5a5;border-color:rgba(239,68,68,.5);" title="删除当前片段内一段画面、声音和字幕，成片时长会缩短">🗑️ 删画面和字幕</button>
+                                <button data-action="remove-visual-keep-subtitle" class="btn btn-secondary" style="padding:4px 4px;font-size:10.5px;color:#fde68a;border-color:rgba(250,204,21,.5);" title="删除当前片段内一段画面与声音，成片时长会缩短；字幕会并入上一条字幕继续显示">🗑️ 删画面留字幕</button>
+                                <button data-action="mark-replace" class="btn btn-secondary" style="padding:4px 4px;font-size:10.5px;color:#fecaca;border-color:rgba(239,68,68,.55);" title="给当前片段添加或取消‘需要替换素材’问题标记">🚩 标记需替换</button>
+                                <button data-action="add-manual-subtitle" class="btn btn-secondary" style="padding:4px 4px;font-size:10.5px;color:#fde68a;border-color:rgba(250,204,21,0.5);" title="在当前播放位置补一条字幕；不影响后面的字幕时间">＋ 补字幕</button>
                                 <button data-action="fix-missed" class="btn btn-secondary" style="padding:4px 4px;font-size:10.5px;color:#fca5a5;border-color:rgba(239,68,68,0.4);" title="原片有声音但 AI 漏识别时手动画选">🎙️ 漏识别处理</button>
                             </div>
                         </div>
@@ -15765,6 +16354,30 @@ function openAutoEditTimelineReview() {
                 </div>
             </footer>`;
 
+        const previewWrap = panel.querySelector('.ae-video-wrap');
+        const previewResizeHandle = panel.querySelector('[data-role="preview-resize-handle"]');
+        if (previewWrap && previewResizeHandle) {
+            previewResizeHandle.onpointerdown = event => {
+                event.preventDefault();
+                const startY = event.clientY;
+                const startHeight = previewWrap.getBoundingClientRect().height;
+                previewResizeHandle.setPointerCapture?.(event.pointerId);
+                const move = moveEvent => {
+                    previewHeight = Math.max(140, Math.min(window.innerHeight * .7, startHeight + moveEvent.clientY - startY));
+                    previewWrap.style.height = `${previewHeight}px`;
+                };
+                const finish = () => {
+                    localStorage.setItem('autoedit-review-preview-height', String(Math.round(previewHeight)));
+                    previewResizeHandle.removeEventListener('pointermove', move);
+                    previewResizeHandle.removeEventListener('pointerup', finish);
+                    previewResizeHandle.removeEventListener('pointercancel', finish);
+                };
+                previewResizeHandle.addEventListener('pointermove', move);
+                previewResizeHandle.addEventListener('pointerup', finish);
+                previewResizeHandle.addEventListener('pointercancel', finish);
+            };
+        }
+
         const showReviewClipContextMenu = (e, rowIdx) => {
             if (!Number.isFinite(rowIdx) || !rows[rowIdx]) return;
             if (typeof selectSegment === 'function') {
@@ -15780,7 +16393,7 @@ function openAutoEditTimelineReview() {
             const source = getSource(row);
             const start = Number(row.querySelector('.ae-review-start')?.value) || 0;
             const end = Number(row.querySelector('.ae-review-end')?.value) || start + 0.05;
-            const script = row.querySelector('.ae-review-script')?.value || '';
+            const script = getAutoEditTimedScript(row);
             const wordTimeline = row.dataset.wordTimeline || '';
             const speed = Number(row.querySelector('.ae-review-speed')?.value) || 1;
             const sourceDuration = Number(row.dataset.sourceDuration) || 0;
@@ -15843,6 +16456,15 @@ function openAutoEditTimelineReview() {
                     action: () => {
                         row.scrollIntoView({ behavior: 'smooth', block: 'center' });
                         row.classList.add('ae-quick-locate-target');
+                    },
+                },
+                {
+                    icon: row.dataset.needsReplacement === 'true' ? '✅' : '🚩',
+                    text: row.dataset.needsReplacement === 'true' ? '取消“需要替换素材”标记' : '标记为“需要替换素材”',
+                    action: () => {
+                        row.dataset.needsReplacement = row.dataset.needsReplacement === 'true' ? 'false' : 'true';
+                        persistAutoEditBatchReview();
+                        render();
                     },
                 }
             ];
@@ -16136,6 +16758,7 @@ function openAutoEditTimelineReview() {
                     markAutoEditCutManual(prevScriptEl);
                     recalculateAutoEditCutFromScript(prevRow, prevRow.dataset?.wordTimeline || '');
                 }
+                transferAutoEditManualSubtitlesWithText(curRow, prevRow, curScript, 'end');
                 const curScriptEl = curRow.querySelector('.ae-review-script');
                 if (curScriptEl) {
                     curScriptEl.value = '';
@@ -16162,6 +16785,7 @@ function openAutoEditTimelineReview() {
                     markAutoEditCutManual(nextScriptEl);
                     recalculateAutoEditCutFromScript(nextRow, nextRow.dataset?.wordTimeline || '');
                 }
+                transferAutoEditManualSubtitlesWithText(curRow, nextRow, curScript, 'start');
                 const curScriptEl = curRow.querySelector('.ae-review-script');
                 if (curScriptEl) {
                     curScriptEl.value = '';
@@ -16201,12 +16825,66 @@ function openAutoEditTimelineReview() {
             };
         }
 
+        const btnReplaceClip = panel.querySelector('[data-action="replace-clip"]');
+        if (btnReplaceClip) {
+            btnReplaceClip.onclick = () => {
+                const current = getRow();
+                const sourceIndex = Number(current?.dataset?.sourceIndex) || selected + 1;
+                if (typeof replaceAutoEditReviewRow === 'function') {
+                    replaceAutoEditReviewRow(current, sourceIndex);
+                }
+            };
+        }
+
+        const btnPartialReplaceClip = panel.querySelector('[data-action="partial-replace-clip"]');
+        if (btnPartialReplaceClip) {
+            btnPartialReplaceClip.onclick = () => {
+                const current = getRow();
+                const start = Number(current?.querySelector('.ae-review-start')?.value) || 0;
+                const end = Number(current?.querySelector('.ae-review-end')?.value) || 0;
+                const sourceIndex = Number(current?.dataset?.sourceIndex) || selected + 1;
+                if (end <= start) return showToast('请先设置有效的当前入点和出点', 'warning');
+                window.partialReplaceAutoEditClip?.(getSource(current), sourceIndex, start, end);
+            };
+        }
+
+        const btnRemoveVisualRange = panel.querySelector('[data-action="remove-visual-range"]');
+        if (btnRemoveVisualRange) btnRemoveVisualRange.onclick = () => showToast('请在“✨ 最终导出字幕”轨道右键目标字幕，直接选择删除方式', 'info');
+        const btnRemoveVisualKeepSubtitle = panel.querySelector('[data-action="remove-visual-keep-subtitle"]');
+        if (btnRemoveVisualKeepSubtitle) btnRemoveVisualKeepSubtitle.onclick = () => showToast('请在“✨ 最终导出字幕”轨道右键目标字幕，选择“删画面但保留此字幕”', 'info');
+
+        const btnMarkReplace = panel.querySelector('[data-action="mark-replace"]');
+        if (btnMarkReplace) {
+            const current = getRow();
+            btnMarkReplace.textContent = current?.dataset?.needsReplacement === 'true' ? '✅ 取消需替换' : '🚩 标记需替换';
+            btnMarkReplace.onclick = () => {
+                const row = getRow();
+                if (!row) return;
+                const marked = row.dataset.needsReplacement !== 'true';
+                row.dataset.needsReplacement = marked ? 'true' : 'false';
+                persistAutoEditBatchReview();
+                showToast(marked ? '已标记：该片段需要替换素材' : '已取消替换素材标记', marked ? 'warning' : 'success');
+                render();
+            };
+        }
+
         const btnFixMissed = panel.querySelector('[data-action="fix-missed"]');
         if (btnFixMissed) {
             btnFixMissed.onclick = () => {
                 if (typeof openAutoEditMissedSpeechFix === 'function') {
                     openAutoEditMissedSpeechFix(getRow());
                 }
+            };
+        }
+
+        const btnAddManualSubtitle = panel.querySelector('[data-action="add-manual-subtitle"]');
+        if (btnAddManualSubtitle) {
+            btnAddManualSubtitle.onclick = async () => {
+                const item = buildSequence().find(candidate => candidate.row === getRow());
+                const sourceTime = item ? Math.max(item.start, Math.min(item.end, playback.outputTime - item.sourceTimelineStart)) : 0;
+                await addAutoEditManualSubtitle(getRow(), sourceTime);
+                pendingTimelineView = captureTimelineView();
+                render();
             };
         }
 
@@ -16530,8 +17208,11 @@ function openAutoEditTimelineReview() {
             // 2. 用户提供的脚本参考轨 (Prompt/文案)
             const scriptClips = [];
             sequence.forEach(item => {
-                const origScript = decodeURIComponent(item.row.dataset.originalScript || '') || item.row.querySelector('.ae-review-script')?.value || '';
-                const scriptLines = origScript.split(/\r?\n+/).map(s => s.trim()).filter(Boolean);
+                // “我提供的文案”必须反映当前审核的文案。此前它总读首次分析时
+                // 的 originalScript，归并/补词后紫轨仍是旧内容，造成与最终字幕
+                // 轨不一致。
+                const currentScript = getAutoEditTimedScript(item.row) || decodeURIComponent(item.row.dataset.originalScript || '') || '';
+                const scriptLines = currentScript.split(/\r?\n+/).map(s => s.trim()).filter(Boolean);
                 let words = [];
                 try { words = item.row.dataset.wordTimeline ? JSON.parse(decodeURIComponent(item.row.dataset.wordTimeline)) : []; } catch (_) {}
                 const validWords = (Array.isArray(words) ? words : []).filter(w => Number.isFinite(Number(w.start)) && Number.isFinite(Number(w.end)) && Number(w.end) > Number(w.start));
@@ -16567,12 +17248,12 @@ function openAutoEditTimelineReview() {
                         });
                         curStart = lineEnd;
                     });
-                } else if (origScript.trim()) {
+                } else if (currentScript.trim()) {
                     const isTrimmed = (speechEnd <= item.start + 0.05) || (speechStart >= item.end - 0.05);
                     scriptClips.push({
                         start: item.sourceTimelineStart + speechStart,
                         end: item.sourceTimelineStart + speechEnd,
-                        name: origScript.trim(),
+                        name: currentScript.trim(),
                         _reviewRow: item.row,
                         _isTrimmed: isTrimmed,
                         _sourceStart: speechStart,
@@ -16586,7 +17267,7 @@ function openAutoEditTimelineReview() {
             // 3. 最终对齐字幕轨 (用于最终导出和播放的 SRT 分句)
             const subClips = [];
             sequence.forEach(item => {
-                const scriptText = item.row.querySelector('.ae-review-script')?.value || '';
+                const scriptText = getAutoEditTimedScript(item.row);
                 const cues = buildAutoEditAllTimelineCues(scriptText, item.row.dataset.wordTimeline, item.start, item.end, item.sourceTimelineStart);
                 cues.forEach(cue => {
                     subClips.push({
@@ -16602,10 +17283,33 @@ function openAutoEditTimelineReview() {
                         _lastEnd: cue.outputEnd
                     });
                 });
+                let manualSubtitles = [];
+                try { manualSubtitles = JSON.parse(decodeURIComponent(item.row.dataset.manualSubtitles || '')); } catch (_) {}
+                (Array.isArray(manualSubtitles) ? manualSubtitles : []).forEach(cue => {
+                    const cueStart = Math.max(item.start, Number(cue.start) || item.start);
+                    const cueEnd = Math.min(item.end, Math.max(cueStart + 0.1, Number(cue.end) || cueStart + 2));
+                    if (!String(cue.text || '').trim() || cueEnd <= cueStart) return;
+                    subClips.push({
+                        start: item.sourceTimelineStart + cueStart,
+                        end: item.sourceTimelineStart + cueEnd,
+                        name: `手工：${cue.text}`,
+                        color: '#facc15',
+                        _reviewRow: item.row,
+                        _manualSubtitle: true,
+                        _sourceStart: cueStart,
+                        _sourceEnd: cueEnd,
+                        _lastStart: item.sourceTimelineStart + cueStart,
+                        _lastEnd: item.sourceTimelineStart + cueEnd,
+                    });
+                });
             });
 
             editorInstance.setTracks([
-                { type: 'video', name: '视频（裁剪顺序）', clips: sequence.map(item => makeClip(item, getSource(item.row).split(/[/\\]/).pop() || '视频')), locked: false, visible: true, domain: 'visual' },
+                { type: 'video', name: '视频（裁剪顺序）', clips: sequence.map(item => {
+                    const flagged = item.row.dataset.needsReplacement === 'true';
+                    const name = getSource(item.row).split(/[/\\]/).pop() || '视频';
+                    return makeClip(item, flagged ? `🚩 需替换 · ${name}` : name, flagged ? { color: '#ef4444' } : {});
+                }), locked: false, visible: true, domain: 'visual' },
                 { type: 'asr', name: '🎙️ AI 语音识别', clips: asrClips, locked: true, visible: true, domain: 'visual' },
                 { type: 'script', name: '📝 我提供的文案', clips: scriptClips, locked: true, visible: true, domain: 'visual' },
                 { type: 'subs', name: '✨ 最终导出字幕', clips: subClips, locked: false, visible: true, domain: 'visual' },
@@ -16645,10 +17349,52 @@ function openAutoEditTimelineReview() {
                 const source = getSource(row);
                 const start = Number(row.querySelector('.ae-review-start')?.value) || 0;
                 const end = Number(row.querySelector('.ae-review-end')?.value) || start + 0.05;
-                const script = row.querySelector('.ae-review-script')?.value || '';
+                const script = getAutoEditTimedScript(row);
                 const wordTimeline = row.dataset.wordTimeline || '';
                 const speed = Number(row.querySelector('.ae-review-speed')?.value) || 1;
                 const sourceDuration = Number(row.dataset.sourceDuration) || 0;
+
+                // 在最终字幕轨上，字幕块本身就是精确的删除范围；无需再输入秒数。
+                // 默认将字幕和对应画面一起删除，只有显式选择时才把字幕归到上一条。
+                if (editorInstance._tracks[trackIndex]?.type === 'subs' && Number.isFinite(Number(clip._sourceStart)) && Number.isFinite(Number(clip._sourceEnd))) {
+                    const applySubtitleVisualRemoval = keepSubtitles => {
+                        if (keepSubtitles && targetIdx <= 0) {
+                            showToast('第一段没有上一条字幕可归并', 'warning');
+                            return;
+                        }
+                        const from = Number(clip._sourceStart);
+                        const to = Number(clip._sourceEnd);
+                        if (to <= from + .01) return;
+                        let ranges = [];
+                        try { ranges = JSON.parse(decodeURIComponent(row.dataset.visualRemoveRanges || '')); } catch (_) {}
+                        ranges.push({ start: from, end: to, keep_subtitles: keepSubtitles });
+                        ranges = ranges
+                            .filter(item => Number.isFinite(Number(item.start)) && Number.isFinite(Number(item.end)) && Number(item.end) > Number(item.start))
+                            .sort((a, b) => Number(a.start) - Number(b.start))
+                            .reduce((all, item) => {
+                                const previous = all[all.length - 1];
+                                if (previous && Number(item.start) <= Number(previous.end) + .02) {
+                                    previous.end = Math.max(Number(previous.end), Number(item.end));
+                                    previous.keep_subtitles = previous.keep_subtitles || item.keep_subtitles === true;
+                                } else all.push({ start: Number(item.start), end: Number(item.end), keep_subtitles: item.keep_subtitles === true });
+                                return all;
+                            }, []);
+                        row.dataset.visualRemoveRanges = encodeURIComponent(JSON.stringify(ranges));
+                        saveReviewHistory();
+                        persistAutoEditBatchReview();
+                        showToast(keepSubtitles ? '已删画面：此字幕会归到上一条显示' : '已删画面和当前字幕', 'success');
+                        pendingTimelineView = captureTimelineView();
+                        render();
+                    };
+                    return {
+                        override: true,
+                        items: [
+                            { icon: '🗑️', text: '删除画面和此字幕（默认）', danger: true, action: () => applySubtitleVisualRemoval(false) },
+                            { icon: '💬', text: '删画面，但保留此字幕到上一条', action: () => applySubtitleVisualRemoval(true) },
+                            { icon: '▶️', text: '预览此字幕对应片段', action: () => { loadOutputTime(clip.start, false); masterVideo.currentTime = Number(clip._sourceStart); } },
+                        ]
+                    };
+                }
 
                 return {
                     override: true,
@@ -17083,6 +17829,18 @@ function handleAutoEditScriptChanged(textarea) {
     updateAutoEditMissingWords(row);
     refreshAutoEditDuplicateMarks();
     persistAutoEditBatchReview();
+
+    // 详情区并非重新渲染，编辑目标文案后在这里用同一份识别结果即时重算差异。
+    const reviewIndex = Number(row.dataset.reviewIndex);
+    const segment = autoEditLastResult?.segments?.[reviewIndex];
+    const textDiff = buildAutoEditTextDiffHtml(textarea.value || '', segment?.recognized_text || '');
+    const targetDiff = row.querySelector('[data-role="review-target-diff"]');
+    if (targetDiff) targetDiff.innerHTML = textDiff.targetHtml || '(尚未匹配文案)';
+    const boundaryWarning = row.querySelector('[data-role="review-boundary-warning"]');
+    if (boundaryWarning) {
+        boundaryWarning.style.display = textDiff.boundaryWarning ? 'block' : 'none';
+        boundaryWarning.innerHTML = textDiff.boundaryWarning ? `⚠️ ${escapeHtml(textDiff.boundaryWarning)}` : '';
+    }
 }
 
 function confirmAutoEditMissingWords(button) {
@@ -17295,16 +18053,30 @@ function toggleAllAutoEditDetails(mode) {
 
 async function retranscribeAutoEditReviewClip(filePath) {
     if (!confirm('将清除此片段的转录缓存并重新执行快速分析，其他片段会继续使用缓存。是否继续？')) return;
+    const timelineReviewOpen = Boolean(document.getElementById('autoedit-timeline-review-modal'));
     try {
+        if (timelineReviewOpen) setAutoEditTimelineReviewBusy('🎙️ 正在清空旧转录并强制重新识别此片段…');
         const result = await window.electronAPI.apiCall('media/clear-clip-cache', { file_path: filePath });
         if (!result?.success) throw new Error(result?.error || '清除转录缓存失败');
         const batchTask = autoEditActiveBatchIndex >= 0 ? autoEditBatchTasks[autoEditActiveBatchIndex] : null;
         await startAutoEditByScript(false, {
             analysisOnly: true,
             outputDirOverride: batchTask ? window.electronAPI.pathJoin(batchTask.folder, '_auto_edit') : undefined,
-            requestSettingsOverride: batchTask?.settings,
+            // 只强制当前这一个片段重转。其他片段继续命中缓存，避免一次点击
+            // 触发整批 ASR；当前片段仍跳过同名旁车字幕，确保真的调用识别服务。
+            requestSettingsOverride: {
+                ...(batchTask?.settings || getAutoEditRequestSettings()),
+                force_transcribe: false,
+                force_transcribe_paths: [filePath],
+            },
         });
+        if (timelineReviewOpen) {
+            window.__autoEditTimelineRestoreSource = filePath;
+            setAutoEditTimelineReviewBusy('✅ 已重新识别，正在刷新时间线审核…');
+            requestAnimationFrame(() => openAutoEditTimelineReview());
+        }
     } catch (error) {
+        if (timelineReviewOpen) clearAutoEditTimelineReviewBusy();
         showToast(`重新转录失败: ${escapeHtml(error.message)}`, 'error');
     }
 }
@@ -17652,9 +18424,13 @@ window.playVideoClip = function(filePath, startVal = 0, endVal = 0, scriptText =
     titleBar.appendChild(titleEl);
     titleBar.appendChild(closeBtn);
     
-    const videoUrl = (window.electronAPI && typeof window.electronAPI.toFileUrl === 'function')
+    const baseVideoUrl = (window.electronAPI && typeof window.electronAPI.toFileUrl === 'function')
         ? window.electronAPI.toFileUrl(filePath)
         : normalizeFilePath(filePath);
+    // A replacement can overwrite the original clip at exactly the same path.
+    // Give every preview a fresh media URL so Chromium does not keep showing the
+    // old decoded resource from its cache after replacement.
+    const videoUrl = `${baseVideoUrl}${baseVideoUrl.includes('?') ? '&' : '?'}preview=${Date.now()}`;
     const videoEl = document.createElement('video');
     videoEl.src = videoUrl;
     videoEl.playbackRate = playbackSpeed;
@@ -17817,19 +18593,23 @@ window.replaceAutoEditClip = async function(originalPath, index) {
     });
     if (!files || files.length === 0) return;
     const newClipPath = files[0];
-    
-    window.showAutoEditModalLoading('🔄 正在备份、替换视频文件并重新对齐，请稍候...');
-    
-    const result = await window.electronAPI.apiCall('media/auto-edit-replace-clip', {
-        originalClipPath: originalPath,
-        newClipPath: newClipPath
-    });
-    
-    if (result && result.success) {
+    const timelineReviewOpen = Boolean(document.getElementById('autoedit-timeline-review-modal'));
+    const setProgress = message => timelineReviewOpen
+        ? setAutoEditTimelineReviewBusy(message)
+        : window.showAutoEditModalLoading(message);
+
+    try {
+        setProgress('🔄 正在备份旧片段，并复制新视频到当前任务文件夹…');
+        const result = await window.electronAPI.apiCall('media/auto-edit-replace-clip', {
+            originalClipPath: originalPath,
+            newClipPath: newClipPath
+        });
+        if (!result?.success) throw new Error(result?.error || '未知错误');
+
         // Update the file path in autoEditFiles
-        const updatedPath = result.updatedPath || (result.data && result.data.updatedPath) || originalPath;
+        const updatedPath = result.updatedPath || result.data?.updatedPath || originalPath;
         const targetPath = String(originalPath || '').replace(/\\/g, '/');
-        let fileIdx = autoEditFiles.findIndex(f => String(f.path || '').replace(/\\/g, '/') === targetPath);
+        const fileIdx = autoEditFiles.findIndex(f => String(f.path || '').replace(/\\/g, '/') === targetPath);
         if (fileIdx !== -1) {
             autoEditFiles[fileIdx].path = updatedPath;
             autoEditFiles[fileIdx].name = updatedPath.split(/[/\\]/).pop();
@@ -17838,15 +18618,166 @@ window.replaceAutoEditClip = async function(originalPath, index) {
             renderAutoEditFiles();
         }
 
+        // Batch review owns its own source list. Keep it in sync as well so an
+        // extension-changing replacement and all later previews/exports use the
+        // newly copied clip rather than the stale task path.
+        const batchTask = autoEditActiveBatchIndex >= 0 ? autoEditBatchTasks[autoEditActiveBatchIndex] : null;
+        if (batchTask?.clips) {
+            batchTask.clips = batchTask.clips.map(clip => String(clip).replace(/\\/g, '/') === targetPath ? updatedPath : clip);
+            if (batchTask.manualSubtitleMap?.[originalPath] && updatedPath !== originalPath) {
+                batchTask.manualSubtitleMap[updatedPath] = batchTask.manualSubtitleMap[originalPath];
+                delete batchTask.manualSubtitleMap[originalPath];
+            }
+            // The old review snapshot points at the pre-replacement analysis.
+            // Never let it overwrite the fresh result or reach the exporter.
+            batchTask.reviewSegments = null;
+            batchTask.result = null;
+            batchTask.status = 'analyzing';
+            batchTask.message = '素材已替换 · 正在重新分析';
+        }
+
         const reportModal = document.getElementById('ae-report-dialog-overlay');
         if (reportModal) reportModal.remove();
-
-        showToast(`片段已替换，原文件已备份到 ${result.backupPath || result.data?.backupPath || 'backup_clips'}`, 'success', 5000);
+        setProgress('🎙️ 视频已替换，正在重新转录并对齐文案…');
         await startAutoEditByScript(false, { analysisOnly: true });
-    } else {
-        showToast(`替换失败: ${result ? result.error : '未知错误'}`, 'error');
+
+        if (timelineReviewOpen) {
+            setProgress('✅ 已重新对齐，正在刷新时间线审核…');
+            requestAnimationFrame(() => openAutoEditTimelineReview());
+        }
+        showToast(`片段已替换，原文件已备份到 ${result.backupPath || result.data?.backupPath || 'backup_clips'}`, 'success', 5000);
+    } catch (error) {
+        if (timelineReviewOpen) clearAutoEditTimelineReviewBusy();
+        showToast(`替换失败: ${error?.message || '未知错误'}`, 'error');
     }
 };
+
+// 用当前审核段的入/出点替换原片中间区域；前后原画面会被保留并重新拼接。
+function openAutoEditPartialReplaceDialog({ originalDuration, newDuration, replaceStart, replaceEnd, onConfirm }) {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:100010;background:rgba(0,0,0,.72);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:20px;';
+    const panel = document.createElement('section');
+    panel.style.cssText = 'width:min(720px,96vw);background:#121827;border:1px solid rgba(96,165,250,.5);border-radius:14px;padding:20px;box-shadow:0 24px 80px rgba(0,0,0,.7);color:#e5e7eb;';
+    const track = (role, title, color, duration, start, end, note) => `
+        <section data-track="${role}" style="padding:14px;border-radius:10px;background:rgba(255,255,255,.04);border:1px solid ${color}55;margin-top:12px;">
+            <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;"><strong style="color:${color};">${title}</strong><span style="font-size:12px;color:#94a3b8;">总长 ${duration.toFixed(3)} 秒</span></div>
+            <div style="font-size:12px;color:#aab6d6;margin:5px 0 11px;">${note}</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+                <label style="font-size:12px;">入点 <input data-role="${role}-start" type="range" min="0" max="${duration}" step="0.01" value="${start}" style="width:100%;accent-color:${color};"><input data-role="${role}-start-number" class="input" type="number" min="0" max="${duration}" step="0.01" value="${start.toFixed(3)}" style="width:100%;margin-top:4px;"></label>
+                <label style="font-size:12px;">出点 <input data-role="${role}-end" type="range" min="0" max="${duration}" step="0.01" value="${end}" style="width:100%;accent-color:${color};"><input data-role="${role}-end-number" class="input" type="number" min="0" max="${duration}" step="0.01" value="${end.toFixed(3)}" style="width:100%;margin-top:4px;"></label>
+            </div>
+        </section>`;
+    panel.innerHTML = `<h2 style="margin:0;font-size:20px;">✂️ 局部替换：上下范围对比</h2><p style="margin:7px 0 0;color:#94a3b8;font-size:13px;">先在上下两条时间线上确定要替掉与要取用的部分，再选择如何处理。</p>${track('old', '上：原片', '#60a5fa', originalDuration, replaceStart, replaceEnd, '蓝色范围会从原片中移除；范围外的前后画面会保留。')}${track('new', '下：新素材', '#86efac', newDuration, 0, Math.min(newDuration, Math.max(.04, replaceEnd - replaceStart)), '绿色范围是从新视频中取出的内容。')}<div style="display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-top:16px;"><button data-action="cancel" class="btn btn-secondary">取消</button><button data-action="rematch" class="btn btn-secondary" title="不保留原片前后内容，直接用新选段作为当前原片重新转录和匹配">只用新选段重新匹配</button><button data-action="splice" class="btn btn-primary" title="保留原片前后内容，把两条范围拼接成新的当前原片">拼接后替换</button></div>`;
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+    const bindRange = role => {
+        const startRange = panel.querySelector(`[data-role="${role}-start"]`);
+        const endRange = panel.querySelector(`[data-role="${role}-end"]`);
+        const startNumber = panel.querySelector(`[data-role="${role}-start-number"]`);
+        const endNumber = panel.querySelector(`[data-role="${role}-end-number"]`);
+        const sync = (edge, value) => {
+            const n = Math.max(0, Math.min(durationOf(role), Number(value) || 0));
+            const range = edge === 'start' ? startRange : endRange;
+            const number = edge === 'start' ? startNumber : endNumber;
+            range.value = String(n);
+            number.value = n.toFixed(3);
+        };
+        const durationOf = name => name === 'old' ? originalDuration : newDuration;
+        startRange.oninput = () => sync('start', startRange.value);
+        endRange.oninput = () => sync('end', endRange.value);
+        startNumber.onchange = () => sync('start', startNumber.value);
+        endNumber.onchange = () => sync('end', endNumber.value);
+    };
+    bindRange('old'); bindRange('new');
+    const getRange = role => ({
+        start: Number(panel.querySelector(`[data-role="${role}-start"]`).value),
+        end: Number(panel.querySelector(`[data-role="${role}-end"]`).value),
+    });
+    const finish = mode => {
+        const oldRange = getRange('old');
+        const newRange = getRange('new');
+        if (oldRange.end <= oldRange.start || newRange.end <= newRange.start) return showToast('上下两条时间线都需要有效的入点和出点', 'warning');
+        overlay.remove();
+        onConfirm({ mode, oldRange, newRange });
+    };
+    panel.querySelector('[data-action="cancel"]').onclick = () => overlay.remove();
+    panel.querySelector('[data-action="splice"]').onclick = () => finish('splice');
+    panel.querySelector('[data-action="rematch"]').onclick = () => finish('rematch');
+    overlay.onclick = event => { if (event.target === overlay) overlay.remove(); };
+}
+
+window.partialReplaceAutoEditClip = async function(originalPath, index, replaceStart, replaceEnd) {
+    if (!originalPath || !window.electronAPI?.selectFiles) {
+        showToast('当前环境无法选择替换视频', 'error');
+        return;
+    }
+    const files = await window.electronAPI.selectFiles({
+        title: '选择用于局部替换的视频',
+        properties: ['openFile'],
+        filters: [{ name: '视频文件', extensions: ['mp4', 'mov', 'avi', 'mkv'] }]
+    });
+    if (!files?.length) return;
+    const newClipPath = files[0];
+    let newDuration = 0;
+    try { newDuration = Number(await window.electronAPI.getMediaDuration?.(newClipPath)) || 0; } catch (_) {}
+    if (newDuration <= 0) return showToast('无法读取新视频时长', 'error');
+
+    let originalDuration = 0;
+    try { originalDuration = Number(await window.electronAPI.getMediaDuration?.(originalPath)) || 0; } catch (_) {}
+    if (originalDuration <= 0) return showToast('无法读取原片时长', 'error');
+    openAutoEditPartialReplaceDialog({
+        originalDuration,
+        newDuration,
+        replaceStart: Math.max(0, Math.min(replaceStart, originalDuration)),
+        replaceEnd: Math.max(0.04, Math.min(replaceEnd, originalDuration)),
+        onConfirm: selection => runAutoEditPartialReplacement({ originalPath, newClipPath, index, originalDuration, selection }),
+    });
+};
+
+async function runAutoEditPartialReplacement({ originalPath, newClipPath, index, originalDuration, selection }) {
+    const { mode, oldRange, newRange } = selection;
+
+    const timelineReviewOpen = Boolean(document.getElementById('autoedit-timeline-review-modal'));
+    const setProgress = message => timelineReviewOpen
+        ? setAutoEditTimelineReviewBusy(message)
+        : window.showAutoEditModalLoading(message);
+    try {
+        setProgress(mode === 'splice' ? '✂️ 正在保留原片前后内容，并拼接选中的新素材…' : '🎬 正在使用新选段替换当前原片…');
+        const result = await window.electronAPI.apiCall('media/auto-edit-partial-replace-clip', {
+            originalClipPath,
+            newClipPath,
+            replace_start: mode === 'splice' ? oldRange.start : 0,
+            replace_end: mode === 'splice' ? oldRange.end : originalDuration,
+            new_start: newRange.start,
+            new_end: newRange.end,
+        });
+        if (!result?.success) throw new Error(result?.error || '局部替换失败');
+        const updatedPath = result.updatedPath || result.data?.updatedPath || originalPath;
+        const normalOriginal = String(originalPath).replace(/\\/g, '/');
+        const fileIdx = autoEditFiles.findIndex(file => String(file.path || '').replace(/\\/g, '/') === normalOriginal);
+        if (fileIdx >= 0) {
+            autoEditFiles[fileIdx].path = updatedPath;
+            autoEditFiles[fileIdx].name = updatedPath.split(/[/\\]/).pop();
+            autoEditFiles[fileIdx].status = '';
+            autoEditFiles[fileIdx].error = null;
+        }
+        const batchTask = autoEditActiveBatchIndex >= 0 ? autoEditBatchTasks[autoEditActiveBatchIndex] : null;
+        if (batchTask?.clips) {
+            batchTask.clips = batchTask.clips.map(clip => String(clip).replace(/\\/g, '/') === normalOriginal ? updatedPath : clip);
+        }
+        renderAutoEditFiles();
+        setProgress('🎙️ 视频已更新，正在重新转录并对齐文案…');
+        await startAutoEditByScript(false, { analysisOnly: true });
+        if (timelineReviewOpen) {
+            setProgress('✅ 已重新对齐，正在刷新时间线审核…');
+            requestAnimationFrame(() => openAutoEditTimelineReview());
+        }
+        showToast(`${mode === 'splice' ? '局部拼接替换' : '新选段重新匹配'}完成，原片已备份到 ${result.backupPath || result.data?.backupPath || 'backup_clips'}`, 'success', 6000);
+    } catch (error) {
+        if (timelineReviewOpen) clearAutoEditTimelineReviewBusy();
+        showToast(`局部替换失败: ${error?.message || '未知错误'}`, 'error');
+    }
+}
 
 window.reopenAutoEditMismatchDialog = function() {
     if (!window.autoEditLastMismatches) {
@@ -17941,6 +18872,25 @@ window.showAutoEditModalLoading = function(message) {
         </div>
     `;
 };
+
+function setAutoEditTimelineReviewBusy(message) {
+    const modal = document.getElementById('autoedit-timeline-review-modal');
+    if (!modal) return;
+    let overlay = modal.querySelector('[data-role="timeline-review-busy"]');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.dataset.role = 'timeline-review-busy';
+        overlay.style.cssText = 'position:absolute;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;background:rgba(5,7,16,.76);backdrop-filter:blur(3px);cursor:wait;';
+        overlay.innerHTML = '<div style="min-width:330px;max-width:min(86vw,540px);padding:24px 28px;border-radius:14px;border:1px solid rgba(96,165,250,.48);background:#111827;box-shadow:0 20px 70px rgba(0,0,0,.6);text-align:center;color:#dbeafe;"><div style="font-size:28px;margin-bottom:12px;animation:ae-timeline-busy-spin 1.1s linear infinite;">◌</div><strong data-role="message" style="display:block;font-size:15px;line-height:1.55;"></strong><span style="display:block;margin-top:9px;color:#94a3b8;font-size:12px;">请保持此窗口打开，完成后会回到时间线审核。</span></div>';
+        modal.appendChild(overlay);
+    }
+    const messageEl = overlay.querySelector('[data-role="message"]');
+    if (messageEl) messageEl.textContent = message;
+}
+
+function clearAutoEditTimelineReviewBusy() {
+    document.querySelector('#autoedit-timeline-review-modal [data-role="timeline-review-busy"]')?.remove();
+}
 
 window.retranscribeAutoEditClip = async function(originalPath, index) {
     window.showAutoEditModalLoading('🎙️ 正在清空此片段的转录缓存，请稍候...');

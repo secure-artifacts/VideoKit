@@ -893,6 +893,48 @@ app.whenReady().then(async () => {
         }
     });
 
+    // Recursively scan source media while keeping every descendant attached to
+    // the selected top-level task folder. Generated output/backup directories
+    // are excluded so a later rescan cannot import finished videos as sources.
+    ipcMain.handle('scan-directory-recursive', async (event, dirPath, options = {}) => {
+        const fs = require('fs');
+        const pathModule = require('path');
+        const maxDepth = Math.max(0, Math.min(50, Number(options.maxDepth) || 20));
+        const excludedNames = new Set((options.excludedNames || ['_auto_edit', 'backup_clips'])
+            .map(name => String(name || '').toLocaleLowerCase()).filter(Boolean));
+        const files = [];
+        if (!dirPath || !fs.existsSync(dirPath)) return files;
+
+        function walk(currentDir, depth) {
+            if (depth > maxDepth) return;
+            let entries = [];
+            try { entries = fs.readdirSync(currentDir, { withFileTypes: true }); } catch (_) { return; }
+            for (const entry of entries) {
+                if (entry.name.startsWith('.')) continue;
+                const fullPath = pathModule.join(currentDir, entry.name);
+                if (entry.isSymbolicLink()) continue;
+                if (entry.isDirectory()) {
+                    if (!excludedNames.has(entry.name.toLocaleLowerCase())) walk(fullPath, depth + 1);
+                    continue;
+                }
+                if (!entry.isFile()) continue;
+                try {
+                    const stat = fs.statSync(fullPath);
+                    files.push({
+                        name: entry.name,
+                        path: fullPath,
+                        relativePath: pathModule.relative(dirPath, fullPath),
+                        size: stat.size,
+                        mtime: stat.mtimeMs,
+                        isDirectory: false,
+                    });
+                } catch (_) { /* skip unreadable files */ }
+            }
+        }
+        walk(dirPath, 0);
+        return files;
+    });
+
     // IPC: 递归搜索指定文件名（查找素材功能）
     ipcMain.handle('search-files-recursive', async (event, searchDir, fileNames, maxDepth = 5) => {
         const result = new Map();
@@ -1501,6 +1543,12 @@ app.whenReady().then(async () => {
                 details.push({ name: dir, size });
             }
         }
+        const overlayCachePath = path.join(userDataPath, 'tmp', 'videokit_overlay_cache');
+        if (fs.existsSync(overlayCachePath)) {
+            const size = getDirSize(overlayCachePath);
+            totalSize += size;
+            details.push({ name: 'GIF/视频覆层帧缓存', size });
+        }
         return { path: userDataPath, totalSize, details };
     });
 
@@ -1518,6 +1566,18 @@ app.whenReady().then(async () => {
                 } catch (e) {
                     log(`[Cache] Failed to clear ${dirPath}: ${e.message}`);
                 }
+            }
+        }
+        // Transparent GIF/video overlays are expanded into PNG sequences here.
+        // They are reproducible runtime data, not user media or project data.
+        const overlayCachePath = path.join(userDataPath, 'tmp', 'videokit_overlay_cache');
+        if (fs.existsSync(overlayCachePath)) {
+            try {
+                freedSize += getDirSize(overlayCachePath);
+                fs.rmSync(overlayCachePath, { recursive: true, force: true });
+                log(`[Cache] Cleared: ${overlayCachePath}`);
+            } catch (e) {
+                log(`[Cache] Failed to clear ${overlayCachePath}: ${e.message}`);
             }
         }
         return { ok: true, freedSize };

@@ -870,6 +870,23 @@ function splitBodyText(text) {
 function drawOverlay(ctx, origOv, currentTime = 0, canvasW = 1920, canvasH = 1080) {
     if (origOv.disabled) return;
 
+    // 一个覆层可拥有多个不连续的显示区间。每次命中区间都投影为独立的
+    // start/end，因此原有入场、出场和转场动画会在每个区间重新触发。
+    if (Array.isArray(origOv.display_ranges) && !origOv._displayRangeDrawing) {
+        const range = origOv.display_ranges.find(item => {
+            const start = Number(item?.start);
+            const end = Number(item?.end);
+            return Number.isFinite(start) && Number.isFinite(end) && currentTime >= start && currentTime <= end + 0.001;
+        });
+        if (!range) return;
+        drawOverlay(ctx, Object.assign({}, origOv, {
+            _displayRangeDrawing: true,
+            start: Number(range.start),
+            end: Number(range.end),
+        }), currentTime, canvasW, canvasH);
+        return;
+    }
+
     // 文字卡片可选择让蒙版与文字使用不同时间。拆成两个同布局的绘制
     // 分支：一个只画蒙版/边框/模糊，一个只画文字，避免其中一方结束时
     // 被另一方的时间范围提前裁掉。

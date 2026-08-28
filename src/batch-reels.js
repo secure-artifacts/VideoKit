@@ -54,6 +54,22 @@ const _reelsState = {
 };
 window._reelsState = _reelsState;
 
+// 顶部时间线工具栏的切刀：对普通片段和覆层都走编辑器同一套切分逻辑。
+// 覆层会由 onClipSplit 转为多个显示区间，因此后续可分别调整或删除。
+window.reelsSplitTimelineAtPlayhead = function() {
+    const editor = _reelsState.timelineEditor;
+    if (!editor) return;
+    const nextActive = !editor._bladeTool;
+    editor.setBladeTool(nextActive);
+    const button = document.getElementById('reels-timeline-blade');
+    if (button) {
+        button.style.background = nextActive ? 'rgba(239,68,68,.48)' : 'rgba(239,68,68,.18)';
+        button.style.color = nextActive ? '#fff' : '#fecaca';
+        button.textContent = nextActive ? '✂️ 切刀已开启' : '✂️ 切刀';
+    }
+    if (typeof showToast === 'function') showToast(nextActive ? '切刀已开启：直接单击片段要切开的位置；Esc 退出' : '已退出切刀', 'info');
+};
+
 const REELS_DEFAULT_PRESET_KEY = 'reels_default_preset_name';
 const REELS_EXPORT_RESUME_KEY = 'videokit_reels_export_resume_v1';
 const REELS_EXPORT_RECYCLE_EVERY_DEFAULT = 0;
@@ -678,7 +694,7 @@ function _initReelsModule() {
             const subtitleDuration = Array.isArray(task.segments) && task.segments.length
                 ? Math.max(0, ...task.segments.map(s => Number(s.end) || 0))
                 : 0;
-            const outputDuration = Math.max(subtitleDuration, _getAudioDuration(task), _getVideoDuration(task), _getContentVideoDuration(task), task.customDuration || 0, 1);
+            const outputDuration = Math.max(subtitleDuration, _getAudioDuration(task), _getVideoDuration(task), _getContentVideoDuration(task), Number(task.duration) || 0, task.customDuration || 0, 1);
             if (window.ReelsRenderPlan?.fillBackgroundLoops(task, { duration: outputDuration })) {
                 _updateTimelineForTask(task);
                 if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
@@ -690,7 +706,9 @@ function _initReelsModule() {
         _reelsState.timelineEditor.onClipChange = (trackIdx, clipIdx, clip, editOptions = {}) => {
             const task = _getSelectedTask();
             if (!task) return;
-            if (clip && clip._timelineClipId && window.ReelsRenderPlan?.applyEditorClip(task, clip, editOptions)) {
+            // 覆层的 id 可能是数字 0；不能用 truthy 判断，否则这类覆层在时间线
+            // 中拖动后不会回写，视觉上就像“不能直接拖拽”。
+            if (clip && (clip._timelineClipId != null || clip._overlayId != null) && window.ReelsRenderPlan?.applyEditorClip(task, clip, editOptions)) {
                 if (!_clipDragTimer && typeof reelsUpdatePreview === 'function') {
                     _clipDragTimer = setTimeout(() => {
                         reelsUpdatePreview();
@@ -800,6 +818,51 @@ function _initReelsModule() {
                 });
             }
 
+            // 覆层可在同一轨道上拥有多个不连续显示区间。每个紫色块就是一次
+            // 出现；拖动/裁切任一块只修改它自己的入点和出点。
+            if (track?.type === 'overlay' || role === 'overlay') {
+                const overlays = (_reelsState.overlayProxy?.overlayMgr?.overlays) || task.overlays || [];
+                const overlay = overlays.find(item => item.id === clip._overlayId);
+                if (overlay) {
+                    extraItems.push({
+                        icon: '＋',
+                        text: '新增一次显示区间（从播放头）',
+                        action: () => {
+                            const total = Math.max(0.2, Number(_reelsState.timelineEditor?._duration) || 10);
+                            const start = Math.max(0, Math.min(total - 0.1, Number(_reelsState.timelineEditor?._playheadPos) || 0));
+                            const ranges = Array.isArray(overlay.display_ranges) && overlay.display_ranges.length
+                                ? overlay.display_ranges.map(range => ({ ...range }))
+                                : [{ start: Number(overlay.start) || 0, end: Number(overlay.end) || Math.min(5, total) }];
+                            ranges.push({ start, end: Math.min(total, start + 10) });
+                            ranges.sort((a, b) => a.start - b.start);
+                            overlay.display_ranges = ranges;
+                            overlay.start = ranges[0].start;
+                            overlay.end = ranges[ranges.length - 1].end;
+                            _updateTimelineForTask(task);
+                            if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
+                            if (typeof window.reelsSaveHistory === 'function') window.reelsSaveHistory();
+                        },
+                    });
+                    if (Array.isArray(overlay.display_ranges) && overlay.display_ranges.length > 1) {
+                        extraItems.push({
+                            icon: '🗑️',
+                            text: '删除当前显示区间',
+                            danger: true,
+                            action: () => {
+                                const rangeIndex = Number(clip._overlayRangeIndex) || 0;
+                                overlay.display_ranges.splice(rangeIndex, 1);
+                                overlay.display_ranges.sort((a, b) => a.start - b.start);
+                                overlay.start = overlay.display_ranges[0].start;
+                                overlay.end = overlay.display_ranges[overlay.display_ranges.length - 1].end;
+                                _updateTimelineForTask(task);
+                                if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
+                                if (typeof window.reelsSaveHistory === 'function') window.reelsSaveHistory();
+                            },
+                        });
+                    }
+                }
+            }
+
             // 3. 字幕轨操作 (字幕编辑与替换)
             if (track?.type === 'subs' || role === 'subs') {
                 extraItems.push({
@@ -854,6 +917,48 @@ function _initReelsModule() {
             }
 
             return extraItems;
+        };
+
+        // 覆层轨使用真正的剪辑语义：S 切分紫色块会拆成两个显示区间；删除
+        // 其中一个块只隐藏那一段，而不会删除整个覆层对象。
+        _reelsState.timelineEditor.onClipSplit = (trackIdx, clipIdx, clip, timeSec) => {
+            if (clip?._timelineRole !== 'overlay' || timeSec <= clip.start + 0.05 || timeSec >= clip.end - 0.05) return false;
+            const task = _getSelectedTask();
+            const overlays = (_reelsState.overlayProxy?.overlayMgr?.overlays) || task?.overlays || [];
+            const overlay = overlays.find(item => item.id === clip._overlayId);
+            if (!overlay) return false;
+            const ranges = Array.isArray(overlay.display_ranges) && overlay.display_ranges.length
+                ? overlay.display_ranges.map(range => ({ ...range }))
+                : [{ start: Number(overlay.start) || 0, end: Number(overlay.end) || 5 }];
+            const rangeIndex = Math.max(0, Math.min(ranges.length - 1, Number(clip._overlayRangeIndex) || 0));
+            const range = ranges[rangeIndex];
+            if (timeSec <= range.start + 0.05 || timeSec >= range.end - 0.05) return true;
+            ranges.splice(rangeIndex, 1, { start: range.start, end: timeSec }, { start: timeSec, end: range.end });
+            overlay.display_ranges = ranges;
+            overlay.start = ranges[0].start;
+            overlay.end = ranges[ranges.length - 1].end;
+            _updateTimelineForTask(task);
+            if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
+            if (typeof window.reelsSaveHistory === 'function') window.reelsSaveHistory();
+            return true;
+        };
+        _reelsState.timelineEditor.onClipDelete = (trackIdx, clipIdx, clip) => {
+            if (clip?._timelineRole !== 'overlay') return false;
+            const task = _getSelectedTask();
+            const overlays = (_reelsState.overlayProxy?.overlayMgr?.overlays) || task?.overlays || [];
+            const overlay = overlays.find(item => item.id === clip._overlayId);
+            if (!overlay) return false;
+            if (Array.isArray(overlay.display_ranges) && overlay.display_ranges.length > 1) {
+                overlay.display_ranges.splice(Math.max(0, Number(clip._overlayRangeIndex) || 0), 1);
+                overlay.start = overlay.display_ranges[0].start;
+                overlay.end = overlay.display_ranges[overlay.display_ranges.length - 1].end;
+            } else {
+                overlay.disabled = true;
+            }
+            _updateTimelineForTask(task);
+            if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
+            if (typeof window.reelsSaveHistory === 'function') window.reelsSaveHistory();
+            return true;
         };
 
         // 双击字幕编辑后的回写
@@ -5728,7 +5833,9 @@ function _getPreviewDuration() {
 
     // 无音频、无覆层视频时以背景视频时长为准，若仍无时长则推算虚拟进度
     const bDurScale = (task && task.bgDurScale) ? (task.bgDurScale / 100) : 1;
-    const baseDur = Math.max(vDur * bDurScale, subDur, 0);
+    // 由“文案自动剪辑”送入的任务会在接收时直接记录导出成片时长，避免
+    // 媒体元数据尚未异步读取完成时，预览错误地退回到字幕最后一句的时间。
+    const baseDur = Math.max(vDur * bDurScale, Number(task?.duration) || 0, subDur, 0);
     if (baseDur <= 0 && !_getPreviewMasterElement()) {
         let maxOverlayEnd = 0;
         if (_reelsState.overlayProxy && _reelsState.overlayProxy.overlayMgr) {
@@ -6549,7 +6656,7 @@ function _updateTimelineForTask(task) {
                 : { path: task.bgPath || task.videoPath || '' };
             const backgroundPath = resolvedBackground?.path || task.bgPath || task.videoPath || '';
             const rawBackgroundDuration = _getVideoDuration(task);
-            const outputDuration = Math.max(subtitleDuration, _getAudioDuration(task), _getContentVideoDuration(task), task.customDuration || 0, rawBackgroundDuration || 0, 1);
+            const outputDuration = Math.max(subtitleDuration, _getAudioDuration(task), _getContentVideoDuration(task), Number(task.duration) || 0, task.customDuration || 0, rawBackgroundDuration || 0, 1);
             if (backgroundPath) {
                 const loopDuration = rawBackgroundDuration > 0.05 ? rawBackgroundDuration : outputDuration;
                 for (let start = 0, index = 0; start < outputDuration - 0.001; start += loopDuration, index++) {
@@ -6569,7 +6676,7 @@ function _updateTimelineForTask(task) {
         const tracks = window.ReelsRenderPlan.getEditorTracks(task, {
             // 媒体元数据还没读到时，字幕末尾仍能给出可靠的整片长度，避免
             // 主视频/人声在时间线中退化为 0 秒的细竖条。
-            duration: Math.max(_getAudioDuration(task), _getVideoDuration(task), _getContentVideoDuration(task), subtitleDuration, task.customDuration || 0, 1),
+            duration: Math.max(_getAudioDuration(task), _getVideoDuration(task), _getContentVideoDuration(task), Number(task.duration) || 0, subtitleDuration, task.customDuration || 0, 1),
             width: _reelsState.targetWidth || 1080,
             height: _reelsState.targetHeight || 1920,
             backgroundSegments,
@@ -6588,7 +6695,7 @@ function _updateTimelineForTask(task) {
     const subDur = task.segments && task.segments.length > 0
         ? (task.segments[task.segments.length - 1].end || 0)
         : 0;
-    let contentDur = Math.max(aDur, vDur, cvDur, subDur, 1);
+    let contentDur = Math.max(aDur, vDur, cvDur, Number(task.duration) || 0, subDur, 1);
     if (task.customDuration && task.customDuration > 0) {
         contentDur = Math.max(contentDur, task.customDuration);
     }
@@ -6684,6 +6791,29 @@ async function reelsCreateTaskFromAutoEditResult(autoEditResult = {}, opts = {})
         task.videoPath = videoPath;
         task.bgSrcUrl = null;
         task.srcUrl = null;
+    }
+
+    // 自动剪辑的导出视频才是这条 Reels 的权威时长。此前这里只带了 SRT，
+    // 在媒体元数据异步返回前，时间线和导出会用“最后一条字幕结束时间”作
+    // 为整片长度，导致末尾无字幕或字幕不完整时被严重截短。
+    const resultDuration = Number(
+        autoEditResult.output_duration ?? autoEditResult.outputDuration ??
+        autoEditResult.video_duration ?? autoEditResult.videoDuration ??
+        autoEditResult.media_duration ?? autoEditResult.mediaDuration ??
+        autoEditResult.duration
+    );
+    let videoDuration = Number.isFinite(resultDuration) && resultDuration > 0 ? resultDuration : 0;
+    if (!videoDuration && typeof window.electronAPI?.getMediaDuration === 'function') {
+        try {
+            videoDuration = Number(await window.electronAPI.getMediaDuration(videoPath)) || 0;
+        } catch (error) {
+            console.warn('[Reels] 无法读取自动剪辑导出视频时长，将等待后续媒体探测', error);
+        }
+    }
+    if (videoDuration > 0) {
+        task.duration = videoDuration;
+        _reelsState._mediaDurations = _reelsState._mediaDurations || {};
+        _reelsState._mediaDurations[videoPath] = videoDuration;
     }
 
     let srtContent = autoEditResult.srt_content || '';
@@ -7727,6 +7857,17 @@ function reelsClearTasks() {
     _reelsState.selectedIdx = -1;
     _reelsState.pendingFiles = { backgrounds: [], audios: [], srts: [], txts: [] };
     _reelsState.backgroundLibrary = [];
+
+    // The batch table owns a second, persisted copy of these tasks. Clearing
+    // only the visible queue lets its autosave restore old tabs on the next hot
+    // reload/startup. Clear that authoritative snapshot in the same action.
+    if (typeof window.reelsClearPersistedBatchTasks === 'function') {
+        window.reelsClearPersistedBatchTasks();
+    } else {
+        // Defensive fallback for an unusually early click before the batch-table
+        // script has finished loading.
+        try { localStorage.removeItem('reels_batch_config_autosave'); } catch (_) { }
+    }
 
     // Clear overlay manager and panel
     if (_reelsState.overlayProxy && _reelsState.overlayProxy.overlayMgr) {
@@ -10761,7 +10902,7 @@ async function reelsStartExport(options = {}) {
         const subtitleDuration = Array.isArray(task.segments) && task.segments.length
             ? Math.max(0, ...task.segments.map(s => Number(s.end) || 0))
             : 0;
-        const outputDuration = Math.max(subtitleDuration, _getAudioDuration(task), _getVideoDuration(task), _getContentVideoDuration(task), task.customDuration || 0, 1);
+        const outputDuration = Math.max(subtitleDuration, _getAudioDuration(task), _getVideoDuration(task), _getContentVideoDuration(task), Number(task.duration) || 0, task.customDuration || 0, 1);
         if (window.ReelsRenderPlan?.fillBackgroundLoops(task, { duration: outputDuration })) {
             _reelsAppendExportLogUI(`[前置检查] 任务 "${task.baseName || task.fileName || 'Reels'}" 背景画面已自动补齐循环至 ${outputDuration.toFixed(1)}s`);
         }
@@ -12920,7 +13061,7 @@ window.reelsInsertAtSilences = async function(options = {}) {
     try {
         if (typeof showToast === 'function') showToast('正在本地分析停顿点…', 'info');
         const silences = await window.electronAPI.reelsDetectSilence({ filePath: mediaPath, noiseDb: -35, minDuration: .35 });
-        const duration = Math.max(_getAudioDuration(task), _getVideoDuration(task), task.customDuration || 0, 1);
+        const duration = Math.max(_getAudioDuration(task), _getVideoDuration(task), Number(task.duration) || 0, task.customDuration || 0, 1);
         const candidates = (silences || []).filter(point => {
             const t = Number(point?.start);
             return Number.isFinite(t) && t >= 3 && t <= duration - 3;

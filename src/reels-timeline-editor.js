@@ -116,6 +116,8 @@ class ReelsTimelineEditor {
 
         // 拖拽状态
         this._drag = null;            // {type: 'move'|'trim_start'|'trim_end'|'cut_in'|'cut_out'|'playhead', ...}
+        this._bladeTool = false;      // 达芬奇式切刀：点片段的任意位置即可切分
+        this._bladeHoverX = null;
 
         // 回调
         this.onSeek = null;           // (timeSec) => {}
@@ -124,6 +126,8 @@ class ReelsTimelineEditor {
         this.onClipDblClick = null;   // (trackIdx, clipIdx, clip, rect) => {}
         // 可由业务层为不同类型片段追加右键操作；返回菜单项数组。
         this.onClipContextMenu = null; // (trackIdx, clipIdx, clip) => [{icon,text,action,danger?}]
+        this.onClipSplit = null;       // (trackIdx, clipIdx, clip, timeSec) => boolean（业务自行处理）
+        this.onClipDelete = null;      // (trackIdx, clipIdx, clip) => boolean（业务自行处理）
         this.onTrackOrderChange = null; // (trackIdx, direction, track) => {}
         // 一个鼠标拖动是一笔编辑事务，而不是数百条 mousemove 历史。
         this.onEditStart = null;      // ({ type, trackIdx, clipIdx, clip }) => {}
@@ -501,6 +505,9 @@ class ReelsTimelineEditor {
         // 播放头
         this._drawPlayhead(ctx, W, H);
 
+        // 切刀工具的跟随指示：不能只改变鼠标光标，否则用户不知道点下去会切在哪。
+        this._drawBladeGuide(ctx, W, H);
+
         // 框选区域
         this._drawMarquee(ctx);
     }
@@ -550,6 +557,34 @@ class ReelsTimelineEditor {
                 ctx.stroke();
             }
         }
+    }
+
+    _drawBladeGuide(ctx, W, H) {
+        if (!this._bladeTool || !Number.isFinite(this._bladeHoverX)) return;
+        const x = this._bladeHoverX;
+        if (x < TL_HEADER_W || x > W) return;
+        ctx.save();
+        ctx.strokeStyle = '#fb7185';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([5, 4]);
+        ctx.beginPath();
+        ctx.moveTo(x, TL_RULER_H);
+        ctx.lineTo(x, H);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = '#fb7185';
+        ctx.beginPath();
+        ctx.moveTo(x - 7, TL_RULER_H + 1);
+        ctx.lineTo(x + 7, TL_RULER_H + 1);
+        ctx.lineTo(x, TL_RULER_H + 10);
+        ctx.closePath();
+        ctx.fill();
+        ctx.font = 'bold 18px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        ctx.fillStyle = '#ffe4e6';
+        ctx.fillText('✂', x, TL_RULER_H - 2);
+        ctx.restore();
     }
 
     _drawTracks(ctx, W, H) {
@@ -778,7 +813,8 @@ class ReelsTimelineEditor {
         // 循环素材不是一个长块：保留少量视觉间隙，让每一轮都能一眼看见。
         // 命中/拖拽仍使用原始时间范围，不会在时间线上制造真实空白。
         const isLoopInstance = clip._isLoopInstance === true;
-        const seam = isLoopInstance && w > 12 ? 2.5 : Math.max(1.5, Math.min(3, w * 0.04));
+        const isOverlayRange = clip._timelineRole === 'overlay' && track.clips.length > 1;
+        const seam = (isLoopInstance || isOverlayRange) && w > 12 ? 4 : Math.max(1.5, Math.min(3, w * 0.04));
         const drawX = x + seam;
         const drawW = Math.max(2, w - seam * 2);
         const drawY = y + 1;
@@ -900,6 +936,28 @@ class ReelsTimelineEditor {
             ctx.lineWidth = isSelected ? 2 : 1;
         }
         ctx.stroke();
+
+        // 覆层被切分后的边界要比普通卡片边框更醒目：留出明显缝隙，并在
+        // 两端画红色“切刀刻痕”。这样即使两个区间紧挨着，也能一眼看出切口。
+        if (isOverlayRange) {
+            ctx.save();
+            ctx.strokeStyle = '#fb7185';
+            ctx.fillStyle = '#fecdd3';
+            ctx.lineWidth = 2;
+            [drawX, drawX + drawW].forEach(edgeX => {
+                ctx.beginPath();
+                ctx.moveTo(edgeX, drawY + 2);
+                ctx.lineTo(edgeX, drawY + drawH - 2);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(edgeX - 3, drawY + 2);
+                ctx.lineTo(edgeX + 3, drawY + 2);
+                ctx.lineTo(edgeX, drawY + 7);
+                ctx.closePath();
+                ctx.fill();
+            });
+            ctx.restore();
+        }
 
         // 渲染裁掉的空档部分 (Trimmed Head / Tail) 与 中间有效保留区域
         const inT = clip.inT !== undefined ? clip.inT : (clip._trimHead || 0);
@@ -1246,6 +1304,11 @@ class ReelsTimelineEditor {
 
         // 3. 检测是否点击了 Trim 手柄
         const hitInfo = this._hitTestClip(mx, my);
+        if (this._bladeTool && hitInfo) {
+            const cutTime = this._snapToFrame(Math.max(0, (mx - TL_HEADER_W + this._scrollX) / this._pxPerSec));
+            this._splitClipAt(hitInfo.trackIdx, hitInfo.clipIdx, cutTime);
+            return;
+        }
         if (hitInfo) {
             const key = this._clipKey(hitInfo.trackIdx, hitInfo.clipIdx);
             const toggleSelection = e.ctrlKey || e.metaKey;
@@ -1408,6 +1471,11 @@ class ReelsTimelineEditor {
         const rect = this.canvas.getBoundingClientRect();
         const mx = e.clientX - rect.left;
         const my = e.clientY - rect.top;
+
+        if (this._bladeTool) {
+            this._bladeHoverX = (mx >= TL_HEADER_W && my >= TL_RULER_H && mx <= rect.width) ? mx : null;
+            this._render();
+        }
 
         // Drag
         if (this._drag) {
@@ -1761,6 +1829,7 @@ class ReelsTimelineEditor {
             this._selectedClip = this._firstSelectedClip();
             if (this._selectedClip) this._selectionAnchor = { ...this._selectedClip };
         } else if (e.key === 'Escape') {
+            if (this._bladeTool) this.setBladeTool(false);
             this._clearClipSelection();
         }
     }
@@ -1858,6 +1927,11 @@ class ReelsTimelineEditor {
         const hitInfo = this._hitTestClip(mx, my);
         const headerTrackIdx = mx < TL_HEADER_W ? this._trackIndexAtY(my) : -1;
         if (hitInfo) {
+            if (this._bladeTool) {
+                this.canvas.style.cursor = 'crosshair';
+                this.canvas.title = '切刀：单击片段即可在该位置切开；Esc 退出切刀';
+                return;
+            }
             const key = this._clipKey(hitInfo.trackIdx, hitInfo.clipIdx);
             if (!this._selectedClips.has(key)) {
                 this._selectedClips.clear();
@@ -2004,12 +2078,32 @@ class ReelsTimelineEditor {
         return -1;
     }
 
+    setBladeTool(active) {
+        this._bladeTool = Boolean(active);
+        if (!this._bladeTool) this._bladeHoverX = null;
+        this.canvas.style.cursor = this._bladeTool ? 'crosshair' : 'default';
+        this.canvas.title = this._bladeTool ? '切刀已启用：单击片段切开；Esc 退出' : '';
+        const bladeButton = document.getElementById('reels-timeline-blade');
+        if (bladeButton) {
+            bladeButton.style.background = this._bladeTool ? 'rgba(239,68,68,.48)' : 'rgba(239,68,68,.18)';
+            bladeButton.style.color = this._bladeTool ? '#fff' : '#fecaca';
+            bladeButton.textContent = this._bladeTool ? '✂️ 切刀已开启' : '✂️ 切刀';
+        }
+        this._render();
+    }
+
     _splitClipAtPlayhead() {
-        const t = this._currentTime;
         const selected = this._selectedClipRefs();
         if (!selected.length) return;
         const first = selected[0];
+        this._splitClipAt(first.trackIdx, first.clipIdx, this._currentTime);
+    }
+
+    _splitClipAt(trackIdx, clipIdx, t) {
+        const first = { trackIdx, clipIdx, clip: this._tracks[trackIdx]?.clips?.[clipIdx] };
         const clip = first.clip;
+        if (!clip) return;
+        if (this.onClipSplit && this.onClipSplit(first.trackIdx, first.clipIdx, clip, t)) return;
         if (t > clip.start + 0.05 && t < clip.end - 0.05) {
             const oldEnd = clip.end;
             clip.end = t;
@@ -2035,6 +2129,7 @@ class ReelsTimelineEditor {
         for (const item of selected) {
             const track = this._tracks[item.trackIdx];
             if (track && !track.locked) {
+                if (this.onClipDelete && this.onClipDelete(item.trackIdx, item.clipIdx, item.clip)) continue;
                 track.clips.splice(item.clipIdx, 1);
             }
         }

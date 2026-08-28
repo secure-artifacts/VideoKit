@@ -2239,6 +2239,17 @@
             </div>
             <div id="autoedit-batch-panel" class="form-section" style="display:none;">
               <h4 style="margin-bottom:10px;color:var(--text-secondary);">📚 批量自动剪辑</h4>
+              <div id="autoedit-batch-folder-drop-zone"
+                ondragenter="handleAutoEditBatchFolderDragEnter(event)"
+                ondragover="handleAutoEditBatchFolderDragOver(event)"
+                ondragleave="handleAutoEditBatchFolderDragLeave(event)"
+                ondrop="handleAutoEditBatchFolderDrop(event)"
+                style="margin-bottom:10px;border:2px dashed rgba(96,165,250,.6);border-radius:10px;padding:14px 16px;background:rgba(59,130,246,.06);transition:border-color .15s,background .15s,box-shadow .15s;display:flex;align-items:center;gap:10px;">
+                <span style="font-size:24px;">📂</span>
+                <div><strong id="autoedit-batch-folder-drop-title" style="color:#bfdbfe;">把一个或多个任务文件夹拖到这里</strong>
+                  <div class="hint" style="margin-top:3px;">会递归读取全部子文件夹；子文件仍归属于拖入的顶层父任务。松开后追加并自动去重。</div>
+                </div>
+              </div>
               <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                 <button class="btn btn-secondary" onclick="selectAutoEditBatchFolders()">选择多个文件夹</button>
                 <button class="btn btn-secondary" onclick="clearAutoEditBatchTasks()">清空任务</button>
@@ -2256,9 +2267,12 @@
                 <textarea id="autoedit-batch-output-names" class="input" rows="3" style="width:100%;resize:vertical;background:var(--bg-secondary);" placeholder="在这里粘贴导出名称，例如：&#10;01-产品介绍&#10;02-使用教程" onchange="applyAutoEditBatchOutputNames(this.value)"></textarea>
               </div>
               <div style="display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap;">
+                <button id="autoedit-batch-smart-pair-btn" class="btn btn-secondary" onclick="startAutoEditBatchSmartPairing()" title="根据每个文件夹的实际识别全文，在所有粘贴文案中做全局一对一匹配">🧠 智能配对</button>
                 <button id="autoedit-batch-analyze-btn" class="btn btn-primary" onclick="startAutoEditBatchAnalysis()">批量分析</button>
                 <button id="autoedit-batch-export-btn" class="btn btn-primary" onclick="startAutoEditBatchExport()">批量正式导出</button>
                 <button id="autoedit-batch-export-only-btn" class="btn btn-secondary" onclick="startAutoEditBatchExportOnly()">仅导出视频 + 字幕</button>
+                <button class="btn btn-secondary" onclick="setAllAutoEditBatchSendToReels(true)" title="勾选全部任务参与本次批量导出">导出任务全选</button>
+                <button class="btn btn-secondary" onclick="setAllAutoEditBatchSendToReels(false)" title="取消全部任务，不参与本次批量导出">导出任务全不选</button>
                 <span id="autoedit-batch-match-hint" class="hint">粘贴后自动识别；第 N 个单元格对应第 N 个文件夹。</span>
               </div>
               <div id="autoedit-batch-task-list" style="margin-top:12px;display:grid;grid-template-columns:repeat(auto-fill,minmax(390px,1fr));gap:10px;"></div>
@@ -5368,6 +5382,7 @@
                 <span style="font-size:10px;color:var(--text-muted);font-weight:normal;margin-left:8px;">框选 / Shift连选 / Ctrl(Cmd)点选 · 拖动所选片段可整体移动</span>
                 <span onclick="event.stopPropagation()" style="display:inline-flex;align-items:center;gap:4px;margin-left:auto;font-size:10px;color:var(--text-muted);font-weight:normal;">
                   <button type="button" onclick="event.stopPropagation();if(window._reelsState&&window._reelsState.timelineEditor&&window._reelsState.timelineEditor.onFillGap){window._reelsState.timelineEditor.onFillGap();}" title="自动补充背景循环画面直到完全覆盖全部音频/字幕时长" style="font-size:10px;padding:2px 7px;background:rgba(99,102,241,0.2);border:1px solid rgba(99,102,241,0.4);color:#a5b4fc;border-radius:4px;cursor:pointer;margin-right:6px;">🔄 补齐循环</button>
+                  <button id="reels-timeline-blade" type="button" onclick="event.stopPropagation();reelsSplitTimelineAtPlayhead();" title="切刀工具：点亮后直接单击片段想切的位置；Esc 退出" style="font-size:10px;padding:2px 7px;background:rgba(239,68,68,.18);border:1px solid rgba(248,113,113,.52);color:#fecaca;border-radius:4px;cursor:pointer;margin-right:6px;">✂️ 切刀</button>
                   <span style="display:inline-flex;align-items:center;gap:3px;padding:1px 6px;border-radius:4px;background:rgba(255,255,255,0.03);border:1px dashed rgba(255,255,255,0.14);margin-right:6px;" title="仅在需要往视频中插入B-Roll/表情包等画面素材片段时使用；普通字幕、卡片或常规视频效果无需操作此组功能">
                     <span style="color:#f59e0b;font-size:10px;white-space:nowrap;" title="仅在需要往视频中插入B-Roll/表情包等画面素材片段时使用；普通字幕、卡片或常规视频效果无需操作此组功能">💡 B-Roll插片 (非必用):</span>
                     <button type="button" onclick="event.stopPropagation();reelsChooseInsertMediaFolder();" title="【B-Roll插片】选择自有插入素材文件夹；当前任务可在播放头插入其中的素材（普通字幕效果无需使用）" style="font-size:10px;padding:2px 6px;background:rgba(16,185,129,.16);border:1px solid rgba(16,185,129,.42);color:#86efac;border-radius:3px;cursor:pointer;">📁 素材库</button>
@@ -5993,7 +6008,7 @@
               </div>
             </div>
             <div style="padding: 8px 12px; background: rgba(74,158,255,0.08); border: 1px solid rgba(74,158,255,0.2); border-radius: 6px; font-size: 11px; line-height: 1.6; color: var(--text-secondary);">
-              💡 <strong>清理内容</strong>：V8编译缓存、GPU缓存、网页资源缓存等运行时文件。<br>
+              💡 <strong>清理内容</strong>：V8编译缓存、GPU缓存、网页资源缓存，以及 GIF/视频覆层生成的临时 PNG 帧。<br>
               🔒 <strong>保留内容</strong>：所有字幕预设、API Key、主题设置、水印模板等用户数据。
             </div>
           </div>
@@ -6023,6 +6038,10 @@
             if (!window.electronAPI || !window.electronAPI.clearCache) return;
             const btn = document.getElementById('settings-clear-cache-btn');
             const status = document.getElementById('settings-cache-status');
+            if (window._reelsState?.isExporting) {
+              if (status) { status.textContent = '⚠️ 导出进行中，不能清理覆层帧缓存'; status.style.color = '#f0ad4e'; }
+              return;
+            }
             if (btn) { btn.disabled = true; btn.textContent = '⏳ 清理中...'; }
             try {
               const result = await window.electronAPI.clearCache();

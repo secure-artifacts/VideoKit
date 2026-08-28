@@ -214,6 +214,7 @@ async function runAutoEditByScript(data = {}, progressSender = null) {
         manualAudioPath: data.manual_audio_path,
         manualAudioReplace: data.manual_audio_replace,
         forceTranscribe: data.force_transcribe,
+        forceTranscribePaths: data.force_transcribe_paths || data.forceTranscribePaths || [],
         transitionType: data.transition_type,
         transitionDuration: data.transition_duration,
         targetWidth: data.target_width,
@@ -856,6 +857,72 @@ async function routeAPI(endpoint, data, progressSender = null, sender = null) {
             console.log(`[Replace Clip] Replaced original file. Target path: ${targetClipPath}`);
 
             return { success: true, backupPath, updatedPath: targetClipPath };
+        }
+
+        case 'media/auto-edit-partial-replace-clip': {
+            const { originalClipPath, newClipPath } = data;
+            if (!originalClipPath || !newClipPath) throw new Error('缺少原片或替换片段路径');
+            if (!fs.existsSync(originalClipPath)) throw new Error(`原始视频文件不存在: ${originalClipPath}`);
+            if (!fs.existsSync(newClipPath)) throw new Error(`替换视频文件不存在: ${newClipPath}`);
+
+            const originalDuration = Number(await ffmpegService.getDuration(originalClipPath)) || 0;
+            const newDuration = Number(await ffmpegService.getDuration(newClipPath)) || 0;
+            const replaceStart = Math.max(0, Math.min(Number(data.replace_start) || 0, originalDuration));
+            const replaceEnd = Math.max(replaceStart, Math.min(Number(data.replace_end) || originalDuration, originalDuration));
+            const newStart = Math.max(0, Math.min(Number(data.new_start) || 0, newDuration));
+            const newEnd = Math.max(newStart, Math.min(Number(data.new_end) || newDuration, newDuration));
+            if (replaceEnd - replaceStart < 0.04) throw new Error('原片要替换的范围过短');
+            if (newEnd - newStart < 0.04) throw new Error('新素材取用范围过短');
+
+            const dir = path.dirname(originalClipPath);
+            const parsed = path.parse(originalClipPath);
+            const backupDir = path.join(dir, 'backup_clips');
+            fs.mkdirSync(backupDir, { recursive: true });
+            const stamp = Date.now();
+            const backupPath = path.join(backupDir, `${parsed.name}_partial_err_${stamp}${parsed.ext}`);
+            const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'videokit_partial_replace_'));
+            const outputPath = parsed.ext.toLowerCase() === '.mp4'
+                ? originalClipPath
+                : path.join(dir, `${parsed.name}.mp4`);
+            const tempOutput = path.join(workDir, 'partial_replaced.mp4');
+            try {
+                fs.copyFileSync(originalClipPath, backupPath);
+                const clips = [];
+                if (replaceStart > 0.04) {
+                    const part = await ffmpegService.mediaTrim(originalClipPath, 0, replaceStart, workDir, true);
+                    clips.push(part.output_path);
+                }
+                const inserted = await ffmpegService.mediaTrim(newClipPath, newStart, newEnd, workDir, true);
+                clips.push(inserted.output_path);
+                if (replaceEnd < originalDuration - 0.04) {
+                    const part = await ffmpegService.mediaTrim(originalClipPath, replaceEnd, originalDuration, workDir, true);
+                    clips.push(part.output_path);
+                }
+                const resolution = String(await ffmpegService.getResolution(originalClipPath) || '1080x1920').match(/(\d+)\D+(\d+)/);
+                const frameRate = Math.max(1, Math.round(Number(await ffmpegService.getFrameRate(originalClipPath)) || 30));
+                if (clips.length === 1) {
+                    fs.copyFileSync(clips[0], tempOutput);
+                } else {
+                    await ffmpegService.concatClips({
+                        clips,
+                        outputPath: tempOutput,
+                        targetWidth: Number(resolution?.[1]) || 1080,
+                        targetHeight: Number(resolution?.[2]) || 1920,
+                        fps: frameRate,
+                        crf: 18,
+                        preset: 'fast',
+                    });
+                }
+                if (outputPath === originalClipPath) {
+                    fs.copyFileSync(tempOutput, originalClipPath);
+                } else {
+                    fs.copyFileSync(tempOutput, outputPath);
+                    try { fs.unlinkSync(originalClipPath); } catch (_) {}
+                }
+                return { success: true, backupPath, updatedPath: outputPath, duration: await ffmpegService.getDuration(outputPath) };
+            } finally {
+                try { fs.rmSync(workDir, { recursive: true, force: true }); } catch (_) {}
+            }
         }
 
         case 'media/copy-file': {

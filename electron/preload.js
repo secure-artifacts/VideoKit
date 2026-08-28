@@ -181,6 +181,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     saveFile: (options) => ipcRenderer.invoke('save-file', options),
 
     scanDirectory: (dirPath) => ipcRenderer.invoke('scan-directory', dirPath),
+    scanDirectoryRecursive: (dirPath, options) => ipcRenderer.invoke('scan-directory-recursive', dirPath, options),
     searchFilesRecursive: (searchDir, fileNames, maxDepth) => ipcRenderer.invoke('search-files-recursive', searchDir, fileNames, maxDepth),
     checkFilesExist: (filePaths) => ipcRenderer.invoke('check-files-exist', filePaths),
     getDownloadsPath: () => ipcRenderer.invoke('get-downloads-path'),

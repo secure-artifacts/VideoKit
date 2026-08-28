@@ -1040,27 +1040,45 @@ async function extractSimpleLoop(ffmpeg, backgroundPath, framesDir, scaleCropFil
     await runFFmpegSync(ffmpeg, args);
 }
 
-function runFFmpegSync(ffmpeg, args) {
+function runFFmpegSync(ffmpeg, args, options = {}) {
     return new Promise((resolve, reject) => {
         // 完整命令只写入开发终端，不回显到用户弹窗。多素材导出的滤镜位于
         // 参数末尾，旧版只打印前 15 项会把真正的兼容性问题藏起来。
         console.log(`[WYSIWYG-BG] FFmpeg command: ${JSON.stringify([ffmpeg, ...args])}`);
         const proc = spawn(ffmpeg, args, { stdio: ['ignore', 'ignore', 'pipe'] });
         let err = '';
+        let settled = false;
+        const timeoutMs = Math.max(0, Number(options.timeoutMs) || 0);
+        const action = options.action || '背景或覆层处理';
+        const finish = (callback) => {
+            if (settled) return;
+            settled = true;
+            if (timer) clearTimeout(timer);
+            callback();
+        };
+        // Animated GIFs can report an invalid duration.  Without a watchdog,
+        // a looping FFmpeg decode then leaves the entire batch permanently at
+        // the material-preparation progress value.
+        const timer = timeoutMs ? setTimeout(() => {
+            const msg = `${action}超时（${Math.round(timeoutMs / 1000)} 秒），已停止处理。`;
+            console.error(`[WYSIWYG-BG] ${msg}\nCommand: ${JSON.stringify([ffmpeg, ...args])}`);
+            try { proc.kill('SIGKILL'); } catch (_) { }
+            finish(() => reject(new Error(msg)));
+        }, timeoutMs) : null;
         proc.stderr.on('data', (d) => { err = (err + d.toString()).slice(-3000); });
         proc.on('close', (code) => {
-            if (code === 0) resolve();
+            if (code === 0) finish(resolve);
             else {
                 console.error(`[WYSIWYG-BG] FFmpeg 处理失败 (code=${code}):\n${err}\nCommand: ${JSON.stringify([ffmpeg, ...args])}`);
-                reject(new Error(formatMediaError(err, {
-                    action: '背景或覆层处理',
+                finish(() => reject(new Error(formatMediaError(err, {
+                    action,
                     code,
-                })));
+                }))));
             }
         });
         proc.on('error', (error) => {
             console.error('[WYSIWYG-BG] FFmpeg 启动失败:', error);
-            reject(new Error(formatProcessStartError('FFmpeg', ffmpeg, error)));
+            finish(() => reject(new Error(formatProcessStartError('FFmpeg', ffmpeg, error))));
         });
     });
 }
@@ -1112,6 +1130,7 @@ async function prepareOverlay(opts) {
         duration = Math.min(duration, end - start);
     }
     const requiredFrames = expectedFrameCount(duration, fps);
+    const isAnimatedGif = /\.gif$/i.test(overlayPath);
 
     const ffmpeg = findFFmpeg();
     const settings = require('./settings');
@@ -1178,12 +1197,23 @@ async function prepareOverlay(opts) {
         '-i', overlayPath,
         '-t', String(duration),
         '-r', String(fps),
-        '-vf', normalizeDisplayAspectFilter(),
+        // Decode GIF through RGBA before scaling so palette transparency is
+        // retained in the PNG sequence rather than composited onto black.
+        '-vf', isAnimatedGif ? `format=rgba,${normalizeDisplayAspectFilter()}` : normalizeDisplayAspectFilter(),
+        // `-t` limits elapsed timestamps, but malformed GIF timing metadata
+        // can prevent it from terminating under `-stream_loop`.  Bound the
+        // output count as well, so the requested timeline duration is exact.
+        '-frames:v', String(Math.max(1, Math.ceil(duration * fps))),
         '-an',
         `${framesDir}/frame_%06d.png`
     );
 
-    await runFFmpegSync(ffmpeg, args);
+    await runFFmpegSync(ffmpeg, args, isAnimatedGif ? {
+        // A normal 20–30s GIF finishes far below this.  The cap prevents one
+        // damaged GIF from blocking every remaining batch task forever.
+        timeoutMs: Math.max(120000, Math.min(300000, Math.ceil(duration * 10000))),
+        action: `透明 GIF 覆层解码（${path.basename(overlayPath)}）`,
+    } : {});
 
     const files = fs.readdirSync(framesDir).filter(f => f.endsWith('.png'));
     if (files.length < requiredFrames) {
@@ -2771,17 +2801,31 @@ async function renderChromiumAudioWav(opts) {
 
     try {
         const wavResult = await new Promise((resolve, reject) => {
-            const timeout = setTimeout(() => reject(new Error('Audio render timeout (60s)')), 60000);
+            let settled = false;
+            let timeout = null;
 
-            const onResult = (event, result) => {
-                clearTimeout(timeout);
+            // 音频效果渲染会在批量导出时并发启动多个隐藏窗口。IPC 通道名是
+            // 全局的，因此必须只接受本窗口发出的 ready/result；否则 A 任务
+            // 可能先收到 B 任务的人声结果，进而将错误的人声混入 A 的成片。
+            const isThisRenderer = event => event && event.sender === renderWin.webContents;
+            const finish = (error, result) => {
+                if (settled) return;
+                settled = true;
+                if (timeout) clearTimeout(timeout);
                 ipcMain.removeListener('render-audio-result', onResult);
                 ipcMain.removeListener('audio-renderer-ready', onReady);
-                renderWin.close();
-                resolve(result);
+                if (!renderWin.isDestroyed()) renderWin.close();
+                if (error) reject(error);
+                else resolve(result);
             };
 
-            const onReady = () => {
+            const onResult = (event, result) => {
+                if (!isThisRenderer(event)) return;
+                finish(null, result);
+            };
+
+            const onReady = event => {
+                if (!isThisRenderer(event)) return;
                 renderWin.webContents.send('render-audio', {
                     filePath: audioInputPath, reverbEnabled,
                     reverbPreset: reverbPreset || 'hall',
@@ -2792,9 +2836,10 @@ async function renderChromiumAudioWav(opts) {
 
             ipcMain.on('render-audio-result', onResult);
             ipcMain.on('audio-renderer-ready', onReady);
+            timeout = setTimeout(() => finish(new Error('Audio render timeout (60s)')), 60000);
 
             const htmlPath = path.join(__dirname, '..', 'audio-renderer.html');
-            renderWin.loadFile(htmlPath).catch(reject);
+            renderWin.loadFile(htmlPath).catch(error => finish(error));
         });
 
         if (wavResult.success && wavResult.wavBuffer) {

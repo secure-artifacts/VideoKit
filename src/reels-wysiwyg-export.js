@@ -767,7 +767,15 @@ async function reelsWysiwygExport(params) {
                 throw new Error(`覆层素材不是可导出的本地文件路径: ${ov.name || ov.content}`);
             }
             const videoOffset = Math.max(0, parseFloat(ov.video_start_offset || 0));
-            const overlayPlayDur = Math.max(0.1, parseFloat(ov.end || duration) - parseFloat(ov.start || 0));
+            const overlayStart = Math.max(0, parseFloat(ov.start || 0));
+            const configuredEnd = parseFloat(ov.end);
+            // `9999` is the editor's “show for the whole project” sentinel.
+            // Passing it to GIF preparation made FFmpeg produce up to 300,000
+            // transparent PNG frames for a normal ~20 second task.
+            const overlayEnd = !Number.isFinite(configuredEnd) || configuredEnd >= 9999
+                ? duration
+                : configuredEnd;
+            const overlayPlayDur = Math.max(0.1, overlayEnd - overlayStart);
             const oPrep = await window.electronAPI.reelsComposeWysiwyg('prepare-overlay', {
                 overlayPath: opath,
                 fps,

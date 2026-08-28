@@ -1278,6 +1278,8 @@ async function autoEditByScript(opts = {}) {
         .split(/[\n,，]+/).map(normalizeText).filter(Boolean));
     const minScore = Math.max(0.1, Math.min(1, Number(opts.minScore ?? opts.min_score ?? 0.52)));
     const forceTranscribe = opts.forceTranscribe === true || opts.force_transcribe === true;
+    const forceTranscribePaths = new Set((opts.forceTranscribePaths || opts.force_transcribe_paths || [])
+        .map(item => String(item || '').replace(/\\/g, '/')));
     const burnSubtitles = opts.burnSubtitles === true || opts.burn_subtitles === true;
     const firstResolution = await ffmpegService.getResolution(clips[0]);
     const [sourceWidth, sourceHeight] = String(firstResolution || '').split('x').map(Number);
@@ -1587,7 +1589,8 @@ async function autoEditByScript(opts = {}) {
                         console.log(`[自动剪辑] 使用用户微调的手动转录文本进行匹配: ${manualText}`);
                         transcription = await buildManualTranscription(clipPath, manualText);
                     } else {
-                        transcription = await transcribeClip(clipPath, language, gladiaKeys, cacheDir, forceTranscribe, manualSubtitleMap[clipPath]);
+                        const forceThisClip = forceTranscribe || forceTranscribePaths.has(String(clipPath).replace(/\\/g, '/'));
+                        transcription = await transcribeClip(clipPath, language, gladiaKeys, cacheDir, forceThisClip, manualSubtitleMap[clipPath]);
                     }
                 } catch (err) {
                     console.error(`[自动剪辑] 片段 ${i + 1}/${clipCount} 转录失败:`, err);
@@ -2683,10 +2686,24 @@ async function autoEditByScript(opts = {}) {
         if (reviewSegments.length > 0) {
             const byId = new Map(plans.map(plan => [plan.planId || `clip-${plan.sourceIndex}`, plan]));
             const bySource = new Map();
+            const bySourceIndex = new Map();
+            const byBaseName = new Map();
+            const normalizeReviewPath = value => String(value || '').replace(/\\/g, '/').normalize('NFC');
             for (const plan of plans) {
                 const source = plan.realClipPath || plan.clipPath;
-                if (!bySource.has(source)) bySource.set(source, []);
-                bySource.get(source).push(plan);
+                const sourceKey = normalizeReviewPath(source);
+                if (!bySource.has(sourceKey)) bySource.set(sourceKey, []);
+                bySource.get(sourceKey).push(plan);
+                const baseName = path.basename(sourceKey).toLocaleLowerCase();
+                if (!byBaseName.has(baseName)) byBaseName.set(baseName, []);
+                byBaseName.get(baseName).push(plan);
+                // Public analysis/review payloads use one-based source_index;
+                // internal plans keep the zero-based array index.
+                const sourceIndex = Number(plan.sourceIndex) + 1;
+                if (Number.isFinite(sourceIndex)) {
+                    if (!bySourceIndex.has(sourceIndex)) bySourceIndex.set(sourceIndex, []);
+                    bySourceIndex.get(sourceIndex).push(plan);
+                }
             }
             const usedFallbackPlans = new Set();
             const reviewedPlans = [];
@@ -2694,7 +2711,21 @@ async function autoEditByScript(opts = {}) {
                 if (review.enabled === false) continue;
                 let plan = review.segment_id ? byId.get(review.segment_id) : null;
                 if (!plan) {
-                    plan = (bySource.get(review.source) || []).find(item => !usedFallbackPlans.has(item));
+                    plan = (bySource.get(normalizeReviewPath(review.source)) || []).find(item => !usedFallbackPlans.has(item));
+                }
+                // 补充片段会先移入任务文件夹；macOS 文件系统 Unicode 规范化、
+                // 路径分隔符或旧审核快照都可能让完整路径的字符串比较失败。
+                // 文件名仅在当前任务里唯一时才作为安全回退，绝不猜测同名文件。
+                if (!plan && review.source) {
+                    const candidates = (byBaseName.get(path.basename(normalizeReviewPath(review.source)).toLocaleLowerCase()) || [])
+                        .filter(item => !usedFallbackPlans.has(item));
+                    if (candidates.length === 1) plan = candidates[0];
+                }
+                if (!plan) {
+                    const sourceIndex = Number(review.source_index ?? review.sourceIndex);
+                    if (Number.isFinite(sourceIndex)) {
+                        plan = (bySourceIndex.get(sourceIndex) || []).find(item => !usedFallbackPlans.has(item));
+                    }
                 }
                 if (!plan) {
                     throw new Error(`审核片段无法定位，已停止导出以避免静默丢片: ${review.source || review.segment_id || '未知片段'}`);
@@ -2712,8 +2743,37 @@ async function autoEditByScript(opts = {}) {
                     plan.end = safeEnd;
                 }
                 plan.speed = normalizeAutoEditSpeed(review.speed);
+                // 删除画面区间使用原片时间轴。画面和原声都会被移除，字幕由后续
+                // SRT 生成逻辑并入上一条 cue，避免在成片中留下无画面的空白时长。
+                plan.visualRemoveRanges = (Array.isArray(review.visual_remove_ranges) ? review.visual_remove_ranges : [])
+                    .map(range => ({ start: Number(range?.start), end: Number(range?.end), keepSubtitles: range?.keep_subtitles === true }))
+                    .filter(range => Number.isFinite(range.start) && Number.isFinite(range.end) && range.end > range.start)
+                    .map(range => ({ start: Math.max(plan.start, range.start), end: Math.min(plan.end, range.end), keepSubtitles: range.keepSubtitles }))
+                    .filter(range => range.end > range.start + 0.01)
+                    .sort((a, b) => a.start - b.start)
+                    .reduce((all, range) => {
+                        const previous = all[all.length - 1];
+                        if (previous && range.start <= previous.end + 0.02) {
+                            previous.end = Math.max(previous.end, range.end);
+                            previous.keepSubtitles = previous.keepSubtitles || range.keepSubtitles;
+                        }
+                        else all.push(range);
+                        return all;
+                    }, []);
                 plan.cutSelection = ['classic', 'v2', 'manual'].includes(review.cut_selection) ? review.cut_selection : 'manual';
                 if (typeof review.script === 'string' && review.script.trim()) plan.scriptText = review.script.trim();
+                plan.manualSubtitles = Array.isArray(review.manual_subtitles)
+                    ? review.manual_subtitles.filter(cue => cue && String(cue.text || '').trim())
+                    : [];
+                // 手工补的漏读字幕会单独写入 SRT；必须先从普通文案中剔除，
+                // 否则模糊匹配会用后面的识别词匹配到整行，把“漏句 + 下一句”
+                // 又输出成一条普通字幕。
+                for (const cue of plan.manualSubtitles) {
+                    const tokens = String(cue.text || '').match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu) || [];
+                    if (!tokens.length) continue;
+                    const escaped = tokens.map(token => token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[^\\p{L}\\p{N}]+');
+                    plan.scriptText = String(plan.scriptText || '').replace(new RegExp(escaped, 'iu'), '').replace(/\n{2,}/g, '\n').trim();
+                }
                 reviewedPlans.push(plan);
             }
             if (reviewedPlans.length === 0) throw new Error('审核时间线中没有可导出的片段');
@@ -2748,6 +2808,18 @@ async function autoEditByScript(opts = {}) {
                 ? normalizeAutoEditSpeed(plan.speed)
                 : normalizeAutoEditSpeed(clipSpeeds[targetClipPath]);
             const vPts = (1.0 / speed).toFixed(5);
+            const visualRemoveRanges = Array.isArray(plan.visualRemoveRanges) ? plan.visualRemoveRanges : [];
+            // -ss 后 t 从剪辑入点开始计；FFmpeg 的 select/aselect 同时删掉
+            // 视频和声音，故最终时长会真正缩短，而不是黑屏占位。
+            const removeExpr = visualRemoveRanges.length
+                ? visualRemoveRanges.map(range => {
+                    const from = Math.max(0, range.start - plan.start).toFixed(3);
+                    const to = Math.max(0, range.end - plan.start).toFixed(3);
+                    return `between(t\\,${from}\\,${to})`;
+                }).join('+')
+                : '';
+            const videoRemoveFilter = removeExpr ? `select='not(${removeExpr})',setpts=N/FRAME_RATE/TB,` : '';
+            const audioRemoveFilter = removeExpr ? `aselect='not(${removeExpr})',asetpts=N/SR/TB,` : '';
 
             let atempoFilter = '';
             if (speed >= 0.5 && speed <= 2.0) {
@@ -2764,10 +2836,10 @@ async function autoEditByScript(opts = {}) {
             if (hasAudio) {
                 // 每段在输入寻址后必须清零 PTS。否则首个关键帧前的时间戳可能被
                 // 保留到 concat 输出，未经过字幕滤镜二次编码时播放器会显示开头黑帧。
-                filterComplex = `[0:v]setpts=${vPts}*(PTS-STARTPTS),${videoFitFilter},fps=${fps},setsar=1[v];[0:a]asetpts=PTS-STARTPTS,${atempoFilter},aformat=sample_rates=48000:channel_layouts=stereo[a]`;
+                filterComplex = `[0:v]${videoRemoveFilter}setpts=${vPts}*(PTS-STARTPTS),${videoFitFilter},fps=${fps},setsar=1[v];[0:a]${audioRemoveFilter}asetpts=PTS-STARTPTS,${atempoFilter},aformat=sample_rates=48000:channel_layouts=stereo[a]`;
             } else {
                 args.push('-f', 'lavfi', '-i', 'anullsrc=cl=stereo:r=48000');
-                filterComplex = `[0:v]setpts=${vPts}*(PTS-STARTPTS),${videoFitFilter},fps=${fps},setsar=1[v];[1:a]asetpts=PTS-STARTPTS,aformat=sample_rates=48000:channel_layouts=stereo[a]`;
+                filterComplex = `[0:v]${videoRemoveFilter}setpts=${vPts}*(PTS-STARTPTS),${videoFitFilter},fps=${fps},setsar=1[v];[1:a]asetpts=PTS-STARTPTS,aformat=sample_rates=48000:channel_layouts=stereo[a]`;
             }
 
             args.push(
@@ -2790,6 +2862,12 @@ async function autoEditByScript(opts = {}) {
             const cutDurationMs = Math.max(1, Math.round(cutDuration * 1000));
             const srtStart = Math.max(0, timelineCursorMs - Math.round(boundaryTransitionSec * 1000));
             const srtEnd = srtStart + cutDurationMs;
+            const removedRangeFor = (sourceStart, sourceEnd) => visualRemoveRanges.find(range => sourceStart < range.end - 0.01 && sourceEnd > range.start + 0.01);
+            const removedBefore = sourceTime => visualRemoveRanges.reduce((total, range) => total + Math.max(0, Math.min(sourceTime, range.end) - range.start), 0);
+            const mergeIntoPreviousSubtitle = text => {
+                const previous = srtItems[srtItems.length - 1];
+                if (previous && text && !String(previous.text).includes(text)) previous.text = `${previous.text}\n${text}`;
+            };
 
             if (hasReviewedTimeline && plan.scriptText) {
                 const reviewedLines = splitScriptLines(plan.scriptText);
@@ -2819,8 +2897,16 @@ async function autoEditByScript(opts = {}) {
                     const clampedStartSec = Math.max(plan.start, firstWord.start);
                     const clampedEndSec = Math.min(plan.end, lastWord.end);
                     if (clampedEndSec > clampedStartSec) {
-                        const lineStartMs = srtStart + Math.round(((clampedStartSec - plan.start) / speed) * 1000);
-                        const lineEndMs = srtStart + Math.round(((clampedEndSec - plan.start) / speed) * 1000);
+                        const removedRange = removedRangeFor(clampedStartSec, clampedEndSec);
+                        if (removedRange) {
+                            // 用户要的是字幕仍可见，而非保留被删画面的时长：把它
+                            // 写到前一条字幕上，时长由前一条字幕自身决定。
+                            if (removedRange.keepSubtitles) mergeIntoPreviousSubtitle(line);
+                            wordCursor += match.endIdx + 1;
+                            continue;
+                        }
+                        const lineStartMs = srtStart + Math.round(((clampedStartSec - plan.start - removedBefore(clampedStartSec)) / speed) * 1000);
+                        const lineEndMs = srtStart + Math.round(((clampedEndSec - plan.start - removedBefore(clampedEndSec)) / speed) * 1000);
                         if (lineEndMs > lineStartMs + 50) {
                             lineMatches.push({
                                 text: line,
@@ -2847,6 +2933,18 @@ async function autoEditByScript(opts = {}) {
                         srtItems.push({ start: cursorMs, end: Math.max(cursorMs + 50, lineEnd), text: line });
                         cursorMs = lineEnd;
                     });
+                }
+            }
+
+            // 手工补的漏识别字幕是独立 cue：只插入指定的小区间，绝不重排
+            // 或拉伸 AI 已对齐的后续字幕。
+            for (const cue of plan.manualSubtitles || []) {
+                const sourceStart = Math.max(plan.start, Number(cue.start) || plan.start);
+                const sourceEnd = Math.min(plan.end, Math.max(sourceStart + 0.1, Number(cue.end) || sourceStart + 2));
+                const cueStart = srtStart + Math.round(((sourceStart - plan.start) / speed) * 1000);
+                const cueEnd = srtStart + Math.round(((sourceEnd - plan.start) / speed) * 1000);
+                if (cueEnd > cueStart + 50) {
+                    srtItems.push({ start: Math.max(srtStart, cueStart), end: Math.min(srtEnd, cueEnd), text: String(cue.text).trim() });
                 }
             }
 

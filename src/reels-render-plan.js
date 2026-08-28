@@ -429,17 +429,24 @@
                     locked: false,
                     visible: !ov.disabled,
                     domain: 'visual',
-                    clips: [{
-                        start,
-                        end: Math.max(start + 0.1, end),
-                        name: label.slice(0, 24) + (label.length > 24 ? '…' : ''),
-                        color: ov.disabled ? '#4b5563' : '#9333ea',
-                        _timelineClipId: ov.id || `ov_${index}`,
-                        _timelineRole: 'overlay',
-                        _overlayId: ov.id,
-                        _overlayType: ov.type,
-                        _fullText: ov.body_text || ov.title_text || ov.content || '',
-                    }],
+                    clips: (Array.isArray(ov.display_ranges) && ov.display_ranges.length
+                        ? ov.display_ranges
+                        : [{ start, end }]).map((range, rangeIndex) => {
+                        const rangeStart = Math.max(0, finite(range?.start, start));
+                        const rangeEnd = Math.max(rangeStart + 0.1, finite(range?.end, end));
+                        return {
+                            start: rangeStart,
+                            end: rangeEnd,
+                            name: label.slice(0, 24) + (label.length > 24 ? '…' : ''),
+                            color: ov.disabled ? '#4b5563' : '#9333ea',
+                            _timelineClipId: ov.id || `ov_${index}`,
+                            _timelineRole: 'overlay',
+                            _overlayId: ov.id,
+                            _overlayRangeIndex: rangeIndex,
+                            _overlayType: ov.type,
+                            _fullText: ov.body_text || ov.title_text || ov.content || '',
+                        };
+                    }),
                 };
             });
             tracks.unshift(...overlayTracks);
@@ -483,8 +490,20 @@
             if (ov) {
                 const newStart = Math.max(0, finite(editorClip.start));
                 const newEnd = Math.max(newStart + 0.1, finite(editorClip.end));
-                ov.start = newStart;
-                ov.end = newEnd;
+                if (editorClip._overlayRangeIndex != null || Array.isArray(ov.display_ranges)) {
+                    const ranges = Array.isArray(ov.display_ranges) && ov.display_ranges.length
+                        ? ov.display_ranges.map(range => ({ ...range }))
+                        : [{ start: finite(ov.start, 0), end: finite(ov.end, 5) }];
+                    const rangeIndex = Math.max(0, Math.min(ranges.length - 1, Number(editorClip._overlayRangeIndex) || 0));
+                    ranges[rangeIndex] = { start: newStart, end: newEnd };
+                    ranges.sort((a, b) => a.start - b.start);
+                    ov.display_ranges = ranges;
+                    ov.start = ranges[0].start;
+                    ov.end = ranges[ranges.length - 1].end;
+                } else {
+                    ov.start = newStart;
+                    ov.end = newEnd;
+                }
                 if (isCurrentTask && typeof window !== 'undefined' && window._reelsState?.overlayProxy?.overlayMgr) {
                     if (typeof window._reelsState.overlayProxy.overlayMgr._notify === 'function') {
                         window._reelsState.overlayProxy.overlayMgr._notify();
