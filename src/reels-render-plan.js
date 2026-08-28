@@ -781,9 +781,13 @@
 
     function moveCompositedOverlay(task, first, second) {
         if (!task || !first || !second) return false;
-        const firstKey = first._overlayId ? `overlay:${first._overlayId}`
+        // 时间线编辑器可能传入重新投影过的轨道对象，轨道本身不一定保留
+        // _overlayId，但它的片段仍带有该 ID。两者都取，确保上/下移真正写回覆层栈。
+        const firstOverlayId = first._overlayId || first.clips?.find(clip => clip?._overlayId)?._overlayId;
+        const secondOverlayId = second._overlayId || second.clips?.find(clip => clip?._overlayId)?._overlayId;
+        const firstKey = firstOverlayId ? `overlay:${firstOverlayId}`
             : (first.role === 'insert_video' ? 'insert:track' : '');
-        const secondKey = second._overlayId ? `overlay:${second._overlayId}`
+        const secondKey = secondOverlayId ? `overlay:${secondOverlayId}`
             : (second.role === 'insert_video' ? 'insert:track' : '');
         // 插入素材是一条轨，任务中每段插入均随该轨一起改变层级。
         const keys = getCompositedOverlays(task).map(ov => ov._compositeOrderKey);

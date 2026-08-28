@@ -322,6 +322,7 @@
               <button class="sidebar-item" data-action="subtab" data-subtab="media-smartkf">智能关键帧</button>
               <button class="sidebar-item" data-action="subtab" data-subtab="media-thumbnail">批量截图</button>
               <button class="sidebar-item" data-action="subtab" data-subtab="media-classify">智能聚类分类</button>
+              <button class="sidebar-item" data-action="subtab" data-subtab="media-visualreview">素材快速审核</button>
 
               <div class="sub-group-title">视频编辑</div>
               <button class="sidebar-item" data-action="subtab" data-subtab="media-batchcut">批量剪辑</button>
@@ -2217,6 +2218,19 @@
           </div>
 
           <!-- ========== 文案自动剪辑模块 ========== -->
+          <div id="media-visualreview-subtab" class="subtab-content">
+            <div class="workbench-title-container">
+              <span class="workbench-title">素材快速审核</span>
+              <span class="workbench-title-desc">按命名分组快速审核画面、运动和声音；悬停 2×，双击原速</span>
+            </div>
+            <div class="form-section" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+              <button class="btn btn-primary" onclick="visualReviewChooseFolder()">📁 选择总文件夹并开始审核</button>
+              <label><input id="visual-review-numeric-suffix" type="checkbox" onchange="visualReviewToggleNumericSuffix(this.checked)"> 数字尾缀也视为版本（如 -1、_2）</label>
+              <span class="hint">递归读取子文件夹。默认仅把 v2、(2)、副本2 等明确版本尾缀归为同组。</span>
+            </div>
+            <div id="media-visual-review"></div>
+          </div>
+
           <div id="media-autoedit-subtab" class="subtab-content">
             <div class="workbench-title-container">
               <span class="workbench-title">文案自动剪辑</span>

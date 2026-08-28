@@ -40,6 +40,7 @@
         if (!task || !Array.isArray(task.overlays)) return new Map();
         const idMap = new Map();
         const templateIdByOldId = new Map();
+        const nextIdByTemplateId = new Map();
 
         task.overlays.forEach((overlay, index) => {
             if (!overlay || typeof overlay !== 'object') return;
@@ -48,6 +49,9 @@
             const nextId = createId('ov');
             if (!idMap.has(oldId)) idMap.set(oldId, nextId);
             templateIdByOldId.set(oldId, templateId);
+            // 批量覆层组的顺序表有时保存的是模板 ID，而不是上一实例 ID。
+            // 两种 ID 都要映射到同一个新实例，否则顺序表留下失效键，渲染时会退回数组顺序。
+            if (!nextIdByTemplateId.has(templateId)) nextIdByTemplateId.set(templateId, nextId);
             overlay._templateOverlayId = templateId;
             overlay.id = nextId;
             delete overlay._compositeOrderKey;
@@ -63,13 +67,15 @@
         });
 
         if (Array.isArray(task.visualOverlayOrder)) {
-            task.visualOverlayOrder = task.visualOverlayOrder.map((key) => {
+            const mappedOrder = task.visualOverlayOrder.map((key) => {
                 const value = String(key || '');
                 if (!value.startsWith('overlay:')) return value;
                 const oldId = value.slice('overlay:'.length);
-                const nextId = idMap.get(oldId);
+                const nextId = idMap.get(oldId) || nextIdByTemplateId.get(oldId);
                 return nextId ? `overlay:${nextId}` : value;
             });
+            // 去掉重建后可能重复的键，但保留组内原有相对顺序。
+            task.visualOverlayOrder = [...new Set(mappedOrder)];
         }
         return idMap;
     }

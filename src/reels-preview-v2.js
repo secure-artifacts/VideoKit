@@ -375,7 +375,16 @@
                 releaseSeekFrameWhenReady();
             });
             if (media.tagName === 'VIDEO') {
-                media.addEventListener('error', () => scheduleMediaRecovery(`error:${media.dataset.role || 'video'}`));
+                media.addEventListener('error', () => {
+                    // 文件不存在、编码不支持时，反复重新加载同一来源不会恢复，
+                    // 只会制造三轮错误并掩盖真正的媒体路径。保留可诊断信息，
+                    // 让用户修正素材后使用 ↻ 手动重载。
+                    const code = media.error?.code || 0;
+                    const source = media.currentSrc || media.getAttribute('src') || '(空来源)';
+                    console.error(`[PreviewV2] ${media.dataset.role || 'video'} 无法读取 (code ${code}): ${source}`);
+                    const title = state.root?.querySelector('[data-role="title"]');
+                    if (title) title.textContent = `视频无法读取（${media.dataset.role || 'video'}），请检查文件后点 ↻`;
+                });
                 media.addEventListener('stalled', () => scheduleMediaRecovery(`stalled:${media.dataset.role || 'video'}`, false, 900));
             }
             media.addEventListener('ended', onMediaEnded);

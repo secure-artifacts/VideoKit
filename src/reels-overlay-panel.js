@@ -1831,6 +1831,10 @@ class ReelsOverlayPanel {
             this.videoCanvas.onSelect = (ov) => this.selectOverlay(ov);
             this.videoCanvas.onDeselect = () => this.deselectOverlay();
             this.videoCanvas.onOverlayChange = (ov) => {
+                // 列表中的改名、显示开关和上下移动以前没有传 ov，导致这里
+                // 读取 ov.type 时抛错，中断了把最新覆层顺序同步回任务的流程。
+                // 空变更只需要由外层回调保存/重绘，不应把它当作某个覆层的属性变更。
+                if (!ov || typeof ov !== 'object') return;
                 this._syncFromOverlay(ov);
                 const applyAllEl = this.container.querySelector('#rop-card-apply-all');
                 if (ov.type === 'textcard' && applyAllEl && applyAllEl.checked) {
@@ -2582,7 +2586,7 @@ class ReelsOverlayPanel {
                     ov.disabled = !ov.disabled;
                     this._refreshList();
                     if (this.videoCanvas) this.videoCanvas.render();
-                    if (typeof this.videoCanvas?.onOverlayChange === 'function') this.videoCanvas.onOverlayChange();
+                    if (typeof this.videoCanvas?.onOverlayChange === 'function') this.videoCanvas.onOverlayChange(ov);
                 }
             });
         });
@@ -2601,7 +2605,7 @@ class ReelsOverlayPanel {
                             this._val('rop-name', ov.name);
                         }
                         this._refreshList();
-                        if (typeof this.videoCanvas?.onOverlayChange === 'function') this.videoCanvas.onOverlayChange();
+                        if (typeof this.videoCanvas?.onOverlayChange === 'function') this.videoCanvas.onOverlayChange(ov);
                     }
                 }
             });
@@ -2620,7 +2624,8 @@ class ReelsOverlayPanel {
                     overlays[idx + 1] = temp;
                     this._refreshList();
                     if (this.videoCanvas) this.videoCanvas.render();
-                    if (typeof this.videoCanvas?.onOverlayChange === 'function') this.videoCanvas.onOverlayChange();
+                    // 传入实际被移动的覆层，才能同步属性且不会在回调中读到 undefined。
+                    if (typeof this.videoCanvas?.onOverlayChange === 'function') this.videoCanvas.onOverlayChange(overlays[idx + 1]);
                 }
             });
         });
@@ -2638,7 +2643,8 @@ class ReelsOverlayPanel {
                     overlays[idx - 1] = temp;
                     this._refreshList();
                     if (this.videoCanvas) this.videoCanvas.render();
-                    if (typeof this.videoCanvas?.onOverlayChange === 'function') this.videoCanvas.onOverlayChange();
+                    // 交换后该位置保存的是被点击、刚刚移动的覆层。
+                    if (typeof this.videoCanvas?.onOverlayChange === 'function') this.videoCanvas.onOverlayChange(overlays[idx - 1]);
                 }
             });
         });

@@ -1230,7 +1230,21 @@ function generateVisualDiffMarkdown(scriptText, transcriptionText) {
 }
 
 async function autoEditByScript(opts = {}) {
+    // 导出审核时间线时，真正的权威来源是审核条目里的 source。
+    // 手动补充片段或“已选素材”路径可能不在旧的 clips 数组中；若不先合并，
+    // 后续会出现“明明选了文件却无法定位”的错误。
+    const reviewSnapshot = Array.isArray(opts.reviewSegments || opts.review_segments)
+        ? (opts.reviewSegments || opts.review_segments) : [];
     const clips = (opts.clips || []).filter(p => p && fs.existsSync(p));
+    const seenClipPaths = new Set(clips.map(p => path.resolve(p).normalize('NFC')));
+    for (const review of reviewSnapshot) {
+        const source = String(review?.source || '');
+        const key = source ? path.resolve(source).normalize('NFC') : '';
+        if (source && key && fs.existsSync(source) && !seenClipPaths.has(key)) {
+            clips.push(source);
+            seenClipPaths.add(key);
+        }
+    }
     const lines = splitScriptLines(opts.scriptText || opts.script_text || '');
     if (clips.length === 0) throw new Error('缺少有效视频片段');
     if (lines.length === 0) throw new Error('缺少断行文案');
@@ -1359,7 +1373,10 @@ async function autoEditByScript(opts = {}) {
             if (/[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]/.test(lineText)) {
                 lineWords = lineText.split('').map(char => char.trim()).filter(Boolean);
             } else {
-                lineWords = lineText.split(/\s+/).filter(Boolean);
+                // 文案常见 `blessed.Share`、`Amen,"because` 这类漏空格写法。
+                // 不能只按空格切，否则会把两个已读词拼成一个不存在的长词，
+                // 再好的 ASR 也无法匹配。保留词内连字符/撇号，其他标点均作边界。
+                lineWords = lineText.match(/[\p{L}\p{N}]+(?:[’'\-][\p{L}\p{N}]+)*/gu) || [];
             }
             for (const w of lineWords) {
                 scriptWords.push({
@@ -2279,6 +2296,57 @@ async function autoEditByScript(opts = {}) {
                 missingBlocksInfo.splice(i, 1);
                 continue;
             }
+            // 不把“句号/换行”当作硬边界。短文案若已经出现在相邻片段的完整
+            // ASR 词序中，就直接按语义归属；只有全局转写也找不到时才报红。
+            const meaningfulRemaining = remainingWords.filter(word => normalizeText(word.raw));
+            const applyPlanWindow = (plan, match, side) => {
+                if (side === 'previous') {
+                    plan.wordEndIdx = Math.max(Number(plan.wordEndIdx) || 0, match.endIdx);
+                    plan.end = Math.min(plan.duration || Infinity, (plan.words[plan.wordEndIdx]?.end || plan.end) + tailPad);
+                } else {
+                    plan.wordStartIdx = Math.min(Number.isInteger(plan.wordStartIdx) ? plan.wordStartIdx : match.startIdx, match.startIdx);
+                    plan.start = Math.max(0, (plan.words[plan.wordStartIdx]?.start || plan.start) - leadPad);
+                }
+            };
+            if (previous && next && meaningfulRemaining.length >= 2 && meaningfulRemaining.length <= 12) {
+                const wholeText = joinWordsSmart(remainingWords.map(word => word.raw));
+                const candidates = [
+                    { plan: previous, side: 'previous', match: findBestWordWindow(previous.words, wholeText, 0.78) },
+                    { plan: next, side: 'next', match: findBestWordWindow(next.words, wholeText, 0.78) },
+                ].filter(candidate => candidate.match).sort((a, b) => b.match.score - a.match.score);
+                if (candidates.length) {
+                    const best = candidates[0];
+                    applyPlanWindow(best.plan, best.match, best.side);
+                    if (best.side === 'previous') previous.scriptWordEnd = block.endIdx;
+                    else next.scriptWordStart = block.startIdx;
+                    refreshPlanScriptAndMatch(best.plan);
+                    console.log(`[自动剪辑] 语义边界命中，整块归${best.side === 'previous' ? '上一' : '下一'}段: ${wholeText}`);
+                    missingBlocksInfo.splice(i, 1);
+                    continue;
+                }
+                // 同一句跨两段时，枚举拆点，要求两边都在各自完整转写中高置信命中。
+                let split = null;
+                for (let pivot = 1; pivot < remainingWords.length; pivot++) {
+                    const previousText = joinWordsSmart(remainingWords.slice(0, pivot).map(word => word.raw));
+                    const nextText = joinWordsSmart(remainingWords.slice(pivot).map(word => word.raw));
+                    const previousMatch = findBestWordWindow(previous.words, previousText, 0.76);
+                    const nextMatch = findBestWordWindow(next.words, nextText, 0.76);
+                    if (!previousMatch || !nextMatch) continue;
+                    const score = previousMatch.score + nextMatch.score;
+                    if (!split || score > split.score) split = { pivot, previousText, nextText, previousMatch, nextMatch, score };
+                }
+                if (split) {
+                    applyPlanWindow(previous, split.previousMatch, 'previous');
+                    applyPlanWindow(next, split.nextMatch, 'next');
+                    previous.scriptWordEnd = block.startIdx + split.pivot - 1;
+                    next.scriptWordStart = block.startIdx + split.pivot;
+                    refreshPlanScriptAndMatch(previous);
+                    refreshPlanScriptAndMatch(next);
+                    console.log(`[自动剪辑] 语义跨片段命中: 上段「${split.previousText}」；下段「${split.nextText}」`);
+                    missingBlocksInfo.splice(i, 1);
+                    continue;
+                }
+            }
             block.text = joinWordsSmart(remainingWords.map(word => word.raw));
             block.startLine = remainingWords[0].lineIndex;
             block.endLine = remainingWords[remainingWords.length - 1].lineIndex;
@@ -2726,6 +2794,28 @@ async function autoEditByScript(opts = {}) {
                     if (Number.isFinite(sourceIndex)) {
                         plan = (bySourceIndex.get(sourceIndex) || []).find(item => !usedFallbackPlans.has(item));
                     }
+                }
+                // 手动补充/从“已选素材”重新建立审核时，审核快照里的文件可能
+                // 不在本次转录计划数组中，但源文件仍真实存在。此时保留该审核片段
+                // 并按用户审核的时长导出，而不是误报为丢片后中止整个任务。
+                if (!plan && review.source && fs.existsSync(review.source)) {
+                    const sourceDuration = Number(review.source_duration || review.duration)
+                        || await ffmpegService.getDuration(review.source)
+                        || Math.max(0.1, Number(review.end) || 0);
+                    plan = {
+                        planId: review.segment_id || `review-source-${reviewedPlans.length}`,
+                        sourceIndex: Number.isFinite(Number(review.source_index ?? review.sourceIndex))
+                            ? Number(review.source_index ?? review.sourceIndex) - 1
+                            : plans.length + reviewedPlans.length,
+                        clipPath: review.source,
+                        realClipPath: review.source,
+                        duration: sourceDuration,
+                        start: 0,
+                        end: sourceDuration,
+                        scriptText: String(review.script || review.text || ''),
+                        words: Array.isArray(review.word_timeline) ? review.word_timeline : [],
+                        isManualReviewSource: true,
+                    };
                 }
                 if (!plan) {
                     throw new Error(`审核片段无法定位，已停止导出以避免静默丢片: ${review.source || review.segment_id || '未知片段'}`);

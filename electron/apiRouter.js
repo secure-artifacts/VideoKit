@@ -926,7 +926,7 @@ async function routeAPI(endpoint, data, progressSender = null, sender = null) {
         }
 
         case 'media/copy-file': {
-            const { srcPath, destDir, destFileName } = data;
+            const { srcPath, destDir, destFileName, skipIfExists = false } = data;
             if (!srcPath || !destDir) throw new Error('缺少文件路径或目标目录参数');
             if (!fs.existsSync(srcPath)) throw new Error(`源文件不存在: ${srcPath}`);
 
@@ -947,6 +947,7 @@ async function routeAPI(endpoint, data, progressSender = null, sender = null) {
             
             // Check for duplicate/collision in target folder
             if (fs.existsSync(targetPath)) {
+                if (skipIfExists) return { success: true, path: targetPath, copied: false, skipped: true };
                 const ext = path.extname(targetName);
                 const nameWithoutExt = path.parse(targetName).name;
                 // Generate a unique suffix to prevent collision
@@ -984,6 +985,17 @@ async function routeAPI(endpoint, data, progressSender = null, sender = null) {
             }
             console.log(`[Move File] Moved ${srcPath} -> ${targetPath}`);
             return { success: true, path: targetPath, moved: true };
+        }
+
+        case 'media/visual-review-save': {
+            const { rootDir, batchName, session } = data;
+            if (!rootDir || !batchName || !session) throw new Error('缺少审核记录参数');
+            const safeName = String(batchName).replace(/[\\/:*?"<>|]/g, '_');
+            const reviewDir = path.join(rootDir, safeName);
+            fs.mkdirSync(reviewDir, { recursive: true });
+            const reviewPath = path.join(reviewDir, 'review.json');
+            fs.writeFileSync(reviewPath, JSON.stringify(session, null, 2), 'utf8');
+            return { reviewPath };
         }
 
         case 'media/auto-edit-by-script':
