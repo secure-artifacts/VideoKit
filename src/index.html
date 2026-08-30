@@ -2223,10 +2223,10 @@
               <span class="workbench-title">素材快速审核</span>
               <span class="workbench-title-desc">按命名分组快速审核画面、运动和声音；悬停 2×，双击原速</span>
             </div>
-            <div class="form-section" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+            <div id="visual-review-drop-zone" class="form-section" ondragenter="visualReviewSetDropActive(event,true)" ondragover="visualReviewSetDropActive(event,true)" ondragleave="visualReviewSetDropActive(event,false)" ondrop="visualReviewHandleFolderDrop(event)" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;border:1px dashed var(--border-color);transition:.15s;">
               <button class="btn btn-primary" onclick="visualReviewChooseFolder()">📁 选择总文件夹并开始审核</button>
               <label><input id="visual-review-numeric-suffix" type="checkbox" onchange="visualReviewToggleNumericSuffix(this.checked)"> 数字尾缀也视为版本（如 -1、_2）</label>
-              <span class="hint">递归读取子文件夹。默认仅把 v2、(2)、副本2 等明确版本尾缀归为同组。</span>
+              <span class="hint">可直接从 Finder 拖入总文件夹；递归读取子文件夹。默认仅把 v2、(2)、副本2 等明确版本尾缀归为同组。</span>
             </div>
             <div id="media-visual-review"></div>
           </div>
@@ -2287,6 +2287,9 @@
                 <button id="autoedit-batch-export-only-btn" class="btn btn-secondary" onclick="startAutoEditBatchExportOnly()">仅导出视频 + 字幕</button>
                 <button class="btn btn-secondary" onclick="setAllAutoEditBatchSendToReels(true)" title="勾选全部任务参与本次批量导出">导出任务全选</button>
                 <button class="btn btn-secondary" onclick="setAllAutoEditBatchSendToReels(false)" title="取消全部任务，不参与本次批量导出">导出任务全不选</button>
+                <button class="btn btn-secondary" onclick="selectAutoEditBatchIssueFreeTasks()" title="只勾选没有错误、警告或待处理文案的任务">只选没问题任务</button>
+                <button class="btn btn-secondary" onclick="deselectAutoEditBatchProblemTasks()" title="取消勾选仍有错误、警告或待处理文案的任务">取消有问题任务</button>
+                <button class="btn btn-secondary" onclick="copyAutoEditBatchTaskResults()" title="按当前顺序复制全部任务及其处理结果，每行一个">📋 复制全部任务处理结果</button>
                 <span id="autoedit-batch-match-hint" class="hint">粘贴后自动识别；第 N 个单元格对应第 N 个文件夹。</span>
               </div>
               <div id="autoedit-batch-task-list" style="margin-top:12px;display:grid;grid-template-columns:repeat(auto-fill,minmax(390px,1fr));gap:10px;"></div>
@@ -2303,9 +2306,11 @@
                   <button class="btn btn-secondary"
                     onclick="document.getElementById('autoedit-video-input').click()">选择多个片段</button>
                   <button class="btn btn-secondary" onclick="clearAutoEditFiles()" style="font-size: 12px;">清空</button>
+                  <button class="btn btn-secondary" onclick="openAutoEditCurrentFolder()" style="font-size: 12px;">📁 打开当前文件夹</button>
+                  <button class="btn btn-secondary" onclick="refreshAutoEditCurrentFolder()" style="font-size: 12px;">↻ 刷新当前文件夹</button>
                   <input type="file" id="autoedit-project-input" class="hidden-file-input" accept=".json" onchange="loadAutoEditProjectFile(this.files[0]);this.value=''">
                   <button class="btn btn-secondary" onclick="document.getElementById('autoedit-project-input').click()" style="font-size:12px;">打开分析项目</button>
-                  <span class="hint">或直接拖拽视频片段到这里。默认会自动匹配片段在整段文案中的位置。</span>
+                  <span class="hint">或直接拖拽视频片段、单个文件夹到这里（文件夹会递归读取视频）。默认会自动匹配片段在整段文案中的位置。</span>
                 </div>
               </div>
               <div id="autoedit-file-list"

@@ -978,10 +978,16 @@ async function routeAPI(endpoint, data, progressSender = null, sender = null) {
             }
             try {
                 fs.renameSync(srcPath, targetPath);
-            } catch (_) {
-                // Cross-volume moves cannot rename atomically; remove only after a successful copy.
-                fs.copyFileSync(srcPath, targetPath);
-                fs.unlinkSync(srcPath);
+            } catch (renameError) {
+                // Linux 的挂载盘/网络盘经常不能原子 rename（EXDEV）。改为
+                // 复制成功后再删除源文件；若仍失败，保留完整错误供前端显示。
+                try {
+                    fs.copyFileSync(srcPath, targetPath);
+                    fs.unlinkSync(srcPath);
+                } catch (copyError) {
+                    try { if (fs.existsSync(targetPath)) fs.unlinkSync(targetPath); } catch (_) {}
+                    throw new Error(`无法移动“${path.basename(srcPath)}”：${copyError.code || copyError.message}（rename: ${renameError.code || renameError.message}）`);
+                }
             }
             console.log(`[Move File] Moved ${srcPath} -> ${targetPath}`);
             return { success: true, path: targetPath, moved: true };

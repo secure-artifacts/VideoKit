@@ -487,6 +487,50 @@ body {
 }
 
 /* 媒体转换左侧侧边栏布局 */
+/* 自动剪辑批量任务卡：右侧状态不能把“参与本次导出”挤到卡片外。 */
+.autoedit-batch-task > div:last-child {
+  min-width: 0;
+}
+
+.autoedit-batch-task > div:last-child > div:first-child {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 150px) !important;
+}
+
+.autoedit-batch-task > div:last-child > div:first-child > div:first-child,
+.autoedit-batch-task > div:last-child > div:first-child > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.autoedit-batch-task > div:last-child > div:first-child > span {
+  text-align: right;
+}
+
+.autoedit-batch-task label[title*="未勾选"] {
+  flex: 0 0 auto !important;
+}
+
+.autoedit-batch-task label[title*="未勾选"] input {
+  flex-shrink: 0;
+}
+
+/* 左侧 Reels 任务列表保留完整命名，允许两行展示，便于从大量任务中定位。 */
+.reels-task-item {
+  flex-wrap: wrap !important;
+}
+
+.reels-task-item > span:nth-of-type(1) {
+  flex: 1 1 190px !important;
+  min-width: 0;
+  max-width: none !important;
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  overflow-wrap: anywhere;
+  line-height: 1.25;
+}
+
 .autoedit-review-row.ae-duplicate-row {
   background-color: rgba(168, 85, 247, 0.16) !important;
   border-left: 5px solid #a855f7 !important;

@@ -759,6 +759,44 @@ function recoverSmallBoundaryGaps(plans, scriptWords, leadPad, tailPad) {
     return recoveries;
 }
 
+/**
+ * Consecutive source clips can both contain a little of the sentence at their
+ * shared boundary (ASR commonly hears the next sentence at the tail of the
+ * previous clip).  Keep that boundary text with the later clip, rather than
+ * exporting it twice.  This intentionally does not touch a true full duplicate
+ * clip: those two plans begin at the same script position and remain reviewable.
+ */
+function trimOverlappingBoundaryReadings(plans, scriptWords, leadPad, tailPad) {
+    const trimmed = [];
+    const ordered = (plans || []).filter(plan => plan?.scriptWordStart >= 0 && plan?.scriptWordEnd >= plan.scriptWordStart)
+        .slice().sort((a, b) => a.sourceIndex - b.sourceIndex);
+    for (let index = 0; index < ordered.length - 1; index++) {
+        const previous = ordered[index];
+        const next = ordered[index + 1];
+        const overlapStart = Math.max(previous.scriptWordStart, next.scriptWordStart);
+        const overlapEnd = Math.min(previous.scriptWordEnd, next.scriptWordEnd);
+        // Only trim a tail duplicated by the immediately following source clip.
+        if (overlapStart !== next.scriptWordStart || overlapEnd !== previous.scriptWordEnd
+            || previous.scriptWordStart >= next.scriptWordStart
+            || !Array.isArray(previous.matchedWordsArray) || previous.matchedWordsArray.length === 0) continue;
+        const firstRepeated = previous.matchedWordsArray
+            .filter(pair => pair.scriptWordIdx >= overlapStart)
+            .sort((a, b) => a.clipWordIdx - b.clipWordIdx)[0];
+        const lastKept = previous.matchedWordsArray
+            .filter(pair => pair.scriptWordIdx < overlapStart)
+            .sort((a, b) => b.clipWordIdx - a.clipWordIdx)[0];
+        if (!firstRepeated || !lastKept || lastKept.clipWordIdx < previous.wordStartIdx) continue;
+
+        previous.scriptWordEnd = overlapStart - 1;
+        previous.wordEndIdx = lastKept.clipWordIdx;
+        previous.matchedWordsArray = previous.matchedWordsArray.filter(pair => pair.scriptWordIdx < overlapStart);
+        const srtRange = getManualSrtCutRange(previous.words, previous.wordStartIdx, previous.wordEndIdx, previous.duration);
+        previous.end = srtRange ? srtRange.end : Math.min(previous.duration || Infinity, previous.words[previous.wordEndIdx].end + tailPad);
+        trimmed.push({ previous: previous.sourceIndex, next: next.sourceIndex, wordCount: overlapEnd - overlapStart + 1 });
+    }
+    return trimmed;
+}
+
 function srtAssPath(p) {
     return String(p).replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\'");
 }
@@ -1230,17 +1268,18 @@ function generateVisualDiffMarkdown(scriptText, transcriptionText) {
 }
 
 async function autoEditByScript(opts = {}) {
-    // 导出审核时间线时，真正的权威来源是审核条目里的 source。
-    // 手动补充片段或“已选素材”路径可能不在旧的 clips 数组中；若不先合并，
-    // 后续会出现“明明选了文件却无法定位”的错误。
+    // 重新分析的权威来源必须是当前 clips 列表。旧审核快照里可能仍残留
+    // 已替换、已删除或已排除片段；若每次都把它们合并回来，会凭空多出
+    // 一个“第 33/33 个片段”并可能卡在过期素材上。只有调用方明确要求时，
+    // 才允许审核快照补充 source（常规批量导出已在前端先合并当前 clips）。
     const reviewSnapshot = Array.isArray(opts.reviewSegments || opts.review_segments)
         ? (opts.reviewSegments || opts.review_segments) : [];
     const clips = (opts.clips || []).filter(p => p && fs.existsSync(p));
     const seenClipPaths = new Set(clips.map(p => path.resolve(p).normalize('NFC')));
-    for (const review of reviewSnapshot) {
+    for (const review of (opts.mergeReviewSources === true ? reviewSnapshot : [])) {
         const source = String(review?.source || '');
         const key = source ? path.resolve(source).normalize('NFC') : '';
-        if (source && key && fs.existsSync(source) && !seenClipPaths.has(key)) {
+        if (review?.enabled !== false && source && key && fs.existsSync(source) && !seenClipPaths.has(key)) {
             clips.push(source);
             seenClipPaths.add(key);
         }
@@ -1740,12 +1779,22 @@ async function autoEditByScript(opts = {}) {
                         let globalEnd = -1;
 
                         const candidates = [];
+                        let fullyOwnedCandidateFound = false;
                         const pushCandidate = (candidate, offset, source, minAcceptScore, orderBonus = 0) => {
                             if (!candidate || candidate.score < minAcceptScore) return;
                             const start = offset + candidate.startIdx;
                             const end = offset + candidate.endIdx;
                             const length = Math.max(1, end - start + 1);
                             const overlap = overlapWithUsedRanges(start, end);
+                            const owningRange = usedScriptRanges.find(range => start >= range.start && end <= range.end);
+                            // 文案已经被前一片段完整占用时，后面的同句朗读是重复，
+                            // 不是第二次分配。保留重复来源给审核页标记，但绝不能再
+                            // 把相同字幕写进后一段。
+                            if (owningRange && overlap / length >= 0.999) {
+                                duplicateOfSourceIndex = Number.isInteger(owningRange.sourceIndex) ? owningRange.sourceIndex : duplicateOfSourceIndex;
+                                fullyOwnedCandidateFound = true;
+                                return;
+                            }
                             const overlapPenalty = Math.min(0.22, (overlap / length) * 0.22);
                             const rangeAdjustedScore = Number.isFinite(candidate.adjustedScore)
                                 ? candidate.adjustedScore
@@ -1759,20 +1808,23 @@ async function autoEditByScript(opts = {}) {
                             });
                         };
 
-                        // “已使用”只能作为轻微的消歧因素，不能从候选中排除。否则一段
-                        // 100% 重复朗读会被迫匹配到一条只有 30%～40% 的无关文案。
+                        // 低相似度绝不能“凑一个位置”。此前这里为了容忍 ASR 差异，
+                        // 把 25%～28% 的候选也放进比较；结果会让诸如 37% 的片段占用
+                        // 完全无关的文案，并把真正的精确句子反标成遗漏。低于可靠阈值
+                        // 的片段宁可留作未匹配，交给审核，不得分配到任何文案行。
+                        const reliableMatchScore = Math.max(0.60, minScore * 0.95);
                         const globalMatch = filteredScriptWords.length
-                            ? findBestWordWindow(filteredScriptWords, clipText, minScore * 0.45)
+                            ? findBestWordWindow(filteredScriptWords, clipText, reliableMatchScore)
                             : null;
-                        pushCandidate(globalMatch, 0, 'global', 0.25, 0);
+                        pushCandidate(globalMatch, 0, 'global', reliableMatchScore, 0);
 
                         const searchSlice = filteredScriptWords.slice(scriptCursor);
                         const cursorMatch = searchSlice.length
-                            ? findBestWordWindow(searchSlice, clipText, minScore * 0.50)
+                            ? findBestWordWindow(searchSlice, clipText, reliableMatchScore)
                             : null;
-                        pushCandidate(cursorMatch, scriptCursor, 'cursor', 0.28, 0.025);
+                        pushCandidate(cursorMatch, scriptCursor, 'cursor', reliableMatchScore, 0.025);
 
-                        if (candidates.length > 0) {
+                        if (!fullyOwnedCandidateFound && candidates.length > 0) {
                             candidates.sort((a, b) => {
                                 if (Math.abs(b.adjustedScore - a.adjustedScore) > 0.001) {
                                     return b.adjustedScore - a.adjustedScore;
@@ -1786,7 +1838,7 @@ async function autoEditByScript(opts = {}) {
                             match = best.match;
                             globalStart = best.globalStart;
                             globalEnd = best.globalEnd;
-                            usedScriptRanges.push({ start: globalStart, end: globalEnd });
+                            usedScriptRanges.push({ start: globalStart, end: globalEnd, sourceIndex: i });
                             if (globalEnd >= scriptCursor) {
                                 scriptCursor = globalEnd + 1;
                             }
@@ -1907,6 +1959,10 @@ async function autoEditByScript(opts = {}) {
         }
 
         if (workflowMode !== 'concat_first') {
+            const trimmedBoundaries = trimOverlappingBoundaryReadings(plans, scriptWords, leadPad, tailPad);
+            for (const trim of trimmedBoundaries) {
+                console.log(`[自动剪辑] 已移除片段 #${trim.previous + 1} 与 #${trim.next + 1} 的 ${trim.wordCount} 个边界重复词，归到后一片段`);
+            }
             const recoveredGaps = recoverSmallBoundaryGaps(plans, scriptWords, leadPad, tailPad);
             for (const recovery of recoveredGaps) {
                 console.log(`[自动剪辑] 已恢复边界漏词“${recovery.target}”，归到${recovery.side === 'previous' ? '上一段' : '下一段'} #${recovery.sourceIndex + 1}`);
@@ -3425,5 +3481,5 @@ module.exports = {
     findBestWordWindow,
     findBestScriptWindowForClip,
     computeAutoEditTransitionSec,
-    _test: { scoreCandidate, scoreWordCandidate, transcribeClip, recoverSmallBoundaryGaps, hasSentenceEndingPunctuation, findRepeatedScriptBlockStarts, findFuzzyBoundaryOverlap, normalizeAutoEditSpeed },
+    _test: { scoreCandidate, scoreWordCandidate, transcribeClip, recoverSmallBoundaryGaps, trimOverlappingBoundaryReadings, hasSentenceEndingPunctuation, findRepeatedScriptBlockStarts, findFuzzyBoundaryOverlap, normalizeAutoEditSpeed },
 };

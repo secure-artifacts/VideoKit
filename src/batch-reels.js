@@ -6783,6 +6783,14 @@ async function reelsCreateTaskFromAutoEditResult(autoEditResult = {}, opts = {})
     task.aligned = true;
     task.alignSource = 'auto_edit';
     task._autoEditSource = true;
+    // 自动剪辑送入 Reels 的成片就是唯一画面源。即使空任务构造器以后带上
+    // 模板默认值，也不能让旧的内容视频/插入素材在导出时再叠一层画面。
+    task.contentVideoPath = '';
+    task.contentVideoDirectBg = false;
+    task.contentVideoBlurBg = false;
+    task.insertClips = [];
+    task.overlays = [];
+    task.visualOverlayOrder = [];
 
     if (typeof _setTaskSingleBackground === 'function') {
         _setTaskSingleBackground(task, videoPath, { clearBgSrcUrl: true });
@@ -7987,7 +7995,8 @@ function _renderTaskList() {
         // 用户对最终文件名的认知；没有自定义名称时才回退到默认文件名。
         const displayName = String(task.exportName || task.fileName || task.baseName || '未命名任务');
         const baseName = displayName.replace(/\.[^.]+$/, '');
-        const shortName = baseName.length > 18 ? baseName.substring(0, 16) + '…' : baseName;
+        // 左侧列表用于人工找任务，不能只显示十几个字符；允许它换行显示全名。
+        const shortName = baseName;
         const escapeTaskText = (value) => String(value || '')
             .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;').replace(/'/g, '&#39;');

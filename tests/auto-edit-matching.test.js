@@ -26,6 +26,18 @@ test('word score tolerates a missing filler word', () => {
     assert.ok(score > 0.75, `expected a useful match, got ${score}`);
 });
 
+test('unrelated low-score clip text is left unmatched instead of occupying a script line', () => {
+    const script = 'God message me through the WhatsApp number on the screen'.split(' ')
+        .map(raw => ({ raw, norm: autoEdit.normalizeText(raw) }));
+    assert.equal(autoEdit.findBestWordWindow(script, 'May God bless you', 0.60), null);
+    const exact = autoEdit.findBestWordWindow(
+        'God message me through the WhatsApp number on the screen May God bless you'.split(' ').map(raw => ({ raw, norm: autoEdit.normalizeText(raw) })),
+        'May God bless you',
+        0.60
+    );
+    assert.equal(exact?.score, 1);
+});
+
 test('distinctive keywords separate the correct candidate', () => {
     const correct = autoEdit._test.scoreWordCandidate(['videokit', '2026', 'berlin'], ['videokit', '2026', 'berlin']);
     const wrong = autoEdit._test.scoreWordCandidate(['another', 'generic', 'sentence'], ['videokit', '2026', 'berlin']);
@@ -171,4 +183,23 @@ test('boundary recovery does not absorb a gap that is not present beside the cut
         { sourceIndex: 1, scriptWordStart: 2, scriptWordEnd: 2, wordStartIdx: 0, wordEndIdx: 0, duration: 2, matchedWordsArray: [], words: [{ raw: 'two', norm: 'two', start: 0, end: .4 }] },
     ];
     assert.equal(autoEdit._test.recoverSmallBoundaryGaps(plans, scriptWords, .04, .08).length, 0);
+});
+
+test('a repeated next sentence at a clip boundary is kept only by the later clip', () => {
+    const scriptWords = ['three', 'how', 'can', 'we', 'discern', 'four', 'how', 'can', 'we', 'prepare'].map((raw, wordIndex) => ({ raw, norm: raw, wordIndex, lineIndex: 0 }));
+    const previous = {
+        sourceIndex: 0, scriptWordStart: 0, scriptWordEnd: 9, wordStartIdx: 0, wordEndIdx: 9, duration: 8, end: 7.8,
+        matchedWordsArray: scriptWords.map((word, clipWordIdx) => ({ scriptWordIdx: word.wordIndex, clipWordIdx })),
+        words: scriptWords.map((word, index) => ({ raw: word.raw, norm: word.norm, start: index * .6, end: index * .6 + .45 })),
+    };
+    const next = {
+        sourceIndex: 1, scriptWordStart: 5, scriptWordEnd: 9, wordStartIdx: 0, wordEndIdx: 4, duration: 4, end: 3.2,
+        matchedWordsArray: scriptWords.slice(5).map((word, clipWordIdx) => ({ scriptWordIdx: word.wordIndex, clipWordIdx })),
+        words: scriptWords.slice(5).map((word, index) => ({ raw: word.raw, norm: word.norm, start: index * .6, end: index * .6 + .45 })),
+    };
+    const trimmed = autoEdit._test.trimOverlappingBoundaryReadings([previous, next], scriptWords, .04, .08);
+    assert.equal(trimmed.length, 1);
+    assert.equal(previous.scriptWordEnd, 4);
+    assert.equal(previous.wordEndIdx, 4);
+    assert.equal(previous.matchedWordsArray.some(pair => pair.scriptWordIdx >= 5), false);
 });
