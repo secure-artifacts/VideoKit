@@ -199,6 +199,12 @@ test('a repeated next sentence at a clip boundary is kept only by the later clip
     };
     const trimmed = autoEdit._test.trimOverlappingBoundaryReadings([previous, next], scriptWords, .04, .08);
     assert.equal(trimmed.length, 1);
+    assert.equal(trimmed[0].id, 'boundary-1-2-5-9');
+    assert.equal(trimmed[0].previous_source_index, 1);
+    assert.equal(trimmed[0].next_source_index, 2);
+    assert.equal(trimmed[0].text, 'four how can we prepare');
+    assert.equal(trimmed[0].assignment, 'next');
+    assert.equal(trimmed[0].confirmed, false);
     assert.equal(previous.scriptWordEnd, 4);
     assert.equal(previous.wordEndIdx, 4);
     assert.equal(previous.matchedWordsArray.some(pair => pair.scriptWordIdx >= 5), false);

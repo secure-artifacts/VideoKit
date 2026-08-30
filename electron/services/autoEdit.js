@@ -787,12 +787,28 @@ function trimOverlappingBoundaryReadings(plans, scriptWords, leadPad, tailPad) {
             .sort((a, b) => b.clipWordIdx - a.clipWordIdx)[0];
         if (!firstRepeated || !lastKept || lastKept.clipWordIdx < previous.wordStartIdx) continue;
 
+        const previousEndBeforeTrim = previous.end;
         previous.scriptWordEnd = overlapStart - 1;
         previous.wordEndIdx = lastKept.clipWordIdx;
         previous.matchedWordsArray = previous.matchedWordsArray.filter(pair => pair.scriptWordIdx < overlapStart);
         const srtRange = getManualSrtCutRange(previous.words, previous.wordStartIdx, previous.wordEndIdx, previous.duration);
         previous.end = srtRange ? srtRange.end : Math.min(previous.duration || Infinity, previous.words[previous.wordEndIdx].end + tailPad);
-        trimmed.push({ previous: previous.sourceIndex, next: next.sourceIndex, wordCount: overlapEnd - overlapStart + 1 });
+        trimmed.push({
+            id: `boundary-${previous.sourceIndex + 1}-${next.sourceIndex + 1}-${overlapStart}-${overlapEnd}`,
+            previous: previous.sourceIndex,
+            next: next.sourceIndex,
+            previous_source_index: previous.sourceIndex + 1,
+            next_source_index: next.sourceIndex + 1,
+            script_word_start: overlapStart,
+            script_word_end: overlapEnd,
+            text: scriptWords.slice(overlapStart, overlapEnd + 1).map(word => word.raw).join(' '),
+            word_count: overlapEnd - overlapStart + 1,
+            wordCount: overlapEnd - overlapStart + 1,
+            assignment: 'next',
+            confirmed: false,
+            previous_end_before_trim: previousEndBeforeTrim,
+            previous_end_after_trim: previous.end,
+        });
     }
     return trimmed;
 }
@@ -1756,14 +1772,15 @@ async function autoEditByScript(opts = {}) {
                             })
                             : null;
 
-                        // 仅在没有可重新评分的文案时才继承旧匹配。正常情况下始终重新做
-                        // 全局相似度匹配，避免前一个片段的错误结果被后一个重复片段继承。
+                        // 即使两个片段高度相似，只要还有未分配的文案，后一个仍
+                        // 必须走正常匹配。只有整篇文案已经分配完，才归为重复并
+                        // 展示同一文案区间给人工确认。
                         if (duplicatePlan && duplicatePlan.scriptWordStart !== -1 && filteredScriptWords.length === 0) {
+                            duplicateOfSourceIndex = duplicatePlan.sourceIndex;
                             scriptWordStart = duplicatePlan.scriptWordStart;
                             scriptWordEnd = duplicatePlan.scriptWordEnd;
                             matchedText = duplicatePlan.matchedText;
                             matchScore = duplicatePlan.matchScore;
-                            duplicateOfSourceIndex = duplicatePlan.sourceIndex;
                             const clipWindow = findBestWordWindow(words, duplicatePlan.matchedText, minScore * 0.4);
                             wordStartIdx = clipWindow?.startIdx ?? 0;
                             wordEndIdx = clipWindow?.endIdx ?? (words.length - 1);
@@ -1779,22 +1796,12 @@ async function autoEditByScript(opts = {}) {
                         let globalEnd = -1;
 
                         const candidates = [];
-                        let fullyOwnedCandidateFound = false;
                         const pushCandidate = (candidate, offset, source, minAcceptScore, orderBonus = 0) => {
                             if (!candidate || candidate.score < minAcceptScore) return;
                             const start = offset + candidate.startIdx;
                             const end = offset + candidate.endIdx;
                             const length = Math.max(1, end - start + 1);
                             const overlap = overlapWithUsedRanges(start, end);
-                            const owningRange = usedScriptRanges.find(range => start >= range.start && end <= range.end);
-                            // 文案已经被前一片段完整占用时，后面的同句朗读是重复，
-                            // 不是第二次分配。保留重复来源给审核页标记，但绝不能再
-                            // 把相同字幕写进后一段。
-                            if (owningRange && overlap / length >= 0.999) {
-                                duplicateOfSourceIndex = Number.isInteger(owningRange.sourceIndex) ? owningRange.sourceIndex : duplicateOfSourceIndex;
-                                fullyOwnedCandidateFound = true;
-                                return;
-                            }
                             const overlapPenalty = Math.min(0.22, (overlap / length) * 0.22);
                             const rangeAdjustedScore = Number.isFinite(candidate.adjustedScore)
                                 ? candidate.adjustedScore
@@ -1824,7 +1831,7 @@ async function autoEditByScript(opts = {}) {
                             : null;
                         pushCandidate(cursorMatch, scriptCursor, 'cursor', reliableMatchScore, 0.025);
 
-                        if (!fullyOwnedCandidateFound && candidates.length > 0) {
+                        if (candidates.length > 0) {
                             candidates.sort((a, b) => {
                                 if (Math.abs(b.adjustedScore - a.adjustedScore) > 0.001) {
                                     return b.adjustedScore - a.adjustedScore;
@@ -1838,7 +1845,7 @@ async function autoEditByScript(opts = {}) {
                             match = best.match;
                             globalStart = best.globalStart;
                             globalEnd = best.globalEnd;
-                            usedScriptRanges.push({ start: globalStart, end: globalEnd, sourceIndex: i });
+                            usedScriptRanges.push({ start: globalStart, end: globalEnd });
                             if (globalEnd >= scriptCursor) {
                                 scriptCursor = globalEnd + 1;
                             }
@@ -1958,9 +1965,10 @@ async function autoEditByScript(opts = {}) {
             });
         }
 
+        let boundaryOverlaps = [];
         if (workflowMode !== 'concat_first') {
-            const trimmedBoundaries = trimOverlappingBoundaryReadings(plans, scriptWords, leadPad, tailPad);
-            for (const trim of trimmedBoundaries) {
+            boundaryOverlaps = trimOverlappingBoundaryReadings(plans, scriptWords, leadPad, tailPad);
+            for (const trim of boundaryOverlaps) {
                 console.log(`[自动剪辑] 已移除片段 #${trim.previous + 1} 与 #${trim.next + 1} 的 ${trim.wordCount} 个边界重复词，归到后一片段`);
             }
             const recoveredGaps = recoverSmallBoundaryGaps(plans, scriptWords, leadPad, tailPad);
@@ -2711,9 +2719,13 @@ async function autoEditByScript(opts = {}) {
                 const baseStatus = v2Segment
                     ? v2Segment.status
                     : (transcriptionFailed || recognitionEmpty ? 'error' : (scriptUnmatched || info.isMismatch ? 'warning' : 'ready'));
-                const segmentStatus = baseStatus === 'error'
+                // 重复视频必须作为待确认问题返回审核页，而不是静默处理后被
+                // 汇总成“全部通过”。是否排除由用户在审核页明确选择。
+                const segmentStatus = isDuplicateClip
+                    ? 'warning'
+                    : (baseStatus === 'error'
                     ? 'error'
-                    : (baseStatus === 'warning' || hasDuplicateScript || isDuplicateClip ? 'warning' : 'ready');
+                    : (baseStatus === 'warning' || hasDuplicateScript ? 'warning' : 'ready'));
                 return {
                     segment_id: plan.planId || `clip-${plan.sourceIndex}`,
                     index: index + 1,
@@ -2735,6 +2747,10 @@ async function autoEditByScript(opts = {}) {
                         : (hasDuplicateScript ? `整段文案从第 ${duplicateScriptLines.join('、')} 行开始重复；片段 #${plan.sourceIndex + 1} 的匹配位置有歧义（不是视频重复）` : ''),
                     duplicate_script_lines: duplicateScriptLines,
                     duplicate_of_source_index: isDuplicateClip ? plan.duplicateOfSourceIndex + 1 : null,
+                    duplicate_status: isDuplicateClip ? 'pending_confirmation' : null,
+                    // 与旧审核规则一致：重复项保持可见、可试听、由用户确认处理。
+                    // 不在后台擅自取消勾选或删除文案；审核页会把同文案两项并排成组。
+                    enabled: true,
                     start: plan.start,
                     end: plan.end,
                     cut_timing_source: getManualSrtCutRange(plan.words, plan.wordStartIdx, plan.wordEndIdx, plan.duration) ? 'srt_timecode' : 'word_timing',
@@ -2758,6 +2774,68 @@ async function autoEditByScript(opts = {}) {
                     })),
                 };
             });
+            // 重复组关系必须与当前可编辑文案解耦。用户把边界词迁移到
+            // 保留片段后，两段文字不再完全相同，但仍然属于同一组。分析时固化
+            // 组 ID 和成员，审核页重开后也能继续正确处理。
+            const duplicateParents = analysisSegments.map((_, index) => index);
+            const findDuplicateRoot = index => {
+                while (duplicateParents[index] !== index) {
+                    duplicateParents[index] = duplicateParents[duplicateParents[index]];
+                    index = duplicateParents[index];
+                }
+                return index;
+            };
+            const unionDuplicateRows = (left, right) => {
+                const leftRoot = findDuplicateRoot(left);
+                const rightRoot = findDuplicateRoot(right);
+                if (leftRoot !== rightRoot) duplicateParents[rightRoot] = leftRoot;
+            };
+            const rowsBySourceIndex = new Map(analysisSegments.map((segment, index) => [Number(segment.source_index), index]));
+            const rowsByScript = new Map();
+            analysisSegments.forEach((segment, index) => {
+                const scriptKey = normalizeText(segment.script || '');
+                if (scriptKey) {
+                    if (rowsByScript.has(scriptKey)) unionDuplicateRows(rowsByScript.get(scriptKey), index);
+                    else rowsByScript.set(scriptKey, index);
+                }
+                const duplicateSourceIndex = Number(segment.duplicate_of_source_index);
+                if (duplicateSourceIndex > 0 && rowsBySourceIndex.has(duplicateSourceIndex)) {
+                    unionDuplicateRows(rowsBySourceIndex.get(duplicateSourceIndex), index);
+                }
+            });
+            // 整段视频重复以识别全文为主。分配后的目标文案可能因边界词
+            // （如 Third）不再完全相同，但识别全文高度相似时仍必须进入同一组。
+            // 0.92 与原有 duplicatePlan 阈值一致；短于 12 个归一化字符不做整段判定。
+            for (let left = 0; left < analysisSegments.length; left++) {
+                const leftText = normalizeText(analysisSegments[left].recognized_text || '');
+                if (leftText.length < 12) continue;
+                for (let right = left + 1; right < analysisSegments.length; right++) {
+                    const rightText = normalizeText(analysisSegments[right].recognized_text || '');
+                    if (rightText.length < 12 || scoreCandidate(leftText, rightText) < 0.92) continue;
+                    unionDuplicateRows(left, right);
+                }
+            }
+            const duplicateComponents = new Map();
+            analysisSegments.forEach((segment, index) => {
+                const root = findDuplicateRoot(index);
+                if (!duplicateComponents.has(root)) duplicateComponents.set(root, []);
+                duplicateComponents.get(root).push(segment);
+            });
+            duplicateComponents.forEach(members => {
+                if (members.length < 2) return;
+                const sourceIndices = members.map(member => Number(member.source_index)).filter(Number.isFinite).sort((a, b) => a - b);
+                const groupId = `duplicate-${sourceIndices.join('-')}`;
+                members.forEach(member => {
+                    member.duplicate_group_id = groupId;
+                    member.duplicate_group_source_indices = sourceIndices;
+                    member.duplicate_status = member.duplicate_status || 'pending_confirmation';
+                    if (member.status === 'ready') member.status = 'warning';
+                    const groupReason = `与同组片段 ${sourceIndices.filter(index => index !== Number(member.source_index)).map(index => `#${index}`).join('、')} 朗读内容高度相似`;
+                    if (!String(member.issue_reason || '').includes('朗读内容高度相似')) {
+                        member.issue_reason = [member.issue_reason, groupReason].filter(Boolean).join('；');
+                    }
+                });
+            });
             const analysisSummary = {
                 total: analysisSegments.length,
                 ready: analysisSegments.filter(segment => segment.status === 'ready').length,
@@ -2775,6 +2853,7 @@ async function autoEditByScript(opts = {}) {
                 script_text: lines.join('\n'),
                 output_settings: { width: targetWidth, height: targetHeight, fps, source: 'first_clip', fit_mode: fitMode },
                 missing_blocks: missingBlocksInfo,
+                boundary_overlaps: boundaryOverlaps,
                 segments: analysisSegments,
                 match_summary: analysisSummary,
             };
@@ -2791,6 +2870,7 @@ async function autoEditByScript(opts = {}) {
                 project_path: projectPath,
                 output_settings: { width: targetWidth, height: targetHeight, fps, source: 'first_clip', fit_mode: fitMode },
                 missing_blocks: missingBlocksInfo,
+                boundary_overlaps: boundaryOverlaps,
                 segments: analysisSegments,
                 match_summary: analysisSummary,
             };
