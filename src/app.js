@@ -173,6 +173,14 @@ function showToast(message, type = 'info', duration = 4000) {
 
 // 初始化
 document.addEventListener('DOMContentLoaded', () => {
+    try {
+        const saved = JSON.parse(localStorage.getItem('videokit_autoedit_batch_review') || 'null');
+        if (saved?.tasks?.length && !autoEditBatchTasks.length) {
+            autoEditBatchTasks = saved.tasks;
+            autoEditBatchScriptCells = saved.scripts || [];
+            autoEditBatchUnmatchedScripts = saved.unmatched || [];
+        }
+    } catch (_) {}
     initTabs();
     initSubTabs();
     initMediaSidebar();
@@ -3642,7 +3650,10 @@ function showSubtitleRetryAllButton() {
 // 重试单个任务
 async function retrySingleSubtitleTask(index) {
     const task = subtitleBatchTasks[index];
-    if (!task) return;
+    if (!task) {
+        if (resolvedMissingCount > 0) requestAnimationFrame(refreshAutoEditReviewAfterMissingResolution);
+        return;
+    }
 
     const items = document.querySelectorAll('.subtitle-batch-item');
     const item = items[index];
@@ -12672,6 +12683,7 @@ let autoEditBatchUnmatchedScripts = [];
 let autoEditBatchSmartPairingComplete = false;
 let autoEditActiveBatchIndex = -1;
 let autoEditBatchRunning = false;
+const autoEditActiveRequestIds = new Set();
 let autoEditBatchInputTimer = null;
 let autoEditBatchDragIndex = -1;
 
@@ -12705,6 +12717,7 @@ function applyAutoEditBatchOutputNames(value) {
 
 function updateAutoEditBatchOutputName(index, value) {
     const task = autoEditBatchTasks[index];
+    try { localStorage.setItem('videokit_autoedit_batch_review', JSON.stringify({ tasks: autoEditBatchTasks, scripts: autoEditBatchScriptCells, unmatched: autoEditBatchUnmatchedScripts })); } catch (_) {}
     if (!task) return;
     task.outputName = sanitizeAutoEditBatchOutputName(value, task.name || `task_${index + 1}`);
     syncAutoEditBatchParallelLists();
@@ -12745,8 +12758,22 @@ function setAutoEditBatchRunning(running) {
         const button = document.getElementById(id);
         if (button) button.disabled = autoEditBatchRunning;
     }
+    const stopButton = document.getElementById('autoedit-batch-stop-btn');
+    if (stopButton) stopButton.disabled = !autoEditBatchRunning || autoEditActiveRequestIds.size === 0;
     if (document.getElementById('autoedit-batch-task-list')) renderAutoEditBatchTasks();
 }
+
+async function cancelAutoEditRunningTasks() {
+    const requestIds = [...autoEditActiveRequestIds];
+    if (!requestIds.length) return showToast('当前没有可停止的自动剪辑任务', 'info');
+    requestIds.forEach(requestId => window.electronAPI?.apiCall?.('media/auto-edit-cancel', { request_id: requestId }).catch(() => {}));
+    const singleStopButton = document.getElementById('autoedit-stop-btn');
+    const batchStopButton = document.getElementById('autoedit-batch-stop-btn');
+    if (singleStopButton) { singleStopButton.disabled = true; singleStopButton.textContent = '⏳ 正在停止…'; }
+    if (batchStopButton) { batchStopButton.disabled = true; batchStopButton.textContent = '⏳ 正在停止…'; }
+    showToast(`已发送停止指令：${requestIds.length} 个任务将在当前步骤安全终止`, 'warning');
+}
+window.cancelAutoEditRunningTasks = cancelAutoEditRunningTasks;
 
 function getAutoEditRequestSettings() {
     const customOutput = document.getElementById('autoedit-output-mode')?.value === 'custom';
@@ -12780,6 +12807,30 @@ function getAutoEditRequestSettings() {
         fps: customOutput ? parseFloat(document.getElementById('autoedit-target-fps')?.value || '0') || undefined : undefined,
         fit_mode: document.getElementById('autoedit-fit-mode')?.value || 'cover'
     };
+}
+
+function restoreAutoEditReviewSettings(settings = {}) {
+    // v1 项目只保存 output_settings.width/height；统一成当前设置字段。
+    settings = {
+        ...settings,
+        target_width: settings.target_width ?? settings.width,
+        target_height: settings.target_height ?? settings.height,
+    };
+    const valueFields = {
+        language: 'autoedit-language', matching_engine: 'autoedit-matching-engine', match_mode: 'autoedit-match-mode', workflow_mode: 'autoedit-workflow-mode',
+        transition_type: 'autoedit-transition-type', transition_duration: 'autoedit-transition-duration', lead_pad: 'autoedit-lead-pad', tail_pad: 'autoedit-tail-pad',
+        min_score: 'autoedit-min-score', audience_response_keywords: 'autoedit-audience-response-keywords', voice_changer_voice_id: 'autoedit-voicechanger-voice',
+        manual_audio_path: 'autoedit-manual-audio-path', fit_mode: 'autoedit-fit-mode'
+    };
+    Object.entries(valueFields).forEach(([key, id]) => { const el = document.getElementById(id); if (el && settings[key] !== undefined) el.value = String(settings[key]); });
+    const checkFields = { keep_audience_responses:'autoedit-keep-audience-response', burn_subtitles:'autoedit-burn-subtitles', export_mp3:'autoedit-export-mp3', voice_changer_enabled:'autoedit-voicechanger-enabled', voice_changer_replace_audio:'autoedit-voicechanger-replace', voice_changer_remove_noise:'autoedit-voicechanger-noise' };
+    Object.entries(checkFields).forEach(([key, id]) => { const el = document.getElementById(id); if (el && settings[key] !== undefined) el.checked = Boolean(settings[key]); });
+    if (settings.target_width && settings.target_height) {
+        const mode = document.getElementById('autoedit-output-mode'); if (mode) mode.value = 'custom';
+        const width = document.getElementById('autoedit-target-width'), height = document.getElementById('autoedit-target-height'), fps = document.getElementById('autoedit-target-fps');
+        if (width) width.value = String(settings.target_width); if (height) height.value = String(settings.target_height); if (fps && settings.fps) fps.value = String(settings.fps);
+    }
+    updateAutoEditMatchingEngineHint();
 }
 
 function setAutoEditMode(mode, preserveBatchContext = false) {
@@ -12870,6 +12921,23 @@ async function scanAutoEditBatchFolderRecursive(folder) {
     return files;
 }
 
+// 自动剪辑的输出文件可能位于用户选中的素材根目录或其子目录中。它们不是原始
+// 素材，若再次送入分析会导致片段数虚高，并可能把上次的成片递归当成新片段处理。
+function isAutoEditGeneratedVideo(entry) {
+    const fileName = String(entry?.name || '').toLocaleLowerCase();
+    const relativePath = String(entry?.relativePath || entry?.path || '').replace(/\\/g, '/').toLocaleLowerCase();
+    if (/(^|\/)_(?:auto_edit|autoedit)(?:\/|$)/.test(relativePath)) return true;
+    // 当前自动剪辑的默认主视频、烧录字幕、换声及手动换声结果均以 auto_edit_ 开头。
+    // 仅匹配带随机 ID 的实际输出，避免误排除用户自命名的普通素材。
+    return /^auto_edit_[a-f0-9]{8}(?:_(?:subtitled|voicechanged|manualaudio))?\.(mp4|mov|mkv|avi|wmv|flv|webm|m4v)$/i.test(fileName);
+}
+
+function filterAutoEditSourceVideos(entries, videoExt) {
+    return (Array.isArray(entries) ? entries : [])
+        .filter(entry => !entry?.isDirectory && videoExt.test(entry?.name || '') && !isAutoEditGeneratedVideo(entry))
+        .sort((a, b) => String(a.relativePath || a.name).localeCompare(String(b.relativePath || b.name), undefined, { numeric: true, sensitivity: 'base' }));
+}
+
 async function loadAutoEditBatchFolders(dirs, { replace = false } = {}) {
     const videoExt = /\.(mp4|mov|mkv|avi|wmv|flv|webm|m4v)$/i;
     const sourceScripts = autoEditBatchScriptCells.slice();
@@ -12892,9 +12960,7 @@ async function loadAutoEditBatchFolders(dirs, { replace = false } = {}) {
         const folderKey = String(folder).toLocaleLowerCase();
         if (existingFolders.has(folderKey)) continue;
         const entries = await scanAutoEditBatchFolderRecursive(folder);
-        const clips = entries.filter(x => !x.isDirectory && videoExt.test(x.name))
-            .sort((a, b) => String(a.relativePath || a.name).localeCompare(String(b.relativePath || b.name), undefined, { numeric: true, sensitivity: 'base' }))
-            .map(x => x.path);
+        const clips = filterAutoEditSourceVideos(entries, videoExt).map(x => x.path);
         const index = autoEditBatchTasks.length;
         const script = sourceScripts[index] || '';
         const name = window.electronAPI.pathBasename(folder);
@@ -13065,12 +13131,15 @@ function setAutoEditBatchTaskScript(task, value) {
 function getAutoEditBatchMatchSummary(data) {
     const segments = Array.isArray(data?.segments) ? data.segments : [];
     const supplied = data?.match_summary || {};
-    const count = status => segments.filter(segment => segment?.status === status).length;
+    const count = status => segments.filter(segment => segment?.status === status && segment?.review_acknowledged !== true).length;
+    const handled = segments.filter(segment => segment?.enabled !== false && segment?.review_acknowledged === true
+        && (segment?.status === 'warning' || segment?.status === 'error' || Number(segment?.similarity) < 75)).length;
     return {
         total: Number.isFinite(Number(supplied.total)) ? Number(supplied.total) : segments.length,
-        ready: Number.isFinite(Number(supplied.ready)) ? Number(supplied.ready) : count('ready'),
-        warning: Number.isFinite(Number(supplied.warning)) ? Number(supplied.warning) : count('warning'),
-        error: Number.isFinite(Number(supplied.error)) ? Number(supplied.error) : count('error'),
+        ready: segments.length ? count('ready') : (Number(supplied.ready) || 0),
+        warning: segments.length ? count('warning') : (Number(supplied.warning) || 0),
+        error: segments.length ? count('error') : (Number(supplied.error) || 0),
+        handled,
         // missing_blocks can be resolved interactively during review. Prefer the
         // live list so a processed placeholder is reflected immediately instead
         // of continuing to show the original backend count.
@@ -13129,7 +13198,7 @@ function renderAutoEditBatchMatchResult(task) {
     }).join('') + missingPlacement.filter(item => !renderedMissing.has(item.index)).map(renderMissingRow).join('');
     return `<details ${hasIssues ? 'open' : ''} style="margin-top:8px;border:1px solid ${hasIssues ? 'rgba(255,159,67,.45)' : 'rgba(81,207,102,.35)'};border-radius:7px;padding:7px;background:rgba(0,0,0,.14);">
         <summary style="cursor:pointer;font-size:12px;color:${hasIssues ? '#ffd8a8' : '#b2f2bb'};">
-            ${engineLabel}匹配结果：${summary.ready}/${summary.total} 通过 · ${summary.warning} 警告 · ${summary.error} 失败${summary.missingBlocks ? ` · ${summary.missingBlocks} 段${isMultilingualV2 ? '待确认文案' : '缺失文案'}` : ''}
+            ${engineLabel}匹配结果：${summary.ready}/${summary.total} 通过 · ${summary.warning} 警告 · ${summary.error} 失败${summary.missingBlocks ? ` · ${summary.missingBlocks} 段${isMultilingualV2 ? '待确认文案' : '缺失文案'}` : ''}${summary.handled ? ` · 已处理 ${summary.handled}（可撤销）` : ''}
         </summary>
         <div style="margin-top:6px;max-height:240px;overflow:auto;">${rows || '<div class="hint">未返回片段匹配明细</div>'}</div>
     </details>`;
@@ -13203,8 +13272,11 @@ function playAutoEditBatchSource(index) {
 }
 
 async function analyzeAutoEditBatchTask(task, settings = task.settings || getAutoEditRequestSettings()) {
+    const savedReviews = Array.isArray(task.reviewSegments) ? task.reviewSegments.map(item => ({ ...item })) : [];
     task.status='analyzing'; task.message='正在分析'; renderAutoEditBatchTasks();
     const requestId=`autoedit-batch-analysis-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    autoEditActiveRequestIds.add(requestId);
+    document.getElementById('autoedit-batch-stop-btn')?.removeAttribute('disabled');
     const unsubscribe=window.electronAPI?.onAutoEditProgress?.(progress=>{
         if(progress?.request_id!==requestId)return;
         task.message=progress.message||'正在分析'; renderAutoEditBatchTasks();
@@ -13213,10 +13285,18 @@ async function analyzeAutoEditBatchTask(task, settings = task.settings || getAut
         task.settings={...settings};
         const response = await apiFetch(`${API_BASE}/media/convert`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ files:task.clips, clips:task.clips, mode:'auto_edit', request_id:requestId, analysis_only:true, script_text:task.script, output_dir:window.electronAPI.pathJoin(task.folder,'_auto_edit'), manual_subtitle_map: task.manualSubtitleMap || {}, ...task.settings }) });
         const data = await response.json(); if (!response.ok) throw new Error(data.error || '分析失败');
-        // A fresh analysis invalidates the previously edited timeline snapshot.
-        // Keeping it would make the review screen overlay stale sources, ASR and
-        // cuts on top of this new result.
-        task.reviewSegments = null;
+        // 重分析刷新识别底稿，但不能清空同路径片段的人工审核结果。
+        // 只覆盖 ASR、匹配证据与状态；人工编辑字段由审核快照保留。
+        const savedBySource = new Map(savedReviews.filter(item => item?.source && item?.manually_modified === true)
+            .map(item => [String(item.source).replace(/\\/g, '/'), item]));
+        if (savedBySource.size) {
+            data.segments = (data.segments || []).map(segment => {
+                const saved = savedBySource.get(String(segment.source || '').replace(/\\/g, '/'));
+                return saved ? { ...segment, ...saved, source: segment.source, recognized_text: segment.recognized_text, word_timeline: segment.word_timeline, status: segment.status, issue_reason: segment.issue_reason } : segment;
+            });
+            task.reviewSegments = data.segments.map(segment => ({ ...segment }));
+            data.review_segments = task.reviewSegments.map(segment => ({ ...segment }));
+        } else task.reviewSegments = null;
         task.result=data;
         const match = getAutoEditBatchMatchSummary(data);
         task.status = match.error > 0 ? 'error' : ((match.warning > 0 || match.missingBlocks > 0) ? 'warning' : 'ready');
@@ -13226,7 +13306,7 @@ async function analyzeAutoEditBatchTask(task, settings = task.settings || getAut
                 ? `${match.ready}/${match.total} 通过 · ${match.warning} 警告${match.missingBlocks ? ` · ${match.missingBlocks} 段缺失` : ''}`
                 : `${match.ready}/${match.total} 全部匹配通过`);
     } catch (e) { task.status='error'; task.message=e.message; }
-    finally { if(typeof unsubscribe==='function')unsubscribe(); }
+    finally { autoEditActiveRequestIds.delete(requestId); if(typeof unsubscribe==='function')unsubscribe(); setAutoEditBatchRunning(autoEditBatchRunning); }
     renderAutoEditBatchTasks();
 }
 
@@ -13425,7 +13505,8 @@ function autoEditBatchExportSignature(task) {
         review: review.map(segment => ({
             source: segment.source, enabled: segment.enabled !== false, script: segment.script,
             start: Number(segment.start), end: Number(segment.end), speed: Number(segment.speed || 1),
-            cut: segment.cut_selection || '', subtitles: segment.manual_subtitles || []
+            cut: segment.cut_selection || '', scale: Number(segment.visual_scale || 100), subtitles: segment.manual_subtitles || [],
+            isHook: segment.is_hook === true
         }))
     });
 }
@@ -13445,6 +13526,8 @@ async function exportAutoEditBatchTask(index, options = {}) {
     if (ownsLock) setAutoEditBatchRunning(true);
     task.status='analyzing'; task.message='正在正式导出'; renderAutoEditBatchTasks();
     const requestId=`autoedit-batch-export-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    autoEditActiveRequestIds.add(requestId);
+    document.getElementById('autoedit-batch-stop-btn')?.removeAttribute('disabled');
     const unsubscribe=window.electronAPI?.onAutoEditProgress?.(progress=>{
         if(progress?.request_id!==requestId)return;
         task.message=progress.message||'正在正式导出'; renderAutoEditBatchTasks();
@@ -13467,6 +13550,7 @@ async function exportAutoEditBatchTask(index, options = {}) {
                 v2_start:Number(seg.v2_start??seg.start),
                 v2_end:Number(seg.v2_end??seg.end),
                 speed:Number(seg.speed)||1,
+                visual_scale:Number(seg.visual_scale)||100,
                 manual_subtitles:Array.isArray(seg.manual_subtitles) ? seg.manual_subtitles : []
             }));
             // 批量任务可能在列表审核中手动补入“已选素材”里的文件。
@@ -13512,6 +13596,7 @@ async function exportAutoEditBatchTask(index, options = {}) {
             }
         }
     } finally {
+        autoEditActiveRequestIds.delete(requestId);
         if(typeof unsubscribe==='function')unsubscribe();
         if(ownsLock)setAutoEditBatchRunning(false);
         renderAutoEditBatchTasks();
@@ -13799,9 +13884,7 @@ async function autoEditHandleDrop(event) {
                 maxDepth: 30,
                 excludedNames: ['审核批次', '_auto_edit', 'backup_clips']
             });
-            const videos = (Array.isArray(entries) ? entries : [])
-                .filter(item => !item?.isDirectory && videoExt.test(item?.name || ''))
-                .sort((a, b) => String(a.relativePath || a.name).localeCompare(String(b.relativePath || b.name), undefined, { numeric: true, sensitivity: 'base' }));
+            const videos = filterAutoEditSourceVideos(entries, videoExt);
             scannedVideos += videos.length;
             added += autoEditAddFiles(videos, { silent: true });
         }
@@ -13829,9 +13912,7 @@ async function refreshAutoEditCurrentFolder() {
             excludedNames: ['审核批次', '_auto_edit', 'backup_clips']
         });
         const videoExt = /\.(mp4|mov|mkv|avi|wmv|flv|webm|m4v)$/i;
-        const videos = (Array.isArray(entries) ? entries : [])
-            .filter(item => !item?.isDirectory && videoExt.test(item?.name || ''))
-            .sort((a, b) => String(a.relativePath || a.name).localeCompare(String(b.relativePath || b.name), undefined, { numeric: true, sensitivity: 'base' }));
+        const videos = filterAutoEditSourceVideos(entries, videoExt);
         const added = autoEditAddFiles(videos, { silent: true });
         showToast(added ? `已刷新当前文件夹，补入 ${added} 个新视频片段` : '当前文件夹已刷新，没有发现新视频片段', 'success');
     } catch (error) {
@@ -15002,6 +15083,17 @@ async function startAutoEditByScript(isRetry = false, options = {}) {
         return;
     }
 
+    // 快速分析会刷新 ASR/匹配底稿；已有审核操作默认不能悄悄被覆盖。
+    const activeReviewTask = autoEditActiveBatchIndex >= 0 ? autoEditBatchTasks[autoEditActiveBatchIndex] : null;
+    const existingReviews = Array.isArray(activeReviewTask?.reviewSegments) && activeReviewTask.reviewSegments.length
+        ? activeReviewTask.reviewSegments
+        : (Array.isArray(autoEditLastResult?.segments) && autoEditLastResult?.analysis_only ? autoEditLastResult.segments : []);
+    if (options.analysisOnly === true && existingReviews.length && options.preserveReviewedResults === undefined && !options.replacementSources) {
+        const keep = confirm('已有人工审核结果。\n\n确定：保留已处理的文案、切点、速度、缩放、字幕和排除状态，并刷新识别/匹配结果。\n取消：用新分析结果覆盖原审核稿。');
+        options = { ...options, preserveReviewedResults: keep };
+    }
+    const reviewsToPreserve = options.preserveReviewedResults === true ? existingReviews.map(item => ({ ...item })) : [];
+
     const scriptText = options.scriptTextOverride ?? document.getElementById('autoedit-script')?.value ?? '';
     const scriptLines = String(scriptText || '')
         .split(/\r?\n/)
@@ -15023,6 +15115,7 @@ async function startAutoEditByScript(isRetry = false, options = {}) {
     const outputDir = options.outputDirOverride ?? document.getElementById('media-output-path')?.value ?? '';
     const requestSettings = options.requestSettingsOverride || getAutoEditRequestSettings();
     const requestId = options.requestId || `autoedit-single-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    autoEditActiveRequestIds.add(requestId);
     const statusEl = document.getElementById('autoedit-status');
     const startBtn = document.getElementById('autoedit-start-btn');
     const progressSection = document.getElementById('autoedit-progress-section');
@@ -15037,6 +15130,8 @@ async function startAutoEditByScript(isRetry = false, options = {}) {
 
     startBtn.disabled = true;
     startBtn.textContent = '⏳ 正在自动剪辑...';
+    const stopBtn = document.getElementById('autoedit-stop-btn');
+    if (stopBtn) { stopBtn.disabled = false; stopBtn.textContent = '⏹ 停止'; }
     statusEl.textContent = `⏳ 正在匹配 ${autoEditFiles.length} 个片段与 ${scriptLines.length} 行字幕文案...`;
     statusEl.style.color = 'var(--accent)';
     progressSection.classList.remove('hidden');
@@ -15132,6 +15227,17 @@ async function startAutoEditByScript(isRetry = false, options = {}) {
 
         const data = await resp.json();
         if (!resp.ok) throw new Error(data.error || '文案自动剪辑失败');
+        if (data.analysis_only && reviewsToPreserve.length) {
+            const replaced = new Set((options.replacementSources || []).map(path => String(path).replace(/\\/g, '/')));
+            const savedBySource = new Map(reviewsToPreserve
+                .filter(item => item?.source && !replaced.has(String(item.source).replace(/\\/g, '/')))
+                .map(item => [String(item.source).replace(/\\/g, '/'), item]));
+            data.segments = (data.segments || []).map(segment => {
+                const saved = savedBySource.get(String(segment.source || '').replace(/\\/g, '/'));
+                return saved?.manually_modified === true ? { ...segment, ...saved, source: segment.source, recognized_text: segment.recognized_text, word_timeline: segment.word_timeline, status: segment.status, issue_reason: segment.issue_reason } : segment;
+            });
+            data.review_segments = data.segments.map(segment => ({ ...segment }));
+        }
         // 正式导出后也要保留审核时间线：用户送入 Reels 后发现问题时，
         // 可以回到原始素材继续精修并再次导出，而不是只能重跑分析。
         if (!data.analysis_only && Array.isArray(options.reviewSegments) && options.reviewSegments.length) {
@@ -15354,12 +15460,14 @@ async function startAutoEditByScript(isRetry = false, options = {}) {
         progressText.textContent = `❌ 失败: ${escapeHtml(error.message)}`;
         showToast(`文案自动剪辑失败: ${escapeHtml(error.message)}`, 'error');
     } finally {
+        autoEditActiveRequestIds.delete(requestId);
         if (typeof autoEditProgressUnsubscribe === 'function') {
             autoEditProgressUnsubscribe();
             autoEditProgressUnsubscribe = null;
         }
         startBtn.disabled = false;
         startBtn.textContent = '① 快速分析与匹配';
+        if (stopBtn) { stopBtn.disabled = true; stopBtn.textContent = '⏹ 停止'; }
         renderAutoEditFiles();
     }
 }
@@ -15479,6 +15587,9 @@ function renderAutoEditResult(data) {
     `).join('');
 
     const segments = data.segments || [];
+    // 打开旧审核稿时也先与当前清单复核，避免历史项目因之前的同步缺口
+    // 继续显示已经由人工归属完成的待确认占位。
+    if (data.analysis_only === true) reconcileAutoEditMissingBlocks(data, segments);
     const boundaryOverlaps = Array.isArray(data.boundary_overlaps) ? data.boundary_overlaps : [];
     const isReview = data.analysis_only === true;
     const isCompareMode = data.matching_engine === 'compare_v2';
@@ -15557,7 +15668,7 @@ function renderAutoEditResult(data) {
                         : (verifiedInTranscript
                             ? '全文核对已读到'
                             : (usage > 1
-                                ? `${sourceIndices.map(formatSegmentSourceLabelHtml).join(' <span>与</span> ')} <span>重复</span>`
+                                ? `${sourceIndices.map(formatSegmentSourceLabelHtml).join(' <span>与</span> ')} <span>同时占用本行</span>`
                                 : `${formatSegmentSourceLabelHtml(sourceIndices[0])} <span>已对上</span>`));
                     const background = isConfirmedMissing ? (usesMultilingualV2 ? 'rgba(251,191,36,.08)' : 'rgba(255,107,107,.08)') : (usage > 1 ? 'rgba(255,159,67,.08)' : 'rgba(81,207,102,.045)');
                     return `<div class="ae-coverage-line" onclick="locateAutoEditScriptLine(${index + 1},this)" title="点击快速定位到审核时间线" style="display:grid;grid-template-columns:62px minmax(120px,190px) 1fr 58px;gap:7px;align-items:start;padding:5px 7px;border-radius:5px;background:${background};font-size:12px;cursor:pointer;"><span style="color:var(--text-muted);">第 ${index + 1} 行</span><strong style="color:${color};">${labelHtml}</strong><span style="white-space:pre-wrap;word-break:break-word;">${escapeHtml(line)}</span><span style="color:#60a5fa;font-weight:700;white-space:nowrap;">🎯 定位</span></div>`;
@@ -15581,6 +15692,8 @@ function renderAutoEditResult(data) {
         }
     });
     const missingPlaceholderHtml = isReview ? missingScriptBlocks.map((block, index) => {
+        const assignment = block.review_assignment && typeof block.review_assignment === 'object' ? block.review_assignment : null;
+        const assigned = Boolean(assignment);
         const previousSegment = segments.filter(seg => Number(seg.script_end_line || 0) < block.start && Number(seg.script_end_line || 0) > 0)
             .sort((a, b) => Number(b.script_end_line || 0) - Number(a.script_end_line || 0))[0];
         const nextSegment = segments.filter(seg => Number(seg.script_start_line || Infinity) > block.end)
@@ -15591,19 +15704,20 @@ function renderAutoEditResult(data) {
             ? `位于 ${formatSegmentSourceLabel(previousSourceIndex)} 与 ${formatSegmentSourceLabel(nextSourceIndex)} 之间`
             : (previousSourceIndex ? `位于 ${formatSegmentSourceLabel(previousSourceIndex)} 之后` : (nextSourceIndex ? `位于 ${formatSegmentSourceLabel(nextSourceIndex)} 之前` : (block.positionHint || '位置待人工确认')));
         return `
-        <div class="autoedit-missing-placeholder" data-warning="true" data-unmatched="true" data-script-start-line="${block.start}" data-script-end-line="${block.end}" data-previous-source-index="${previousSourceIndex || ''}" data-next-source-index="${nextSourceIndex || ''}" data-missing-text="${escapeHtml(encodeURIComponent(block.text))}">
+        <div class="autoedit-missing-placeholder" data-warning="true" data-unmatched="true" data-assigned="${assigned}" data-script-start-line="${block.start}" data-script-end-line="${block.end}" data-previous-source-index="${previousSourceIndex || ''}" data-next-source-index="${nextSourceIndex || ''}" data-missing-text="${escapeHtml(encodeURIComponent(block.text))}" style="${assigned ? 'opacity:.72;border-style:solid;border-color:rgba(81,207,102,.65);' : ''}">
             <div class="ae-missing-placeholder-icon">!</div>
             <div>
-                <div class="ae-missing-placeholder-title">${usesMultilingualV2 ? 'V2 待确认占位' : '缺失占位'} #${index + 1} · ${escapeHtml(positionHint)} · 文案第 ${block.start}${block.end > block.start ? `–${block.end}` : ''} 行</div>
+                <div class="ae-missing-placeholder-title">${usesMultilingualV2 ? 'V2 待确认占位' : '缺失占位'} #${index + 1} · ${escapeHtml(positionHint)} · 文案第 ${block.start}${block.end > block.start ? `–${block.end}` : ''}${assigned ? ` · 已${assignment.mode === 'split' ? '均分归属' : `归入${assignment.mode === 'previous' ? '上一' : '下一'}段`}` : ''}</div>
                 <div class="ae-missing-placeholder-text">${escapeHtml(block.text)}</div>
-                <div class="ae-missing-placeholder-help">${usesMultilingualV2 ? '当前识别结果没有可靠归属这段文案，但这不代表演员一定漏读。' : '系统已用完整识别文字二次核对，仍未找到这段文案。'}请重点播放${previousSourceIndex ? formatSegmentSourceLabel(previousSourceIndex) : '上一个片段'}${nextSourceIndex ? ` 和 ${formatSegmentSourceLabel(nextSourceIndex)}` : '与下一个片段'}；如果实际已读，将文案归入对应片段即可${usesMultilingualV2 ? '完成确认' : '消除缺失'}。</div>
+                <div class="ae-missing-placeholder-help">${assigned ? '此归属已保存，确认无误可继续导出；需要改回时点击“撤销归属”，会恢复归属前的文案与占位。' : `${usesMultilingualV2 ? '当前识别结果没有可靠归属这段文案，但这不代表演员一定漏读。' : '系统已用完整识别文字二次核对，仍未找到这段文案。'}请重点播放${previousSourceIndex ? formatSegmentSourceLabel(previousSourceIndex) : '上一个片段'}${nextSourceIndex ? ` 和 ${formatSegmentSourceLabel(nextSourceIndex)}` : '与下一个片段'}；如果实际已读，将文案归入对应片段即可${usesMultilingualV2 ? '完成确认' : '消除缺失'}。`}</div>
                 <div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:7px;">
+                    ${assigned ? `<button class="btn btn-secondary" onclick="undoAutoEditMissingBlock(this)" style="padding:3px 9px;font-size:11px;color:#fde68a;border-color:rgba(251,191,36,.6);">↶ 撤销归属</button>` : `
                     <button class="btn btn-primary" onclick="assignAutoEditMissingBlock(this,'split')" style="padding:3px 9px;font-size:11px;background:#7c3aed;border-color:#a78bfa;">自动均分上下（推荐）</button>
                     <button class="btn btn-primary" onclick="assignAutoEditMissingBlock(this,'previous')" style="padding:3px 9px;font-size:11px;">归到上一段</button>
                     <button class="btn btn-primary" onclick="assignAutoEditMissingBlock(this,'next')" style="padding:3px 9px;font-size:11px;">归到下一段</button>
                     <button class="btn btn-secondary" onclick="addSupplementaryAutoEditReviewClip(this)" title="选择一段补录视频插在这个文案位置；不在当前任务文件夹的文件会自动移入" style="padding:3px 9px;font-size:11px;color:#86efac;border-color:rgba(74,222,128,.45);">＋ 补充片段</button>
                     <button class="btn btn-secondary" onclick="locateAutoEditScriptLine(${Math.max(1, block.start - 1)})" style="padding:3px 9px;font-size:11px;">↑ 核对上一个片段</button>
-                    <button class="btn btn-secondary" onclick="locateAutoEditScriptLine(${Math.min(originalScriptLines.length, block.end + 1)})" style="padding:3px 9px;font-size:11px;">↓ 核对下一个片段</button>
+                    <button class="btn btn-secondary" onclick="locateAutoEditScriptLine(${Math.min(originalScriptLines.length, block.end + 1)})" style="padding:3px 9px;font-size:11px;">↓ 核对下一个片段</button>`}
                 </div>
             </div>
         </div>`;
@@ -15657,7 +15771,11 @@ function renderAutoEditResult(data) {
                 const matchPercent = Number.isFinite(Number(seg.similarity)) ? Math.round(Number(seg.similarity)) : Math.round((seg.match_score || 0) * 100);
                 const isCriticalMatch = matchPercent < 50;
                 const isLowMatch = matchPercent >= 50 && matchPercent < 75;
-                const reviewWarning = seg.status === 'warning' || seg.status === 'error' || matchPercent < 75;
+                const hasReviewRisk = seg.status === 'warning' || seg.status === 'error' || matchPercent < 75;
+                const reviewWarning = !seg.review_acknowledged && hasReviewRisk;
+                const handledRiskBadge = seg.review_acknowledged && hasReviewRisk
+                    ? '<strong class="ae-reviewed-risk-badge">✓ 已处理（可撤销）</strong>'
+                    : '';
                 const matchRiskBadge = isCriticalMatch
                     ? `<strong class="ae-match-risk-badge ae-match-risk-critical">⛔ 严重低匹配 ${matchPercent}% · 很可能匹配错误</strong>`
                     : (isLowMatch ? `<strong class="ae-match-risk-badge ae-match-risk-low">⚠ 低匹配 ${matchPercent}% · 请重点核对</strong>` : '');
@@ -15671,7 +15789,8 @@ function renderAutoEditResult(data) {
                 const timingBadge = seg.cut_timing_source === 'srt_timecode'
                     ? '<strong style="color:#86efac;">SRT 原始时间码裁切</strong>'
                     : '';
-                const reviewUnmatched = !seg.script || !seg.recognized_text;
+                const isOpeningHook = seg.is_hook === true;
+                const reviewUnmatched = !isOpeningHook && !seg.review_acknowledged && (!seg.script || !seg.recognized_text);
                 const textDiff = buildAutoEditTextDiffHtml(seg.script || '', seg.recognized_text || '');
                 const detailsOpen = duplicateText || isDuplicateSource || hasStableDuplicateGroup || reviewWarning || reviewUnmatched;
                 const srcTag = seg.transcription_source === 'cache'
@@ -15692,10 +15811,10 @@ function renderAutoEditResult(data) {
                     : 'display: grid; grid-template-columns: 70px 90px 70px 80px 60px 1fr 100px; gap: 8px; align-items: center; padding: 5px 8px; border-bottom: 1px solid var(--border-color); font-size: 12px;';
                 
                 if (isReview) return `${boundaryNoticeHtml}
-                    <div class="autoedit-review-row ${duplicateText || isDuplicateSource || hasStableDuplicateGroup ? 'ae-duplicate-row' : ''} ${reviewWarning && !duplicateText && !isDuplicateSource && !hasStableDuplicateGroup ? 'ae-warning-row' : ''} ${isCriticalMatch ? 'ae-critical-match-row' : ''}" data-review-index="${reviewIndex}" data-source-index="${Number(seg.source_index || seg.index) || reviewIndex + 1}" data-duplicate-source-index="${Number(seg.duplicate_of_source_index) || ''}" data-duplicate-group-id="${escapeHtml(seg.duplicate_group_id || '')}" data-source-label="${escapeHtml(formatSegmentSourceLabel(seg.source_index))}" data-script-start-line="${Number(seg.script_start_line) || 0}" data-script-end-line="${Number(seg.script_end_line || seg.script_start_line) || 0}" data-source-duration="${Number(seg.source_duration || 0)}" data-source="${escapeHtml(encodeURIComponent(seg.source || ''))}" data-word-timeline="${escapeHtml(encodeURIComponent(JSON.stringify(seg.word_timeline || [])))}" data-manual-subtitles="${escapeHtml(encodeURIComponent(JSON.stringify(seg.manual_subtitles || [])))}" data-visual-remove-ranges="${escapeHtml(encodeURIComponent(JSON.stringify(seg.visual_remove_ranges || [])))}" data-needs-replacement="${seg.needs_replacement === true}" data-original-text-key="${escapeHtml(reviewTextKey(seg.script))}" data-original-script="${escapeHtml(encodeURIComponent(seg.script || ''))}" data-warning="${reviewWarning}" data-critical-match="${isCriticalMatch}" data-duplicate="${duplicateText || isDuplicateSource || hasStableDuplicateGroup}" data-unmatched="${reviewUnmatched}" data-exclusion-reason="" data-classic-start="${Number(seg.legacy_start ?? seg.start ?? 0)}" data-classic-end="${Number(seg.legacy_end ?? seg.end ?? 0)}" data-v2-start="${Number(seg.v2_start ?? seg.start ?? 0)}" data-v2-end="${Number(seg.v2_end ?? seg.end ?? 0)}" data-v2-available="${seg.v2_cut_available === true}" data-cut-selection="${seg.cut_selection || (isMultilingualV2 ? 'v2' : 'classic')}" draggable="true" ondragstart="autoEditReviewDragStart(event,${reviewIndex})" ondragover="event.preventDefault()" ondrop="autoEditReviewDrop(event,${reviewIndex})" style="display:grid;grid-template-columns:42px 38px 1fr 112px 112px 90px;gap:8px;align-items:center;padding:10px 8px;border-bottom:1px solid ${duplicateText || isDuplicateSource || hasStableDuplicateGroup ? '#ff6b6b' : 'var(--border-color)'};cursor:grab;">
+                    <div class="autoedit-review-row ${isOpeningHook ? 'ae-opening-hook-row' : ''} ${seg.review_acknowledged && hasReviewRisk ? 'ae-reviewed-risk-row' : ''} ${duplicateText || isDuplicateSource || hasStableDuplicateGroup ? 'ae-duplicate-row' : ''} ${reviewWarning && !duplicateText && !isOpeningHook && !isDuplicateSource && !hasStableDuplicateGroup ? 'ae-warning-row' : ''} ${isCriticalMatch && !isOpeningHook && !seg.review_acknowledged ? 'ae-critical-match-row' : ''}" data-review-index="${reviewIndex}" data-source-index="${Number(seg.source_index || seg.index) || reviewIndex + 1}" data-duplicate-source-index="${Number(seg.duplicate_of_source_index) || ''}" data-duplicate-group-id="${escapeHtml(seg.duplicate_group_id || '')}" data-source-label="${escapeHtml(formatSegmentSourceLabel(seg.source_index))}" data-script-start-line="${Number(seg.script_start_line) || 0}" data-script-end-line="${Number(seg.script_end_line || seg.script_start_line) || 0}" data-source-duration="${Number(seg.source_duration || 0)}" data-source="${escapeHtml(encodeURIComponent(seg.source || ''))}" data-word-timeline="${escapeHtml(encodeURIComponent(JSON.stringify(seg.word_timeline || [])))}" data-manual-subtitles="${escapeHtml(encodeURIComponent(JSON.stringify(seg.manual_subtitles || [])))}" data-visual-remove-ranges="${escapeHtml(encodeURIComponent(JSON.stringify(seg.visual_remove_ranges || [])))}" data-needs-replacement="${seg.needs_replacement === true}" data-review-acknowledged="${seg.review_acknowledged === true}" data-original-text-key="${escapeHtml(reviewTextKey(seg.script))}" data-original-script="${escapeHtml(encodeURIComponent(seg.script || ''))}" data-warning="${isOpeningHook ? false : reviewWarning}" data-critical-match="${isCriticalMatch && !isOpeningHook && !seg.review_acknowledged}" data-duplicate="${isOpeningHook ? false : (duplicateText || isDuplicateSource || hasStableDuplicateGroup)}" data-unmatched="${reviewUnmatched}" data-is-hook="${isOpeningHook}" data-exclusion-reason="" data-classic-start="${Number(seg.legacy_start ?? seg.start ?? 0)}" data-classic-end="${Number(seg.legacy_end ?? seg.end ?? 0)}" data-v2-start="${Number(seg.v2_start ?? seg.start ?? 0)}" data-v2-end="${Number(seg.v2_end ?? seg.end ?? 0)}" data-v2-available="${seg.v2_cut_available === true}" data-cut-selection="${seg.cut_selection || (isMultilingualV2 ? 'v2' : 'classic')}" draggable="true" ondragstart="autoEditReviewDragStart(event,${reviewIndex})" ondragover="event.preventDefault()" ondrop="autoEditReviewDrop(event,${reviewIndex})" style="display:grid;grid-template-columns:42px 38px 1fr 112px 112px 90px;gap:8px;align-items:center;padding:10px 8px;border-bottom:1px solid ${isOpeningHook ? '#a78bfa' : (duplicateText || isDuplicateSource || hasStableDuplicateGroup ? '#ff6b6b' : 'var(--border-color)')};cursor:grab;background:${isOpeningHook ? 'rgba(139,92,246,.10)' : ''};">
                         <input type="checkbox" class="ae-review-enabled" ${seg.enabled === false ? '' : 'checked'} title="是否导出" onchange="handleAutoEditReviewEnabled(this)">
                         <div style="display:flex;flex-direction:column;gap:2px;"><button class="btn btn-secondary" onclick="moveAutoEditReviewRow(${reviewIndex},-1)" style="padding:1px 5px;">↑</button><button class="btn btn-secondary" onclick="moveAutoEditReviewRow(${reviewIndex},1)" style="padding:1px 5px;">↓</button></div>
-                        <div><div style="font-size:11px;color:var(--text-muted);display:flex;gap:6px;align-items:center;flex-wrap:wrap;">${escapeHtml(formatSegmentSourceLabel(seg.source_index))} ${cutBadge} ${timingBadge} ${isDuplicateSource ? `<strong class="ae-live-duplicate-badge" style="color:#ff6b6b;">⚠ 与片段 #${Number(seg.duplicate_of_source_index)} 重复，同组待确认</strong>` : (matchRiskBadge || `<span>匹配 ${matchPercent}%</span>`)}${duplicateText ? ` · <strong class="ae-live-duplicate-badge" style="color:#ff6b6b;">⚠ ${escapeHtml(duplicateMembers.map(formatSegmentSourceLabel).join(' 与 '))} 重复</strong>` : ''}${seg.issue_reason ? ` · <strong style="color:${usesMultilingualV2 ? '#fbbf24' : '#ff6b6b'};">⚠ ${escapeHtml(seg.issue_reason)}</strong>` : (seg.ambiguity ? ` · ⚠️ ${escapeHtml(seg.ambiguity)}` : '')} · 双击放大编辑</div><textarea class="input ae-review-script" rows="2" ondblclick="openAutoEditLargeScriptEditor(this)" oninput="handleAutoEditScriptChanged(this)" style="width:100%;resize:vertical;">${escapeHtml(seg.script || '')}</textarea><div class="ae-missing-words-status"></div></div>
+                        <div><div style="font-size:11px;color:var(--text-muted);display:flex;gap:6px;align-items:center;flex-wrap:wrap;">${isOpeningHook ? '<strong style="color:#c4b5fd;">🎣 开场钩子 · 完整原片 · 不生成字幕</strong>' : `${escapeHtml(formatSegmentSourceLabel(seg.source_index))} ${cutBadge} ${timingBadge} ${handledRiskBadge} ${isDuplicateSource ? `<strong class="ae-live-duplicate-badge" style="color:#ff6b6b;">⚠ 与片段 #${Number(seg.duplicate_of_source_index)} 重复，同组待确认</strong>` : (matchRiskBadge || `<span>匹配 ${matchPercent}%</span>`)}${duplicateText ? ` · <strong class="ae-live-duplicate-badge" style="color:#ff6b6b;">⚠ ${escapeHtml(duplicateMembers.map(formatSegmentSourceLabel).join(' 与 '))} 重复</strong>` : ''}${seg.issue_reason ? ` · <strong style="color:${usesMultilingualV2 ? '#fbbf24' : '#ff6b6b'};">⚠ ${escapeHtml(seg.issue_reason)}</strong>` : (seg.ambiguity ? ` · ⚠️ ${escapeHtml(seg.ambiguity)}` : '')} · 双击放大编辑`}</div><textarea class="input ae-review-script" rows="2" ${isOpeningHook ? 'disabled placeholder="开场钩子不参与文案和字幕"' : ''} ondblclick="openAutoEditLargeScriptEditor(this)" oninput="handleAutoEditScriptChanged(this)" style="width:100%;resize:vertical;">${escapeHtml(seg.script || '')}</textarea><div class="ae-missing-words-status"></div></div>
                         <label style="font-size:11px;">入点<div><button class="btn btn-secondary" onclick="nudgeAutoEditTime(this,'.ae-review-start',-.1)" style="padding:1px 4px;">−</button><input type="number" class="input ae-review-start" value="${Number(seg.start || 0).toFixed(3)}" min="0" step="0.01" onchange="markAutoEditCutManual(this)" style="width:72px;"><button class="btn btn-secondary" onclick="nudgeAutoEditTime(this,'.ae-review-start',.1)" style="padding:1px 4px;">+</button></div></label>
                         <label style="font-size:11px;">出点<div><button class="btn btn-secondary" onclick="nudgeAutoEditTime(this,'.ae-review-end',-.1)" style="padding:1px 4px;">−</button><input type="number" class="input ae-review-end" value="${Number(seg.end || 0).toFixed(3)}" min="0" step="0.01" onchange="markAutoEditCutManual(this)" style="width:72px;"><button class="btn btn-secondary" onclick="nudgeAutoEditTime(this,'.ae-review-end',.1)" style="padding:1px 4px;">+</button></div></label>
                         <div style="display:flex;flex-direction:column;gap:5px;"><button class="btn btn-primary" title="按照当前入点和出点播放裁切后的内容" onclick="playAutoEditReviewSource(this,true)" style="font-size:11px;padding:4px 8px;">▶ 剪后预览</button><button class="btn btn-secondary" title="播放未裁切的完整原始视频" onclick="playAutoEditReviewSource(this,false)" style="font-size:11px;padding:3px 8px;">原片预览</button><button class="btn btn-secondary" title="在 Finder / 文件资源管理器中定位当前原视频" onclick="openAutoEditReviewSourceInFolder(this)" style="font-size:11px;padding:3px 8px;">📁 打开所在文件夹</button><button class="btn btn-secondary" onclick="toggleAutoEditReviewDetails(this)" style="font-size:11px;padding:3px 8px;">${detailsOpen ? '收起详情' : '展开详情'}</button></div>
@@ -15710,10 +15829,13 @@ function renderAutoEditResult(data) {
                             <div style="grid-column:1 / -1;display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-top:1px solid rgba(255,255,255,.06);padding-top:8px;">
                                 <span class="hint">更多操作:</span>
                                 <label style="font-size:11px;">速度 <input class="input ae-review-speed" type="number" value="${Math.max(0.25, Math.min(4, Number(seg.speed) || 1))}" min="0.25" max="4" step="0.05" onchange="handleAutoEditReviewSpeedChanged(this)" style="width:65px;"></label>
+                                <label title="仅影响当前片段画面。小于 100% 会留黑边，大于 100% 会从中心放大裁切。" style="font-size:11px;">画面缩放 <input class="input ae-review-visual-scale" type="number" value="${Math.max(50, Math.min(200, Number(seg.visual_scale) || 100))}" min="50" max="200" step="1" onchange="handleAutoEditReviewVisualScaleChanged(this)" style="width:65px;">%</label>
                                 <button class="btn btn-secondary" onclick="selectAutoEditReviewSrt(this)" title="为当前原片段选择人工校正的 SRT，并立即按该字幕重新匹配" style="font-size:11px;padding:3px 8px;color:#86efac;border-color:rgba(74,222,128,.45);">📄 替换/选择 SRT</button>
                                 <button class="btn btn-secondary" onclick="retranscribeAutoEditReviewRow(this,${reviewIndex})" style="font-size:11px;padding:3px 8px;">重新转录此片段</button>
                                 <button class="btn btn-secondary" onclick="replaceAutoEditReviewRow(this,${seg.source_index || reviewIndex})" style="font-size:11px;padding:3px 8px;color:#fca5a5;border-color:rgba(239,68,68,.35);">替换当前片段</button>
+                                <button class="btn btn-secondary" onclick="toggleAutoEditOpeningHook(this)" title="${isOpeningHook ? '恢复为普通文案片段' : '完整保留原片并放到成片最前，不生成字幕'}" style="font-size:11px;padding:3px 8px;color:#c4b5fd;border-color:rgba(167,139,250,.55);">${isOpeningHook ? '↩ 转回普通片段' : '🎣 设为开场钩子'}</button>
                                 <button class="btn btn-primary" onclick="recalculateAutoEditReviewRow(this)" style="font-size:11px;padding:3px 9px;">按文案重算切点</button>
+                                <button class="btn btn-secondary" onclick="${seg.review_acknowledged ? 'unacknowledgeAutoEditReviewRisk(this)' : 'acknowledgeAutoEditReviewRisk(this)'}" style="font-size:11px;padding:3px 9px;">${seg.review_acknowledged ? '↩ 撤销确认' : '✓ 已试听确认'}</button>
                                 <button class="btn btn-secondary" onclick="openAutoEditMissedSpeechFix(this)" title="原片有声音但 AI 漏识别时使用" style="font-size:11px;padding:3px 9px;color:#fcd34d;border-color:rgba(245,158,11,.45);">🎙 处理 AI 漏识别</button>
                             </div>
                         </div>
@@ -15733,23 +15855,29 @@ function renderAutoEditResult(data) {
         </div>
     ` : '';
 
-    const failedSegmentCount = segments.filter(segment => segment?.status === 'error').length;
-    const warningSegmentCount = segments.filter(segment => segment?.status === 'warning').length;
-    const duplicateSegmentCount = segments.filter(segment => Boolean(segment?.duplicate_group_id)
+    // 顶部汇总必须读取当前审核稿，而不是首次分析时遗留的 status。已排除或
+    // 已试听确认的行仍保留为审核证据，但不能继续被算作“待处理”。
+    const isPendingReviewSegment = segment => segment?.enabled !== false && segment?.is_hook !== true && segment?.review_acknowledged !== true;
+    const isHandledReviewSegment = segment => segment?.enabled !== false && segment?.review_acknowledged === true;
+    const failedSegmentCount = segments.filter(segment => segment?.status === 'error' && isPendingReviewSegment(segment)).length;
+    const warningSegmentCount = segments.filter(segment => segment?.status === 'warning' && isPendingReviewSegment(segment)).length;
+    const handledRiskCount = segments.filter(segment => isHandledReviewSegment(segment)
+        && (segment?.status === 'warning' || segment?.status === 'error' || Number(segment?.similarity) < 75)).length;
+    const duplicateSegmentCount = segments.filter(segment => isPendingReviewSegment(segment) && (Boolean(segment?.duplicate_group_id)
         || Number(segment?.duplicate_of_source_index) > 0
-        || (reviewTextCounts.get(reviewTextKey(segment?.script)) || 0) > 1).length;
+        || (reviewTextCounts.get(reviewTextKey(segment?.script)) || 0) > 1)).length;
     const pendingBoundaryOverlapCount = boundaryOverlaps.filter(overlap => overlap?.confirmed !== true).length;
     const missingLineCount = authoritativeMissingLines.size;
     const hasCriticalReviewProblems = failedSegmentCount > 0 || (!usesMultilingualV2 && missingLineCount > 0);
     const hasReviewWarnings = warningSegmentCount > 0 || duplicateSegmentCount > 0 || pendingBoundaryOverlapCount > 0 || (usesMultilingualV2 && missingLineCount > 0);
     const reviewHeadline = hasCriticalReviewProblems
         ? `❌ 分析完成，发现需要处理的问题`
-        : (hasReviewWarnings ? `⚠️ 分析完成，存在待审核项` : '✅ 第一步分析完成，全部匹配通过');
+        : (hasReviewWarnings ? `⚠️ 分析完成，存在待审核项` : (handledRiskCount ? '✅ 待处理项已处理，保留审核记录' : '✅ 第一步分析完成，全部匹配通过'));
     const reviewHeadlineColor = hasCriticalReviewProblems ? '#ff6b6b' : (hasReviewWarnings ? '#ff9f43' : 'var(--success)');
-    const reviewProblemSummary = isReview && (hasCriticalReviewProblems || hasReviewWarnings) ? `
+    const reviewProblemSummary = isReview && (hasCriticalReviewProblems || hasReviewWarnings || handledRiskCount) ? `
         <div style="margin:8px 0 10px;padding:10px 12px;border:2px solid ${hasCriticalReviewProblems ? 'rgba(239,68,68,.68)' : 'rgba(255,159,67,.58)'};border-radius:8px;background:${hasCriticalReviewProblems ? 'rgba(127,29,29,.22)' : 'rgba(120,70,15,.18)'};color:${reviewHeadlineColor};font-weight:650;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-            <span>${missingLineCount ? `${usesMultilingualV2 ? '待确认文案' : '缺失文案'} ${missingLineCount} 行` : ''}${missingLineCount && failedSegmentCount ? ' · ' : ''}${failedSegmentCount ? `失败片段 ${failedSegmentCount} 个` : ''}${(missingLineCount || failedSegmentCount) && warningSegmentCount ? ' · ' : ''}${warningSegmentCount ? `警告片段 ${warningSegmentCount} 个` : ''}${duplicateSegmentCount ? ` · 完整重复片段 ${duplicateSegmentCount} 个` : ''}${pendingBoundaryOverlapCount ? ` · 边界重复 ${pendingBoundaryOverlapCount} 处` : ''}</span>
-            <button class="btn btn-secondary" onclick="locateFirstAutoEditProblem()" style="margin-left:auto;padding:4px 10px;font-size:11px;border-color:${reviewHeadlineColor};color:${reviewHeadlineColor};">🎯 定位第一个问题</button>
+            <span>${missingLineCount ? `${usesMultilingualV2 ? '待确认文案' : '缺失文案'} ${missingLineCount} 行` : ''}${missingLineCount && failedSegmentCount ? ' · ' : ''}${failedSegmentCount ? `失败片段 ${failedSegmentCount} 个` : ''}${(missingLineCount || failedSegmentCount) && warningSegmentCount ? ' · ' : ''}${warningSegmentCount ? `警告片段 ${warningSegmentCount} 个` : ''}${duplicateSegmentCount ? ` · 完整重复片段 ${duplicateSegmentCount} 个` : ''}${pendingBoundaryOverlapCount ? ` · 边界重复 ${pendingBoundaryOverlapCount} 处` : ''}${handledRiskCount ? `${(missingLineCount || failedSegmentCount || warningSegmentCount || duplicateSegmentCount || pendingBoundaryOverlapCount) ? ' · ' : ''}已处理片段 ${handledRiskCount} 个（可撤销）` : ''}</span>
+            ${(hasCriticalReviewProblems || hasReviewWarnings) ? `<button class="btn btn-secondary" onclick="locateFirstAutoEditProblem()" style="margin-left:auto;padding:4px 10px;font-size:11px;border-color:${reviewHeadlineColor};color:${reviewHeadlineColor};">🎯 定位第一个待处理问题</button>` : ''}
         </div>` : '';
 
     root.innerHTML = `
@@ -15763,6 +15891,7 @@ function renderAutoEditResult(data) {
             ${!isReview && ((Array.isArray(data.review_segments) && data.review_segments.length) || (Array.isArray(data.segments) && data.segments.length)) ? '<button class="btn btn-primary" onclick="reopenExportedAutoEditTimelineReview()" style="padding:5px 12px;font-size:12px;">⏱ 继续时间线审核</button>' : ''}
             ${isReview && usesMultilingualV2 ? '<button class="btn btn-secondary" onclick="rerunAutoEditWithLegacy()" style="padding:5px 12px;font-size:12px;">↩ 使用经典版重新分析</button>' : ''}
             <button class="btn btn-primary" onclick="sendAutoEditResultToReels()" style="padding: 5px 12px; font-size: 12px;">🎬 送入批量 Reels</button>
+            ${!isReview ? '<button class="btn btn-secondary" onclick="updateAutoEditResultInReels()" style="padding:5px 12px;font-size:12px;color:#86efac;border-color:rgba(74,222,128,.55);">🔄 更新已关联 Reels 任务</button>' : ''}
             <button class="btn btn-secondary" id="autoedit-rename-btn" onclick="renameAutoEditOriginalClips()" style="padding: 5px 12px; font-size: 12px; background: rgba(79, 70, 229, 0.1); border: 1px solid rgba(79, 70, 229, 0.3); color: #818cf8;">✏️ 一键重命名本地原视频</button>
             <button class="btn btn-secondary" id="autoedit-view-report-btn" onclick="viewAutoEditReport()" style="padding: 5px 12px; font-size: 12px; background: rgba(34, 197, 94, 0.1); border: 1px solid rgba(34, 197, 94, 0.3); color: #4ade80;">📊 查看对齐报告</button>
         </div>
@@ -15796,6 +15925,7 @@ function reopenExportedAutoEditTimelineReview() {
     };
     renderAutoEditResult(autoEditLastResult);
     document.getElementById('autoedit-result-section')?.classList.remove('hidden');
+    showToast('已恢复审核稿。再次正式导出会生成新版本，不会自动覆盖当前成片。', 'info', 7000);
     openAutoEditTimelineReview();
 }
 window.reopenExportedAutoEditTimelineReview = reopenExportedAutoEditTimelineReview;
@@ -15994,7 +16124,8 @@ function collectAutoEditReviewSegments() {
             source: sourcePath,
             source_index: Number(row.dataset.sourceIndex) || original.source_index,
             enabled: row.querySelector('.ae-review-enabled')?.checked !== false,
-            script: row.querySelector('.ae-review-script')?.value || original.script || '',
+            is_hook: row.dataset.isHook === 'true',
+            script: row.dataset.isHook === 'true' ? '' : (row.querySelector('.ae-review-script')?.value || original.script || ''),
             start: Number(row.querySelector('.ae-review-start')?.value),
             end: Number(row.querySelector('.ae-review-end')?.value),
             cut_selection: row.dataset.cutSelection || original.cut_selection || 'manual',
@@ -16003,27 +16134,119 @@ function collectAutoEditReviewSegments() {
             v2_start: Number(row.dataset.v2Start),
             v2_end: Number(row.dataset.v2End),
             speed: Number(row.querySelector('.ae-review-speed')?.value || 1),
-            manual_subtitles: (() => { try { const value = JSON.parse(decodeURIComponent(row.dataset.manualSubtitles || '')); return Array.isArray(value) ? value : []; } catch (_) { return []; } })(),
+            visual_scale: Number(row.querySelector('.ae-review-visual-scale')?.value || 100),
+            manual_subtitles: row.dataset.isHook === 'true' ? [] : (() => { try { const value = JSON.parse(decodeURIComponent(row.dataset.manualSubtitles || '')); return Array.isArray(value) ? value : []; } catch (_) { return []; } })(),
             visual_remove_ranges: (() => { try { const value = JSON.parse(decodeURIComponent(row.dataset.visualRemoveRanges || '')); return Array.isArray(value) ? value : []; } catch (_) { return []; } })(),
+            missing_confirmed_for: row.dataset.missingConfirmedFor || '',
+            review_acknowledged: row.dataset.reviewAcknowledged === 'true',
             needs_replacement: row.dataset.needsReplacement === 'true',
             manually_modified: row.dataset.modified === 'true',
         };
     });
 }
 
+// 钩子是没有文案的剧情/演示画面：完整保留在成片最前，但绝不把原先的
+// 识别文字当作字幕。原状态存在 segment 上，误点后可无损转回普通片段。
+function toggleAutoEditOpeningHook(button) {
+    const row = button?.closest?.('.autoedit-review-row');
+    if (!row || !autoEditLastResult?.analysis_only) return;
+    const reviewIndex = Number(row.dataset.reviewIndex);
+    const segment = autoEditLastResult.segments?.[reviewIndex];
+    if (!segment) return;
+    const isHook = row.dataset.isHook === 'true';
+    if (isHook) {
+        const saved = segment.hook_original_state || {};
+        Object.assign(segment, {
+            is_hook: false,
+            script: String(saved.script ?? ''),
+            start: Number.isFinite(Number(saved.start)) ? Number(saved.start) : segment.start,
+            end: Number.isFinite(Number(saved.end)) ? Number(saved.end) : segment.end,
+            manual_subtitles: Array.isArray(saved.manual_subtitles) ? saved.manual_subtitles : [],
+        });
+        delete segment.hook_original_state;
+    } else {
+        const sourceDuration = Number(row.dataset.sourceDuration) || Number(segment.source_duration) || Number(segment.duration) || Number(segment.end) || 0.05;
+        segment.hook_original_state = {
+            script: segment.script || row.querySelector('.ae-review-script')?.value || '',
+            start: Number(row.querySelector('.ae-review-start')?.value ?? segment.start),
+            end: Number(row.querySelector('.ae-review-end')?.value ?? segment.end),
+            manual_subtitles: Array.isArray(segment.manual_subtitles) ? segment.manual_subtitles : [],
+        };
+        Object.assign(segment, { is_hook: true, script: '', start: 0, end: sourceDuration, manual_subtitles: [], review_acknowledged: true });
+    }
+    // 所有钩子固定在正式文案片段前面；钩子之间仍按当前顺序，可用上下键或
+    // 拖动调整。普通片段的相对顺序不变。
+    autoEditLastResult.segments = autoEditLastResult.segments.slice().sort((a, b) => Number(b.is_hook === true) - Number(a.is_hook === true));
+    renderAutoEditResult(autoEditLastResult);
+    document.getElementById('autoedit-result-section')?.classList.remove('hidden');
+    if (typeof persistAutoEditBatchReview === 'function') persistAutoEditBatchReview();
+    showToast(isHook ? '已转回普通片段' : '已设为开场钩子：完整原片将排在成片最前，且不生成字幕', 'success');
+}
+
+function normalizeAutoEditReviewText(value) {
+    return String(value || '').toLocaleLowerCase().normalize('NFKC').replace(/[^\p{L}\p{N}]/gu, '');
+}
+
+// 用户有时直接在上下片段里补齐占位文案，而不是点占位卡上的按钮。此前这
+// 种情况下片段列表已正确，missing_blocks 却仍保留，导致顶部总览和导出提示
+// 继续要求处理。保存审核稿时以当前启用片段为准回查一次，自动关闭已完整归属
+// 的占位；短语不完整时仍保留，避免把只碰巧含有几个词的情况误判为已处理。
+function reconcileAutoEditMissingBlocks(result, reviewSegments) {
+    if (!result || !Array.isArray(result.missing_blocks) || !result.missing_blocks.length) return 0;
+    const scripts = (Array.isArray(reviewSegments) ? reviewSegments : [])
+        .filter(segment => segment?.enabled !== false)
+        .map(segment => normalizeAutoEditReviewText(segment.script))
+        .filter(Boolean);
+    if (!scripts.length) return 0;
+    const resolved = [];
+    const remaining = result.missing_blocks.filter(block => {
+        const text = normalizeAutoEditReviewText(block?.text);
+        // 两三个字符/一个短词不足以确认归属，至少保留 4 个规范化字符。
+        // 已归属的占位必须继续保留，才能显示“已归属”和允许撤销；不能在
+        // 保存审核稿时因目标文案刚好包含该文本而静默删除。
+        if (block?.review_assignment) return true;
+        const assigned = text.length >= 4 && scripts.some(script => script.includes(text));
+        if (assigned) resolved.push({ ...block, resolved_by: 'review_script', resolved_at: new Date().toISOString() });
+        return !assigned;
+    });
+    if (!resolved.length) return 0;
+    result.missing_blocks = remaining;
+    result.resolved_missing_blocks = [...(Array.isArray(result.resolved_missing_blocks) ? result.resolved_missing_blocks : []), ...resolved];
+    return resolved.length;
+}
+
+function refreshAutoEditReviewAfterMissingResolution() {
+    if (!autoEditLastResult?.analysis_only) return;
+    renderAutoEditResult(autoEditLastResult);
+    document.getElementById('autoedit-result-section')?.classList.remove('hidden');
+}
+
+function flushAutoEditProjectReview() {
+    if (!autoEditProjectPersistTimer) return;
+    clearTimeout(autoEditProjectPersistTimer);
+    autoEditProjectPersistTimer = null;
+    const result = autoEditLastResult;
+    if (result?.analysis_only === true && result.project_path && window.electronAPI?.writeFileText) {
+        try { window.electronAPI.writeFileText(result.project_path, JSON.stringify({ ...result, review_settings: getAutoEditRequestSettings() }, null, 2)); } catch (_) {}
+    }
+}
+window.addEventListener('beforeunload', flushAutoEditProjectReview);
+
 // 批量审核中的编辑应立即回写。这样返回批量列表后无需再按“保存”或
 // “正式导出”，批量导出会直接使用当前审核结果。
 function persistAutoEditBatchReview() {
     const task = autoEditActiveBatchIndex >= 0 ? autoEditBatchTasks[autoEditActiveBatchIndex] : null;
     const reviewSegments = collectAutoEditReviewSegments().map(segment => ({ ...segment }));
+    let resolvedMissingCount = 0;
     if (autoEditLastResult) {
         autoEditLastResult.segments = reviewSegments;
+        resolvedMissingCount += reconcileAutoEditMissingBlocks(autoEditLastResult, reviewSegments);
         // 审核状态不只保存在当前页面内存中。防抖回写分析项目，
         // 让重复组、排除状态、边界归属和修改后切点重开后仍然存在。
         if (autoEditLastResult.analysis_only === true && autoEditLastResult.project_path && window.electronAPI?.writeFileText) {
             clearTimeout(autoEditProjectPersistTimer);
             const projectPath = autoEditLastResult.project_path;
-            const projectSnapshot = JSON.stringify(autoEditLastResult, null, 2);
+            const projectSnapshot = JSON.stringify({ ...autoEditLastResult, review_settings: getAutoEditRequestSettings() }, null, 2);
             autoEditProjectPersistTimer = setTimeout(() => {
                 try {
                     window.electronAPI.writeFileText(projectPath, projectSnapshot);
@@ -16035,19 +16258,12 @@ function persistAutoEditBatchReview() {
     }
     if (!task) return;
     task.reviewSegments = reviewSegments;
+    if (task.result) task.result.segments = reviewSegments.map(segment => ({ ...segment }));
+    resolvedMissingCount += reconcileAutoEditMissingBlocks(task.result, reviewSegments);
     if (task.result && autoEditLastResult?.boundary_overlaps) {
         task.result.boundary_overlaps = autoEditLastResult.boundary_overlaps.map(overlap => ({ ...overlap }));
     }
     if (task.reviewSegments.length) {
-        // 审核操作已经落到任务快照；回到批量列表时明确显示“已处理”，
-        // 而不是继续让用户误以为这些操作没有保存。
-        task.status = 'reviewed';
-        task.message = '已处理并保存，等待导出';
-        task.exportSignature = '';
-        task.exportedAt = '';
-        // 已导出的任务被再次编辑后，转回“可导出审核稿”；原成片路径仍
-        // 保留在结果里供查看，但下一次批量导出会确实重新执行。
-        if (task.result && task.result.analysis_only !== true) task.result.analysis_only = true;
         // 同步更新外面的完整文案 task.script，确保外面卡片实时同步！
         const activeScripts = task.reviewSegments
             .filter(s => s.enabled !== false && s.script && s.script.trim())
@@ -16060,10 +16276,26 @@ function persistAutoEditBatchReview() {
                 if (typeof updateAutoEditScriptCount === 'function') updateAutoEditScriptCount();
             }
         }
+        // 仅仅打开/关闭审核时间线会触发一次保存；它不是编辑，不能因此把
+        // 已导出的成片标成“需要重新裁切”。只有审核指纹实际变化才重导出。
+        if (task.exportSignature && task.result?.output_path && task.exportSignature === autoEditBatchExportSignature(task)) {
+            task.status = 'exported';
+            task.message = '已导出（审核未修改，复用已有裁切）';
+        } else {
+            task.status = 'reviewed';
+            task.message = '已处理并保存，等待导出';
+            task.exportSignature = '';
+            task.exportedAt = '';
+            // 已导出的任务被再次编辑后，转回“可导出审核稿”。
+            if (task.result && task.result.analysis_only !== true) task.result.analysis_only = true;
+        }
     }
     if (typeof renderAutoEditBatchTasks === 'function' && autoEditBatchTasks.length > 0) {
         renderAutoEditBatchTasks();
     }
+    // 只有首次发现“用户已手动归属”的占位时才整体重绘，避免普通输入时
+    // 抢走焦点；重绘后总览、占位卡、导出前风险检查读取同一份状态。
+    if (resolvedMissingCount > 0) requestAnimationFrame(refreshAutoEditReviewAfterMissingResolution);
 }
 
 function updateAutoEditCutSelection(row, selection) {
@@ -16130,6 +16362,16 @@ function handleAutoEditReviewSpeedChanged(input) {
     input.value = String(safeSpeed);
     if (row) row.dataset.modified = 'true';
     if (autoEditLastResult?.segments?.[index]) autoEditLastResult.segments[index].speed = safeSpeed;
+    persistAutoEditBatchReview();
+}
+function handleAutoEditReviewVisualScaleChanged(input) {
+    const row = input?.closest('.autoedit-review-row');
+    const index = Number(row?.dataset.reviewIndex);
+    const scale = Number(input?.value);
+    const safeScale = Number.isFinite(scale) && scale >= 50 && scale <= 200 ? scale : 100;
+    input.value = String(safeScale);
+    if (row) row.dataset.modified = 'true';
+    if (autoEditLastResult?.segments?.[index]) autoEditLastResult.segments[index].visual_scale = safeScale;
     persistAutoEditBatchReview();
 }
 function retranscribeAutoEditReviewRow(button, reviewIndex) {
@@ -16457,6 +16699,16 @@ function assignAutoEditMissingBlock(button, direction) {
     }
     let cleanMissing = '';
     try { cleanMissing = decodeURIComponent(placeholder.dataset.missingText || '').trim(); } catch (_) { cleanMissing = ''; }
+    const recordAssignment = assignment => {
+        const start = Number(placeholder.dataset.scriptStartLine);
+        const end = Number(placeholder.dataset.scriptEndLine);
+        const save = result => {
+            const block = result?.missing_blocks?.find(item => Number(item.startLine) + 1 === start && Number(item.endLine) + 1 === end);
+            if (block) block.review_assignment = assignment;
+        };
+        save(autoEditLastResult);
+        save(autoEditActiveBatchIndex >= 0 ? autoEditBatchTasks[autoEditActiveBatchIndex]?.result : null);
+    };
     if (direction === 'split') {
         const prevIndex = Number(placeholder.dataset.previousSourceIndex);
         const nextIndex = Number(placeholder.dataset.nextSourceIndex);
@@ -16471,6 +16723,12 @@ function assignAutoEditMissingBlock(button, direction) {
         const prevTextarea = prev.querySelector('.ae-review-script');
         const nextTextarea = next.querySelector('.ae-review-script');
         if (!prevTextarea || !nextTextarea || !before || !after) return showToast('这段文案无法自动拆分，请改用归上一段/下一段', 'warning');
+        const prevBefore = prevTextarea.value;
+        const nextBefore = nextTextarea.value;
+        recordAssignment({ mode: 'split', targets: [
+            { source_index: Number(prev.dataset.sourceIndex), script_before: prevBefore },
+            { source_index: Number(next.dataset.sourceIndex), script_before: nextBefore },
+        ] });
         prevTextarea.value = `${prevTextarea.value.trim()} ${before}`.trim();
         nextTextarea.value = `${after} ${nextTextarea.value.trim()}`.trim();
         [prevTextarea, nextTextarea].forEach(textarea => textarea.dispatchEvent(new Event('input', { bubbles: true })));
@@ -16488,16 +16746,16 @@ function assignAutoEditMissingBlock(button, direction) {
         const help = placeholder.querySelector('.ae-missing-placeholder-help');
         if (help) help.textContent = `已按文案中点拆分：上段补入“${before}”，下段补入“${after}”，并分别重算切点；请试听确认。`;
         placeholder.querySelectorAll('button').forEach(item => { item.disabled = true; });
-        const blockStart = Number(placeholder.dataset.scriptStartLine), blockEnd = Number(placeholder.dataset.scriptEndLine);
-        const removeBlock = result => { if (Array.isArray(result?.missing_blocks)) result.missing_blocks = result.missing_blocks.filter(block => Number(block.startLine) + 1 !== blockStart || Number(block.endLine) + 1 !== blockEnd); };
-        removeBlock(autoEditLastResult); removeBlock(autoEditActiveBatchIndex >= 0 ? autoEditBatchTasks[autoEditActiveBatchIndex]?.result : null);
         persistAutoEditBatchReview();
+        refreshAutoEditReviewAfterMissingResolution();
         showToast('已自动均分给上下片段，并分别更新切点', 'success', 5500);
         return;
     }
     if (!target) return showToast(`没有找到可归入的${direction === 'previous' ? '上一' : '下一'}段`, 'error');
     const textarea = target.querySelector('.ae-review-script');
     if (!textarea) return;
+    const scriptBefore = textarea.value;
+    recordAssignment({ mode: direction, targets: [{ source_index: Number(target.dataset.sourceIndex), script_before: scriptBefore }] });
     textarea.value = direction === 'previous'
         ? `${textarea.value.trim()} ${cleanMissing}`.trim()
         : `${cleanMissing} ${textarea.value.trim()}`.trim();
@@ -16516,21 +16774,42 @@ function assignAutoEditMissingBlock(button, direction) {
         ? '已写入目标文案并根据识别结果更新切点；可试听该片段确认。'
         : '已写入目标文案并完成归属确认；识别词不足以自动重算切点，请试听后按需手动调整入出点。';
     placeholder.querySelectorAll('button').forEach(item => { item.disabled = true; });
-    const blockStart = Number(placeholder.dataset.scriptStartLine);
-    const blockEnd = Number(placeholder.dataset.scriptEndLine);
-    const removeAssignedBlock = result => {
-        if (!Array.isArray(result?.missing_blocks)) return;
-        result.missing_blocks = result.missing_blocks.filter(block => Number(block.startLine) + 1 !== blockStart || Number(block.endLine) + 1 !== blockEnd);
-    };
-    removeAssignedBlock(autoEditLastResult);
-    const activeTask = autoEditActiveBatchIndex >= 0 ? autoEditBatchTasks[autoEditActiveBatchIndex] : null;
-    removeAssignedBlock(activeTask?.result);
     persistAutoEditBatchReview();
+    refreshAutoEditReviewAfterMissingResolution();
     target.scrollIntoView({ behavior: 'smooth', block: 'center' });
     showToast(cutUpdated
         ? `已将文案归到${direction === 'previous' ? '上一' : '下一'}段，已写入目标文案并更新切点`
         : `已将文案归到${direction === 'previous' ? '上一' : '下一'}段，已写入目标文案；请试听后确认切点`, 'success', 6500);
 }
+
+function undoAutoEditMissingBlock(button) {
+    const placeholder = button?.closest('.autoedit-missing-placeholder');
+    if (!placeholder) return;
+    const start = Number(placeholder.dataset.scriptStartLine);
+    const end = Number(placeholder.dataset.scriptEndLine);
+    const findBlock = result => result?.missing_blocks?.find(item => Number(item.startLine) + 1 === start && Number(item.endLine) + 1 === end);
+    const block = findBlock(autoEditLastResult);
+    const assignment = block?.review_assignment;
+    if (!assignment?.targets?.length) return showToast('找不到这次归属的可撤销记录', 'warning');
+    const rows = Array.from(document.querySelectorAll('.autoedit-review-row'));
+    assignment.targets.forEach(target => {
+        const row = rows.find(item => Number(item.dataset.sourceIndex) === Number(target.source_index));
+        const textarea = row?.querySelector('.ae-review-script');
+        if (!textarea) return;
+        textarea.value = String(target.script_before || '');
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        row.dataset.modified = 'true';
+        const recalcButton = Array.from(row.querySelectorAll('button')).find(item => item.textContent.includes('重算切点'));
+        if (recalcButton) recalculateAutoEditReviewRow(recalcButton);
+    });
+    const clear = result => { const item = findBlock(result); if (item) delete item.review_assignment; };
+    clear(autoEditLastResult);
+    clear(autoEditActiveBatchIndex >= 0 ? autoEditBatchTasks[autoEditActiveBatchIndex]?.result : null);
+    persistAutoEditBatchReview();
+    refreshAutoEditReviewAfterMissingResolution();
+    showToast('已撤销归属，并恢复原来的待确认占位', 'success');
+}
+window.undoAutoEditMissingBlock = undoAutoEditMissingBlock;
 
 async function addSupplementaryAutoEditReviewClip(button, nextSourceIndexOverride = null) {
     if (!window.electronAPI?.selectFiles) return showToast('当前环境不支持选择文件', 'error');
@@ -17065,9 +17344,15 @@ function openAutoEditTimelineReview() {
             return item;
         });
     };
-    const fileUrl = source => (window.electronAPI && typeof window.electronAPI.toFileUrl === 'function')
-        ? window.electronAPI.toFileUrl(source)
-        : normalizeFilePath(source);
+    // 替换素材可能保留原文件名和路径。每次打开审核都附带新的预览版本，
+    // 防止 Chromium 继续复用同一 URL 已解码的旧画面，而列表却已显示新素材。
+    const previewRevision = Date.now();
+    const fileUrl = source => {
+        const url = (window.electronAPI && typeof window.electronAPI.toFileUrl === 'function')
+            ? window.electronAPI.toFileUrl(source)
+            : normalizeFilePath(source);
+        return `${url}${url.includes('?') ? '&' : '?'}review=${previewRevision}`;
+    };
     function undoReview() {
         // 栈尾是当前状态；弹出它以后恢复前一个状态。
         if (reviewHistory.length < 2) {
@@ -17113,7 +17398,8 @@ function openAutoEditTimelineReview() {
             const disabled = item.querySelector('.ae-review-enabled')?.checked === false;
             const isCur = index === selected;
             const needsReplacement = item.dataset.needsReplacement === 'true';
-            return `<button data-index="${index}" data-role="pill" class="ae-review-pill ${isCur ? 'active' : ''}" title="${escapeHtml(item.querySelector('.ae-review-script')?.value || '')}" style="${disabled ? 'opacity:0.4;' : ''}${needsReplacement ? 'border-color:#ef4444;background:rgba(239,68,68,.2);' : ''}"><span>${needsReplacement ? '🚩 ' : ''}#${index + 1}</span><span style="font-size:10px;color:${isCur ? '#bfdbfe' : '#94a3b8'};">${fmt(b - a)}</span></button>`;
+            const isHook = item.dataset.isHook === 'true';
+            return `<button data-index="${index}" data-role="pill" class="ae-review-pill ${isCur ? 'active' : ''}" title="${isHook ? '开场钩子（完整原片、不生成字幕）' : escapeHtml(item.querySelector('.ae-review-script')?.value || '')}" style="${disabled ? 'opacity:0.4;' : ''}${needsReplacement ? 'border-color:#ef4444;background:rgba(239,68,68,.2);' : ''}${isHook ? 'border-color:#a78bfa;background:rgba(139,92,246,.18);' : ''}"><span>${isHook ? '🎣 ' : (needsReplacement ? '🚩 ' : '')}#${index + 1}</span><span style="font-size:10px;color:${isCur ? '#bfdbfe' : '#94a3b8'};">${fmt(b - a)}</span></button>`;
         }).join('');
         const cards = rows.map((item, index) => {
             const a = Number(item.querySelector('.ae-review-start')?.value) || 0;
@@ -17130,16 +17416,18 @@ function openAutoEditTimelineReview() {
             const isDup = item.dataset.duplicate === 'true';
             const issueReason = seg.issue_reason || seg.ambiguity || '';
             const needsReplacement = item.dataset.needsReplacement === 'true';
+            const isHook = item.dataset.isHook === 'true';
 
             return `<button data-index="${index}" data-role="card" class="ae-review-card ${isCur ? 'active' : ''}" style="${needsReplacement ? 'border-color:#ef4444;box-shadow:inset 3px 0 #ef4444;' : ''}">
                 <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
-                    <strong style="font-size:12px;color:${isCur ? '#93c5fd' : '#f1f5f9'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${index + 1}. ${escapeHtml(fileName)}</strong>
+                    <strong style="font-size:12px;color:${isCur ? '#93c5fd' : '#f1f5f9'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${isHook ? '🎣 开场钩子 · ' : ''}${index + 1}. ${escapeHtml(fileName)}</strong>
                     <span style="font-size:10px;font-weight:700;padding:1px 5px;border-radius:4px;background:${disabled ? 'rgba(239,68,68,0.15)' : 'rgba(59,130,246,0.18)'};color:${disabled ? '#f87171' : '#60a5fa'};font-variant-numeric:tabular-nums;flex-shrink:0;">${fmt(b - a)}</span>
                 </div>
                 <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin:1px 0;">
                     <span style="font-size:9.5px;font-weight:700;padding:0.5px 4px;border-radius:3px;background:${isCritical ? 'rgba(239,68,68,0.25)' : (isLow ? 'rgba(245,158,11,0.2)' : 'rgba(59,130,246,0.18)')};color:${isCritical ? '#f87171' : (isLow ? '#fbbf24' : '#60a5fa')};">匹配 ${matchPercent}%</span>
                     ${isDup ? '<span style="font-size:9.5px;font-weight:700;padding:0.5px 4px;border-radius:3px;background:rgba(239,68,68,0.25);color:#fca5a5;">⚠️重复</span>' : ''}
                     ${needsReplacement ? '<span style="font-size:9.5px;font-weight:800;padding:0.5px 4px;border-radius:3px;background:rgba(239,68,68,.3);color:#fecaca;">🚩 需要替换素材</span>' : ''}
+                    ${isHook ? '<span style="font-size:9.5px;font-weight:800;padding:0.5px 4px;border-radius:3px;background:rgba(139,92,246,.25);color:#ddd6fe;">完整原片 · 无字幕</span>' : ''}
                     ${issueReason ? `<span style="font-size:9.5px;font-weight:600;padding:0.5px 4px;border-radius:3px;background:rgba(245,158,11,0.2);color:#fcd34d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:110px;" title="${escapeHtml(issueReason)}">⚠️ ${escapeHtml(issueReason)}</span>` : ''}
                 </div>
                 <div style="font-size:11px;color:${isCur ? '#e2e8f0' : '#94a3b8'};line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word;">${escapeHtml(text || '（无文案）')}</div>
@@ -17332,10 +17620,11 @@ function openAutoEditTimelineReview() {
                                     <input data-role="end" type="range" min="0" max="${sourceDuration}" step="0.01" value="${end}" style="width:100%;accent-color:#fbbf24;cursor:pointer;">
                                 </div>
                             </div>
-                            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;align-items:center;">
+                            <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;align-items:center;">
                                 <label style="font-size:10px;color:#94a3b8;">入点: <input data-role="start-number" class="input" type="number" min="0" step="0.01" value="${start.toFixed(3)}" style="width:100%;padding:2px 4px;font-size:11px;background:#0f111e;"></label>
                                 <label style="font-size:10px;color:#94a3b8;">出点: <input data-role="end-number" class="input" type="number" min="0" step="0.01" value="${end.toFixed(3)}" style="width:100%;padding:2px 4px;font-size:11px;background:#0f111e;"></label>
                                 <label style="font-size:10px;color:#94a3b8;">速度: <input data-role="segment-speed" class="input" type="number" min="0.25" max="4" step="0.05" value="${Math.max(0.25, Math.min(4, Number(row.querySelector('.ae-review-speed')?.value) || 1))}" style="width:100%;padding:2px 4px;font-size:11px;background:#0f111e;color:#cbd5e1;"></label>
+                                <label title="仅影响当前片段画面；小于 100% 补黑边，大于 100% 从中心放大裁切。" style="font-size:10px;color:#94a3b8;">缩放: <input data-role="segment-visual-scale" class="input" type="number" min="50" max="200" step="1" value="${Math.max(50, Math.min(200, Number(row.querySelector('.ae-review-visual-scale')?.value) || 100))}" style="width:100%;padding:2px 4px;font-size:11px;background:#0f111e;color:#cbd5e1;"></label>
                             </div>
                             <!-- 友好温馨提示 -->
                             <div style="font-size:9.5px;color:#94a3b8;display:flex;align-items:center;gap:4px;background:rgba(255,255,255,0.03);padding:3px 7px;border-radius:4px;border:1px solid rgba(255,255,255,0.06);margin-top:1px;">
@@ -17746,6 +18035,10 @@ function openAutoEditTimelineReview() {
             if (speedEl) {
                 speedEl.value = Math.max(0.25, Math.min(4, Number(current.querySelector('.ae-review-speed')?.value) || 1)).toFixed(2);
             }
+            const visualScaleEl = panel.querySelector('[data-role="segment-visual-scale"]');
+            if (visualScaleEl) {
+                visualScaleEl.value = String(Math.max(50, Math.min(200, Number(current.querySelector('.ae-review-visual-scale')?.value) || 100)));
+            }
 
             reflectCurrentCut();
         };
@@ -17920,6 +18213,20 @@ function openAutoEditTimelineReview() {
                     rowSpeed.value = String(val);
                     if (typeof handleAutoEditReviewSpeedChanged === 'function') {
                         handleAutoEditReviewSpeedChanged(rowSpeed);
+                    }
+                }
+            };
+        }
+        const visualScaleInput = panel.querySelector('[data-role="segment-visual-scale"]');
+        if (visualScaleInput) {
+            visualScaleInput.onchange = (e) => {
+                const val = Math.max(50, Math.min(200, parseFloat(e.target.value) || 100));
+                const curRow = getRow();
+                const rowScale = curRow?.querySelector('.ae-review-visual-scale');
+                if (rowScale) {
+                    rowScale.value = String(val);
+                    if (typeof handleAutoEditReviewVisualScaleChanged === 'function') {
+                        handleAutoEditReviewVisualScaleChanged(rowScale);
                     }
                 }
             };
@@ -18688,6 +18995,7 @@ function openAutoEditTimelineReview() {
     modal.focus();
 }
 window.openAutoEditTimelineReview = openAutoEditTimelineReview;
+window.toggleAutoEditOpeningHook = toggleAutoEditOpeningHook;
 
 function locateFirstAutoEditProblem() {
     const missing = document.querySelector('.autoedit-missing-placeholder:not([data-assigned="true"])');
@@ -18777,6 +19085,10 @@ async function loadAutoEditProjectFile(file) {
     try {
         const project = JSON.parse(await file.text());
         if (!Array.isArray(project.clips) || !Array.isArray(project.segments)) throw new Error('项目文件结构无效');
+        const missingClips = project.clips.filter(clip => window.electronAPI?.fileExists && !window.electronAPI.fileExists(clip));
+        if (missingClips.length) {
+            showToast(`继续审核已恢复，但有 ${missingClips.length} 个原片找不到；请先替换这些片段再导出`, 'warning', 8000);
+        }
         autoEditFiles = project.clips.map(path => ({ path, name: String(path).split(/[/\\]/).pop(), status: 'transcribed' }));
         const scriptInput = document.getElementById('autoedit-script');
         if (scriptInput) scriptInput.value = project.script_text || '';
@@ -18786,6 +19098,7 @@ async function loadAutoEditProjectFile(file) {
             localStorage.setItem('autoedit_matching_engine', matchingEngineInput.value);
             updateAutoEditMatchingEngineHint();
         }
+        restoreAutoEditReviewSettings(project.review_settings || project.output_settings || {});
         updateAutoEditScriptCount();
         renderAutoEditFiles();
         autoEditLastResult = { ...project, analysis_only: true, project_path: file.path || '' };
@@ -18805,6 +19118,7 @@ function moveAutoEditReviewRow(index, delta) {
     const list = autoEditLastResult.segments || [];
     if (next < 0 || next >= list.length) return;
     [list[index], list[next]] = [list[next], list[index]];
+    list.sort((a, b) => Number(b.is_hook === true) - Number(a.is_hook === true));
     renderAutoEditResult(autoEditLastResult);
     persistAutoEditBatchReview();
 }
@@ -18843,6 +19157,9 @@ function updateAutoEditMissingWords(row) {
     try { original = decodeURIComponent(row.dataset.originalScript || ''); } catch (_) { original = ''; }
     const missing = findAutoEditMissingWords(original, textarea.value);
     const fingerprint = encodeURIComponent(textarea.value);
+    const reviewIndex = Number(row.dataset.reviewIndex);
+    const savedConfirmation = autoEditLastResult?.segments?.[reviewIndex]?.missing_confirmed_for || '';
+    if (!row.dataset.missingConfirmedFor && savedConfirmation) row.dataset.missingConfirmedFor = savedConfirmation;
     const confirmed = missing.length > 0 && row.dataset.missingConfirmedFor === fingerprint;
     row.dataset.missingCount = String(missing.length);
     row.dataset.missingConfirmed = confirmed ? 'true' : 'false';
@@ -18887,8 +19204,45 @@ function confirmAutoEditMissingWords(button) {
     row.dataset.missingConfirmedFor = encodeURIComponent(textarea.value);
     updateAutoEditMissingWords(row);
     refreshAutoEditDuplicateMarks();
+    persistAutoEditBatchReview();
     showToast('已确认此次删词，继续修改后需要重新确认', 'success');
 }
+
+function acknowledgeAutoEditReviewRisk(button) {
+    const row = button?.closest('.autoedit-review-row');
+    if (!row) return;
+    row.dataset.reviewAcknowledged = 'true';
+    row.dataset.warning = 'false';
+    row.dataset.unmatched = 'false';
+    row.classList.remove('ae-warning-row', 'ae-critical-match-row');
+    row.classList.add('ae-reviewed-risk-row');
+    button.textContent = '↩ 撤销确认';
+    button.setAttribute('onclick', 'unacknowledgeAutoEditReviewRisk(this)');
+    persistAutoEditBatchReview();
+    refreshAutoEditDuplicateMarks();
+    showToast('已记录试听确认；该片段不会再作为未处理风险阻止导出', 'success');
+}
+window.acknowledgeAutoEditReviewRisk = acknowledgeAutoEditReviewRisk;
+
+function unacknowledgeAutoEditReviewRisk(button) {
+    const row = button?.closest('.autoedit-review-row');
+    if (!row) return;
+    row.dataset.reviewAcknowledged = 'false';
+    const original = autoEditLastResult?.segments?.[Number(row.dataset.reviewIndex)] || {};
+    const similarity = Number.isFinite(Number(original.similarity)) ? Number(original.similarity) : Math.round((Number(original.match_score) || 1) * 100);
+    const isRisk = original.status === 'warning' || original.status === 'error' || similarity < 75;
+    row.dataset.warning = isRisk ? 'true' : 'false';
+    row.dataset.unmatched = (!original.script || !original.recognized_text) ? 'true' : 'false';
+    row.classList.remove('ae-reviewed-risk-row');
+    if (isRisk) row.classList.add('ae-warning-row');
+    if (similarity < 50) row.classList.add('ae-critical-match-row');
+    button.textContent = '✓ 已试听确认';
+    button.setAttribute('onclick', 'acknowledgeAutoEditReviewRisk(this)');
+    persistAutoEditBatchReview();
+    refreshAutoEditDuplicateMarks();
+    showToast('已撤销试听确认；该片段重新计入待处理问题', 'warning');
+}
+window.unacknowledgeAutoEditReviewRisk = unacknowledgeAutoEditReviewRisk;
 
 function refreshAutoEditDuplicateMarks() {
     const rows = Array.from(document.querySelectorAll('.autoedit-review-row'));
@@ -19283,6 +19637,7 @@ function autoEditReviewDrop(event, index) {
     if (currentSegments.length) autoEditLastResult.segments = currentSegments;
     const [item] = autoEditLastResult.segments.splice(autoEditReviewDragIndex, 1);
     autoEditLastResult.segments.splice(index, 0, item);
+    autoEditLastResult.segments.sort((a, b) => Number(b.is_hook === true) - Number(a.is_hook === true));
     autoEditReviewDragIndex = -1;
     renderAutoEditResult(autoEditLastResult);
     persistAutoEditBatchReview();
@@ -19296,13 +19651,14 @@ function nudgeAutoEditTime(button, selector, delta) {
 
 async function exportReviewedAutoEdit() {
     if (!autoEditLastResult?.analysis_only) return;
+    const linkedReelsTaskId = autoEditLastResult.reels_task_id || '';
     const rows = Array.from(document.querySelectorAll('.autoedit-review-row'));
     const reviewSegments = collectAutoEditReviewSegments();
     const enabledRows = rows.filter(row => row.querySelector('.ae-review-enabled')?.checked !== false);
     const excludedCount = rows.length - enabledRows.length;
     const duplicateCount = enabledRows.filter(row => row.dataset.duplicate === 'true').length;
-    const unmatchedCount = enabledRows.filter(row => row.dataset.unmatched === 'true').length;
-    const warningCount = enabledRows.filter(row => row.dataset.warning === 'true' && row.dataset.duplicate !== 'true' && row.dataset.unmatched !== 'true').length;
+    const unmatchedCount = enabledRows.filter(row => row.dataset.isHook !== 'true' && row.dataset.unmatched === 'true').length;
+    const warningCount = enabledRows.filter(row => row.dataset.isHook !== 'true' && row.dataset.warning === 'true' && row.dataset.duplicate !== 'true' && row.dataset.unmatched !== 'true').length;
     const unconfirmedMissingCount = enabledRows.filter(row => Number(row.dataset.missingCount || 0) > 0 && row.dataset.missingConfirmed !== 'true').length;
     const missingPlaceholderCount = document.querySelectorAll('.autoedit-missing-placeholder:not([data-assigned="true"])').length;
     const pendingBoundaryCount = document.querySelectorAll('.autoedit-boundary-overlap:not([data-confirmed="true"])').length;
@@ -19349,6 +19705,9 @@ async function exportReviewedAutoEdit() {
             : undefined,
         requestSettingsOverride: { ...(batchTask?.settings || getAutoEditRequestSettings()), force_transcribe: false },
     });
+    // 后端返回的是一次新的导出结果；把此前已经关联的 Reels 任务带回来，
+    // 使用户可直接更新同一条二剪任务而不是重新创建。
+    if (linkedReelsTaskId && autoEditLastResult?.output_path) autoEditLastResult.reels_task_id = linkedReelsTaskId;
 }
 
 async function renameAutoEditOriginalClips() {
@@ -19747,18 +20106,14 @@ window.replaceAutoEditClip = async function(originalPath, index) {
                 batchTask.manualSubtitleMap[updatedPath] = batchTask.manualSubtitleMap[originalPath];
                 delete batchTask.manualSubtitleMap[originalPath];
             }
-            // The old review snapshot points at the pre-replacement analysis.
-            // Never let it overwrite the fresh result or reach the exporter.
-            batchTask.reviewSegments = null;
-            batchTask.result = null;
             batchTask.status = 'analyzing';
-            batchTask.message = '素材已替换 · 正在重新分析';
+            batchTask.message = '素材已替换 · 保留其他审核结果并重新分析';
         }
 
         const reportModal = document.getElementById('ae-report-dialog-overlay');
         if (reportModal) reportModal.remove();
         setProgress('🎙️ 视频已替换，正在重新转录并对齐文案…');
-        await startAutoEditByScript(false, { analysisOnly: true });
+        await startAutoEditByScript(false, { analysisOnly: true, preserveReviewedResults: true, replacementSources: [originalPath, updatedPath] });
 
         if (timelineReviewOpen) {
             setProgress('✅ 已重新对齐，正在刷新时间线审核…');
@@ -19886,7 +20241,7 @@ async function runAutoEditPartialReplacement({ originalPath, newClipPath, index,
         }
         renderAutoEditFiles();
         setProgress('🎙️ 视频已更新，正在重新转录并对齐文案…');
-        await startAutoEditByScript(false, { analysisOnly: true });
+        await startAutoEditByScript(false, { analysisOnly: true, preserveReviewedResults: true, replacementSources: [originalPath, updatedPath] });
         if (timelineReviewOpen) {
             setProgress('✅ 已重新对齐，正在刷新时间线审核…');
             requestAnimationFrame(() => openAutoEditTimelineReview());
@@ -20153,8 +20508,8 @@ window.addSupplementaryClip = async function(targetLineIdx) {
     }
 
     if (addedFiles.length === 0) {
-        // Re-run anyway to restore the nuclear warning modal
-        startAutoEditByScript(true);
+        // 列表审核里的补充操作只能回到分析/审核，绝不能沿用默认的正式导出。
+        startAutoEditByScript(true, { analysisOnly: true, preserveReviewedResults: true });
         return;
     }
 
@@ -20187,8 +20542,9 @@ window.addSupplementaryClip = async function(targetLineIdx) {
     const reportModal = document.getElementById('ae-report-dialog-overlay');
     if (reportModal) reportModal.remove();
     
-    // Re-run
-    startAutoEditByScript(true);
+    // 这是“列表审核 → 补充片段”的入口。补入后先重新分析并回到审核，
+    // 不能因为 startAutoEditByScript 的默认值而直接进入裁切/正式导出。
+    startAutoEditByScript(true, { analysisOnly: true, preserveReviewedResults: true });
 };
 
 function parseMarkdownToHtml(md) {
@@ -20362,6 +20718,9 @@ async function sendAutoEditResultToReels(result = null, options = {}) {
 
     try {
         const task = await window.reelsCreateTaskFromAutoEditResult(data, { baseName: options.baseName });
+        // 将 Reels 任务 ID 写回本次自动剪辑结果。后续从审核重新导出后，
+        // 可用“更新已关联 Reels 任务”直接替换成片，而不是重复创建任务。
+        if (task?.id) data.reels_task_id = task.id;
         if (typeof openPanelByName === 'function') openPanelByName('batch-reels');
         if (!options.silent) {
             showToast(`已送入批量 Reels: ${task?.fileName || '自动剪辑任务'}`, 'success');
@@ -20371,6 +20730,21 @@ async function sendAutoEditResultToReels(result = null, options = {}) {
         throw error;
     }
 }
+
+async function updateAutoEditResultInReels() {
+    const data = autoEditLastResult;
+    if (data?.analysis_only || !data?.output_path || !data?.srt_path) return showToast('请先按审核结果完成正式导出', 'warning');
+    if (typeof window.reelsUpdateTaskFromAutoEditResult !== 'function') return showToast('请先打开一次批量 Reels 页面后再更新', 'warning');
+    try {
+        const task = await window.reelsUpdateTaskFromAutoEditResult(data, { taskId: data.reels_task_id });
+        data.reels_task_id = task.id;
+        if (typeof openPanelByName === 'function') openPanelByName('batch-reels');
+        showToast('已更新关联 Reels 任务；覆层、贴纸、BGM 与样式已保留', 'success');
+    } catch (error) {
+        showToast(`没有找到关联任务：${error.message || error}。请先用“送入批量 Reels”创建一次。`, 'warning');
+    }
+}
+window.updateAutoEditResultInReels = updateAutoEditResultInReels;
 
 function openAutoEditFromReels() {
     if (typeof openPanelByName === 'function') openPanelByName('media');

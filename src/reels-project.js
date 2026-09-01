@@ -34,6 +34,8 @@ const REELS_TASK_EXTRA_FIELDS = [
     // 不会改变已有背景/覆层的预览或导出结果。
     'insertClips', 'insertMediaFolder', 'insertMediaFiles', 'insertDefaultsOverride', 'visualOverlayOrder',
     'customDuration',
+    // 文案自动剪辑送入 Reels 时保留来源工程、原片和审核快照，供以后追溯和二剪。
+    'autoEditProject',
     '_overlayPresetName',
     'firstSubtitleStyleOverride',
 ];
@@ -323,6 +325,67 @@ async function saveProject(state) {
     }
 }
 
+// 自动剪辑成片送入 Reels 后，立即在成片旁写入完整工程。清空当前队列不会
+// 删除该 JSON；以后用“加载工程”打开即可继续改字幕、覆层和时间线。
+async function saveAutoEditRecoveryProject(state, task, autoEditResult = {}) {
+    const outputPath = String(autoEditResult.output_path || autoEditResult.outputPath || task?.bgPath || '');
+    if (!outputPath || !window.electronAPI?.writeFileText) return { ok: false, path: '' };
+    const slash = Math.max(outputPath.lastIndexOf('/'), outputPath.lastIndexOf('\\'));
+    if (slash < 0) return { ok: false, path: '' };
+    const outputDir = outputPath.slice(0, slash);
+    const baseName = outputPath.slice(slash + 1).replace(/\.[^.]+$/, '') || 'auto_edit';
+    const sep = outputDir.includes('\\') ? '\\' : '/';
+    const projectPath = `${outputDir}${sep}${baseName}.reels-project.json`;
+    const projectData = collectProjectData(state);
+    projectData.autoEditRecovery = {
+        version: 1,
+        createdAt: new Date().toISOString(),
+        outputPath,
+        srtPath: autoEditResult.srt_path || autoEditResult.srtPath || task?.srtPath || '',
+        autoEditAnalysisProjectPath: autoEditResult.project_path || autoEditResult.projectPath || task?.autoEditProject?.analysisProjectPath || '',
+        note: '自动保存：可在批量 Reels 的“加载项目”中打开，继续二次编辑。',
+    };
+    const ok = window.electronAPI.writeFileText(projectPath, JSON.stringify(projectData, null, 2));
+    if (ok !== true) return { ok: false, path: '' };
+
+    const analysisProjectPath = autoEditResult.project_path || autoEditResult.projectPath || task?.autoEditProject?.analysisProjectPath || '';
+    const originalClips = Array.isArray(autoEditResult.clips)
+        ? autoEditResult.clips
+        : (Array.isArray(task?.autoEditProject?.originalClips) ? task.autoEditProject.originalClips : []);
+    let collection = { ok: false, projectDir: '' };
+    if (typeof window.electronAPI.collectReelsProjectAssets === 'function') {
+        const derivativePaths = [
+            autoEditResult.final_video_path, autoEditResult.finalVideoPath,
+            autoEditResult.subtitled_path, autoEditResult.subtitledPath,
+            autoEditResult.mp3_path, autoEditResult.mp3Path,
+            autoEditResult.voice_changed_mp3_path, autoEditResult.voiceChangedMp3Path,
+            autoEditResult.voice_changed_video_path, autoEditResult.voiceChangedVideoPath,
+            autoEditResult.manual_audio_path, autoEditResult.manualAudioPath,
+            autoEditResult.manual_audio_video_path, autoEditResult.manualAudioVideoPath,
+        ].filter(Boolean);
+        const scriptText = String(
+            autoEditResult.script_text || autoEditResult.scriptText || task?.autoEditProject?.scriptText ||
+            (Array.isArray(task?.segments)
+                ? task.segments.map(segment => segment?.edited_text || segment?.text || '').filter(Boolean).join('\n')
+                : '')
+        );
+        collection = await window.electronAPI.collectReelsProjectAssets({
+            outputPath,
+            scriptText,
+            assets: [
+                { role: 'output', path: outputPath },
+                ...derivativePaths.filter(path => path !== outputPath).map(path => ({ role: 'derived', path })),
+                { role: 'subtitle', path: autoEditResult.srt_path || autoEditResult.srtPath || task?.srtPath || '' },
+                { role: 'reels', path: projectPath },
+                { role: 'analysis', path: analysisProjectPath },
+                { role: 'analysis', path: autoEditResult.report_path || autoEditResult.reportPath || task?.autoEditProject?.analysisReportPath || '' },
+                ...originalClips.map(path => ({ role: 'source', path })),
+            ],
+        });
+    }
+    return { ok: true, path: projectPath, collection };
+}
+
 /**
  * 从文件加载项目。
  * @returns {Promise<object>} 恢复的状态
@@ -467,6 +530,7 @@ const ReelsProject = {
     collectProjectData,
     applyProjectData,
     saveProject,
+    saveAutoEditRecoveryProject,
     loadProject,
     autoSaveProject,
     loadAutoSave,

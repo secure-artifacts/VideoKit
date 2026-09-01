@@ -2285,6 +2285,7 @@
                 <button id="autoedit-batch-analyze-btn" class="btn btn-primary" onclick="startAutoEditBatchAnalysis()">批量分析</button>
                 <button id="autoedit-batch-export-btn" class="btn btn-primary" onclick="startAutoEditBatchExport()">批量正式导出</button>
                 <button id="autoedit-batch-export-only-btn" class="btn btn-secondary" onclick="startAutoEditBatchExportOnly()">仅导出视频 + 字幕</button>
+                <button id="autoedit-batch-stop-btn" class="btn btn-danger" onclick="cancelAutoEditRunningTasks()" disabled>⏹ 停止当前任务</button>
                 <button class="btn btn-secondary" onclick="setAllAutoEditBatchSendToReels(true)" title="勾选全部任务参与本次批量导出">导出任务全选</button>
                 <button class="btn btn-secondary" onclick="setAllAutoEditBatchSendToReels(false)" title="取消全部任务，不参与本次批量导出">导出任务全不选</button>
                 <button class="btn btn-secondary" onclick="selectAutoEditBatchIssueFreeTasks()" title="只勾选没有错误、警告或待处理文案的任务">只选没问题任务</button>
@@ -2455,6 +2456,7 @@
               <button id="autoedit-start-btn" class="btn btn-primary" onclick="startAutoEditByScript(false, {analysisOnly:true})" style="min-width: 170px;">
                 ① 快速分析与匹配
               </button>
+              <button id="autoedit-stop-btn" class="btn btn-danger" onclick="cancelAutoEditRunningTasks()" disabled>⏹ 停止</button>
               <button class="btn btn-secondary" onclick="openAutoEditOutputDir()" style="padding: 6px 12px; font-size: 12px;">
                 📁 打开输出目录
               </button>
@@ -3668,9 +3670,21 @@
                   <span style="flex:1;"></span>
                   <span id="reels-export-selected-count" style="font-size:10px;color:var(--accent,#7b8bef);font-weight:600;" title="已选中导出的任务数"></span>
                 </div>
+                <div style="flex-shrink:0;display:flex;align-items:center;gap:5px;padding:4px 10px;border-bottom:1px solid var(--border-color);font-size:10px;background:rgba(0,0,0,.08);">
+                  <span style="color:var(--text-secondary);white-space:nowrap;">排序：</span>
+                  <select id="reels-task-sort" class="select" style="flex:1;min-width:0;font-size:10px;padding:2px 4px;"
+                    title="排序只调整当前分组内的任务顺序；手动排序可直接拖动任务行"
+                    onchange="reelsSortTasks(this.value)">
+                    <option value="manual">手动拖动</option>
+                    <option value="import-asc">导入时间（先导入在前）</option>
+                    <option value="import-desc">导入时间（后导入在前）</option>
+                    <option value="export-name">导出名称</option>
+                    <option value="file-name">文件名称</option>
+                  </select>
+                </div>
                 <div id="reels-task-list"
                   style="flex:1; overflow-y:auto; padding:4px 6px; font-size:12px; border:1px dashed rgba(255,255,255,0.15); border-radius:4px; margin:6px; transition:border-color .15s ease, background-color .15s ease, box-shadow .15s ease;">
-                  <p class="hint" style="margin:0;font-size:11px;">添加背景素材+配音+SRT，或拖拽/导入文件夹</p>
+                  <p class="hint" style="margin:0;font-size:11px;">可直接拖入背景视频、配音、SRT 或任务文件夹</p>
                 </div>
               </div>
               <div class="reels-resize-handle reels-resize-handle-1" data-left="reels-col-tasks" data-right="reels-col-preview"></div>
@@ -5463,10 +5477,18 @@
                 <label>目录:</label>
                 <input type="text" id="reels-output-dir" class="input file-path" placeholder="输出目录" readonly
                   style="width:200px;font-size:11px;">
-                <button class="btn btn-secondary" style="font-size:11px;padding:3px 8px;"
+                <button id="reels-package-project-btn" class="btn btn-secondary" style="font-size:11px;padding:3px 8px;"
                   onclick="reelsSelectOutputDir()">选择</button>
                 <button class="btn btn-secondary" style="font-size:11px;padding:3px 8px;"
                   onclick="reelsOpenOutputDir()">打开目录</button>
+                <label title="勾选后，Reels 成片导出成功时会在该成片旁复制一份可二剪工程包；不勾选时不额外复制。"
+                  style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap;">
+                  <input type="checkbox" id="reels-copy-project-to-output">
+                  导出后复制工程包
+                </label>
+                <button class="btn btn-secondary" style="font-size:11px;padding:3px 8px;"
+                  onclick="reelsPackageSelectedProjects()"
+                  title="不重新渲染视频，直接将已选自动剪辑任务的工程包复制到当前输出目录">📦 仅打包工程</button>
               </div>
               <!-- ── 行1.5: 画质 & 编码设置 ── -->
               <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; font-size:12px; padding:5px 0 4px; border-bottom:1px solid var(--border-color);">

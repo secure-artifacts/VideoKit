@@ -44,6 +44,17 @@ test('distinctive keywords separate the correct candidate', () => {
     assert.ok(correct > wrong);
 });
 
+test('duplicate-video detection does not flag a substantially shorter overlapping reading', () => {
+    assert.equal(autoEdit._test.isLikelyDuplicateTranscription(
+        autoEdit.normalizeText('be saved and shall go in and be blessed today'),
+        autoEdit.normalizeText('be saved and shall go in and be blessed'),
+    ), false);
+    assert.equal(autoEdit._test.isLikelyDuplicateTranscription(
+        autoEdit.normalizeText('be saved and shall go in and be blessed today'),
+        autoEdit.normalizeText('be saved and shall go in and be blessed today'),
+    ), true);
+});
+
 test('a repeated short line inside a unique block is not reported as an ambiguous match', () => {
     const lines = [
         "Aujourd'hui.",

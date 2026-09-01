@@ -109,7 +109,7 @@ function classifyGladiaError(message) {
 
 // ==================== HTTP 请求工具 ====================
 
-function gladiaRequest(method, urlStr, headers, body, timeout = 120000) {
+function gladiaRequest(method, urlStr, headers, body, timeout = 120000, signal = null) {
     // Intentional: sending user data (audio/text) to Gladia API for transcription
     const requestBody = body ? Buffer.from(body) : null;
     return new Promise((resolve, reject) => {
@@ -123,15 +123,28 @@ function gladiaRequest(method, urlStr, headers, body, timeout = 120000) {
             headers,
             timeout,
         };
+        let settled = false;
+        const finish = (fn, value) => {
+            if (settled) return;
+            settled = true;
+            signal?.removeEventListener?.('abort', abort);
+            fn(value);
+        };
+        const abort = () => {
+            req.destroy();
+            finish(reject, new Error('任务已停止'));
+        };
         const req = client.request(options, (res) => {
             const chunks = [];
             res.on('data', c => chunks.push(c));
             res.on('end', () => {
-                resolve({ status: res.statusCode, body: Buffer.concat(chunks), headers: res.headers });
+                finish(resolve, { status: res.statusCode, body: Buffer.concat(chunks), headers: res.headers });
             });
         });
-        req.on('timeout', () => { req.destroy(); reject(new Error('Gladia 请求超时')); });
-        req.on('error', reject);
+        if (signal?.aborted) return abort();
+        signal?.addEventListener?.('abort', abort, { once: true });
+        req.on('timeout', () => { req.destroy(); finish(reject, new Error('Gladia 请求超时')); });
+        req.on('error', error => finish(reject, signal?.aborted ? new Error('任务已停止') : error));
         if (requestBody) req.write(requestBody);
         req.end();
     });
@@ -356,7 +369,7 @@ async function splitAudioOnSilence(audioPath, outputDir, minMinutes = 5.0, maxMi
 /**
  * 上传音频文件到 Gladia v2
  */
-async function uploadAudio(apiKey, filePath) {
+async function uploadAudio(apiKey, filePath, signal = null) {
     const fileData = fs.readFileSync(filePath);
     const fileName = path.basename(filePath);
     const boundary = '----FormBoundary' + Math.random().toString(36).slice(2);
@@ -374,7 +387,7 @@ async function uploadAudio(apiKey, filePath) {
         'x-gladia-key': apiKey,
         'Content-Type': `multipart/form-data; boundary=${boundary}`,
         'Content-Length': fullBody.length,
-    }, fullBody, 300000);
+    }, fullBody, 300000, signal);
 
     if (res.status !== 200 && res.status !== 201) {
         const errText = res.body.toString().slice(0, 500);
@@ -392,7 +405,7 @@ async function uploadAudio(apiKey, filePath) {
 /**
  * 发起转录请求 (v2)
  */
-async function startTranscription(apiKey, audioUrl, language = 'english') {
+async function startTranscription(apiKey, audioUrl, language = 'english', signal = null) {
     // Gladia v2 使用 language_config.languages 数组，且需要语言代码（如 'en'）
     // 如果传入的是英文名，尝试映射到代码
     const { LANGUAGES } = require('./subtitleUtils');
@@ -421,7 +434,7 @@ async function startTranscription(apiKey, audioUrl, language = 'english') {
         'x-gladia-key': apiKey,
         'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(payload),
-    }, payload, 30000);
+    }, payload, 30000, signal);
 
     if (res.status !== 200 && res.status !== 201) {
         const errText = parseGladiaErrorText(res.body);
@@ -438,13 +451,14 @@ async function startTranscription(apiKey, audioUrl, language = 'english') {
 /**
  * 轮询转录结果
  */
-async function pollResult(apiKey, resultUrl, maxAttempts = 60, interval = 3000) {
+async function pollResult(apiKey, resultUrl, maxAttempts = 60, interval = 3000, signal = null) {
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        if (signal?.aborted) throw new Error('任务已停止');
         console.log(`Gladia 轮询尝试 ${attempt + 1}/${maxAttempts}...`);
         const res = await gladiaRequest('GET', resultUrl, {
             'x-gladia-key': apiKey,
             'Accept': 'application/json',
-        }, null, 15000);
+        }, null, 15000, signal);
 
         if (res.status === 200) {
             const data = JSON.parse(res.body.toString());
@@ -466,7 +480,16 @@ async function pollResult(apiKey, resultUrl, maxAttempts = 60, interval = 3000) 
             }
             throw new Error(`Gladia 轮询错误: ${res.status} - ${errText.slice(0, 300)}`);
         }
-        await new Promise(r => setTimeout(r, interval));
+        await new Promise((resolve, reject) => {
+            if (signal?.aborted) return reject(new Error('任务已停止'));
+            const timer = setTimeout(done, interval);
+            const abort = () => { clearTimeout(timer); done(new Error('任务已停止')); };
+            function done(error) {
+                signal?.removeEventListener?.('abort', abort);
+                error ? reject(error) : resolve();
+            }
+            signal?.addEventListener?.('abort', abort, { once: true });
+        });
     }
     throw new Error('Gladia 转录超时: 已达最大轮询次数');
 }
@@ -622,7 +645,9 @@ function getJsonResult(transcribeResult, lastResult, fullTextList, startTime) {
  * @param {Function} onProgress   进度回调
  * @returns {Object} { wordTimeInfo, fullText }
  */
-async function transcribeAudioFull(mediaPath, apiKeys, language, jsonPath, txtPath, minMinutes = 5.0, onProgress = null) {
+async function transcribeAudioFull(mediaPath, apiKeys, language, jsonPath, txtPath, minMinutes = 5.0, onProgress = null, signal = null) {
+    const throwIfAborted = () => { if (signal?.aborted) throw new Error('任务已停止'); };
+    throwIfAborted();
     if (!apiKeys || apiKeys.length === 0) {
         throw new Error('无可用 Gladia Key，请添加 Gladia key。');
     }
@@ -646,6 +671,7 @@ async function transcribeAudioFull(mediaPath, apiKeys, language, jsonPath, txtPa
     if (onProgress) onProgress('开始转录音频');
 
     for (let idx = 0; idx < segments.length; idx++) {
+        throwIfAborted();
         const { path: segPath, duration } = segments[idx];
 
         if (onProgress) onProgress(`转录进度: ${idx + 1}/${segments.length}`);
@@ -661,14 +687,15 @@ async function transcribeAudioFull(mediaPath, apiKeys, language, jsonPath, txtPa
 
             for (let retry = 0; retry < 3; retry++) {
                 try {
+                    throwIfAborted();
                     // 上传
-                    const audioUrl = await uploadAudio(apiKey, segPath);
+                    const audioUrl = await uploadAudio(apiKey, segPath, signal);
 
                     // 转录
-                    const resultUrl = await startTranscription(apiKey, audioUrl, language);
+                    const resultUrl = await startTranscription(apiKey, audioUrl, language, signal);
 
                     // 轮询结果
-                    const result = await pollResult(apiKey, resultUrl);
+                    const result = await pollResult(apiKey, resultUrl, 60, 3000, signal);
 
                     // 解析结果
                     const ok = getJsonResult(result, lastResult, fullTextList, curStartTime);
@@ -680,6 +707,7 @@ async function transcribeAudioFull(mediaPath, apiKeys, language, jsonPath, txtPa
                     curKeyIndex = keyAttempt; // 记住当前 key
                     break;
                 } catch (e) {
+                    if (signal?.aborted || String(e?.message || '') === '任务已停止') throw e;
                     console.error(`Gladia 转录失败 (key ${keyAttempt + 1}, 重试 ${retry + 1}): ${e.message}`);
                     lastKeyError = e.message;
 
@@ -692,7 +720,13 @@ async function transcribeAudioFull(mediaPath, apiKeys, language, jsonPath, txtPa
 
                     // 其他错误继续重试
                     if (retry < 2) {
-                        await new Promise(r => setTimeout(r, 2000));
+                        await new Promise((resolve, reject) => {
+                            if (signal?.aborted) return reject(new Error('任务已停止'));
+                            const timer = setTimeout(done, 2000);
+                            const abort = () => { clearTimeout(timer); done(new Error('任务已停止')); };
+                            function done(error) { signal?.removeEventListener?.('abort', abort); error ? reject(error) : resolve(); }
+                            signal?.addEventListener?.('abort', abort, { once: true });
+                        });
                     }
                 }
             }

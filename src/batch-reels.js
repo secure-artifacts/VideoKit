@@ -5943,6 +5943,7 @@ const REELS_EXPORT_SETTING_DEFAULTS = {
     'reels-resolution-select': '1080x1920',
     'reels-export-concurrency': '1',
     'reels-export-recycle-every': String(REELS_EXPORT_RECYCLE_EVERY_DEFAULT),
+    'reels-copy-project-to-output': false,
 };
 const REELS_EXPORT_SETTING_LABELS = {
     'reels-quality': '画质', 'reels-custom-bitrate': '目标码率', 'reels-custom-max-bitrate': '最大码率',
@@ -5956,6 +5957,7 @@ const REELS_EXPORT_SETTING_LABELS = {
     'reels-loop-fade-dur': '过渡时长', 'reels-resolution-select': '分辨率',
     'reels-export-concurrency': '并发数',
     'reels-export-recycle-every': '队列刷新间隔',
+    'reels-copy-project-to-output': '导出后复制工程包',
 };
 
 function _readReelsExportSettings() {
@@ -6739,6 +6741,7 @@ function _getOrCreateTaskByBase(baseName, fallbackName = '') {
 
     task = {
         id: 'task_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now(),
+        importedAt: Date.now(),
         baseName: normalized,
         fileName: fallbackName || `${normalized || 'reel'}.mp4`,
         bgPath: null,
@@ -6777,12 +6780,32 @@ async function reelsCreateTaskFromAutoEditResult(autoEditResult = {}, opts = {})
     };
 
     task.baseName = baseName || 'auto_edit';
+    if (!Number.isFinite(Number(task.importedAt))) task.importedAt = Date.now();
     task.fileName = `${task.baseName}.mp4`;
     task.audioPath = null;
     task.srtPath = srtPath;
     task.aligned = true;
     task.alignSource = 'auto_edit';
     task._autoEditSource = true;
+    // 这份来源快照与 Reels 的二剪工程一同保存。它既指向自动剪辑分析工程，
+    // 也保留原片、目标文案和审核切点；清空 Reels 队列后仍可回溯整个过程。
+    task.autoEditProject = {
+        version: 1,
+        analysisProjectPath: autoEditResult.project_path || autoEditResult.projectPath || '',
+        analysisReportPath: autoEditResult.report_path || autoEditResult.reportPath || '',
+        analysisOutputDir: autoEditResult.output_dir || autoEditResult.outputDir || '',
+        outputPath: videoPath,
+        srtPath,
+        outputDir: autoEditResult.output_dir || autoEditResult.outputDir || '',
+        processedClipsDir: autoEditResult.processed_clips_dir || autoEditResult.processedClipsDir || '',
+        processedClips: Array.isArray(autoEditResult.processed_clips) ? autoEditResult.processed_clips : [],
+        originalClips: Array.isArray(autoEditResult.clips) ? [...autoEditResult.clips] : [],
+        scriptText: autoEditResult.script_text || autoEditResult.scriptText || '',
+        reviewSegments: Array.isArray(autoEditResult.review_segments)
+            ? autoEditResult.review_segments
+            : (Array.isArray(autoEditResult.segments) ? autoEditResult.segments : []),
+        savedAt: new Date().toISOString(),
+    };
     // 自动剪辑送入 Reels 的成片就是唯一画面源。即使空任务构造器以后带上
     // 模板默认值，也不能让旧的内容视频/插入素材在导出时再叠一层画面。
     task.contentVideoPath = '';
@@ -6867,6 +6890,27 @@ async function reelsCreateTaskFromAutoEditResult(autoEditResult = {}, opts = {})
         if (typeof _renderTaskList === 'function') _renderTaskList();
         if (typeof reelsSelectTask === 'function') reelsSelectTask(_reelsState.selectedIdx);
         else if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
+
+        // 不依赖用户手动点“保存工程”：每次送入自动剪辑成片时，在成片旁生成
+        // `<成片名>.reels-project.json`。随后即使点击清空任务，二剪工程仍在。
+        const recovery = await window.ReelsProject?.saveAutoEditRecoveryProject?.(_reelsState, task, autoEditResult);
+        if (recovery?.ok) {
+            task.autoEditProject.reelsProjectPath = recovery.path;
+            task.autoEditProject.collectionPath = recovery.collection?.projectDir || '';
+            batchArchive = window.reelsArchiveTaskToActiveBatchTab?.(task) || batchArchive;
+            if (typeof _batchAutoSave === 'function') _batchAutoSave({ skipSync: true });
+            if (typeof showToast === 'function') {
+                const label = recovery.collection?.ok
+                    ? `${recovery.collection.projectDir.split(/[\\/]/).pop()}（已收集成片、字幕、工程和原片）`
+                    : recovery.path.split(/[\\/]/).pop();
+                const missingHint = recovery.collection?.ok && recovery.collection.complete === false
+                    ? `；${recovery.collection.missing?.length || 0} 个文件未找到，详见工程清单`
+                    : '';
+                showToast(`已保存二剪工程：${label}${missingHint}`, recovery.collection?.ok && recovery.collection.complete !== false ? 'success' : 'warning', 7000);
+            }
+        } else {
+            console.warn('[Reels] 自动剪辑二剪工程保存失败，仍可使用“保存工程”手动保存');
+        }
     } catch (error) {
         _reelsState.tasks.splice(previousTaskCount);
         _reelsState.selectedIdx = previousSelectedIdx;
@@ -6879,9 +6923,75 @@ async function reelsCreateTaskFromAutoEditResult(autoEditResult = {}, opts = {})
 }
 window.reelsCreateTaskFromAutoEditResult = reelsCreateTaskFromAutoEditResult;
 
+// 自动剪辑二次导出时，不新建 Reels 任务：仅替换该任务的成片和 SRT，
+// 所有用户在 Reels 内追加的覆层、贴纸、BGM、字幕样式与画面设置均保留。
+async function reelsUpdateTaskFromAutoEditResult(autoEditResult = {}, opts = {}) {
+    const videoPath = autoEditResult.output_path || autoEditResult.outputPath || '';
+    const srtPath = autoEditResult.srt_path || autoEditResult.srtPath || '';
+    if (!videoPath || !srtPath) throw new Error('缺少重新导出的自动剪辑成片或字幕');
+    const taskId = String(opts.taskId || autoEditResult.reels_task_id || autoEditResult.reelsTaskId || '');
+    const analysisPath = String(autoEditResult.project_path || autoEditResult.projectPath || '');
+    const task = _reelsState.tasks.find(item => String(item.id) === taskId)
+        || _reelsState.tasks.find(item => analysisPath && String(item.autoEditProject?.analysisProjectPath || '') === analysisPath);
+    if (!task?.autoEditProject) throw new Error('未找到已关联的 Reels 自动剪辑任务');
+
+    if (typeof _setTaskSingleBackground === 'function') _setTaskSingleBackground(task, videoPath, { clearBgSrcUrl: true });
+    else { task.bgPath = videoPath; task.videoPath = videoPath; task.bgSrcUrl = null; task.srcUrl = null; }
+    task.srtPath = srtPath;
+    task.aligned = true;
+    task._autoEditSource = true;
+    let srtContent = autoEditResult.srt_content || '';
+    if (!srtContent && window.electronAPI?.readFileText) srtContent = await window.electronAPI.readFileText(srtPath);
+    if (srtContent && typeof parseSRT === 'function') {
+        const raw = parseSRT(srtContent).map(segment => ({ ...segment, _timeUnit: 'sec' }));
+        task.segments = window.ReelsSubtitleProcessor ? ReelsSubtitleProcessor.srtToSegmentsWithWords(raw) : raw;
+    }
+    const duration = Number(autoEditResult.output_duration ?? autoEditResult.outputDuration ?? autoEditResult.duration)
+        || Number(await window.electronAPI?.getMediaDuration?.(videoPath)) || 0;
+    if (duration > 0) {
+        task.duration = duration;
+        _reelsState._mediaDurations = _reelsState._mediaDurations || {};
+        _reelsState._mediaDurations[videoPath] = duration;
+    }
+    task.autoEditProject = {
+        ...task.autoEditProject,
+        outputPath: videoPath, srtPath,
+        analysisProjectPath: analysisPath || task.autoEditProject.analysisProjectPath,
+        analysisReportPath: autoEditResult.report_path || autoEditResult.reportPath || task.autoEditProject.analysisReportPath,
+        analysisOutputDir: autoEditResult.output_dir || autoEditResult.outputDir || task.autoEditProject.analysisOutputDir,
+        reviewSegments: Array.isArray(autoEditResult.review_segments) ? autoEditResult.review_segments : task.autoEditProject.reviewSegments,
+        updatedAt: new Date().toISOString(),
+    };
+    const index = _reelsState.tasks.indexOf(task);
+    if (typeof _renderBatchTable === 'function') _renderBatchTable();
+    if (typeof _renderTaskList === 'function') _renderTaskList();
+    if (typeof reelsSelectTask === 'function') reelsSelectTask(index);
+    if (typeof _batchAutoSave === 'function') _batchAutoSave({ skipSync: true });
+    return task;
+}
+window.reelsUpdateTaskFromAutoEditResult = reelsUpdateTaskFromAutoEditResult;
+
+async function reelsRefreshAutoEditTask(index) {
+    const task = _reelsState.tasks[index];
+    if (!task?.autoEditProject) return;
+    try {
+        await reelsUpdateTaskFromAutoEditResult({
+            output_path: task.autoEditProject.outputPath || task.bgPath,
+            srt_path: task.autoEditProject.srtPath || task.srtPath,
+            project_path: task.autoEditProject.analysisProjectPath,
+        }, { taskId: task.id });
+        showToast?.('已更新自动剪辑成片与字幕；Reels 覆层、贴纸、BGM 和样式已保留', 'success');
+    } catch (error) {
+        showToast?.(`更新自动剪辑任务失败：${error.message || error}`, 'error');
+    }
+}
+window.reelsRefreshAutoEditTask = reelsRefreshAutoEditTask;
+
 function _buildFileInfo(file) {
     const name = file.name || '';
-    let filePath = name;
+    // Electron 开启 contextIsolation 后，渲染世界里的 File 可能无法再被
+    // webUtils 识别。任务列表拖拽会在 preload 捕获原始路径并挂到这里。
+    let filePath = file._nativePath || name;
     
     // 1. 尝试 Electron API（最可靠）
     if (window.electronAPI && window.electronAPI.getFilePath) {
@@ -6919,7 +7029,7 @@ function _pushPendingUnique(list, item) {
     if (!exists) list.push(item);
 }
 
-function _queueBackgroundFile(file) {
+function _queueBackgroundFile(file, options = {}) {
     const info = _buildFileInfo(file);
     let srcUrl = null;
     if (window.electronAPI && typeof window.electronAPI.toFileUrl === 'function' && info.path) {
@@ -6928,6 +7038,9 @@ function _queueBackgroundFile(file) {
         try { srcUrl = URL.createObjectURL(file); } catch (e) { }
     }
     info.srcUrl = srcUrl;
+    // 从左侧任务区直接投放多个背景时，用户期待“一条素材 = 一条任务”；
+    // 菜单“导入背景素材”仍保持素材库语义，不额外制造空任务。
+    info.createTask = options.createTask === true;
     _pushPendingUnique(_reelsState.pendingFiles.backgrounds, info);
 }
 
@@ -7359,7 +7472,7 @@ function reelsOnWorkModeChange() {
     }
 }
 
-function _queueMixedFiles(files) {
+function _queueMixedFiles(files, options = {}) {
     const workMode = _getWorkMode();
     for (const file of files) {
         const ext = _fileExt(file.name || '');
@@ -7372,7 +7485,7 @@ function _queueMixedFiles(files) {
         } else if (REELS_AUDIO_EXTS.has(ext)) {
             _queueAudioFile(file);
         } else if (REELS_BACKGROUND_EXTS.has(ext)) {
-            _queueBackgroundFile(file);
+            _queueBackgroundFile(file, { createTask: options.createBackgroundTasks === true });
         }
     }
 }
@@ -7404,7 +7517,7 @@ function _onFolderFilesSelected(e) {
     e.target.value = '';
 }
 
-function _scanDroppedReelsTaskFolder(dirPath, maxDepth = 3) {
+function _scanDroppedReelsTaskFolder(dirPath, maxDepth = 20) {
     const api = window.electronAPI;
     if (!api?.fsReaddir || !api?.pathJoin) return [];
     const files = [];
@@ -7422,6 +7535,26 @@ function _scanDroppedReelsTaskFolder(dirPath, maxDepth = 3) {
     return files.sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' }));
 }
 
+function _reelsPathParent(filePath) {
+    const value = String(filePath || '').replace(/\\/g, '/');
+    const slash = value.lastIndexOf('/');
+    return slash >= 0 ? value.slice(0, slash).toLowerCase() : '';
+}
+
+// 外层拖入会递归收集整个任务文件夹。不能只按文件名配对：常见结构是
+// `背景/xxx.mp4`、`配音/xxx.mp3`、`字幕/xxx.srt`，或者一个子目录里只有
+// 一份配音/字幕但背景有多段。优先同名，其次同目录唯一，最后整个任务夹唯一。
+function _pickDroppedFolderCompanion(filePath, byKey, byParent, allFiles) {
+    const parent = _reelsPathParent(filePath);
+    const name = String(filePath || '').split(/[\\/]/).pop() || filePath;
+    const key = `${parent}\u0000${_buildAudioSubtitleMatchKey(name)}`;
+    const exact = byKey.get(key) || [];
+    if (exact.length) return exact[0];
+    const siblings = byParent.get(parent) || [];
+    if (siblings.length === 1) return siblings[0];
+    return allFiles.length === 1 ? allFiles[0] : null;
+}
+
 function _importDroppedReelsTaskFolders(dirPaths) {
     const api = window.electronAPI;
     if (!api?.readFileText) return { imported: 0, skipped: (dirPaths || []).length };
@@ -7431,6 +7564,7 @@ function _importDroppedReelsTaskFolders(dirPaths) {
     let unmatched = 0;
     let replaced = 0;
     let firstImportedIndex = -1;
+    const detected = { videos: 0, audios: 0, srts: 0, txts: 0 };
     const workMode = _getWorkMode();
 
     for (const dirPath of dirPaths || []) {
@@ -7439,6 +7573,10 @@ function _importDroppedReelsTaskFolders(dirPaths) {
         const audios = paths.filter(p => REELS_AUDIO_EXTS.has(_fileExt(p)));
         const srts = paths.filter(p => _fileExt(p) === 'srt');
         const txts = paths.filter(p => _fileExt(p) === 'txt');
+        detected.videos += videos.length;
+        detected.audios += audios.length;
+        detected.srts += srts.length;
+        detected.txts += txts.length;
         // 人声模式允许只拖入 MP3：背景视频、SRT 和 TXT 都可在批量表格中后补。
         // 带声视频模式则必须至少有一个视频作为音频识别源。
         const requiresVideo = workMode === 'voiced_bg';
@@ -7452,52 +7590,57 @@ function _importDroppedReelsTaskFolders(dirPaths) {
         const byMatchKey = list => {
             const map = new Map();
             for (const filePath of list) {
-                const key = _buildAudioSubtitleMatchKey(api.pathBasename?.(filePath) || filePath);
+                const key = `${_reelsPathParent(filePath)}\u0000${_buildAudioSubtitleMatchKey(api.pathBasename?.(filePath) || filePath)}`;
                 if (!map.has(key)) map.set(key, []);
                 map.get(key).push(filePath);
             }
             return map;
         };
-        const audioMap = byMatchKey(audios);
+        const byParent = list => list.reduce((map, filePath) => {
+            const parent = _reelsPathParent(filePath);
+            if (!map.has(parent)) map.set(parent, []);
+            map.get(parent).push(filePath);
+            return map;
+        }, new Map());
         const srtMap = byMatchKey(srts);
         const txtMap = byMatchKey(txts);
+        const srtsByParent = byParent(srts);
+        const txtsByParent = byParent(txts);
         const pairs = [];
+        const usedSrts = new Set();
+        const usedTxts = new Set();
         if (workMode === 'voiced_bg') {
-            // 带声视频模式不需要独立配音；一个视频对应同名 TXT（TXT 可缺失，后续也可手动输入）。
+            // 带声视频模式不需要独立配音；一个视频对应同名/同目录唯一的字幕或 TXT。
             for (let i = 0; i < videos.length; i++) {
                 const videoPath = videos[i];
                 const matchKey = _buildAudioSubtitleMatchKey(api.pathBasename?.(videoPath) || videoPath);
+                const srtPath = _pickDroppedFolderCompanion(videoPath, srtMap, srtsByParent, srts);
+                const txtPath = _pickDroppedFolderCompanion(videoPath, txtMap, txtsByParent, txts);
+                if (srtPath) usedSrts.add(srtPath);
+                if (txtPath) usedTxts.add(txtPath);
                 pairs.push({
                     matchKey,
                     videoPath,
                     audioPath: null,
-                    srtPath: (srtMap.get(matchKey) || [])[0] || null,
-                    txtPath: (txtMap.get(matchKey) || [])[0] || null,
+                    srtPath,
+                    txtPath,
                 });
             }
         } else {
-            const captionMap = workMode === 'srt' ? srtMap : txtMap;
-            for (const [matchKey, audioGroup] of audioMap.entries()) {
-                const captionGroup = captionMap.get(matchKey) || [];
-                // 字幕文本和背景都可以后补：先为每个 MP3 建立任务，方便在表格中
-                // 一次粘贴文案后批量对齐。已有同名 SRT/TXT 时仍自动关联。
-                const pairCount = audioGroup.length;
-                for (let i = 0; i < pairCount; i++) {
-                    pairs.push({
-                        matchKey,
-                        audioPath: audioGroup[i],
-                        srtPath: workMode === 'srt' ? captionGroup[i] : (srtMap.get(matchKey) || [])[i] || null,
-                        txtPath: workMode === 'srt'
-                            ? (txtMap.get(matchKey) || [])[i] || (txtMap.get(matchKey) || [])[0] || null
-                            : captionGroup[i],
-                    });
-                }
-                unmatched += Math.max(0, audioGroup.length - pairCount);
+            // 每个 MP3 都建立一行；SRT/TXT 优先同名，再落到同目录唯一或全夹唯一。
+            // 这使“背景、MP3、SRT 分三个子文件夹”的真实目录也能完整导入。
+            for (const audioPath of audios) {
+                const audioName = api.pathBasename?.(audioPath) || audioPath;
+                const matchKey = _buildAudioSubtitleMatchKey(audioName);
+                const srtPath = _pickDroppedFolderCompanion(audioPath, srtMap, srtsByParent, srts);
+                const txtPath = _pickDroppedFolderCompanion(audioPath, txtMap, txtsByParent, txts);
+                if (srtPath) usedSrts.add(srtPath);
+                if (txtPath) usedTxts.add(txtPath);
+                pairs.push({ matchKey, audioPath, srtPath, txtPath });
             }
-            // 只统计多余的字幕文件；缺失 SRT 不应阻断任务导入。
-            for (const [matchKey, captionGroup] of captionMap.entries()) {
-                unmatched += Math.max(0, captionGroup.length - (audioMap.get(matchKey) || []).length);
-            }
+            // 缺字幕不会阻断 MP3 导入；仅把真正没有挂到任何任务的字幕/TXT 计入反馈。
+            unmatched += srts.filter(path => !usedSrts.has(path)).length;
+            unmatched += txts.filter(path => !usedTxts.has(path)).length;
         }
         if (pairs.length === 0) {
             skipped++;
@@ -7582,7 +7725,7 @@ function _importDroppedReelsTaskFolders(dirPaths) {
         reelsSelectTask(firstImportedIndex);
         if (typeof _batchAutoSave === 'function') _batchAutoSave({ skipSync: true });
     }
-    return { imported, importedFolders, skipped, unmatched, replaced };
+    return { imported, importedFolders, skipped, unmatched, replaced, detected };
 }
 
 function reelsToggleFolderQueue(queueId) {
@@ -7623,16 +7766,112 @@ function reelsToggleFolderQueueExport(queueId, checked) {
 }
 window.reelsToggleFolderQueueExport = reelsToggleFolderQueueExport;
 
+function _reelsTaskSortLabel(task, mode) {
+    if (mode === 'export-name') return String(task.exportName || task.fileName || task.baseName || '');
+    if (mode === 'file-name') {
+        return String(task.bgPath || task.videoPath || task.audioPath || task.srtPath || task.fileName || task.baseName || '').split(/[\\/]/).pop();
+    }
+    return '';
+}
+
+function reelsSortTasks(mode = 'manual') {
+    const sortMode = String(mode || 'manual');
+    if (sortMode === 'manual') return;
+    const selectedTask = _getSelectedTask();
+    const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+    // 不跨分组重排：分组标题、文件夹队列和它们的批量配置都要保持原样。
+    const groups = new Map();
+    _reelsState.tasks.forEach((task, index) => {
+        const key = `${task._batchTabId || '__existing__'}\u0000${task._folderQueueId || '__none__'}`;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push({ task, index });
+    });
+    for (const entries of groups.values()) {
+        const sorted = entries.slice().sort((a, b) => {
+            if (sortMode === 'import-asc' || sortMode === 'import-desc') {
+                const aTime = Number(a.task.importedAt) || 0;
+                const bTime = Number(b.task.importedAt) || 0;
+                const difference = aTime - bTime;
+                if (difference) return sortMode === 'import-desc' ? -difference : difference;
+            } else {
+                const difference = collator.compare(_reelsTaskSortLabel(a.task, sortMode), _reelsTaskSortLabel(b.task, sortMode));
+                if (difference) return difference;
+            }
+            return a.index - b.index;
+        });
+        entries.forEach((entry, position) => { _reelsState.tasks[entry.index] = sorted[position].task; });
+    }
+    _reelsState.selectedIdx = selectedTask ? _reelsState.tasks.indexOf(selectedTask) : -1;
+    _renderTaskList();
+    if (typeof _batchAutoSave === 'function') _batchAutoSave({ skipSync: true });
+}
+window.reelsSortTasks = reelsSortTasks;
+
+function reelsTaskDragStart(event, index) {
+    event.stopPropagation();
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('application/x-videokit-reels-task-index', String(index));
+    event.currentTarget.style.opacity = '0.45';
+}
+window.reelsTaskDragStart = reelsTaskDragStart;
+
+function reelsTaskDragEnd(event) {
+    if (event.currentTarget) event.currentTarget.style.opacity = '';
+}
+window.reelsTaskDragEnd = reelsTaskDragEnd;
+
 function _onTaskListDrop(e) {
     e.preventDefault();
     e.stopPropagation();
     e.currentTarget.style.borderColor = '';
     e.currentTarget.style.backgroundColor = '';
     e.currentTarget.style.boxShadow = '';
+    const draggedIndex = Number(e.dataTransfer?.getData('application/x-videokit-reels-task-index'));
+    if (Number.isInteger(draggedIndex) && draggedIndex >= 0 && draggedIndex < _reelsState.tasks.length) {
+        const targetRow = e.target.closest?.('.reels-task-item');
+        const targetIndex = Number(targetRow?.dataset?.taskIdx);
+        if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= _reelsState.tasks.length || targetIndex === draggedIndex) return;
+        const sourceTask = _reelsState.tasks[draggedIndex];
+        const targetTask = _reelsState.tasks[targetIndex];
+        // 分组和文件夹队列各自有标题及批量规则；跨组挪动会破坏这些关系，
+        // 因此允许组内排序，跨组请先用批量表格移动任务。
+        if ((sourceTask._batchTabId || '') !== (targetTask._batchTabId || '') || (sourceTask._folderQueueId || '') !== (targetTask._folderQueueId || '')) {
+            if (typeof showToast === 'function') showToast('任务只能在同一分组内拖动排序', 'warning');
+            return;
+        }
+        const selectedTask = _getSelectedTask();
+        _reelsState.tasks.splice(draggedIndex, 1);
+        const insertionIndex = draggedIndex < targetIndex ? targetIndex - 1 : targetIndex;
+        _reelsState.tasks.splice(insertionIndex, 0, sourceTask);
+        _reelsState.selectedIdx = selectedTask ? _reelsState.tasks.indexOf(selectedTask) : -1;
+        const sortSelect = document.getElementById('reels-task-sort');
+        if (sortSelect) sortSelect.value = 'manual';
+        _renderTaskList();
+        if (typeof _batchAutoSave === 'function') _batchAutoSave({ skipSync: true });
+        return;
+    }
     const files = Array.from(e.dataTransfer.files || []);
+    // 必须消费 preload 在捕获阶段保存的路径。否则单独拖入背景时，File 经
+    // contextIsolation 转换后可能取不到绝对路径，结果看起来像“拖不进去”。
+    const droppedPaths = window.electronAPI?.consumeDroppedFilePaths?.() || [];
+    files.forEach((file, index) => {
+        if (droppedPaths[index]) file._nativePath = droppedPaths[index];
+    });
+    // 某些 macOS/Electron 组合会把 DataTransfer 的 File 列表传给页面，
+    // 却让其中的文件拿不到路径；也有场景只留下 preload 捕获的原始路径。
+    // 补成最小文件描述后，单独拖背景仍能进入导入链路。
+    const knownPaths = new Set(files.map(file => file._nativePath).filter(Boolean));
+    for (const nativePath of droppedPaths) {
+        if (!nativePath || knownPaths.has(nativePath)) continue;
+        files.push({
+            name: String(nativePath).split(/[\\/]/).pop() || nativePath,
+            _nativePath: nativePath,
+            path: nativePath,
+        });
+    }
     const fileEntries = files.map(file => ({
         file,
-        path: (typeof getFileNativePath === 'function') ? getFileNativePath(file) : (file.path || file.name),
+        path: file._nativePath || ((typeof getFileNativePath === 'function') ? getFileNativePath(file) : (file.path || '')),
     })).filter(item => item.path);
     const dirs = fileEntries.filter(item => window.electronAPI?.isDirectory?.(item.path)).map(item => item.path);
     const regularFiles = fileEntries.filter(item => !window.electronAPI?.isDirectory?.(item.path)).map(item => item.file);
@@ -7643,8 +7882,9 @@ function _onTaskListDrop(e) {
             if (result.imported > 0) {
                 showToast(
                     `📁 已建立 ${result.importedFolders} 个文件夹队列，共 ${result.imported} 个独立任务`
+                    + `；识别到 ${result.detected?.videos || 0} 个背景视频、${result.detected?.audios || 0} 个音频、${result.detected?.srts || 0} 个 SRT`
                     + `${result.replaced ? `；已替换 ${result.replaced} 个旧任务` : ''}`
-                    + `${result.unmatched ? `；跳过 ${result.unmatched} 个未配套的 MP3/SRT` : ''}`
+                    + `${result.unmatched ? `；${result.unmatched} 个字幕/TXT未能唯一配对，未挂入任务` : ''}`
                     + `${result.skipped ? `；跳过 ${result.skipped} 个无完整配套内容的文件夹` : ''}`,
                     'success',
                     7000
@@ -7658,8 +7898,12 @@ function _onTaskListDrop(e) {
         }
     }
     if (regularFiles.length > 0) {
-        _queueMixedFiles(regularFiles);
+        _queueMixedFiles(regularFiles, { createBackgroundTasks: true });
         reelsAutoMatchFiles();
+        const backgroundCount = regularFiles.filter(file => REELS_BACKGROUND_EXTS.has(_fileExt(file.name || ''))).length;
+        if (backgroundCount > 0 && typeof showToast === 'function') {
+            showToast(`已导入 ${backgroundCount} 个背景素材；可继续拖入配音和 SRT 自动配对`, 'success', 4500);
+        }
     }
 }
 
@@ -7685,7 +7929,10 @@ function _applyFreeBackgroundAssignment() {
     const assignMode = _getBgAssignMode();
     // free 模式下，TXT/手动文本任务也需要拿到背景，便于点击预览
     const targetTasks = _reelsState.tasks.filter(t =>
-        t.audioPath || t.srtPath || t.txtContent || t.manualText
+        (t.audioPath || t.srtPath || t.txtContent || t.manualText)
+        // 任务区直接投放的背景已明确绑定到这条任务；后续拖入同名配音/SRT
+        // 时不能被“背景循环分配”改成另一条素材。
+        && !(t._keepBackgroundOnly === true && (t.bgPath || t.videoPath))
     );
     if (targetTasks.length === 0) return;
 
@@ -7761,7 +8008,9 @@ function _pruneFreeBgOnlyTasks() {
         const hasAudio = !!t.audioPath;
         const hasSrt = !!t.srtPath;
         const hasTxt = !!t.txtContent;
-        if (hasBg && !hasAudio && !hasSrt && !hasTxt) return false;
+        // 任务区直接拖入的背景是明确创建的任务，不能因暂未附加音频/字幕而
+        // 被自由匹配的清理逻辑移除。
+        if (hasBg && !hasAudio && !hasSrt && !hasTxt) return t._keepBackgroundOnly === true;
         return true;
     });
 }
@@ -7776,6 +8025,18 @@ function reelsAutoMatchFiles() {
 
     for (const bg of backgrounds) {
         _upsertBackgroundLibrary(bg);
+        if (matchMode === 'free' && bg.createTask) {
+            const task = _getOrCreateTaskByBase(bg.baseName, bg.name);
+            task.baseName = bg.baseName;
+            task.matchKey = bg.matchKey || _buildAudioSubtitleMatchKey(bg.name);
+            task.bgPath = bg.path;
+            task.bgSrcUrl = bg.srcUrl || null;
+            task.videoPath = bg.path;
+            task.srcUrl = bg.srcUrl || null;
+            task._keepBackgroundOnly = true;
+            if (!task.fileName) task.fileName = bg.name;
+            continue;
+        }
         if (matchMode !== 'strict') continue;
         const task = _getOrCreateTaskByBase(bg.baseName, bg.name);
         task.baseName = bg.baseName;
@@ -7990,10 +8251,13 @@ function _renderTaskList() {
             ];
         }
         const statusText = statusParts.join(' ');
-        // 左侧任务列表应优先回显用户在批量表格中设置的“导出命名”。
-        // fileName 是任务的内部/素材名称（例如 card_001.mp4），不能用它覆盖
-        // 用户对最终文件名的认知；没有自定义名称时才回退到默认文件名。
-        const displayName = String(task.exportName || task.fileName || task.baseName || '未命名任务');
+        // 左侧任务列表应优先回显用户在批量表格中设置的“导出命名”。只导入背景
+        // 时，card_001 只是系统的临时卡片 ID，不是用户认识的素材名；此时显示
+        // 背景文件名，内部 ID 与最终导出命名都不受影响。
+        const internalName = String(task.fileName || task.baseName || '');
+        const backgroundName = String(task.bgPath || task.videoPath || '').split(/[\\/]/).pop() || '';
+        const isGeneratedCardName = /^card_\d+(?:\.[^.]+)?$/i.test(internalName);
+        const displayName = String(task.exportName || (isGeneratedCardName && backgroundName ? backgroundName : internalName) || '未命名任务');
         const baseName = displayName.replace(/\.[^.]+$/, '');
         // 左侧列表用于人工找任务，不能只显示十几个字符；允许它换行显示全名。
         const shortName = baseName;
@@ -8100,6 +8364,9 @@ function _renderTaskList() {
 
         return `${batchGroupHeader}${folderHeader}
             <div class="reels-task-item ${selected ? 'reels-task-selected' : ''}"
+                 draggable="true" data-task-idx="${i}"
+                 ondragstart="reelsTaskDragStart(event, ${i})"
+                 ondragend="reelsTaskDragEnd(event)"
                  onclick="reelsSelectTask(${i})"
                  title="${escapeTaskText(displayName)}${task.exportName && task.fileName ? `\n内部任务名：${escapeTaskText(task.fileName)}` : ''}"
                  style="display:flex; align-items:center; gap:4px; padding:5px 6px; margin-bottom:2px;
@@ -8109,13 +8376,15 @@ function _renderTaskList() {
                         opacity: ${rowOpacity};
                         ${(queueCollapsed || batchGroupCollapsed) ? 'display:none;' : ''}
                         ${selected ? 'box-shadow: inset 0 0 0 1px rgba(0,212,255,0.3);' : ''}">
+                <span title="拖动排序" style="color:var(--text-secondary);cursor:grab;font-size:12px;line-height:1;">⠿</span>
                 <input type="checkbox" class="reels-export-cb" data-task-idx="${i}" ${exportChecked ? 'checked' : ''}
                     style="accent-color:var(--accent-color,#7b8bef);transform:scale(1.25);margin:0 6px 0 4px;flex-shrink:0;cursor:pointer;"
                     onclick="event.stopPropagation(); reelsToggleExportSelect(${i}, this.checked)"
                     title="勾选以包含在批量导出中">
-                <span style="font-size:12px; font-weight:${selected ? '600' : '400'}; color:${selected ? '#fff' : 'var(--text-primary)'}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:60px; max-width:120px;">${escapeTaskText(shortName)}</span>
+                <span class="reels-task-name" style="font-size:12px; font-weight:${selected ? '600' : '400'}; color:${selected ? '#fff' : 'var(--text-primary)'}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:60px; max-width:120px;">${escapeTaskText(shortName)}</span>
                 ${alphaIcon}
                 ${ovPreview}
+                ${task.autoEditProject ? `<button class="btn" style="padding:1px 4px;font-size:10px;border:none;background:transparent;color:#86efac;" onclick="event.stopPropagation(); reelsRefreshAutoEditTask(${i})" title="读取此自动剪辑任务最新导出的成片和 SRT；保留 Reels 覆层、贴纸、BGM 与样式">🔄</button>` : ''}
                 <span style="font-size:10px; white-space:nowrap; opacity:0.8; margin-left:auto;">${statusText}</span>
                 <button class="btn" style="padding:1px 4px; font-size:10px; opacity:0.5; border:none; background:transparent; color:var(--text-secondary);" onclick="event.stopPropagation(); reelsRemoveTask(${i})" title="删除">✕</button>
             </div>
@@ -10657,6 +10926,117 @@ function _summarizeExportBinding(task) {
     return `id=${task?.id || '-'} | video=${String(task?.bgPath || task?.videoPath || '-').split(/[\\/]/).pop()} | subtitle="${compact(firstSegment?.text)}" | overlay="${compact(overlayText)}"`;
 }
 
+function _getAutoEditProjectScript(task) {
+    const savedScript = String(task?.autoEditProject?.scriptText || '').trim();
+    if (savedScript) return savedScript;
+    return (Array.isArray(task?.segments) ? task.segments : [])
+        .map(segment => String(segment?.edited_text || segment?.text || '').trim())
+        .filter(Boolean)
+        .join('\n');
+}
+
+function _collectReelsProjectMediaAssets() {
+    const paths = new Set();
+    const isAbsolutePath = value => typeof value === 'string'
+        && (value.startsWith('/') || /^[A-Za-z]:[\\/]/.test(value) || /^\\\\[^\\]+\\[^\\]+/.test(value));
+    const visit = (value, key = '', seen = new WeakSet()) => {
+        if (typeof value === 'string') {
+            // 覆层文字同样使用 content 字段，因此只收集真正的绝对本地路径。
+            if (isAbsolutePath(value) && /(?:path|src|content|media|file)$/i.test(key)) paths.add(value);
+            return;
+        }
+        if (!value || typeof value !== 'object' || seen.has(value)) return;
+        seen.add(value);
+        if (Array.isArray(value)) value.forEach(item => visit(item, '', seen));
+        else Object.entries(value).forEach(([childKey, childValue]) => visit(childValue, childKey, seen));
+    };
+    (_reelsState.tasks || []).forEach(task => visit(task.overlays || []));
+    (_reelsState.watermarks || []).forEach(watermark => visit(watermark));
+    return [...paths];
+}
+
+async function _copyAutoEditProjectToReelsOutput(task, finalOutputPath) {
+    let sourceProjectDir = String(task?.autoEditProject?.collectionPath || '').trim();
+    if (!sourceProjectDir) {
+        const sourceOutputPath = String(task?.autoEditProject?.outputPath || task?.bgPath || '');
+        const sourceBase = sourceOutputPath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') || '';
+        const sourceDir = sourceOutputPath.slice(0, Math.max(sourceOutputPath.lastIndexOf('/'), sourceOutputPath.lastIndexOf('\\')));
+        if (sourceBase && sourceDir) {
+            const sep = sourceDir.includes('\\') ? '\\' : '/';
+            sourceProjectDir = `${sourceDir}${sep}${sourceBase}-工程`;
+        }
+    }
+    if (!sourceProjectDir || !finalOutputPath || !window.electronAPI?.copyReelsProjectPackage) return { skipped: true };
+    let reelsProjectData = null;
+    try {
+        reelsProjectData = window.ReelsProject?.collectProjectData?.(_reelsState) || null;
+    } catch (error) {
+        console.warn('[Reels] 收集当前 Reels 工程快照失败:', error);
+    }
+    return window.electronAPI.copyReelsProjectPackage({
+        sourceProjectDir,
+        outputPath: finalOutputPath,
+        scriptText: _getAutoEditProjectScript(task),
+        reelsProjectData,
+        overlayAssets: _collectReelsProjectMediaAssets(),
+        analysisAssets: [task?.autoEditProject?.analysisProjectPath, task?.autoEditProject?.analysisReportPath].filter(Boolean),
+        analysisOutputDir: task?.autoEditProject?.analysisOutputDir || '',
+        originalClips: Array.isArray(task?.autoEditProject?.originalClips) ? task.autoEditProject.originalClips : [],
+    });
+}
+
+async function reelsPackageSelectedProjects() {
+    const packButton = document.getElementById('reels-package-project-btn');
+    const statusEl = document.getElementById('reels-export-status');
+    const tasks = (_reelsState.tasks || []).filter(task => task._exportSelected !== false && task.autoEditProject);
+    if (!tasks.length) {
+        showToast?.('没有可打包的自动剪辑任务；请先将文案自动剪辑成片送入 Reels', 'info');
+        return;
+    }
+    let outputDir = String(document.getElementById('reels-output-dir')?.value || '');
+    if (!outputDir) {
+        outputDir = await _getSystemDownloadsPath();
+        const outputEl = document.getElementById('reels-output-dir');
+        if (outputEl) outputEl.value = outputDir || '';
+    }
+    if (!outputDir) return showToast?.('请先选择工程包输出目录', 'warning');
+    const ensure = await window.electronAPI?.ensureDirectory?.(outputDir);
+    if (ensure?.ok === false) return showToast?.(`无法创建输出目录：${ensure.error || outputDir}`, 'error');
+    const sep = outputDir.includes('\\') ? '\\' : '/';
+    const baseDir = outputDir.replace(/[\\/]+$/, '');
+    let succeeded = 0;
+    const failures = [];
+    const previousButtonText = packButton?.textContent || '📦 仅打包工程';
+    if (packButton) { packButton.disabled = true; packButton.textContent = '📦 打包中…'; }
+    if (statusEl) statusEl.textContent = `📦 正在打包工程 0/${tasks.length}…`;
+    showToast?.(`开始打包 ${tasks.length} 个工程；大视频素材复制期间请勿关闭窗口`, 'info', 5000);
+    try {
+        for (let index = 0; index < tasks.length; index++) {
+            const task = tasks[index];
+            const rawName = task.exportName || task.baseName || task.fileName || 'Reels工程';
+            const safeName = _sanitizeReelsFileBaseName(rawName, 'Reels工程');
+            if (statusEl) statusEl.textContent = `📦 正在打包工程 ${index + 1}/${tasks.length}：${safeName}`;
+            const virtualOutputPath = `${baseDir}${sep}${safeName}.mp4`;
+            const result = await _copyAutoEditProjectToReelsOutput(task, virtualOutputPath);
+            if (result?.ok) succeeded++;
+            else failures.push(`${task.fileName || safeName}：${result?.error || '原工程文件夹不存在'}`);
+        }
+    } catch (error) {
+        failures.push(`打包流程：${error?.message || error}`);
+    } finally {
+        if (packButton) { packButton.disabled = false; packButton.textContent = previousButtonText; }
+    }
+    if (statusEl) statusEl.textContent = failures.length
+        ? `⚠️ 工程打包完成 ${succeeded}/${tasks.length}，有 ${failures.length} 个失败`
+        : `✅ 工程打包完成 ${succeeded}/${tasks.length}`;
+    if (succeeded) showToast?.(`已打包 ${succeeded}/${tasks.length} 个工程到当前输出目录（未重新导出视频）`, failures.length ? 'warning' : 'success', 7000);
+    if (failures.length) {
+        console.warn('[Reels] 仅打包工程失败:', failures);
+        showToast?.(`有 ${failures.length} 个工程未打包成功，请查看控制台详情`, 'warning', 7000);
+    }
+}
+window.reelsPackageSelectedProjects = reelsPackageSelectedProjects;
+
 // 初始化（需要在 DOM 就绪后调用）
 setTimeout(() => _initMultiPresetUI(), 200);
 
@@ -10820,6 +11200,7 @@ async function reelsStartExport(options = {}) {
     let exportEngine = (document.getElementById('reels-export-engine') || {}).value || 'precise';
     if (exportEngine === 'experimental') exportEngine = 'hardware';
     const suffix = document.getElementById('reels-suffix').value || '_subtitled';
+    const copyProjectToOutput = !!document.getElementById('reels-copy-project-to-output')?.checked;
     const namingMode = (document.getElementById('reels-export-naming-mode-outer') || {}).value || (document.getElementById('reels-naming-mode') || {}).value || localStorage.getItem('reels_naming_mode') || 'text';
     // 导出前只同步当前界面选中任务在 UI 中的微调，切勿跨任务强行覆盖其他任务的独立样式与模板
     const currentTaskForSync = _getSelectedTask();
@@ -11974,6 +12355,19 @@ async function reelsStartExport(options = {}) {
                 }
             }
 
+            // 默认不复制；仅在用户勾选且该任务来自文案自动剪辑时，在最终成片旁
+            // 再放一份完整工程包。复制失败不影响已经成功的成片。
+            if (copyProjectToOutput && doMp4 && task.autoEditProject) {
+                const copiedProject = await _copyAutoEditProjectToReelsOutput(task, finalOutputPath);
+                if (copiedProject?.ok) {
+                    _reelsAppendExportLogUI(`${task.fileName}${presetLabel}：工程包已复制 → ${copiedProject.projectDir}`);
+                } else if (!copiedProject?.skipped) {
+                    const copyError = copiedProject?.error || '未知原因';
+                    _reelsAppendExportLogUI(`${task.fileName}${presetLabel}：成片已导出，但工程包复制失败：${copyError}`, 'warning');
+                    if (typeof showToast === 'function') showToast(`成片已导出，工程包复制失败：${copyError}`, 'warning', 8000);
+                }
+            }
+
             okCount += 1;
             _reelsUpdateJobProgressUI(i, 100, '已完成', 'success');
             _reelsState.lastExportOutputPath = finalOutputPath;
@@ -12250,6 +12644,7 @@ function collectCurrentProjectState() {
     const globalStyle = _cloneSubtitleStyle(_reelsState.globalSubtitleStyle) || style;
     const exportOpts = {
         outputDir: (document.getElementById('reels-output-dir') || {}).value || '',
+        copyProjectToOutput: (document.getElementById('reels-copy-project-to-output') || {}).checked || false,
         quality: (document.getElementById('reels-quality') || {}).value || 'medium',
         exportEngine: (document.getElementById('reels-export-engine') || {}).value || 'precise',
         customBitrateMbps: _readReelsCustomBitrate().target,
@@ -12353,6 +12748,7 @@ function applyRestoredProject(result) {
         };
         const setCheck = (id, val) => { const el = document.getElementById(id); if (el) el.checked = !!val; };
         if (opts.outputDir) setVal('reels-output-dir', opts.outputDir);
+        if (opts.copyProjectToOutput !== undefined) setCheck('reels-copy-project-to-output', opts.copyProjectToOutput);
         if (opts.quality) setVal('reels-quality', opts.quality);
         if (opts.exportEngine) setVal('reels-export-engine', opts.exportEngine === 'experimental' ? 'hardware' : opts.exportEngine);
         if (opts.customBitrateMbps !== undefined) setVal('reels-custom-bitrate', opts.customBitrateMbps);
@@ -12493,6 +12889,7 @@ function reelsSaveProject() {
     const globalStyle = _cloneSubtitleStyle(_reelsState.globalSubtitleStyle) || style;
     const exportOpts = {
         outputDir: (document.getElementById('reels-output-dir') || {}).value || '',
+        copyProjectToOutput: (document.getElementById('reels-copy-project-to-output') || {}).checked || false,
         quality: (document.getElementById('reels-quality') || {}).value || 'medium',
         exportEngine: (document.getElementById('reels-export-engine') || {}).value || 'precise',
         customBitrateMbps: _readReelsCustomBitrate().target,

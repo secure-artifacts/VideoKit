@@ -28,6 +28,7 @@ const wav2lipService = require('./services/wav2lip');
 const geminiService = require('./services/gemini');
 const templateService = require('./services/templates');
 const autoEditService = require('./services/autoEdit');
+const activeAutoEditRequests = new Map();
 
 function normalizeNumbers(text) {
     if (!text) return '';
@@ -229,6 +230,7 @@ async function runAutoEditByScript(data = {}, progressSender = null) {
         analysisOnly: data.analysis_only === true || data.analysis_only === 'true',
         reviewSegments: data.review_segments || data.reviewSegments || [],
         fitMode: data.fit_mode || data.fitMode || 'cover',
+        signal: data.signal,
         onProgress: progressSender,
     });
 }
@@ -351,7 +353,16 @@ function calibrateSrtTimingFromWordTimeline(sourceSrtPath, srtPaths, generationS
 function registerAPIHandlers() {
     // ==================== 通用 API 调用接口 ====================
     ipcMain.handle('api-call', async (event, endpoint, data) => {
+        const requestId = String(data?.request_id || '');
         try {
+            if (endpoint === 'media/auto-edit-cancel') {
+                const controller = activeAutoEditRequests.get(requestId);
+                if (controller) controller.abort();
+                return { success: true, data: { cancelled: Boolean(controller) } };
+            }
+            const isAutoEdit = endpoint === 'media/convert' && data?.mode === 'auto_edit';
+            const controller = isAutoEdit ? new AbortController() : null;
+            if (controller && requestId) activeAutoEditRequests.set(requestId, controller);
             const result = await routeAPI(endpoint, data || {}, (progress) => {
                 try {
                     event.sender.send(endpoint === 'subtitle/generate' ? 'subtitle-progress' : 'auto-edit-progress', {
@@ -369,6 +380,8 @@ function registerAPIHandlers() {
             console.error(`[API Error] ${endpoint}: ${rawMsg}`);
             if (error.stack) console.error(error.stack);
             return { success: false, error: safeMsg };
+        } finally {
+            if (requestId) activeAutoEditRequests.delete(requestId);
         }
     });
 
@@ -1304,7 +1317,7 @@ async function routeAPI(endpoint, data, progressSender = null, sender = null) {
             const allResults = [];
 
             if (mode === 'auto_edit') {
-                return await runAutoEditByScript({ ...data, files }, progressSender);
+                return await runAutoEditByScript({ ...data, files, signal: activeAutoEditRequests.get(String(data.request_id || ''))?.signal }, progressSender);
             }
 
             if (mode === 'audio_split') {

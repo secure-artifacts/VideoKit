@@ -1320,6 +1320,192 @@ app.whenReady().then(async () => {
         }
     });
 
+    // 将文案自动剪辑的“可二剪工程”整理到成片旁。只复制，不移动或删除原文件；
+    // 重复执行会更新同名工程文件夹，避免用户在多个目录里找素材。
+    ipcMain.handle('collect-reels-project-assets', async (event, payload = {}) => {
+        const outputPath = String(payload.outputPath || '');
+        if (!outputPath || !path.isAbsolute(outputPath)) return { ok: false, error: '缺少有效的成片路径' };
+        const outputDir = path.dirname(outputPath);
+        const baseName = path.basename(outputPath, path.extname(outputPath)) || '成片';
+        const projectDir = path.join(outputDir, `${baseName}-工程`);
+        // 主成片放在工程包根目录，双击就能看到；其余辅助材料再按类型收纳。
+        const roleDirs = { output: '', derived: '关联成片和音频', subtitle: '字幕', reels: 'Reels工程', analysis: '自动剪辑分析', source: '原始片段' };
+        const assets = Array.isArray(payload.assets) ? payload.assets : [];
+        const copied = [];
+        const missing = [];
+        const usedTargets = new Set();
+        const safeName = value => String(value || '').replace(/[\\/:*?"<>|]/g, '_');
+        try {
+            await fs.promises.mkdir(projectDir, { recursive: true });
+            for (let index = 0; index < assets.length; index++) {
+                const asset = assets[index] || {};
+                const sourcePath = String(asset.path || '');
+                if (!sourcePath || !path.isAbsolute(sourcePath)) continue;
+                const role = Object.prototype.hasOwnProperty.call(roleDirs, asset.role) ? asset.role : 'source';
+                if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) {
+                    missing.push({ role, path: sourcePath });
+                    continue;
+                }
+                const targetDir = roleDirs[role] ? path.join(projectDir, roleDirs[role]) : projectDir;
+                await fs.promises.mkdir(targetDir, { recursive: true });
+                const originalName = safeName(path.basename(sourcePath)) || `素材_${index + 1}`;
+                let targetName = originalName;
+                let suffix = 2;
+                while (usedTargets.has(path.join(targetDir, targetName))) {
+                    const ext = path.extname(originalName);
+                    targetName = `${path.basename(originalName, ext)}_${suffix++}${ext}`;
+                }
+                const targetPath = path.join(targetDir, targetName);
+                usedTargets.add(targetPath);
+                await fs.promises.copyFile(sourcePath, targetPath);
+                copied.push({ role, sourcePath, path: targetPath });
+            }
+            const manifest = {
+                version: 1,
+                createdAt: new Date().toISOString(),
+                sourceOutputPath: outputPath,
+                copied,
+                missing,
+                note: '这是可二剪工程包。原始文件未被移动或删除。',
+            };
+            const scriptText = String(payload.scriptText || '');
+            await fs.promises.writeFile(path.join(projectDir, '文案.txt'), scriptText, 'utf8');
+            await fs.promises.writeFile(path.join(projectDir, '工程清单.json'), JSON.stringify(manifest, null, 2), 'utf8');
+            return { ok: true, complete: missing.length === 0, projectDir, copied, missing };
+        } catch (error) {
+            return { ok: false, error: error.message || String(error), projectDir, copied, missing };
+        }
+    });
+
+    // Reels 最终导出可选择在最终成片旁再复制一份工程包。只复制，不移动源工程；
+    // 这样既保留自动剪辑输出处的原工程，也方便把成片和二剪资料一起交付或归档。
+    ipcMain.handle('copy-reels-project-package', async (event, payload = {}) => {
+        const sourceProjectDir = String(payload.sourceProjectDir || '');
+        const outputPath = String(payload.outputPath || '');
+        if (!sourceProjectDir || !path.isAbsolute(sourceProjectDir) || !fs.existsSync(sourceProjectDir) || !fs.statSync(sourceProjectDir).isDirectory()) {
+            return { ok: false, error: '原工程文件夹不存在' };
+        }
+        if (!outputPath || !path.isAbsolute(outputPath)) return { ok: false, error: '缺少有效的最终成片路径' };
+        const baseName = path.basename(outputPath, path.extname(outputPath)) || '成片';
+        const targetProjectDir = path.join(path.dirname(outputPath), `${baseName}-工程`);
+        try {
+            const sourceResolved = await fs.promises.realpath(sourceProjectDir);
+            const targetResolved = path.resolve(targetProjectDir);
+            if (sourceResolved !== targetResolved) {
+                await fs.promises.mkdir(targetProjectDir, { recursive: true });
+                await fs.promises.cp(sourceProjectDir, targetProjectDir, { recursive: true, force: true });
+            }
+            const overlayAssets = Array.isArray(payload.overlayAssets) ? payload.overlayAssets : [];
+            const overlayDir = path.join(targetProjectDir, '覆层素材');
+            const overlayPathMap = new Map();
+            const usedOverlayNames = new Set();
+            for (const sourcePath of overlayAssets) {
+                if (!sourcePath || !path.isAbsolute(sourcePath) || !fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) continue;
+                await fs.promises.mkdir(overlayDir, { recursive: true });
+                const sourceName = path.basename(sourcePath).replace(/[\\/:*?"<>|]/g, '_') || '覆层素材';
+                const ext = path.extname(sourceName);
+                const stem = path.basename(sourceName, ext);
+                let targetName = sourceName;
+                let sequence = 2;
+                while (usedOverlayNames.has(targetName)) targetName = `${stem}_${sequence++}${ext}`;
+                usedOverlayNames.add(targetName);
+                const targetPath = path.join(overlayDir, targetName);
+                await fs.promises.copyFile(sourcePath, targetPath);
+                overlayPathMap.set(sourcePath, targetPath);
+            }
+            // 旧工程包可能在“分析文件自动收集”上线前创建。仅打包时仍要从
+            // 当前任务记录的原始路径补齐分析工程/报告，不能只相信源工程夹。
+            const analysisAssets = Array.isArray(payload.analysisAssets) ? payload.analysisAssets : [];
+            const analysisDir = path.join(targetProjectDir, '自动剪辑分析');
+            const portablePathMap = new Map();
+            const originalDir = path.join(targetProjectDir, '原始片段');
+            const usedOriginalNames = new Set();
+            for (const sourcePath of (Array.isArray(payload.originalClips) ? payload.originalClips : [])) {
+                if (!sourcePath || !path.isAbsolute(sourcePath) || !fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) continue;
+                await fs.promises.mkdir(originalDir, { recursive: true });
+                const sourceName = path.basename(sourcePath);
+                const ext = path.extname(sourceName);
+                const stem = path.basename(sourceName, ext);
+                let targetName = sourceName;
+                let sequence = 2;
+                while (usedOriginalNames.has(targetName)) targetName = `${stem}_${sequence++}${ext}`;
+                usedOriginalNames.add(targetName);
+                const targetPath = path.join(originalDir, targetName);
+                await fs.promises.copyFile(sourcePath, targetPath);
+                portablePathMap.set(sourcePath, targetPath);
+            }
+            for (const sourcePath of analysisAssets) {
+                if (!sourcePath || !path.isAbsolute(sourcePath) || !fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) continue;
+                await fs.promises.mkdir(analysisDir, { recursive: true });
+                await fs.promises.copyFile(sourcePath, path.join(analysisDir, path.basename(sourcePath)));
+            }
+            // 一次自动剪辑的每片段转录 txt/json 都在 auto_edit_… 输出目录中。
+            // 打包必须带上整个分析目录，不能只抽取总工程 JSON，否则无法回看
+            // 单片段的识别证据。已独立收集的“成片名-工程”子目录不再嵌套复制。
+            const analysisOutputDir = String(payload.analysisOutputDir || '');
+            let analysisTargetDir = '';
+            if (analysisOutputDir && path.isAbsolute(analysisOutputDir) && fs.existsSync(analysisOutputDir) && fs.statSync(analysisOutputDir).isDirectory()) {
+                analysisTargetDir = path.join(analysisDir, path.basename(path.resolve(analysisOutputDir)) || '本次分析');
+                const sourceResolved = await fs.promises.realpath(analysisOutputDir);
+                const targetResolved = path.resolve(analysisTargetDir);
+                if (!targetResolved.startsWith(`${sourceResolved}${path.sep}`) && targetResolved !== sourceResolved) {
+                    await fs.promises.cp(analysisOutputDir, analysisTargetDir, {
+                        recursive: true,
+                        force: true,
+                        filter: source => !String(source).endsWith('-工程'),
+                    });
+                    portablePathMap.set(analysisOutputDir, analysisTargetDir);
+                }
+            }
+            const rebasePath = value => {
+                if (typeof value !== 'string') return value;
+                for (const [from, to] of portablePathMap) {
+                    if (value === from) return to;
+                    if (value.startsWith(`${from}${path.sep}`)) return `${to}${value.slice(from.length)}`;
+                }
+                return value;
+            };
+            const rebaseJson = value => {
+                if (Array.isArray(value)) return value.map(rebaseJson);
+                if (!value || typeof value !== 'object') return rebasePath(value);
+                Object.keys(value).forEach(key => { value[key] = rebaseJson(value[key]); });
+                return value;
+            };
+            if (analysisTargetDir && fs.existsSync(analysisTargetDir)) {
+                const files = await fs.promises.readdir(analysisTargetDir, { recursive: true });
+                for (const relativePath of files) {
+                    if (!String(relativePath).toLowerCase().endsWith('.json')) continue;
+                    const jsonPath = path.join(analysisTargetDir, relativePath);
+                    try {
+                        const data = JSON.parse(await fs.promises.readFile(jsonPath, 'utf8'));
+                        await fs.promises.writeFile(jsonPath, JSON.stringify(rebaseJson(data), null, 2), 'utf8');
+                    } catch (_) { /* 非工程 JSON 或格式异常时保留原文件 */ }
+                }
+            }
+            await fs.promises.writeFile(path.join(targetProjectDir, '文案.txt'), String(payload.scriptText || ''), 'utf8');
+            if (payload.reelsProjectData && typeof payload.reelsProjectData === 'object') {
+                const projectData = JSON.parse(JSON.stringify(payload.reelsProjectData));
+                const remapPaths = value => {
+                    if (Array.isArray(value)) return value.map(remapPaths);
+                    if (!value || typeof value !== 'object') return overlayPathMap.get(value) || rebasePath(value);
+                    Object.keys(value).forEach(key => { value[key] = remapPaths(value[key]); });
+                    return value;
+                };
+                remapPaths(projectData);
+                const reelsDir = path.join(targetProjectDir, 'Reels工程');
+                await fs.promises.mkdir(reelsDir, { recursive: true });
+                await fs.promises.writeFile(
+                    path.join(reelsDir, `${baseName}.reels-project.json`),
+                    JSON.stringify(projectData, null, 2),
+                    'utf8'
+                );
+            }
+            return { ok: true, projectDir: targetProjectDir };
+        } catch (error) {
+            return { ok: false, error: error.message || String(error), projectDir: targetProjectDir };
+        }
+    });
+
     // IPC: 获取媒体时长
     ipcMain.handle('get-media-duration', async (event, filePath) => {
         return ffmpegService.getDuration(filePath);

@@ -308,6 +308,14 @@ function scoreCandidate(candidate, targetNorm) {
     return Math.max(0, Math.min(1, base + containsBonus - lenPenalty * 0.12));
 }
 
+// “可匹配”允许省词或短句嵌在长句中；“整段视频重复”则不能使用同一宽松标准。
+// 否则相邻两个连续朗读的素材只要重叠约 80%，就会被错误标成重复片段。
+function isLikelyDuplicateTranscription(left, right) {
+    if (!left || !right || left.length < 12 || right.length < 12) return false;
+    const lengthRatio = Math.min(left.length, right.length) / Math.max(left.length, right.length);
+    return lengthRatio >= 0.9 && scoreCandidate(left, right) >= 0.92;
+}
+
 function wordLcsLength(a, b) {
     if (!a || !b || a.length === 0 || b.length === 0) return 0;
     const prev = new Array(b.length + 1).fill(0);
@@ -853,7 +861,8 @@ function extractUtterances(data) {
     return [];
 }
 
-async function transcribeClip(clipPath, language, gladiaKeys, cacheDir, force, manualSubtitlePath) {
+async function transcribeClip(clipPath, language, gladiaKeys, cacheDir, force, manualSubtitlePath, signal = null) {
+    if (signal?.aborted) throw new Error('任务已停止');
     // 如果用户手动指定了字幕文件路径
     if (manualSubtitlePath && fs.existsSync(manualSubtitlePath)) {
         const ext = path.parse(manualSubtitlePath).ext.toLowerCase();
@@ -1106,7 +1115,7 @@ async function transcribeClip(clipPath, language, gladiaKeys, cacheDir, force, m
         console.warn(`[自动剪辑] 检测到空转录缓存，忽略缓存并重新调用识别: ${txtPath}`);
     }
     let result = await gladiaService.transcribeAudioFull(
-        clipPath, gladiaKeys, langEnName, jsonPath, txtPath, 5.0
+        clipPath, gladiaKeys, langEnName, jsonPath, txtPath, 5.0, null, signal
     );
     const hasRecognizedText = value => Boolean(
         value?.fullText?.trim() && Array.isArray(value?.wordTimeInfo) && value.wordTimeInfo.length > 0
@@ -1114,7 +1123,7 @@ async function transcribeClip(clipPath, language, gladiaKeys, cacheDir, force, m
     if (!hasRecognizedText(result)) {
         console.warn(`[自动剪辑] Gladia 首次未返回文字，自动重试一次: ${clipPath}`);
         result = await gladiaService.transcribeAudioFull(
-            clipPath, gladiaKeys, langEnName, jsonPath, txtPath, 5.0
+            clipPath, gladiaKeys, langEnName, jsonPath, txtPath, 5.0, null, signal
         );
     }
     if (!hasRecognizedText(result)) {
@@ -1284,6 +1293,10 @@ function generateVisualDiffMarkdown(scriptText, transcriptionText) {
 }
 
 async function autoEditByScript(opts = {}) {
+    const throwIfCancelled = () => {
+        if (opts.signal?.aborted) throw new Error('任务已停止');
+    };
+    throwIfCancelled();
     // 重新分析的权威来源必须是当前 clips 列表。旧审核快照里可能仍残留
     // 已替换、已删除或已排除片段；若每次都把它们合并回来，会凭空多出
     // 一个“第 33/33 个片段”并可能卡在过期素材上。只有调用方明确要求时，
@@ -1360,6 +1373,17 @@ async function autoEditByScript(opts = {}) {
     const videoFitFilter = fitMode === 'contain'
         ? `scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2:black`
         : `scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=increase,crop=${targetWidth}:${targetHeight}`;
+    // 审核页可为每个片段单独设定画面缩放。先完成统一适配，再以成片中心为
+    // 基准缩放：缩小补黑边，放大从中心裁切，保证不会因小于 100% 而让 crop 失败。
+    const visualScaleFilter = (value) => {
+        const percent = Math.max(50, Math.min(200, Number(value) || 100));
+        if (Math.abs(percent - 100) < 0.001) return '';
+        const factor = (percent / 100).toFixed(4);
+        const scaled = `scale=trunc(iw*${factor}/2)*2:trunc(ih*${factor}/2)*2`;
+        return percent < 100
+            ? `${scaled},pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2:black`
+            : `${scaled},crop=${targetWidth}:${targetHeight}`;
+    };
     const crf = parseInt(opts.crf || 18, 10);
     const preset = opts.preset || 'fast';
     const matchMode = opts.matchMode || opts.match_mode || 'script';
@@ -1467,7 +1491,7 @@ async function autoEditByScript(opts = {}) {
                 stage: 'transcribe',
                 message: '正在进行单次语音转录识别...',
             });
-            const transcription = await transcribeClip(rawConcatPath, language, gladiaKeys, cacheDir, forceTranscribe);
+            const transcription = await transcribeClip(rawConcatPath, language, gladiaKeys, cacheDir, forceTranscribe, null, opts.signal);
             globalTranscriptionText = transcription.fullText;
             const words = flattenWords(transcription.wordTimeInfo);
             const duration = await ffmpegService.getDuration(rawConcatPath);
@@ -1662,9 +1686,10 @@ async function autoEditByScript(opts = {}) {
                         transcription = await buildManualTranscription(clipPath, manualText);
                     } else {
                         const forceThisClip = forceTranscribe || forceTranscribePaths.has(String(clipPath).replace(/\\/g, '/'));
-                        transcription = await transcribeClip(clipPath, language, gladiaKeys, cacheDir, forceThisClip, manualSubtitleMap[clipPath]);
+                        transcription = await transcribeClip(clipPath, language, gladiaKeys, cacheDir, forceThisClip, manualSubtitleMap[clipPath], opts.signal);
                     }
                 } catch (err) {
+                    if (opts.signal?.aborted || String(err?.message || '') === '任务已停止') throw err;
                     console.error(`[自动剪辑] 片段 ${i + 1}/${clipCount} 转录失败:`, err);
                     isFailed = true;
                     errorMsg = err.message || String(err);
@@ -1768,7 +1793,7 @@ async function autoEditByScript(opts = {}) {
                         const duplicatePlan = currentTranscriptionNorm.length >= 12
                             ? plans.find(previous => {
                                 const previousNorm = normalizeText(previous.transcription?.fullText);
-                                return previousNorm.length >= 12 && scoreCandidate(currentTranscriptionNorm, previousNorm) >= 0.92;
+                                return isLikelyDuplicateTranscription(currentTranscriptionNorm, previousNorm);
                             })
                             : null;
 
@@ -2220,6 +2245,7 @@ async function autoEditByScript(opts = {}) {
         const missingBlocksInfo = [];
         const coveredWordIndices = new Set();
         for (let i = 0; i < plans.length; i++) {
+            throwIfCancelled();
             const plan = plans[i];
             const matchInfo = allClipsMatchInfo[i];
             const similarity = matchInfo ? matchInfo.similarity : 0;
@@ -2811,7 +2837,7 @@ async function autoEditByScript(opts = {}) {
                 if (leftText.length < 12) continue;
                 for (let right = left + 1; right < analysisSegments.length; right++) {
                     const rightText = normalizeText(analysisSegments[right].recognized_text || '');
-                    if (rightText.length < 12 || scoreCandidate(leftText, rightText) < 0.92) continue;
+                    if (!isLikelyDuplicateTranscription(leftText, rightText)) continue;
                     unionDuplicateRows(left, right);
                 }
             }
@@ -2969,6 +2995,7 @@ async function autoEditByScript(opts = {}) {
                     plan.end = safeEnd;
                 }
                 plan.speed = normalizeAutoEditSpeed(review.speed);
+                plan.visualScale = Math.max(50, Math.min(200, Number(review.visual_scale) || 100));
                 // 删除画面区间使用原片时间轴。画面和原声都会被移除，字幕由后续
                 // SRT 生成逻辑并入上一条 cue，避免在成片中留下无画面的空白时长。
                 plan.visualRemoveRanges = (Array.isArray(review.visual_remove_ranges) ? review.visual_remove_ranges : [])
@@ -2991,6 +3018,14 @@ async function autoEditByScript(opts = {}) {
                 plan.manualSubtitles = Array.isArray(review.manual_subtitles)
                     ? review.manual_subtitles.filter(cue => cue && String(cue.text || '').trim())
                     : [];
+                plan.isOpeningHook = review.is_hook === true || review.isHook === true;
+                if (plan.isOpeningHook) {
+                    // 开场钩子只保留原画/原声，不能继承该素材此前的匹配文案、
+                    // 手工字幕或逐词字幕；否则会在无台词画面烧出错误字幕。
+                    plan.scriptText = '';
+                    plan.manualSubtitles = [];
+                    plan.words = [];
+                }
                 // 手工补的漏读字幕会单独写入 SRT；必须先从普通文案中剔除，
                 // 否则模糊匹配会用后面的识别词匹配到整行，把“漏句 + 下一句”
                 // 又输出成一条普通字幕。
@@ -3034,6 +3069,7 @@ async function autoEditByScript(opts = {}) {
                 ? normalizeAutoEditSpeed(plan.speed)
                 : normalizeAutoEditSpeed(clipSpeeds[targetClipPath]);
             const vPts = (1.0 / speed).toFixed(5);
+            const scaleFilter = visualScaleFilter(plan.visualScale);
             const visualRemoveRanges = Array.isArray(plan.visualRemoveRanges) ? plan.visualRemoveRanges : [];
             // -ss 后 t 从剪辑入点开始计；FFmpeg 的 select/aselect 同时删掉
             // 视频和声音，故最终时长会真正缩短，而不是黑屏占位。
@@ -3062,10 +3098,10 @@ async function autoEditByScript(opts = {}) {
             if (hasAudio) {
                 // 每段在输入寻址后必须清零 PTS。否则首个关键帧前的时间戳可能被
                 // 保留到 concat 输出，未经过字幕滤镜二次编码时播放器会显示开头黑帧。
-                filterComplex = `[0:v]${videoRemoveFilter}setpts=${vPts}*(PTS-STARTPTS),${videoFitFilter},fps=${fps},setsar=1[v];[0:a]${audioRemoveFilter}asetpts=PTS-STARTPTS,${atempoFilter},aformat=sample_rates=48000:channel_layouts=stereo[a]`;
+                filterComplex = `[0:v]${videoRemoveFilter}setpts=${vPts}*(PTS-STARTPTS),${videoFitFilter}${scaleFilter ? `,${scaleFilter}` : ''},fps=${fps},setsar=1[v];[0:a]${audioRemoveFilter}asetpts=PTS-STARTPTS,${atempoFilter},aformat=sample_rates=48000:channel_layouts=stereo[a]`;
             } else {
                 args.push('-f', 'lavfi', '-i', 'anullsrc=cl=stereo:r=48000');
-                filterComplex = `[0:v]${videoRemoveFilter}setpts=${vPts}*(PTS-STARTPTS),${videoFitFilter},fps=${fps},setsar=1[v];[1:a]asetpts=PTS-STARTPTS,aformat=sample_rates=48000:channel_layouts=stereo[a]`;
+                filterComplex = `[0:v]${videoRemoveFilter}setpts=${vPts}*(PTS-STARTPTS),${videoFitFilter}${scaleFilter ? `,${scaleFilter}` : ''},fps=${fps},setsar=1[v];[1:a]asetpts=PTS-STARTPTS,aformat=sample_rates=48000:channel_layouts=stereo[a]`;
             }
 
             args.push(
@@ -3077,7 +3113,7 @@ async function autoEditByScript(opts = {}) {
                 '-shortest',
                 cutPath
             );
-            await ffmpegService.runCommand('ffmpeg', args, { timeout: 1800000 });
+            await ffmpegService.runCommand('ffmpeg', args, { timeout: 1800000, signal: opts.signal });
 
             const cutDuration = await ffmpegService.getDuration(cutPath) || (plan.end - plan.start);
             tempClips.push(cutPath);
@@ -3262,6 +3298,7 @@ async function autoEditByScript(opts = {}) {
                 script_start_line: pStartLine !== -1 ? pStartLine + 1 : null,
                 script_end_line: pEndLine !== -1 ? pEndLine + 1 : null,
                 script: plan.scriptText,
+                is_hook: plan.isOpeningHook === true,
                 recognized_text: plan.transcription.fullText || '',
                 matched_text: plan.matchedText,
                 match_score: Math.round((plan.matchScore || 0) * 1000) / 1000,
@@ -3285,6 +3322,7 @@ async function autoEditByScript(opts = {}) {
                 v2_end: Number.isFinite(plan.v2End) ? plan.v2End : plan.end,
                 v2_cut_available: plan.v2CutAvailable === true,
                 duration: Math.round((plan.end - plan.start) * 1000) / 1000,
+                source_duration: Number(plan.duration) || Math.round((plan.end - plan.start) * 1000) / 1000,
                 audience_response: plan.audienceResponse || null,
                 transcription_source: plan.transcription.source,
                 word_timeline: (plan.words || [])
@@ -3398,6 +3436,46 @@ async function autoEditByScript(opts = {}) {
         }
 
         subtitleService.writeSRT(srtItems, srtPath);
+
+        // 临时裁切片段过去会在 finally 中删除，导致用户只能保留最终拼接成片，
+        // 无法在二剪时直接复用已经确认过切点、变速和画面删除后的单段素材。
+        // 把它们固定保存到成片同名工程包；原始素材仍保留在别处，二者互不替代。
+        const outputBaseName = path.basename(outputPath, path.extname(outputPath)) || 'auto_edit';
+        const projectDir = path.join(path.dirname(outputPath), `${outputBaseName}-工程`);
+        const processedClipsDir = path.join(projectDir, '处理片段');
+        const processedClips = [];
+        try {
+            fs.mkdirSync(processedClipsDir, { recursive: true });
+            // 自动剪辑本身导出完成就应是完整可回溯工程，不能依赖后续是否送入 Reels。
+            // 保留用户输入的断行，方便二剪时直接查看或复用文案。
+            fs.writeFileSync(path.join(projectDir, '文案.txt'), lines.join('\n'), 'utf8');
+            for (let index = 0; index < tempClips.length; index++) {
+                const sourceCut = tempClips[index];
+                const plan = plans[index] || {};
+                const sourceName = path.basename(plan.realClipPath || plan.clipPath || `片段_${index + 1}`).replace(/\.[^.]+$/, '');
+                const safeName = sourceName.replace(/[\\/:*?"<>|]/g, '_');
+                const fileName = `${String(index + 1).padStart(3, '0')}_${safeName}_${Number(plan.start || 0).toFixed(2)}-${Number(plan.end || 0).toFixed(2)}.mp4`;
+                const savedPath = path.join(processedClipsDir, fileName);
+                fs.copyFileSync(sourceCut, savedPath);
+                processedClips.push({
+                    index: index + 1,
+                    path: savedPath,
+                    source: plan.realClipPath || plan.clipPath || '',
+                    source_start: Number(plan.start || 0),
+                    source_end: Number(plan.end || 0),
+                    script: plan.scriptText || '',
+                });
+            }
+            fs.writeFileSync(path.join(processedClipsDir, '处理片段清单.json'), JSON.stringify({
+                version: 1,
+                created_at: new Date().toISOString(),
+                output_path: outputPath,
+                clips: processedClips,
+            }, null, 2), 'utf8');
+        } catch (error) {
+            // 工程包收集失败不能让已成功导出的成片报失败；把原因返回前端清单即可。
+            console.warn(`[AutoEdit] 保存处理片段失败: ${error.message}`);
+        }
 
         let mp3Path = '';
         if (exportMp3 || voiceChangerEnabled) {
@@ -3537,6 +3615,14 @@ async function autoEditByScript(opts = {}) {
             final_video_path: subtitledPath || manualAudioVideoPath || voiceChangedVideoPath || outputPath,
             output_dir: outputDir,
             report_path: reportPath,
+            // 送入 Reels 后需要能恢复整条自动剪辑链路，而不只是拿到成片。
+            // 前端将这些字段写进二剪工程；路径均是本地引用，不复制大媒体文件。
+            project_path: projectPath,
+            clips,
+            script_text: lines.join('\n'),
+            review_segments: reviewSegments,
+            processed_clips_dir: processedClipsDir,
+            processed_clips: processedClips,
             matching_engine: matchingEngine,
             matching_engine_version: matchingEngineVersion,
             language,
@@ -3561,5 +3647,5 @@ module.exports = {
     findBestWordWindow,
     findBestScriptWindowForClip,
     computeAutoEditTransitionSec,
-    _test: { scoreCandidate, scoreWordCandidate, transcribeClip, recoverSmallBoundaryGaps, trimOverlappingBoundaryReadings, hasSentenceEndingPunctuation, findRepeatedScriptBlockStarts, findFuzzyBoundaryOverlap, normalizeAutoEditSpeed },
+    _test: { scoreCandidate, scoreWordCandidate, isLikelyDuplicateTranscription, transcribeClip, recoverSmallBoundaryGaps, trimOverlappingBoundaryReadings, hasSentenceEndingPunctuation, findRepeatedScriptBlockStarts, findFuzzyBoundaryOverlap, normalizeAutoEditSpeed },
 };

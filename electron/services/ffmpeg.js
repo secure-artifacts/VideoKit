@@ -70,9 +70,23 @@ function runCommand(cmd, args, options = {}) {
             env: { ...process.env, ...options.env },
             cwd: options.cwd,
         });
+        let cancelled = false;
+        const abort = () => {
+            cancelled = true;
+            try { proc.kill('SIGTERM'); } catch (_) { }
+        };
+        if (options.signal) {
+            if (options.signal.aborted) abort();
+            else options.signal.addEventListener('abort', abort, { once: true });
+        }
         proc.stdout.on('data', d => stdout += d.toString());
         proc.stderr.on('data', d => stderr += d.toString());
         proc.on('close', code => {
+            if (options.signal) options.signal.removeEventListener('abort', abort);
+            if (cancelled || options.signal?.aborted) {
+                reject(new Error('任务已停止'));
+                return;
+            }
             if (code === 0 || options.allowNonZero) {
                 resolve({ stdout, stderr, code });
             } else {
