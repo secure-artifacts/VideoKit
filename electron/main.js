@@ -850,12 +850,13 @@ app.whenReady().then(async () => {
     });
 
     ipcMain.handle('select-files', async (event, options = {}) => {
-        const props = ['openFile'];
-        if (options.multiple !== false) props.push('multiSelections');
+        const props = options.properties || ['openFile'];
+        if (options.multiple !== false && !props.includes('multiSelections')) props.push('multiSelections');
         const dialogOpts = {
             properties: props,
             title: options.title || '选择文件',
         };
+        if (options.defaultPath) dialogOpts.defaultPath = options.defaultPath;
         if (options.filters) dialogOpts.filters = options.filters;
         const result = await dialog.showOpenDialog(mainWindow, dialogOpts);
         if (!result.canceled && result.filePaths.length > 0) {
@@ -900,7 +901,7 @@ app.whenReady().then(async () => {
         const fs = require('fs');
         const pathModule = require('path');
         const maxDepth = Math.max(0, Math.min(50, Number(options.maxDepth) || 20));
-        const excludedNames = new Set((options.excludedNames || ['_auto_edit', 'backup_clips'])
+        const excludedNames = new Set((options.excludedNames || ['_auto_edit', 'backup_clips', '已排除素材', '已排除'])
             .map(name => String(name || '').toLocaleLowerCase()).filter(Boolean));
         const files = [];
         if (!dirPath || !fs.existsSync(dirPath)) return files;

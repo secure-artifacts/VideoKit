@@ -660,6 +660,55 @@ function normalizeAutoEditSpeed(value) {
     return Number.isFinite(speed) && speed >= 0.25 && speed <= 4 ? speed : 1;
 }
 
+// 裁切缓存不能只靠路径或文件名：原素材被同名覆盖时必须失效。读取首尾各
+// 64KB 加上大小、修改时间，成本很低且能可靠识别正常剪辑流程中的素材变化。
+function getAutoEditClipFingerprint(clipPath) {
+    try {
+        const stat = fs.statSync(clipPath);
+        const hash = crypto.createHash('sha256');
+        hash.update(`${path.resolve(clipPath)}|${stat.size}|${Math.round(stat.mtimeMs)}`);
+        const sampleSize = Math.min(64 * 1024, stat.size);
+        if (sampleSize > 0) {
+            const fd = fs.openSync(clipPath, 'r');
+            try {
+                const head = Buffer.alloc(sampleSize);
+                fs.readSync(fd, head, 0, sampleSize, 0);
+                hash.update(head);
+                if (stat.size > sampleSize) {
+                    const tail = Buffer.alloc(sampleSize);
+                    fs.readSync(fd, tail, 0, sampleSize, Math.max(0, stat.size - sampleSize));
+                    hash.update(tail);
+                }
+            } finally { fs.closeSync(fd); }
+        }
+        return hash.digest('hex');
+    } catch (_) {
+        return `unavailable:${String(clipPath || '')}`;
+    }
+}
+
+function readAutoEditCutCache(cacheDir) {
+    const manifestPath = path.join(cacheDir, '裁切缓存清单.json');
+    try {
+        const data = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+        const entries = Array.isArray(data?.entries) ? data.entries : [];
+        return new Map(entries.filter(item => item?.signature && item?.path && fs.existsSync(item.path))
+            .map(item => [item.signature, item]));
+    } catch (_) {
+        return new Map();
+    }
+}
+
+function writeAutoEditCutCache(cacheDir, entries) {
+    fs.mkdirSync(cacheDir, { recursive: true });
+    const manifestPath = path.join(cacheDir, '裁切缓存清单.json');
+    fs.writeFileSync(manifestPath, JSON.stringify({
+        version: 1,
+        updated_at: new Date().toISOString(),
+        entries: [...entries.values()],
+    }, null, 2), 'utf8');
+}
+
 function extendPlanAtBoundary(plan, targetText, side, leadPad, tailPad) {
     if (!plan || !Array.isArray(plan.words) || plan.words.length === 0 || !normalizeText(targetText)) return null;
     let sliceStart;
@@ -821,6 +870,11 @@ function trimOverlappingBoundaryReadings(plans, scriptWords, leadPad, tailPad) {
     return trimmed;
 }
 
+function getWordLineIndex(wordsList, idx) {
+    if (!Array.isArray(wordsList) || idx === undefined || idx === null || idx < 0 || idx >= wordsList.length) return -1;
+    return typeof wordsList[idx]?.lineIndex === 'number' ? wordsList[idx].lineIndex : -1;
+}
+
 function srtAssPath(p) {
     return String(p).replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\'");
 }
@@ -861,7 +915,7 @@ function extractUtterances(data) {
     return [];
 }
 
-async function transcribeClip(clipPath, language, gladiaKeys, cacheDir, force, manualSubtitlePath, signal = null) {
+async function transcribeClip(clipPath, language, gladiaKeys, cacheDir, force, manualSubtitlePath, signal = null, savedTranscriptionDir = '') {
     if (signal?.aborted) throw new Error('任务已停止');
     // 如果用户手动指定了字幕文件路径
     if (manualSubtitlePath && fs.existsSync(manualSubtitlePath)) {
@@ -981,13 +1035,21 @@ async function transcribeClip(clipPath, language, gladiaKeys, cacheDir, force, m
 
     // 支持手动指定转录结果文件：检查视频同目录下是否存在同名或带有 _transcription 后缀的 .json 和 .txt 文件
     const parsed = path.parse(clipPath);
+    const savedDir = String(savedTranscriptionDir || '').trim();
     const manualJsonPaths = [
         path.join(parsed.dir, `${parsed.name}_transcription.json`),
-        path.join(parsed.dir, `${parsed.name}.json`)
+        path.join(parsed.dir, `${parsed.name}.json`),
+        // 文案自动剪辑会把每段识别结果保存到 _auto_edit。此前重新打开
+        // 同一套素材再分析时只查临时缓存，应用重启后缓存不存在便会整套重转。
+        // 把该工程目录作为可信旁车来源，可直接恢复已有逐词时间轴。
+        ...(savedDir && path.resolve(savedDir) !== path.resolve(parsed.dir)
+            ? [path.join(savedDir, `${parsed.name}_transcription.json`)] : [])
     ];
     const manualTxtPaths = [
         path.join(parsed.dir, `${parsed.name}_transcription.txt`),
-        path.join(parsed.dir, `${parsed.name}.txt`)
+        path.join(parsed.dir, `${parsed.name}.txt`),
+        ...(savedDir && path.resolve(savedDir) !== path.resolve(parsed.dir)
+            ? [path.join(savedDir, `${parsed.name}_transcription.txt`)] : [])
     ];
 
     let foundJson = manualJsonPaths.find(p => fs.existsSync(p));
@@ -1339,7 +1401,7 @@ async function autoEditByScript(opts = {}) {
     const dateStr = `${y}-${m}-${d}_${hh}${mm}`;
     const firstClipName = path.basename(clips[0], path.extname(clips[0]));
 
-    const outputDir = opts.outputDir || opts.output_dir || path.join(path.dirname(clips[0]), `auto_edit_${dateStr}_${firstClipName}`);
+    const outputDir = opts.outputDir || opts.output_dir || path.join(path.dirname(clips[0]), '_auto_edit');
     fs.mkdirSync(outputDir, { recursive: true });
 
     const ignoreMismatch = opts.ignoreMismatch === true || opts.ignore_mismatch === true;
@@ -1686,7 +1748,10 @@ async function autoEditByScript(opts = {}) {
                         transcription = await buildManualTranscription(clipPath, manualText);
                     } else {
                         const forceThisClip = forceTranscribe || forceTranscribePaths.has(String(clipPath).replace(/\\/g, '/'));
-                        transcription = await transcribeClip(clipPath, language, gladiaKeys, cacheDir, forceThisClip, manualSubtitleMap[clipPath], opts.signal);
+                        transcription = await transcribeClip(
+                            clipPath, language, gladiaKeys, cacheDir, forceThisClip,
+                            manualSubtitleMap[clipPath], opts.signal, outputDir
+                        );
                     }
                 } catch (err) {
                     if (opts.signal?.aborted || String(err?.message || '') === '任务已停止') throw err;
@@ -2005,12 +2070,8 @@ async function autoEditByScript(opts = {}) {
         // 2. 初始化所有计划的 scriptStartLine / scriptEndLine（防空隙填充逻辑报错或清除）
         for (const plan of plans) {
             if (workflowMode !== 'concat_first') {
-                plan.scriptStartLine = (plan.scriptWordStart !== undefined && plan.scriptWordStart !== -1)
-                    ? scriptWords[plan.scriptWordStart].lineIndex
-                    : -1;
-                plan.scriptEndLine = (plan.scriptWordEnd !== undefined && plan.scriptWordEnd !== -1)
-                    ? scriptWords[plan.scriptWordEnd].lineIndex
-                    : -1;
+                plan.scriptStartLine = getWordLineIndex(scriptWords, plan.scriptWordStart);
+                plan.scriptEndLine = getWordLineIndex(scriptWords, plan.scriptWordEnd);
             }
         }
 
@@ -2048,12 +2109,8 @@ async function autoEditByScript(opts = {}) {
         // 4. 同步更新对应的 scriptStartLine / scriptEndLine，并将 scriptText 设为精确词级别的匹配文案
         for (const plan of plans) {
             if (workflowMode !== 'concat_first') {
-                plan.scriptStartLine = (plan.scriptWordStart !== undefined && plan.scriptWordStart !== -1)
-                    ? scriptWords[plan.scriptWordStart].lineIndex
-                    : -1;
-                plan.scriptEndLine = (plan.scriptWordEnd !== undefined && plan.scriptWordEnd !== -1)
-                    ? scriptWords[plan.scriptWordEnd].lineIndex
-                    : -1;
+                plan.scriptStartLine = getWordLineIndex(scriptWords, plan.scriptWordStart);
+                plan.scriptEndLine = getWordLineIndex(scriptWords, plan.scriptWordEnd);
                 
                 if (plan.scriptWordStart !== -1 && plan.scriptWordEnd !== -1) {
                     const sliced = scriptWords.slice(plan.scriptWordStart, plan.scriptWordEnd + 1);
@@ -2225,8 +2282,8 @@ async function autoEditByScript(opts = {}) {
                     recognizedText: plan.transcription.fullText || plan.matchedText || '',
                     similarity: simPercent,
                     isMismatch,
-                    scriptStartLine: plan.scriptWordStart !== -1 ? scriptWords[plan.scriptWordStart].lineIndex : -1,
-                    scriptEndLine: plan.scriptWordEnd !== -1 ? scriptWords[plan.scriptWordEnd].lineIndex : -1,
+                    scriptStartLine: getWordLineIndex(scriptWords, plan.scriptWordStart),
+                    scriptEndLine: getWordLineIndex(scriptWords, plan.scriptWordEnd),
                     scriptWordStart: plan.scriptWordStart,
                     scriptWordEnd: plan.scriptWordEnd,
                     start: plan.start,
@@ -2287,8 +2344,8 @@ async function autoEditByScript(opts = {}) {
             if (normalizeText(text).length === 0) {
                 continue; // Skip purely punctuation missing blocks
             }
-            const startLine = blockWords[0].lineIndex;
-            const endLine = blockWords[blockWords.length - 1].lineIndex;
+            const startLine = blockWords[0]?.lineIndex ?? 0;
+            const endLine = blockWords[blockWords.length - 1]?.lineIndex ?? 0;
             missingBlocksInfo.push({
                 index: blockIndex++,
                 startIdx: block.start,
@@ -2319,8 +2376,8 @@ async function autoEditByScript(opts = {}) {
                 currentWords.push(word.raw);
             }
             if (currentWords.length) groupedLines.push(joinWordsSmart(currentWords));
-            plan.scriptStartLine = sliced[0].lineIndex;
-            plan.scriptEndLine = sliced[sliced.length - 1].lineIndex;
+            plan.scriptStartLine = getWordLineIndex(scriptWords, plan.scriptWordStart);
+            plan.scriptEndLine = getWordLineIndex(scriptWords, plan.scriptWordEnd);
             plan.scriptText = groupedLines.join('\n');
 
             const info = allClipsMatchInfo.find(item => item.sourceIndex === plan.sourceIndex);
@@ -2438,8 +2495,8 @@ async function autoEditByScript(opts = {}) {
                 }
             }
             block.text = joinWordsSmart(remainingWords.map(word => word.raw));
-            block.startLine = remainingWords[0].lineIndex;
-            block.endLine = remainingWords[remainingWords.length - 1].lineIndex;
+            block.startLine = remainingWords[0]?.lineIndex ?? 0;
+            block.endLine = remainingWords[remainingWords.length - 1]?.lineIndex ?? 0;
 
             block.previous_source_index = previous ? previous.sourceIndex + 1 : null;
             block.next_source_index = next ? next.sourceIndex + 1 : null;
@@ -2467,8 +2524,8 @@ async function autoEditByScript(opts = {}) {
                     startIdx: safetyGap.start,
                     endIdx: safetyGap.end,
                     text: joinWordsSmart(words.map(word => word.raw)),
-                    startLine: words[0].lineIndex,
-                    endLine: words[words.length - 1].lineIndex,
+                    startLine: words[0]?.lineIndex ?? 0,
+                    endLine: words[words.length - 1]?.lineIndex ?? 0,
                 });
                 console.warn(`[自动剪辑] 完整性核对发现未归属文案，已恢复为缺失占位: ${joinWordsSmart(words.map(word => word.raw))}`);
             }
@@ -3019,6 +3076,7 @@ async function autoEditByScript(opts = {}) {
                     ? review.manual_subtitles.filter(cue => cue && String(cue.text || '').trim())
                     : [];
                 plan.isOpeningHook = review.is_hook === true || review.isHook === true;
+                plan.hookKeepAudio = review.hook_keep_audio !== false && review.hookKeepAudio !== false;
                 if (plan.isOpeningHook) {
                     // 开场钩子只保留原画/原声，不能继承该素材此前的匹配文案、
                     // 手工字幕或逐词字幕；否则会在无台词画面烧出错误字幕。
@@ -3040,6 +3098,22 @@ async function autoEditByScript(opts = {}) {
             if (reviewedPlans.length === 0) throw new Error('审核时间线中没有可导出的片段');
             plans.splice(0, plans.length, ...reviewedPlans);
         }
+
+        const outputKey = crypto.createHash('sha256').update(JSON.stringify({
+            folders: [...new Set(clips.map(clip => path.dirname(path.resolve(clip))))].sort(),
+            script: opts.script_text || opts.scriptText || ''
+        })).digest('hex').slice(0, 8);
+        const outputPath = opts.outputPath || opts.output_path || path.join(outputDir, `auto_edit_${outputKey}.mp4`);
+        try {
+            fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+        } catch (e) {
+            console.warn(`[AutoEdit] Failed to create directory: ${e.message}`);
+        }
+        const outputBaseName = path.basename(outputPath, path.extname(outputPath)) || 'auto_edit';
+        const projectDir = path.join(path.dirname(outputPath), `${outputBaseName}-工程`);
+        const processedClipsDir = path.join(projectDir, '处理片段');
+        const cutCacheDir = path.join(projectDir, '裁切缓存');
+        const cutCacheEntries = readAutoEditCutCache(cutCacheDir);
 
         const coveredLines = new Set();
         let previousCutDuration = 0;
@@ -3095,7 +3169,8 @@ async function autoEditByScript(opts = {}) {
             }
 
             let filterComplex;
-            if (hasAudio) {
+            const keepSourceAudio = hasAudio && !(plan.isOpeningHook && plan.hookKeepAudio === false);
+            if (keepSourceAudio) {
                 // 每段在输入寻址后必须清零 PTS。否则首个关键帧前的时间戳可能被
                 // 保留到 concat 输出，未经过字幕滤镜二次编码时播放器会显示开头黑帧。
                 filterComplex = `[0:v]${videoRemoveFilter}setpts=${vPts}*(PTS-STARTPTS),${videoFitFilter}${scaleFilter ? `,${scaleFilter}` : ''},fps=${fps},setsar=1[v];[0:a]${audioRemoveFilter}asetpts=PTS-STARTPTS,${atempoFilter},aformat=sample_rates=48000:channel_layouts=stereo[a]`;
@@ -3113,7 +3188,53 @@ async function autoEditByScript(opts = {}) {
                 '-shortest',
                 cutPath
             );
-            await ffmpegService.runCommand('ffmpeg', args, { timeout: 1800000, signal: opts.signal });
+
+            // 每段独立复用：只要素材本身及所有会影响画面/声音的裁切参数
+            // 未变，就直接复制上次已编码的片段到本次临时拼接目录。
+            const sourceForCache = plan.realClipPath || clipPath;
+            const cacheKeyPayload = {
+                version: 1,
+                source: path.resolve(sourceForCache),
+                source_fingerprint: getAutoEditClipFingerprint(sourceForCache),
+                start: Number(plan.start.toFixed(3)),
+                end: Number(plan.end.toFixed(3)),
+                speed: Number(speed.toFixed(4)),
+                visual_scale: Number(plan.visualScale || 100),
+                visual_remove_ranges: visualRemoveRanges.map(range => ({
+                    start: Number(range.start.toFixed(3)), end: Number(range.end.toFixed(3)),
+                    keep_subtitles: range.keepSubtitles === true,
+                })),
+                keep_source_audio: keepSourceAudio,
+                output: { width: targetWidth, height: targetHeight, fps, fit_mode: fitMode, crf, preset },
+            };
+            const cutCacheSignature = crypto.createHash('sha256').update(JSON.stringify(cacheKeyPayload)).digest('hex');
+            const cachedCut = cutCacheEntries.get(cutCacheSignature);
+            plan.cutCacheSignature = cutCacheSignature;
+            plan.cutCacheHit = Boolean(cachedCut?.path && fs.existsSync(cachedCut.path));
+            if (cachedCut?.path && fs.existsSync(cachedCut.path)) {
+                fs.copyFileSync(cachedCut.path, cutPath);
+                emitProgress({
+                    percent: 52 + Math.round((i / Math.max(plans.length, 1)) * 30),
+                    stage: 'trim', current: i + 1, total: plans.length,
+                    message: `复用已裁切片段 ${i + 1}/${plans.length}`,
+                });
+            } else {
+                await ffmpegService.runCommand('ffmpeg', args, { timeout: 1800000, signal: opts.signal });
+                const cachePath = path.join(cutCacheDir, `${cutCacheSignature}.mp4`);
+                fs.mkdirSync(cutCacheDir, { recursive: true });
+                fs.copyFileSync(cutPath, cachePath);
+                cutCacheEntries.set(cutCacheSignature, {
+                    signature: cutCacheSignature,
+                    path: cachePath,
+                    source: sourceForCache,
+                    source_start: cacheKeyPayload.start,
+                    source_end: cacheKeyPayload.end,
+                    created_at: new Date().toISOString(),
+                });
+                // 每完成一段便落盘。即使用户在后续拼接或烧录阶段停止，已经
+                // 裁好的未修改片段下次仍然可复用。
+                writeAutoEditCutCache(cutCacheDir, cutCacheEntries);
+            }
 
             const cutDuration = await ffmpegService.getDuration(cutPath) || (plan.end - plan.start);
             tempClips.push(cutPath);
@@ -3280,15 +3401,17 @@ async function autoEditByScript(opts = {}) {
                         }
                     }
                 }
-                const pStartLine = scriptWords[plan.scriptWordStart].lineIndex;
-                const pEndLine = scriptWords[plan.scriptWordEnd].lineIndex;
-                for (let n = pStartLine; n <= pEndLine; n++) coveredLines.add(n);
+                const pStartLine = getWordLineIndex(scriptWords, plan.scriptWordStart);
+                const pEndLine = getWordLineIndex(scriptWords, plan.scriptWordEnd);
+                if (pStartLine !== -1 && pEndLine !== -1) {
+                    for (let n = pStartLine; n <= pEndLine; n++) coveredLines.add(n);
+                }
             }
             timelineCursorMs = srtEnd;
             previousCutDuration = cutDuration;
 
-            const pStartLine = plan.scriptWordStart !== -1 ? scriptWords[plan.scriptWordStart].lineIndex : -1;
-            const pEndLine = plan.scriptWordEnd !== -1 ? scriptWords[plan.scriptWordEnd].lineIndex : -1;
+            const pStartLine = getWordLineIndex(scriptWords, plan.scriptWordStart);
+            const pEndLine = getWordLineIndex(scriptWords, plan.scriptWordEnd);
 
             selected.push({
                 segment_id: plan.planId || `clip-${plan.sourceIndex}`,
@@ -3299,6 +3422,7 @@ async function autoEditByScript(opts = {}) {
                 script_end_line: pEndLine !== -1 ? pEndLine + 1 : null,
                 script: plan.scriptText,
                 is_hook: plan.isOpeningHook === true,
+                hook_keep_audio: plan.hookKeepAudio !== false,
                 recognized_text: plan.transcription.fullText || '',
                 matched_text: plan.matchedText,
                 match_score: Math.round((plan.matchScore || 0) * 1000) / 1000,
@@ -3363,12 +3487,6 @@ async function autoEditByScript(opts = {}) {
             }
         }
 
-        const outputPath = opts.outputPath || opts.output_path || path.join(outputDir, `auto_edit_${sessionId}.mp4`);
-        try {
-            fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-        } catch (e) {
-            console.warn(`[AutoEdit] Failed to create directory: ${e.message}`);
-        }
         if (tempClips.length === 1) {
             emitProgress({
                 percent: 86,
@@ -3440,9 +3558,6 @@ async function autoEditByScript(opts = {}) {
         // 临时裁切片段过去会在 finally 中删除，导致用户只能保留最终拼接成片，
         // 无法在二剪时直接复用已经确认过切点、变速和画面删除后的单段素材。
         // 把它们固定保存到成片同名工程包；原始素材仍保留在别处，二者互不替代。
-        const outputBaseName = path.basename(outputPath, path.extname(outputPath)) || 'auto_edit';
-        const projectDir = path.join(path.dirname(outputPath), `${outputBaseName}-工程`);
-        const processedClipsDir = path.join(projectDir, '处理片段');
         const processedClips = [];
         try {
             fs.mkdirSync(processedClipsDir, { recursive: true });
@@ -3464,12 +3579,15 @@ async function autoEditByScript(opts = {}) {
                     source_start: Number(plan.start || 0),
                     source_end: Number(plan.end || 0),
                     script: plan.scriptText || '',
+                    cache_signature: plan.cutCacheSignature || '',
+                    reused_from_cache: plan.cutCacheHit === true,
                 });
             }
             fs.writeFileSync(path.join(processedClipsDir, '处理片段清单.json'), JSON.stringify({
                 version: 1,
                 created_at: new Date().toISOString(),
                 output_path: outputPath,
+                cut_cache_dir: cutCacheDir,
                 clips: processedClips,
             }, null, 2), 'utf8');
         } catch (error) {
@@ -3647,5 +3765,5 @@ module.exports = {
     findBestWordWindow,
     findBestScriptWindowForClip,
     computeAutoEditTransitionSec,
-    _test: { scoreCandidate, scoreWordCandidate, isLikelyDuplicateTranscription, transcribeClip, recoverSmallBoundaryGaps, trimOverlappingBoundaryReadings, hasSentenceEndingPunctuation, findRepeatedScriptBlockStarts, findFuzzyBoundaryOverlap, normalizeAutoEditSpeed },
+    _test: { getWordLineIndex, scoreCandidate, scoreWordCandidate, isLikelyDuplicateTranscription, transcribeClip, recoverSmallBoundaryGaps, trimOverlappingBoundaryReadings, hasSentenceEndingPunctuation, findRepeatedScriptBlockStarts, findFuzzyBoundaryOverlap, normalizeAutoEditSpeed },
 };

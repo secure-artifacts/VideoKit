@@ -365,7 +365,12 @@ function registerAPIHandlers() {
             if (controller && requestId) activeAutoEditRequests.set(requestId, controller);
             const result = await routeAPI(endpoint, data || {}, (progress) => {
                 try {
-                    event.sender.send(endpoint === 'subtitle/generate' ? 'subtitle-progress' : 'auto-edit-progress', {
+                    const channel = endpoint === 'subtitle/generate'
+                        ? 'subtitle-progress'
+                        : (endpoint === 'media/archive-autoedit-selected-tasks' || endpoint === 'media/archive-autoedit-failed-tasks'
+                            ? 'autoedit-archive-progress'
+                            : 'auto-edit-progress');
+                    event.sender.send(channel, {
                         ...progress,
                         request_id: data?.request_id || null,
                     });
@@ -872,6 +877,75 @@ async function routeAPI(endpoint, data, progressSender = null, sender = null) {
             return { success: true, backupPath, updatedPath: targetClipPath };
         }
 
+        case 'media/move-clip-to-excluded': {
+            const { filePath, folderName = '已排除素材' } = data;
+            if (!filePath) throw new Error('缺少文件路径');
+            if (!fs.existsSync(filePath)) throw new Error(`文件不存在: ${filePath}`);
+
+            const dir = path.dirname(filePath);
+            const base = path.basename(filePath);
+            const targetDir = path.join(dir, folderName);
+            await fs.promises.mkdir(targetDir, { recursive: true });
+
+            let targetPath = path.join(targetDir, base);
+            if (fs.existsSync(targetPath)) {
+                const parsed = path.parse(base);
+                targetPath = path.join(targetDir, `${parsed.name}_${Date.now()}${parsed.ext}`);
+            }
+
+            try {
+                await fs.promises.rename(filePath, targetPath);
+            } catch (err) {
+                if (err.code === 'EXDEV') {
+                    await fs.promises.copyFile(filePath, targetPath);
+                    await fs.promises.unlink(filePath);
+                } else {
+                    throw err;
+                }
+            }
+
+            return {
+                success: true,
+                originalPath: filePath,
+                newPath: targetPath,
+                folderName,
+                targetDir
+            };
+        }
+
+        case 'media/restore-clip-from-excluded': {
+            const { filePath } = data;
+            if (!filePath) throw new Error('缺少文件路径');
+            if (!fs.existsSync(filePath)) throw new Error(`文件不存在: ${filePath}`);
+
+            const currentDir = path.dirname(filePath);
+            const parentDir = path.dirname(currentDir);
+            const base = path.basename(filePath);
+            let targetPath = path.join(parentDir, base);
+
+            if (fs.existsSync(targetPath)) {
+                const parsed = path.parse(base);
+                targetPath = path.join(parentDir, `${parsed.name}_restored_${Date.now()}${parsed.ext}`);
+            }
+
+            try {
+                await fs.promises.rename(filePath, targetPath);
+            } catch (err) {
+                if (err.code === 'EXDEV') {
+                    await fs.promises.copyFile(filePath, targetPath);
+                    await fs.promises.unlink(filePath);
+                } else {
+                    throw err;
+                }
+            }
+
+            return {
+                success: true,
+                originalPath: filePath,
+                newPath: targetPath
+            };
+        }
+
         case 'media/auto-edit-partial-replace-clip': {
             const { originalClipPath, newClipPath } = data;
             if (!originalClipPath || !newClipPath) throw new Error('缺少原片或替换片段路径');
@@ -1004,6 +1078,126 @@ async function routeAPI(endpoint, data, progressSender = null, sender = null) {
             }
             console.log(`[Move File] Moved ${srcPath} -> ${targetPath}`);
             return { success: true, path: targetPath, moved: true };
+        }
+
+        case 'media/save-autoedit-batch-project': {
+            return require('./services/autoEditBatchProject').saveEntry(data.projectPath, data.entry);
+        }
+        case 'media/archive-autoedit-failed-tasks':
+        case 'media/archive-autoedit-selected-tasks': {
+            const destinationRoot = String(data?.destinationRoot || '').trim();
+            const tasks = Array.isArray(data?.tasks) ? data.tasks : [];
+            const mode = data?.mode === 'move' ? 'move' : 'copy';
+            if (!destinationRoot) throw new Error('请选择任务文件夹整理放入的目标总目录');
+            if (!tasks.length) throw new Error('没有可整理的任务文件夹');
+
+            const root = path.resolve(destinationRoot);
+            await fs.promises.mkdir(root, { recursive: true });
+            const archived = [];
+            const failed = [];
+            const csvCell = value => `"${String(value ?? '').replace(/"/g, '""')}"`;
+            const uniqueTarget = (baseName) => {
+                let candidate = path.join(root, baseName);
+                let number = 2;
+                while (fs.existsSync(candidate)) candidate = path.join(root, `${baseName}_${number++}`);
+                return candidate;
+            };
+
+            for (let i = 0; i < tasks.length; i++) {
+                const task = tasks[i];
+                const sourceFolder = path.resolve(String(task?.folder || ''));
+                const safeName = path.basename(sourceFolder).replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').trim();
+
+                if (progressSender) {
+                    progressSender({
+                        current: i + 1,
+                        total: tasks.length,
+                        taskName: task?.name || safeName,
+                        mode,
+                        percent: Math.round((i / tasks.length) * 100),
+                        stage: 'processing'
+                    });
+                }
+                await new Promise(resolve => setImmediate(resolve));
+
+                if (!safeName || !fs.existsSync(sourceFolder) || !fs.statSync(sourceFolder).isDirectory()) {
+                    failed.push({ sourceFolder: task?.folder || '', error: '任务文件夹不存在或不可读取' });
+                    continue;
+                }
+                const targetFolder = uniqueTarget(safeName);
+                // 归档根目录若被选在当前任务文件夹中，递归复制会把自己不断复制。
+                const relativeTarget = path.relative(sourceFolder, targetFolder);
+                if (relativeTarget && !relativeTarget.startsWith(`..${path.sep}`) && relativeTarget !== '..' && !path.isAbsolute(relativeTarget)) {
+                    failed.push({ sourceFolder, error: '目标总文件夹不能放在当前任务文件夹内部' });
+                    continue;
+                }
+                try {
+                    if (mode === 'move') {
+                        try {
+                            await fs.promises.rename(sourceFolder, targetFolder);
+                        } catch (err) {
+                            if (err.code === 'EXDEV' || err.code === 'EPERM') {
+                                await fs.promises.cp(sourceFolder, targetFolder, { recursive: true, force: false, errorOnExist: true });
+                                await fs.promises.rm(sourceFolder, { recursive: true, force: true });
+                            } else {
+                                throw err;
+                            }
+                        }
+                    } else {
+                        await fs.promises.cp(sourceFolder, targetFolder, { recursive: true, force: false, errorOnExist: true, dereference: false });
+                    }
+
+                    const record = {
+                        archived_at: new Date().toISOString(),
+                        archive_mode: mode,
+                        source_folder: sourceFolder,
+                        archived_folder: targetFolder,
+                        task_name: task?.name || safeName,
+                        task_status: task?.status || '',
+                        task_message: task?.message || '',
+                        clips: Array.isArray(task?.clips) ? task.clips : [],
+                        script: String(task?.script || ''),
+                        match_summary: task?.match_summary || {},
+                        missing_blocks: Array.isArray(task?.missing_blocks) ? task.missing_blocks : [],
+                    };
+                    await fs.promises.writeFile(path.join(targetFolder, '任务处理记录.json'), JSON.stringify(record, null, 2), 'utf8');
+                    archived.push({
+                        sourceFolder,
+                        destinationFolder: targetFolder,
+                        taskName: record.task_name,
+                        oldFolder: sourceFolder,
+                        newFolder: targetFolder
+                    });
+                } catch (error) {
+                    failed.push({ sourceFolder, error: error?.message || String(error) });
+                }
+
+                if (progressSender) {
+                    progressSender({
+                        current: i + 1,
+                        total: tasks.length,
+                        taskName: task?.name || safeName,
+                        mode,
+                        percent: Math.round(((i + 1) / tasks.length) * 100),
+                        stage: 'completed'
+                    });
+                }
+                await new Promise(resolve => setTimeout(resolve, 8));
+            }
+            const summary = {
+                generated_at: new Date().toISOString(),
+                archive_mode: mode,
+                destination_root: root,
+                archived,
+                failed,
+            };
+            await fs.promises.writeFile(path.join(root, '任务归档记录.json'), JSON.stringify(summary, null, 2), 'utf8');
+            const csv = [
+                ['任务名称', '原任务文件夹', '归档总文件夹内路径', '整理模式', '整理时间'],
+                ...archived.map(item => [item.taskName, item.sourceFolder, item.destinationFolder, mode === 'move' ? '移动' : '复制', summary.generated_at]),
+            ].map(row => row.map(csvCell).join(',')).join('\n');
+            await fs.promises.writeFile(path.join(root, '任务归档记录.csv'), `\uFEFF${csv}\n`, 'utf8');
+            return { archived, failed, recordPath: path.join(root, '任务归档记录.json'), mode, destinationRoot: root };
         }
 
         case 'media/visual-review-save': {
@@ -2241,12 +2435,25 @@ async function routeAPI(endpoint, data, progressSender = null, sender = null) {
             const copyMode = data.copy !== false;
             if (!source || !target) throw new Error('缺少源文件或目标路径');
             if (!fs.existsSync(source)) throw new Error(`文件不存在: ${source}`);
+            const targetDir = path.dirname(target);
+            if (!fs.existsSync(targetDir)) {
+                fs.mkdirSync(targetDir, { recursive: true });
+            }
             if (copyMode) {
                 fs.copyFileSync(source, target);
             } else {
-                fs.renameSync(source, target);
+                try {
+                    fs.renameSync(source, target);
+                } catch (err) {
+                    if (err.code === 'EXDEV' || err.code === 'EPERM') {
+                        fs.copyFileSync(source, target);
+                        fs.unlinkSync(source);
+                    } else {
+                        throw err;
+                    }
+                }
             }
-            return { message: copyMode ? '复制成功' : '重命名成功', target };
+            return { success: true, message: copyMode ? '复制成功' : '重命名成功', target };
         }
 
         case 'file/delete': {
@@ -2451,4 +2658,4 @@ async function routeUpload(endpoint, fileBuffer, fileName, formData) {
     }
 }
 
-module.exports = { registerAPIHandlers };
+module.exports = { registerAPIHandlers, routeAPI };

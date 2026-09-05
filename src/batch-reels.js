@@ -72,6 +72,7 @@ window.reelsSplitTimelineAtPlayhead = function() {
 
 const REELS_DEFAULT_PRESET_KEY = 'reels_default_preset_name';
 const REELS_EXPORT_RESUME_KEY = 'videokit_reels_export_resume_v1';
+const REELS_TASK_NAME_DISPLAY_KEY = 'videokit_reels_task_name_display_v1';
 const REELS_EXPORT_RECYCLE_EVERY_DEFAULT = 0;
 const REELS_WATERMARK_STORAGE_KEY = 'reels_watermarks';
 const REELS_BACKGROUND_EXTS = new Set(['mp4', 'mov', 'mkv', 'avi', 'wmv', 'flv', 'webm', 'jpg', 'jpeg', 'png', 'webp']);
@@ -6893,7 +6894,7 @@ async function reelsCreateTaskFromAutoEditResult(autoEditResult = {}, opts = {})
 
         // 不依赖用户手动点“保存工程”：每次送入自动剪辑成片时，在成片旁生成
         // `<成片名>.reels-project.json`。随后即使点击清空任务，二剪工程仍在。
-        const recovery = await window.ReelsProject?.saveAutoEditRecoveryProject?.(_reelsState, task, autoEditResult);
+        const recovery = opts.skipRecoveryCollection ? null : await window.ReelsProject?.saveAutoEditRecoveryProject?.(_reelsState, task, autoEditResult);
         if (recovery?.ok) {
             task.autoEditProject.reelsProjectPath = recovery.path;
             task.autoEditProject.collectionPath = recovery.collection?.projectDir || '';
@@ -6908,7 +6909,7 @@ async function reelsCreateTaskFromAutoEditResult(autoEditResult = {}, opts = {})
                     : '';
                 showToast(`已保存二剪工程：${label}${missingHint}`, recovery.collection?.ok && recovery.collection.complete !== false ? 'success' : 'warning', 7000);
             }
-        } else {
+        } else if (!opts.skipRecoveryCollection) {
             console.warn('[Reels] 自动剪辑二剪工程保存失败，仍可使用“保存工程”手动保存');
         }
     } catch (error) {
@@ -7922,23 +7923,26 @@ function _getBgAssignMode() {
     return el ? el.value : 'cycle';
 }
 
-function _applyFreeBackgroundAssignment() {
-    const library = _reelsState.backgroundLibrary || [];
+function _applyFreeBackgroundAssignment({ backgrounds = [], targetTasks = [] } = {}) {
+    // 背景自动分配必须是“一次导入”的局部动作：历史背景库仅用于展示和
+    // 手动选择，不能在随后又导入一条音频/SRT 时把旧任务重新洗牌。
+    const library = backgrounds.filter(item => item?.path);
     if (library.length === 0) return;
 
     const assignMode = _getBgAssignMode();
-    // free 模式下，TXT/手动文本任务也需要拿到背景，便于点击预览
-    const targetTasks = _reelsState.tasks.filter(t =>
-        (t.audioPath || t.srtPath || t.txtContent || t.manualText)
-        // 任务区直接投放的背景已明确绑定到这条任务；后续拖入同名配音/SRT
-        // 时不能被“背景循环分配”改成另一条素材。
+    // 只处理本次导入刚创建/刚补全、且尚未绑定背景的任务。已有背景不论是
+    // 自动还是手工设置，均视为用户已确认，绝不被后续导入覆盖。
+    const uniqueTargets = [...new Set(targetTasks)].filter(t =>
+        t && (t.audioPath || t.srtPath || t.txtContent || t.manualText)
         && !(t._keepBackgroundOnly === true && (t.bgPath || t.videoPath))
+        && !(t.bgPath || t.videoPath)
     );
-    if (targetTasks.length === 0) return;
+    const targets = uniqueTargets;
+    if (targets.length === 0) return;
 
     if (assignMode === 'single') {
         const firstBg = library[0];
-        for (const task of targetTasks) {
+        for (const task of targets) {
             task.bgPath = firstBg.path;
             task.bgSrcUrl = firstBg.srcUrl || null;
             task.videoPath = firstBg.path;
@@ -7947,12 +7951,12 @@ function _applyFreeBackgroundAssignment() {
         return;
     }
 
-    for (let i = 0; i < targetTasks.length; i++) {
+    for (let i = 0; i < targets.length; i++) {
         const bg = library[i % library.length];
-        targetTasks[i].bgPath = bg.path;
-        targetTasks[i].bgSrcUrl = bg.srcUrl || null;
-        targetTasks[i].videoPath = bg.path;
-        targetTasks[i].srcUrl = bg.srcUrl || null;
+        targets[i].bgPath = bg.path;
+        targets[i].bgSrcUrl = bg.srcUrl || null;
+        targets[i].videoPath = bg.path;
+        targets[i].srcUrl = bg.srcUrl || null;
     }
 }
 
@@ -8022,11 +8026,15 @@ function reelsAutoMatchFiles() {
     const txts = _reelsState.pendingFiles.txts.splice(0);
     const receivedFiles = backgrounds.length + audios.length + srts.length + txts.length > 0;
     const matchMode = _getMatchMode();
+    // 用对象引用而非索引记录本次导入涉及的任务；导入流程可能会新建任务或
+    // 清理仅背景占位任务，索引在这期间并不稳定。
+    const importedTasks = new Set();
 
     for (const bg of backgrounds) {
         _upsertBackgroundLibrary(bg);
         if (matchMode === 'free' && bg.createTask) {
             const task = _getOrCreateTaskByBase(bg.baseName, bg.name);
+            importedTasks.add(task);
             task.baseName = bg.baseName;
             task.matchKey = bg.matchKey || _buildAudioSubtitleMatchKey(bg.name);
             task.bgPath = bg.path;
@@ -8039,6 +8047,7 @@ function reelsAutoMatchFiles() {
         }
         if (matchMode !== 'strict') continue;
         const task = _getOrCreateTaskByBase(bg.baseName, bg.name);
+        importedTasks.add(task);
         task.baseName = bg.baseName;
         task.bgPath = bg.path;
         task.bgSrcUrl = bg.srcUrl || null;
@@ -8052,6 +8061,7 @@ function reelsAutoMatchFiles() {
         const task = matchMode === 'free'
             ? _getOrCreateFreeTaskForAudio(audio)
             : _getOrCreateTaskByBase(audio.baseName, audio.name);
+        importedTasks.add(task);
         task.baseName = audio.baseName;
         task.audioPath = audio.path;
         if (matchMode === 'free') {
@@ -8065,6 +8075,7 @@ function reelsAutoMatchFiles() {
         const task = matchMode === 'free'
             ? _getOrCreateFreeTaskForSrt(srt)
             : _getOrCreateTaskByBase(srt.baseName, srt.name);
+        importedTasks.add(task);
         const rawSegs = parseSRT(srt.content || '').map(seg => ({
             ...seg,
             _timeUnit: 'sec',
@@ -8083,6 +8094,7 @@ function reelsAutoMatchFiles() {
         const task = matchMode === 'free'
             ? _getOrCreateFreeTaskForSrt(txt) // 复用 free 匹配逻辑
             : _getOrCreateTaskByBase(txt.baseName, txt.name);
+        importedTasks.add(task);
         task.baseName = txt.baseName;
         task.txtPath = txt.path;
         task.txtContent = txt.content;
@@ -8094,7 +8106,7 @@ function reelsAutoMatchFiles() {
     if (matchMode === 'free') {
         _pruneFreeBgOnlyTasks();
         _ensureBackgroundLibraryFromTasks();
-        _applyFreeBackgroundAssignment();
+        _applyFreeBackgroundAssignment({ backgrounds, targetTasks: [...importedTasks] });
         _ensurePreviewTaskForBackgroundOnlyInFreeMode();
     }
 
@@ -8180,6 +8192,21 @@ function _reelsQueueShortId(value) {
     return (hash >>> 0).toString(36).toUpperCase().padStart(7, '0').slice(-7);
 }
 
+function _getReelsTaskNameDisplay() {
+    try {
+        return localStorage.getItem(REELS_TASK_NAME_DISPLAY_KEY) === 'full' ? 'full' : 'compact';
+    } catch (_) {
+        return 'compact';
+    }
+}
+
+function reelsSetTaskNameDisplay(mode) {
+    const nextMode = mode === 'compact' ? 'compact' : 'full';
+    try { localStorage.setItem(REELS_TASK_NAME_DISPLAY_KEY, nextMode); } catch (_) { }
+    _renderTaskList();
+}
+window.reelsSetTaskNameDisplay = reelsSetTaskNameDisplay;
+
 function _renderTaskList() {
     const container = document.getElementById('reels-task-list');
     const countEl = document.getElementById('reels-task-count');
@@ -8187,6 +8214,10 @@ function _renderTaskList() {
     if (!container) return;
 
     const tasks = _reelsState.tasks;
+    const taskNameDisplay = _getReelsTaskNameDisplay();
+    container.classList.toggle('reels-task-list-compact', taskNameDisplay === 'compact');
+    const nameDisplaySelect = document.getElementById('reels-task-name-display');
+    if (nameDisplaySelect && nameDisplaySelect.value !== taskNameDisplay) nameDisplaySelect.value = taskNameDisplay;
     const workMode = _getWorkMode();
     if (countEl) countEl.textContent = `${tasks.length} 个任务`;
     if (countPanelEl) countPanelEl.textContent = tasks.length > 0 ? `${tasks.length}` : '0';
@@ -8259,8 +8290,12 @@ function _renderTaskList() {
         const isGeneratedCardName = /^card_\d+(?:\.[^.]+)?$/i.test(internalName);
         const displayName = String(task.exportName || (isGeneratedCardName && backgroundName ? backgroundName : internalName) || '未命名任务');
         const baseName = displayName.replace(/\.[^.]+$/, '');
-        // 左侧列表用于人工找任务，不能只显示十几个字符；允许它换行显示全名。
+        // 左侧列表用于人工找任务：可在“完整名称”和“单行截断”间切换。
         const shortName = baseName;
+        const isCompactName = taskNameDisplay === 'compact';
+        const taskNameStyle = isCompactName
+            ? 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1;'
+            : 'overflow:visible;text-overflow:clip;white-space:normal;overflow-wrap:anywhere;word-break:break-word;min-width:0;flex:1;';
         const escapeTaskText = (value) => String(value || '')
             .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -8381,7 +8416,7 @@ function _renderTaskList() {
                     style="accent-color:var(--accent-color,#7b8bef);transform:scale(1.25);margin:0 6px 0 4px;flex-shrink:0;cursor:pointer;"
                     onclick="event.stopPropagation(); reelsToggleExportSelect(${i}, this.checked)"
                     title="勾选以包含在批量导出中">
-                <span class="reels-task-name" style="font-size:12px; font-weight:${selected ? '600' : '400'}; color:${selected ? '#fff' : 'var(--text-primary)'}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:60px; max-width:120px;">${escapeTaskText(shortName)}</span>
+                <span class="reels-task-name" style="font-size:12px; font-weight:${selected ? '600' : '400'}; color:${selected ? '#fff' : 'var(--text-primary)'}; ${taskNameStyle}">${escapeTaskText(shortName)}</span>
                 ${alphaIcon}
                 ${ovPreview}
                 ${task.autoEditProject ? `<button class="btn" style="padding:1px 4px;font-size:10px;border:none;background:transparent;color:#86efac;" onclick="event.stopPropagation(); reelsRefreshAutoEditTask(${i})" title="读取此自动剪辑任务最新导出的成片和 SRT；保留 Reels 覆层、贴纸、BGM 与样式">🔄</button>` : ''}

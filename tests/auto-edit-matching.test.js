@@ -220,3 +220,15 @@ test('a repeated next sentence at a clip boundary is kept only by the later clip
     assert.equal(previous.wordEndIdx, 4);
     assert.equal(previous.matchedWordsArray.some(pair => pair.scriptWordIdx >= 5), false);
 });
+
+test('getWordLineIndex safely returns lineIndex and handles undefined/out-of-bounds', () => {
+    const scriptWords = [{ raw: 'hello', lineIndex: 0 }, { raw: 'world', lineIndex: 1 }];
+    assert.equal(autoEdit._test.getWordLineIndex(scriptWords, 0), 0);
+    assert.equal(autoEdit._test.getWordLineIndex(scriptWords, 1), 1);
+    assert.equal(autoEdit._test.getWordLineIndex(scriptWords, -1), -1);
+    assert.equal(autoEdit._test.getWordLineIndex(scriptWords, 2), -1);
+    assert.equal(autoEdit._test.getWordLineIndex(scriptWords, undefined), -1);
+    assert.equal(autoEdit._test.getWordLineIndex([], 0), -1);
+    assert.equal(autoEdit._test.getWordLineIndex(null, 0), -1);
+});
+

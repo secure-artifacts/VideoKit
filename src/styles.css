@@ -1,4 +1,24 @@
 /* 全局样式 */
+/* 自动剪辑停止按钮：显式覆盖浏览器默认的浅色按钮外观。 */
+#autoedit-stop-btn,
+#autoedit-batch-stop-btn {
+    background: #742b32;
+    color: #ffe4e6;
+    border: 1px solid #a64750;
+}
+#autoedit-stop-btn:disabled,
+#autoedit-batch-stop-btn:disabled {
+    background: #303030;
+    color: #9a9a9a;
+    border-color: #454545;
+    opacity: 1;
+    cursor: not-allowed;
+    box-shadow: none;
+}
+#autoedit-stop-btn:not(:disabled):hover,
+#autoedit-batch-stop-btn:not(:disabled):hover {
+    background: #8d333d;
+}
 :root {
     --bg-primary: #181818;
     --bg-secondary: #1e1e1e;
@@ -232,6 +252,7 @@ body {
     font-weight: 600;
     cursor: pointer;
     transition: all 0.2s ease;
+    color: var(--text-primary, #e2e8f0);
 }
 
 .btn-primary {
@@ -531,6 +552,20 @@ body {
   line-height: 1.25;
 }
 
+/* “单行截断”须覆盖完整名称模式的强制换行规则。 */
+#reels-task-list.reels-task-list-compact .reels-task-item {
+  flex-wrap: nowrap !important;
+}
+
+#reels-task-list.reels-task-list-compact .reels-task-item > .reels-task-name {
+  flex: 1 1 0 !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
 .autoedit-review-row.ae-duplicate-row {
   background-color: rgba(168, 85, 247, 0.16) !important;
   border-left: 5px solid #a855f7 !important;
@@ -699,6 +734,14 @@ body {
   color: #fca5a5;
   font-weight: 800;
   font-size: 13px;
+}
+
+.autoedit-missing-placeholder[data-assigned="true"] .ae-missing-placeholder-icon {
+  background: #16a34a;
+}
+
+.autoedit-missing-placeholder[data-assigned="true"] .ae-missing-placeholder-title {
+  color: #86efac;
 }
 
 .ae-missing-placeholder-text {

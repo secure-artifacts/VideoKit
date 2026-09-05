@@ -173,6 +173,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
         clipboard.writeText(String(text || ''));
         return true;
     },
+    writeClipboardImage: (filePath) => {
+        try {
+            const { nativeImage } = require('electron');
+            const cleanPath = localMediaUrlToPath(filePath);
+            const img = nativeImage.createFromPath(cleanPath);
+            if (!img || img.isEmpty()) return false;
+            clipboard.writeImage(img);
+            return true;
+        } catch (e) {
+            console.error('writeClipboardImage error:', e);
+            return false;
+        }
+    },
 
     // 选择目录
     selectDirectory: () => ipcRenderer.invoke('select-directory'),
@@ -317,6 +330,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
         const handler = (event, data) => callback(data);
         ipcRenderer.on('auto-edit-progress', handler);
         return () => ipcRenderer.removeListener('auto-edit-progress', handler);
+    },
+
+    onAutoEditArchiveProgress: (callback) => {
+        const handler = (event, data) => callback(data);
+        ipcRenderer.on('autoedit-archive-progress', handler);
+        return () => ipcRenderer.removeListener('autoedit-archive-progress', handler);
     },
 
     onSubtitleProgress: (callback) => {
