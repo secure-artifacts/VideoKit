@@ -9,6 +9,7 @@ const os = require('os');
 const elevenlabs = require('./elevenlabs');
 const ffmpeg = require('./ffmpeg');
 const gladia = require('./gladia');
+const cloudTranscription = require('./cloudTranscription');
 const settings = require('./settings');
 
 function expandHomePath(p) {
@@ -86,12 +87,10 @@ async function appendTailSilenceToMp3(filePath, seconds, tempDir, baseName) {
 async function generateWorkflowSubtitles({ sourcePath, subtitleText, outputDir, taskPrefix, groupName = '', gladiaKeys, language, exportFcpxml = true, seamlessFcpxml = true, exportSubtitleTxt = true }) {
     if (!sourcePath || !fs.existsSync(sourcePath)) throw new Error('已生成的配音文件不存在');
     if (!subtitleText || !String(subtitleText).trim()) throw new Error('字幕文案为空');
-    let activeGladiaKeys = gladiaKeys;
-    if (!activeGladiaKeys || activeGladiaKeys.length === 0) {
-        const gladiaKeysData = settings.loadGladiaKeys();
-        activeGladiaKeys = gladiaKeysData.keys || [];
+    const transcriptionConfig = settings.loadTranscriptionProviders();
+    if (!Object.values(transcriptionConfig.providers || {}).some(provider => provider.keys?.length)) {
+        throw new Error('未配置 Deepgram 或 Groq API Key，请在设置中配置后再试');
     }
-    if (!activeGladiaKeys.length) throw new Error('未配置 Gladia API Key，请在设置中配置后再试');
 
     const { videoGroup, audioGroup, metadataGroup } = resolveWorkflowOutputGroups(
         outputDir, taskPrefix, groupName
@@ -107,7 +106,7 @@ async function generateWorkflowSubtitles({ sourcePath, subtitleText, outputDir, 
     const fileName = path.parse(sourcePath).name;
     const arrayPath = path.join(metadataGroup, `${fileName}_audio_text_withtime.json`);
     const textPath = path.join(metadataGroup, `${fileName}_transcription.txt`);
-    const result = await gladia.transcribeAudio(sourcePath, activeGladiaKeys, language);
+    const result = await cloudTranscription.transcribeWithFallback(sourcePath, transcriptionConfig, language, arrayPath, textPath, 5.0);
     fs.writeFileSync(arrayPath, JSON.stringify(result.wordTimeInfo, null, 4), 'utf-8');
     if (exportSubtitleTxt) fs.writeFileSync(textPath, result.fullText, 'utf-8');
 
@@ -183,13 +182,9 @@ async function ttsWorkflow(data) {
     if (!apiKeys || apiKeys.length === 0) throw new Error('未配置 API Key');
 
     if (subtitle_text) {
-        let activeGladiaKeys = gladia_keys;
-        if (!activeGladiaKeys || activeGladiaKeys.length === 0) {
-            const gladiaKeysData = settings.loadGladiaKeys();
-            activeGladiaKeys = gladiaKeysData.keys || [];
-        }
-        if (!activeGladiaKeys || activeGladiaKeys.length === 0) {
-            throw new Error('未配置 Gladia (AI字幕转录) API Key！任务被拒绝，以防浪费TTS额度 (请在设置中配置)');
+        const transcriptionConfig = settings.loadTranscriptionProviders();
+        if (!Object.values(transcriptionConfig.providers || {}).some(provider => provider.keys?.length)) {
+            throw new Error('未配置 Deepgram 或 Groq API Key！任务被拒绝，以防浪费 TTS 额度（请在设置中配置）');
         }
     }
 

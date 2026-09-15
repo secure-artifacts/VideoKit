@@ -2264,8 +2264,8 @@
                 ondrop="handleAutoEditBatchFolderDrop(event)"
                 style="margin-bottom:10px;border:2px dashed rgba(96,165,250,.6);border-radius:10px;padding:14px 16px;background:rgba(59,130,246,.06);transition:border-color .15s,background .15s,box-shadow .15s;display:flex;align-items:center;gap:10px;">
                 <span style="font-size:24px;">📂</span>
-                <div><strong id="autoedit-batch-folder-drop-title" style="color:#bfdbfe;">把一个或多个任务文件夹拖到这里</strong>
-                  <div class="hint" style="margin-top:3px;">会递归读取全部子文件夹；子文件仍归属于拖入的顶层父任务。松开后追加并自动去重。</div>
+                <div><strong id="autoedit-batch-folder-drop-title" style="color:#bfdbfe;">把本次的一个或多个任务文件夹拖到这里</strong>
+                  <div class="hint" style="margin-top:3px;">会递归读取所拖入文件夹的子文件夹；松开后替换旧批次，避免上次残留任务混入。</div>
                 </div>
               </div>
               <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
@@ -6110,7 +6110,10 @@
               style="flex-shrink:0; border-top:1px solid var(--border-color); padding:6px 12px; background:var(--bg-secondary);">
               <summary
                 style="cursor:pointer; font-size:12px; font-weight:bold; color:var(--text-secondary); user-select:none;">
-                🚀 导出设置 <span id="reels-export-status" style="font-weight:normal;margin-left:8px;">就绪</span></summary>
+                🚀 导出设置 <span id="reels-export-status" style="font-weight:normal;margin-left:8px;">就绪</span>
+                <button type="button" class="btn btn-secondary" style="font-size:10px;padding:2px 7px;margin-left:10px;vertical-align:middle;"
+                  title="恢复本区域的画质、音量、时长、特效和导出参数默认值；不会删除任务、素材或输出目录"
+                  onclick="event.preventDefault(); event.stopPropagation(); reelsResetExportSettings();">↺ 恢复默认</button></summary>
               <!-- ── 行1: 文件 & 输出 ── -->
               <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; font-size:12px; padding:6px 0 4px; border-bottom:1px solid var(--border-color);">
                 <span style="font-size:10px; color:var(--text-muted); min-width:32px;">📁</span>
@@ -6507,10 +6510,132 @@
             </div>
 
           <div class="form-section">
-            <h3 class="section-title">Gladia API Keys</h3>
-            <p class="hint">用于音频转录，每行一个 API Key</p>
-            <textarea id="gladia-keys" class="textarea" rows="6" placeholder="输入 Gladia API Keys..."></textarea>
-            <button class="btn btn-primary" onclick="saveGladiaKeys()" style="margin-top: 12px;">💾 保存 Gladia Keys</button>
+            <h3 class="section-title">云端转录服务</h3>
+            <p class="hint">支持 Deepgram、Groq 与 Gladia 多平台切换与多 Key 轮询池。可在表格模式下逐行查看/编辑/删除，或在文本模式下一行一个快速导入。</p>
+
+            <div style="margin: 12px 0 8px; display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-end;">
+              <div style="flex: 1; min-width: 260px;">
+                <label style="font-weight:600;display:block;margin-bottom:6px;">首选转录平台</label>
+                <select id="transcription-primary" class="select" style="width: 100%;" onchange="onTranscriptionPrimaryChange()">
+                  <option value="deepgram">⚡ Deepgram（推荐·极速直出·自带 $200 免费额度）</option>
+                  <option value="groq">🌐 Groq（基于 Whisper·每天 2000 次免费）</option>
+                  <option value="gladia">⏳ Gladia（老平台·机房故障时仅作备用）</option>
+                </select>
+              </div>
+              <div style="width: 230px;">
+                <label style="font-weight:600;display:block;margin-bottom:6px;">片段转录并发数 (Concurrency)</label>
+                <select id="transcription-concurrency" class="select" style="width: 100%;">
+                  <option value="30">⚡ 30 并发（Deepgram 极速）</option>
+                  <option value="20" selected>⚡ 20 并发（Deepgram 推荐）</option>
+                  <option value="10">🚀 10 并发</option>
+                  <option value="5">🌐 5 并发（Groq 推荐）</option>
+                  <option value="3">🌐 3 并发</option>
+                  <option value="1">⏳ 1 并发（串行·Gladia）</option>
+                </select>
+              </div>
+            </div>
+            <div class="hint" style="font-size:12px;color:var(--text-muted);margin-bottom:12px;line-height:1.6;">
+              💡 <strong>并发说明</strong>：单个任务有多个镜头/音频切片片段时同时发起的转录请求数。选择 Deepgram 时开启 <strong>20~30 并发</strong>，30 个片段约 2~3 秒内全部齐头并进搞定！Groq 建议 3~5 并发；Gladia 建议 1。若首选故障或未配 Key，系统会自动顺位尝试后备平台。
+            </div>
+
+            <div style="margin: 8px 0 14px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+              <button type="button" id="transcription-quota-toggle-btn" class="btn btn-secondary" onclick="toggleTranscriptionQuotaHelp()" style="font-size: 12px; padding: 5px 12px; display: inline-flex; align-items: center; gap: 6px; background: rgba(74,158,255,0.12); color: #4a9eff; border: 1px solid rgba(74,158,255,0.3); border-radius: 6px; cursor: pointer;">
+                📊 各平台额度与并发限制对比
+              </button>
+              <button type="button" class="btn btn-secondary" onclick="window.showTranscriptionRecordsModal?.()" style="font-size: 12px; padding: 5px 12px; display: inline-flex; align-items: center; gap: 6px; background: rgba(59,130,246,0.15); color: #93c5fd; border: 1px solid rgba(96,165,250,0.35); border-radius: 6px; cursor: pointer;">
+                📜 查看切片发送与耗时记录看板
+              </button>
+              <span class="hint" style="font-size: 11px; color: var(--text-muted); margin-left: auto;">💡 遇到并发或额度超限会自动尝试后备平台</span>
+            </div>
+
+            <!-- 平台额度与并发限制详细对比面板 -->
+            <div id="transcription-quota-help-panel" style="display: none; background: rgba(0,0,0,0.35); border: 1px solid rgba(74,158,255,0.25); border-radius: 8px; padding: 12px 14px; margin-bottom: 16px;">
+              <div style="font-weight: 600; color: #4a9eff; margin-bottom: 8px; font-size: 13px; display: flex; align-items: center; justify-content: space-between;">
+                <span>📋 三大云端转录平台：额度、并发与官网入口对比</span>
+                <span style="font-size: 11px; color: var(--text-muted); cursor: pointer;" onclick="toggleTranscriptionQuotaHelp()">✖ 关闭</span>
+              </div>
+              <div style="overflow-x: auto;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 12px; text-align: left; line-height: 1.5;">
+                  <thead>
+                    <tr style="border-bottom: 1px solid rgba(255,255,255,0.12); color: var(--text-secondary); background: rgba(255,255,255,0.03);">
+                      <th style="padding: 8px 10px; white-space: nowrap;">平台</th>
+                      <th style="padding: 8px 10px; white-space: nowrap;">免费额度类型</th>
+                      <th style="padding: 8px 10px; white-space: nowrap;">额度上限</th>
+                      <th style="padding: 8px 10px; white-space: nowrap;">并发与速率限制</th>
+                      <th style="padding: 8px 10px; white-space: nowrap;">相当于短视频数 / 时长</th>
+                      <th style="padding: 8px 10px; white-space: nowrap;">有效期 / 周期</th>
+                      <th style="padding: 8px 10px; white-space: nowrap;">官网控制台直达</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr style="border-bottom: 1px solid rgba(255,255,255,0.06);">
+                      <td style="padding: 8px 10px; font-weight: 600; color: #6ee7b7; white-space: nowrap;">⚡ Deepgram<br><span style="font-size: 10px; color: var(--text-muted); font-weight: normal;">(推荐·极速直出)</span></td>
+                      <td style="padding: 8px 10px; color: var(--text-primary);">$200 美元赠金</td>
+                      <td style="padding: 8px 10px; color: var(--text-primary); font-weight: 600;">账上 $200 赠额</td>
+                      <td style="padding: 8px 10px; color: #6ee7b7;"><strong style="color: #6ee7b7;">50 路并发</strong><br><span style="font-size: 11px; color: var(--text-muted);">秒级直出(1~3秒)，批量最强</span></td>
+                      <td style="padding: 8px 10px; color: var(--text-primary);">约 <strong>770 小时</strong><br><span style="font-size: 11px; color: var(--text-muted);">(约 30,000 ~ 46,000 条短视频)</span></td>
+                      <td style="padding: 8px 10px; color: #6ee7b7;">永久有效<br><span style="font-size: 11px; color: var(--text-muted);">(扣完即止)</span></td>
+                      <td style="padding: 8px 10px; white-space: nowrap;">
+                        <button type="button" class="btn btn-secondary btn-small" onclick="openExternalUrl('https://console.deepgram.com/')" style="font-size: 11px; padding: 3px 8px; color: #4a9eff; border-color: rgba(74,158,255,0.4);">
+                          🌍 打开 Deepgram
+                        </button>
+                      </td>
+                    </tr>
+                    <tr style="border-bottom: 1px solid rgba(255,255,255,0.06);">
+                      <td style="padding: 8px 10px; font-weight: 600; color: #38bdf8; white-space: nowrap;">🌐 Groq<br><span style="font-size: 10px; color: var(--text-muted); font-weight: normal;">(免费 Whisper)</span></td>
+                      <td style="padding: 8px 10px; color: var(--text-primary);">按天免费限额</td>
+                      <td style="padding: 8px 10px; color: var(--text-primary); font-weight: 600;">2,000 次 / 天<br><span style="font-size: 11px; color: var(--text-muted);">(每日 8 小时音频)</span></td>
+                      <td style="padding: 8px 10px; color: #38bdf8;"><strong>20 次/分 (20 RPM)</strong><br><span style="font-size: 11px; color: var(--text-muted);">建议并发 3~5 路 (超出会报 429)</span></td>
+                      <td style="padding: 8px 10px; color: var(--text-primary);">每天 <strong>2,000 条</strong> 短视频<br><span style="font-size: 11px; color: var(--text-muted);">(次日清晨重置)</span></td>
+                      <td style="padding: 8px 10px; color: #38bdf8;">每日重置<br><span style="font-size: 11px; color: var(--text-muted);">(UTC 0点刷新)</span></td>
+                      <td style="padding: 8px 10px; white-space: nowrap;">
+                        <button type="button" class="btn btn-secondary btn-small" onclick="openExternalUrl('https://console.groq.com/keys')" style="font-size: 11px; padding: 3px 8px; color: #4a9eff; border-color: rgba(74,158,255,0.4);">
+                          🌍 打开 Groq Keys
+                        </button>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 8px 10px; font-weight: 600; color: #fbbf24; white-space: nowrap;">⏳ Gladia<br><span style="font-size: 10px; color: var(--text-muted); font-weight: normal;">(原老平台·备用)</span></td>
+                      <td style="padding: 8px 10px; color: var(--text-primary);">按月时长配额</td>
+                      <td style="padding: 8px 10px; color: var(--text-primary); font-weight: 600;">每月约 10 小时</td>
+                      <td style="padding: 8px 10px; color: #fbbf24;"><strong>1~2 路并发</strong><br><span style="font-size: 11px; color: var(--text-muted);">机房网络偶有波动，建议串行</span></td>
+                      <td style="padding: 8px 10px; color: var(--text-primary);">约 <strong>300 ~ 500 条</strong> 短视频 / 月</td>
+                      <td style="padding: 8px 10px; color: #fbbf24;">每月刷新<br><span style="font-size: 11px; color: var(--text-muted);">(不结转)</span></td>
+                      <td style="padding: 8px 10px; white-space: nowrap;">
+                        <button type="button" class="btn btn-secondary btn-small" onclick="openExternalUrl('https://app.gladia.io/')" style="font-size: 11px; padding: 3px 8px; color: #4a9eff; border-color: rgba(74,158,255,0.4);">
+                          🌍 打开 Gladia
+                        </button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div style="margin-top: 10px; padding: 8px 10px; background: rgba(74,158,255,0.06); border-radius: 6px; font-size: 11px; color: var(--text-muted); line-height: 1.6;">
+                💡 <strong>提示</strong>：多个平台可以同时配置 Key。如果首选服务（如 Deepgram）出现额度耗尽或网络波动，系统会自动顺位尝试 Groq 或 Gladia 作为备用服务，无需手动反复切换。
+              </div>
+            </div>
+
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:12px;">
+              <label class="hint" style="font-weight:500;margin:0;">Deepgram API Key（推荐，秒级返回，自带 $200 免费额度）</label>
+              <a href="#" onclick="openExternalUrl('https://console.deepgram.com/'); return false;" style="color:#4a9eff; font-size:11px; text-decoration:underline;">🌍 访问 Deepgram 控制台获取 Key</a>
+            </div>
+            <textarea id="deepgram-keys" class="textarea" rows="2" autocomplete="off" spellcheck="false" placeholder="每行一个 Deepgram API Key"></textarea>
+            <div id="deepgram-key-status" class="hint" style="margin:2px 0 8px;font-size:11px;color:var(--text-muted);"></div>
+
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:12px;">
+              <label class="hint" style="font-weight:500;margin:0;">Groq API Key（备用，基于 Whisper，每天 2000 次免费请求）</label>
+              <a href="#" onclick="openExternalUrl('https://console.groq.com/keys'); return false;" style="color:#4a9eff; font-size:11px; text-decoration:underline;">🌍 访问 Groq 控制台获取 Key</a>
+            </div>
+            <textarea id="groq-keys" class="textarea" rows="2" autocomplete="off" spellcheck="false" placeholder="每行一个 Groq API Key"></textarea>
+            <div id="groq-key-status" class="hint" style="margin:2px 0 8px;font-size:11px;color:var(--text-muted);"></div>
+
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:12px;">
+              <label class="hint" style="font-weight:500;margin:0;">Gladia API Key（老平台，当前官方机房故障时建议作备用）</label>
+              <a href="#" onclick="openExternalUrl('https://app.gladia.io/'); return false;" style="color:#4a9eff; font-size:11px; text-decoration:underline;">🌍 访问 Gladia 控制台获取 Key</a>
+            </div>
+            <textarea id="gladia-keys" class="textarea" rows="2" autocomplete="off" spellcheck="false" placeholder="每行一个 Gladia API Key"></textarea>
+            <div id="gladia-provider-key-status" class="hint" style="margin:2px 0 8px;font-size:11px;color:var(--text-muted);"></div>
+            <button class="btn btn-primary" style="margin-top:12px;" onclick="saveTranscriptionProviders()">🔐 保存云端转录设置</button>
           </div>
 
           <div class="form-section">

@@ -5,11 +5,28 @@ const crypto = require('crypto');
 
 const ffmpegService = require('./ffmpeg');
 const gladiaService = require('./gladia');
+const cloudTranscription = require('./cloudTranscription');
 const elevenlabsService = require('./elevenlabs');
 const subtitleService = require('./subtitle');
 const settingsService = require('./settings');
 const subtitleUtils = require('./subtitleUtils');
 const autoEditMatcherV2 = require('./autoEditMatcherV2');
+
+async function asyncPool(limit, items, iteratorFn) {
+    const ret = [];
+    const executing = new Set();
+    for (const item of items) {
+        const p = Promise.resolve().then(() => iteratorFn(item));
+        ret.push(p);
+        executing.add(p);
+        const clean = () => executing.delete(p);
+        p.then(clean, clean);
+        if (executing.size >= limit) {
+            await Promise.race(executing);
+        }
+    }
+    return Promise.all(ret);
+}
 
 const ENGLISH_NUMBER_VALUES = Object.freeze({
     zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9,
@@ -915,7 +932,7 @@ function extractUtterances(data) {
     return [];
 }
 
-async function transcribeClip(clipPath, language, gladiaKeys, cacheDir, force, manualSubtitlePath, signal = null, savedTranscriptionDir = '', onProgress = null) {
+async function transcribeClip(clipPath, language, transcriptionConfig, cacheDir, force, manualSubtitlePath, signal = null, savedTranscriptionDir = '', onProgress = null) {
     if (signal?.aborted) throw new Error('任务已停止');
     // 如果用户手动指定了字幕文件路径
     if (manualSubtitlePath && fs.existsSync(manualSubtitlePath)) {
@@ -1176,26 +1193,27 @@ async function transcribeClip(clipPath, language, gladiaKeys, cacheDir, force, m
         }
         console.warn(`[自动剪辑] 检测到空转录缓存，忽略缓存并重新调用识别: ${txtPath}`);
     }
-    let result = await gladiaService.transcribeAudioFull(
-        clipPath, gladiaKeys, langEnName, jsonPath, txtPath, 5.0, onProgress, signal
-    );
+    // Keep the historical array argument working for saved/legacy callers.
+    // New calls use the encrypted provider configuration from the main process.
+    const runTranscription = () => Array.isArray(transcriptionConfig)
+        ? gladiaService.transcribeAudioFull(clipPath, transcriptionConfig, langEnName, jsonPath, txtPath, 5.0, onProgress, signal)
+        : cloudTranscription.transcribeWithFallback(clipPath, transcriptionConfig, langEnName, jsonPath, txtPath, 5.0, onProgress, signal);
+    let result = await runTranscription();
     const hasRecognizedText = value => Boolean(
         value?.fullText?.trim() && Array.isArray(value?.wordTimeInfo) && value.wordTimeInfo.length > 0
     );
     if (!hasRecognizedText(result)) {
-        console.warn(`[自动剪辑] Gladia 首次未返回文字，自动重试一次: ${clipPath}`);
-        result = await gladiaService.transcribeAudioFull(
-            clipPath, gladiaKeys, langEnName, jsonPath, txtPath, 5.0, onProgress, signal
-        );
+        console.warn(`[自动剪辑] 云端转录首次未返回文字，自动重试一次: ${clipPath}`);
+        result = await runTranscription();
     }
     if (!hasRecognizedText(result)) {
         // 不保留空结果，避免下一次分析继续误用。
         for (const emptyPath of [jsonPath, txtPath]) {
             try { if (fs.existsSync(emptyPath)) fs.unlinkSync(emptyPath); } catch (_) { }
         }
-        throw new Error('GLADIA_EMPTY_RESULT：语音识别服务连续两次返回空响应。Gladia 请求已完成，但没有返回可用文字；这不是“额度不足”的确定证据，可能是音轨无声、语言识别失败、接口空响应或结果格式异常。请试听原片、检查语言设置后再单独重试。');
+        throw new Error('TRANSCRIPTION_EMPTY_RESULT：语音识别服务连续两次返回空响应。请试听原片、检查语言设置后再单独重试。');
     }
-    return { ...result, source: 'gladia' };
+    return { ...result, source: result.provider || (Array.isArray(transcriptionConfig) ? 'gladia' : 'cloud') };
 }
 
 function buildSubtitleItemsFromAudioWords(lines, words, audioDurationSec, minScore = 0.52) {
@@ -1288,12 +1306,12 @@ async function generateSrtForAudioScript(opts = {}) {
     if (!audioPath || !fs.existsSync(audioPath)) throw new Error('缺少有效音频文件，无法重新生成字幕');
     if (lines.length === 0) throw new Error('缺少文案，无法重新生成字幕');
 
-    const gladiaKeys = Array.isArray(opts.gladiaKeys) ? opts.gladiaKeys.filter(Boolean) : [];
-    if (gladiaKeys.length === 0) throw new Error('未配置 Gladia API Key，无法重新转录换声后的音频');
+    const transcriptionConfig = opts.transcriptionConfig || settingsService.loadTranscriptionProviders();
+    if (!Object.values(transcriptionConfig.providers || {}).some(provider => provider.keys?.length)) throw new Error('未配置 Deepgram 或 Groq API Key，无法重新转录换声后的音频');
 
     const language = opts.language || 'auto';
     const cacheDir = settingsService.getSecureTmpDir('videokit_autoedit_cache');
-    const transcription = await transcribeClip(audioPath, language, gladiaKeys, cacheDir, opts.force === true);
+    const transcription = await transcribeClip(audioPath, language, transcriptionConfig, cacheDir, opts.force === true);
     const words = flattenWords(transcription.wordTimeInfo);
     const duration = await ffmpegService.getDuration(audioPath).catch(() => {
         const lastWord = words[words.length - 1];
@@ -1386,10 +1404,10 @@ async function autoEditByScript(opts = {}) {
 
     const manualSubtitleMap = opts.manualSubtitleMap || opts.manual_subtitle_map || {};
     const manualTranscripts = opts.manualTranscripts || opts.manual_transcripts || {};
-    const gladiaKeys = Array.isArray(opts.gladiaKeys) ? opts.gladiaKeys.filter(Boolean) : [];
+    const transcriptionConfig = opts.transcriptionConfig || settingsService.loadTranscriptionProviders();
     const everyClipHasLocalText = clips.every(clip => manualTranscripts[clip] || manualSubtitleMap[clip]);
-    if (gladiaKeys.length === 0 && !everyClipHasLocalText) {
-        throw new Error('部分片段没有本地字幕或手动转录，请配置 Gladia API Key 后再分析');
+    if (!Object.values(transcriptionConfig.providers || {}).some(provider => provider.keys?.length) && !everyClipHasLocalText) {
+        throw new Error('部分片段没有本地字幕或手动转录，请配置 Deepgram 或 Groq API Key 后再分析');
     }
 
     const now = new Date();
@@ -1593,7 +1611,7 @@ async function autoEditByScript(opts = {}) {
                 stage: 'transcribe',
                 message: '正在进行单次语音转录识别...',
             });
-            const transcription = await transcribeClip(rawConcatPath, language, gladiaKeys, cacheDir, forceTranscribe, null, opts.signal);
+            const transcription = await transcribeClip(rawConcatPath, language, transcriptionConfig, cacheDir, forceTranscribe, null, opts.signal);
             globalTranscriptionText = transcription.fullText;
             const words = flattenWords(transcription.wordTimeInfo);
             const duration = await ffmpegService.getDuration(rawConcatPath);
@@ -1767,17 +1785,19 @@ async function autoEditByScript(opts = {}) {
                 return overlap;
             };
 
-            for (let i = 0; i < clipCount; i++) {
+            const concurrency = (typeof transcriptionConfig?.concurrency === 'number' && transcriptionConfig.concurrency > 0)
+                ? transcriptionConfig.concurrency
+                : (typeof settingsService.getEffectiveConcurrency === 'function'
+                    ? settingsService.getEffectiveConcurrency(transcriptionConfig)
+                    : (transcriptionConfig?.primary === 'deepgram' ? 20 : 1));
+            console.log(`[自动剪辑] 开始多片段并发转录: 共 ${clipCount} 个片段，并发数: ${concurrency} (首选: ${transcriptionConfig?.primary || 'deepgram'})`);
+
+            const clipResults = new Array(clipCount);
+            let completedCount = 0;
+
+            await asyncPool(concurrency, Array.from({ length: clipCount }, (_, idx) => idx), async (i) => {
+                if (opts.signal?.aborted) throw new Error('任务已停止');
                 const clipPath = clips[i];
-                emitProgress({
-                    percent: 8 + Math.round((i / Math.max(clipCount, 1)) * 42),
-                    stage: 'transcribe',
-                    current: i + 1,
-                    total: clipCount,
-                    clip_index: i,
-                    clip_status: 'transcribing',
-                    message: `正在转录并匹配第 ${i + 1}/${clipCount} 个片段...`,
-                });
                 let transcription;
                 let isFailed = false;
                 let errorMsg = null;
@@ -1789,14 +1809,11 @@ async function autoEditByScript(opts = {}) {
                     } else {
                         const forceThisClip = forceTranscribe || forceTranscribePaths.has(String(clipPath).replace(/\\/g, '/'));
                         transcription = await transcribeClip(
-                            clipPath, language, gladiaKeys, cacheDir, forceThisClip,
+                            clipPath, language, transcriptionConfig, cacheDir, forceThisClip,
                             manualSubtitleMap[clipPath], opts.signal, outputDir,
-                            message => emitProgress({
-                                percent: 8 + Math.round((i / Math.max(clipCount, 1)) * 42),
-                                stage: 'transcribe', current: i + 1, total: clipCount,
-                                clip_index: i, clip_status: 'transcribing',
-                                message: `片段 ${i + 1}/${clipCount}：${message}`,
-                            })
+                            message => {
+                                // 单个片段内部消息
+                            }
                         );
                     }
                 } catch (err) {
@@ -1822,18 +1839,18 @@ async function autoEditByScript(opts = {}) {
                     clipStatus = 'cached';
                 }
 
-                const isManual = ['manual', 'manual_srt', 'manual_txt'].includes(transcription.source);
-                console.log(`[自动剪辑] 片段 ${i + 1}/${clipCount}: ${path.basename(clipPath)} (${isFailed ? '转录失败' : (isTextEmpty ? '转录为空' : (isManual ? '手动指定字幕文件' : (isCache ? '命中缓存' : '调用 Gladia API')))})`);
+                completedCount++;
                 emitProgress({
-                    percent: 8 + Math.round(((i + 0.8) / Math.max(clipCount, 1)) * 42),
+                    percent: 8 + Math.round((completedCount / Math.max(clipCount, 1)) * 42),
                     stage: 'transcribe',
-                    current: i + 1,
+                    current: completedCount,
                     total: clipCount,
                     clip_index: i,
                     clip_status: clipStatus,
                     clip_error: isFailed ? errorMsg : (isTextEmpty ? emptyMessage : null),
-                    message: `已处理第 ${i + 1}/${clipCount} 个片段 (${isFailed ? '转录失败' : (isTextEmpty ? '未获得识别结果' : (isCache ? '使用缓存' : '新调用接口'))})`,
+                    message: `片段转录 (${completedCount}/${clipCount}): ${path.basename(clipPath)} (${isFailed ? '失败' : (isTextEmpty ? '空结果' : (isCache ? '使用缓存' : '已识别'))}) · ${concurrency}并发`,
                 });
+
                 const words = flattenWords(transcription.wordTimeInfo);
 
                 // 保存每个片段的转录结果（.txt 和 .json）到输出文件夹（当前文件夹）
@@ -1873,6 +1890,20 @@ async function autoEditByScript(opts = {}) {
                 } catch (writeErr) {
                     console.error(`[自动剪辑] 保存片段 ${clipPath} 的转录结果到输出目录失败:`, writeErr);
                 }
+
+                clipResults[i] = {
+                    transcription,
+                    words,
+                    isFailed,
+                    errorMsg,
+                    clipStatus,
+                };
+            });
+
+            // 阶段二：严格按原始片段顺序进行文本匹配与时间线规划
+            for (let i = 0; i < clipCount; i++) {
+                const clipPath = clips[i];
+                const { transcription, words, isFailed, errorMsg, clipStatus } = clipResults[i];
                 const duration = await ffmpegService.getDuration(clipPath);
 
                 let scriptWordStart = -1;
@@ -2523,6 +2554,8 @@ async function autoEditByScript(opts = {}) {
             block.position_hint = previous && next
                 ? `位于片段 #${previous.sourceIndex + 1} 与片段 #${next.sourceIndex + 1} 之间`
                 : (previous ? `位于片段 #${previous.sourceIndex + 1} 之后` : (next ? `位于片段 #${next.sourceIndex + 1} 之前` : '未能确定相邻片段'));
+            block.issue_type = 'confirmed_missing_script';
+            block.detection_method = 'full_transcript_and_boundary_recheck';
         }
 
         // 完整性兜底：原文中的每个有效字词必须归属某个目标片段或缺失占位，禁止静默丢失。
@@ -2546,6 +2579,8 @@ async function autoEditByScript(opts = {}) {
                     text: joinWordsSmart(words.map(word => word.raw)),
                     startLine: words[0]?.lineIndex ?? 0,
                     endLine: words[words.length - 1]?.lineIndex ?? 0,
+                    issue_type: 'confirmed_missing_script',
+                    detection_method: 'coverage_safety_check',
                 });
                 console.warn(`[自动剪辑] 完整性核对发现未归属文案，已恢复为缺失占位: ${joinWordsSmart(words.map(word => word.raw))}`);
             }
@@ -2574,6 +2609,8 @@ async function autoEditByScript(opts = {}) {
             block.position_hint = previous && next
                 ? `位于片段 #${previous.sourceIndex + 1} 与片段 #${next.sourceIndex + 1} 之间`
                 : (previous ? `位于片段 #${previous.sourceIndex + 1} 之后` : (next ? `位于片段 #${next.sourceIndex + 1} 之前` : '未能确定相邻片段'));
+            block.issue_type = block.issue_type || 'confirmed_missing_script';
+            block.detection_method = block.detection_method || 'full_transcript_and_boundary_recheck';
         });
 
         // V2 独立使用语言感知词窗重新计算每段入点/出点。

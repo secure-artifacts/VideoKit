@@ -21,12 +21,58 @@ window.openBatchOverlayPresetEditor = function(name, preset) {
     const layers = JSON.parse(JSON.stringify(Array.isArray(preset) ? preset : (preset.layers || [])));
     const modal = document.createElement('div');
     modal.style.cssText = 'position:fixed;inset:0;z-index:450000;background:#000d;display:flex;align-items:center;justify-content:center;';
-    modal.innerHTML = `<div style="background:#181822;padding:16px;border-radius:10px;display:flex;gap:16px;max-width:96vw;max-height:94vh;overflow:auto;color:#ddd;">
-      <div style="width:min(38vw,360px);aspect-ratio:9/16;position:relative;background:#080810;align-self:flex-start;"><video data-video muted loop playsinline style="width:100%;height:100%;object-fit:cover;position:absolute;"></video><img data-image style="width:100%;height:100%;object-fit:cover;position:absolute;display:none;"><canvas data-canvas width="1080" height="1920" style="width:100%;height:100%;position:absolute;pointer-events:none;"></canvas></div>
-      <div style="width:260px;display:flex;flex-direction:column;gap:8px;font-size:12px;"><strong>✏️ 直接编辑「${String(name).replace(/</g, '&lt;')}」</strong><button data-bg>🖼 选择临时预览背景</button><button data-clear>清除临时背景</button><span data-label style="color:#aaa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">未设置（深色底）</span><span style="color:#94a3b8;font-size:11px;">背景仅供预览，不保存到预设、不影响导出。</span><button data-save style="margin-top:auto;background:#2563eb;color:#fff;border:0;border-radius:5px;padding:8px;cursor:pointer;">保存预设</button><button data-close>完成</button></div>
-      <div data-panel style="width:440px;min-width:360px;max-height:85vh;overflow:auto;border-left:1px solid #444;padding-left:12px;"></div></div>`;
+    modal.innerHTML = `<div style="background:#181822;padding:16px;border-radius:10px;display:flex;gap:16px;max-width:96vw;height:92vh;overflow:hidden;color:#ddd;box-sizing:border-box;">
+      <div style="display:flex;flex-direction:column;height:100%;min-height:0;overflow:hidden;">
+        <div data-viewport style="width:min(38vw,360px);aspect-ratio:9/16;position:relative;background:#080810;border-radius:8px;overflow:hidden;cursor:grab;user-select:none;border:1px solid rgba(255,255,255,0.15);box-shadow:0 6px 20px rgba(0,0,0,0.5);">
+          <div style="position:absolute;top:6px;right:6px;z-index:20;display:flex;gap:4px;background:rgba(0,0,0,0.75);backdrop-filter:blur(6px);padding:3px 6px;border-radius:5px;border:1px solid rgba(255,255,255,0.15);">
+            <span data-zoom-label style="font-size:11px;color:#eee;align-self:center;min-width:36px;text-align:center;font-family:monospace;">100%</span>
+            <button data-zoom-in style="padding:1px 6px;font-size:11px;background:rgba(255,255,255,0.15);color:#fff;border:0;border-radius:3px;cursor:pointer;" title="放大">➕</button>
+            <button data-zoom-out style="padding:1px 6px;font-size:11px;background:rgba(255,255,255,0.15);color:#fff;border:0;border-radius:3px;cursor:pointer;" title="缩小">➖</button>
+            <button data-zoom-reset style="padding:1px 6px;font-size:10px;background:rgba(255,255,255,0.15);color:#aaa;border:0;border-radius:3px;cursor:pointer;" title="复位">1:1</button>
+          </div>
+          <div data-stage style="position:absolute;top:0;left:0;width:100%;height:100%;transform-origin:0 0;will-change:transform;">
+            <video data-video muted loop playsinline style="width:100%;height:100%;object-fit:cover;position:absolute;"></video>
+            <img data-image style="width:100%;height:100%;object-fit:cover;position:absolute;display:none;">
+            <canvas data-canvas width="1080" height="1920" style="width:100%;height:100%;position:absolute;pointer-events:none;"></canvas>
+          </div>
+        </div>
+        <div style="font-size:11px;color:#94a3b8;margin-top:6px">💡 滚轮缩放画面，按住拖拽平移，双击复位。</div>
+      </div>
+      <div style="width:240px;display:flex;flex-direction:column;gap:8px;font-size:12px;flex-shrink:0;"><strong>✏️ 直接编辑「${String(name).replace(/</g, '&lt;')}」</strong><button data-bg>🖼 选择临时预览背景</button><button data-clear>清除临时背景</button><span data-label style="color:#aaa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">未设置（深色底）</span><span style="color:#94a3b8;font-size:11px;">背景仅供预览，不保存到预设、不影响导出。</span><button data-save style="margin-top:auto;background:#2563eb;color:#fff;border:0;border-radius:5px;padding:8px;cursor:pointer;">保存预设</button><button data-close>完成</button></div>
+      <div data-panel style="flex:1;min-width:380px;height:100%;overflow-y:auto;border-left:1px solid #444;padding-left:12px;box-sizing:border-box;"></div></div>`;
     document.body.appendChild(modal);
     const get = s => modal.querySelector(s), mgr = new window.ReelsOverlay.OverlayManager(); mgr.overlays = layers;
+
+    // 滚轮缩放与平移
+    const vp = get('[data-viewport]'), stg = get('[data-stage]'), zLbl = get('[data-zoom-label]');
+    if (vp && stg) {
+        let sc = 1.0, px = 0, py = 0, panning = false, sx = 0, sy = 0, ox = 0, oy = 0;
+        const update = () => { stg.style.transform = `translate(${px}px, ${py}px) scale(${sc})`; if (zLbl) zLbl.textContent = `${Math.round(sc * 100)}%`; };
+        vp.addEventListener('wheel', e => {
+            e.preventDefault(); e.stopPropagation();
+            const rect = vp.getBoundingClientRect(), mx = e.clientX - rect.left, my = e.clientY - rect.top;
+            const factor = e.deltaY < 0 ? 1.15 : (1 / 1.15);
+            const nsc = Math.min(6.0, Math.max(0.6, sc * factor));
+            px = mx - (mx - px) * (nsc / sc); py = my - (my - py) * (nsc / sc);
+            sc = nsc;
+            if (Math.abs(sc - 1.0) < 0.04) { sc = 1.0; px = 0; py = 0; }
+            update();
+        }, { passive: false });
+        vp.addEventListener('pointerdown', e => {
+            if (e.target.closest('button')) return;
+            panning = true; sx = e.clientX; sy = e.clientY; ox = px; oy = py;
+            vp.style.cursor = 'grabbing';
+            try { vp.setPointerCapture(e.pointerId); } catch (_) {}
+        });
+        vp.addEventListener('pointermove', e => { if (!panning) return; px = ox + (e.clientX - sx); py = oy + (e.clientY - sy); update(); });
+        const endP = () => { if (panning) { panning = false; vp.style.cursor = 'grab'; } };
+        vp.addEventListener('pointerup', endP); vp.addEventListener('pointercancel', endP);
+        get('[data-zoom-in]').onclick = () => { sc = Math.min(6.0, sc * 1.25); update(); };
+        get('[data-zoom-out]').onclick = () => { sc = Math.max(0.6, sc * 0.8); update(); };
+        get('[data-zoom-reset]').onclick = () => { sc = 1.0; px = 0; py = 0; update(); };
+        vp.addEventListener('dblclick', e => { if (e.target.closest('button')) return; sc = Math.abs(sc - 1.0) < 0.1 ? 2.0 : 1.0; px = 0; py = 0; update(); });
+    }
+
     let bgPath = '';
     const draw = () => { const c = get('[data-canvas]'), ctx = c.getContext('2d'); ctx.clearRect(0,0,1080,1920); for (const ov of mgr.overlays) window.ReelsOverlay.drawOverlay(ctx, { ...ov, _exporting:true }, 0, 1080, 1920); };
     const proxy = { overlayMgr:mgr, getCanvasSize:()=>({w:1080,h:1920,cx:540,cy:960}), getDuration:()=>9999, previewEnd:()=>{}, addOverlay:o=>{mgr.addOverlay(o);draw();panel._refreshList();}, removeOverlay:id=>{mgr.removeOverlay(id);draw();panel._refreshList();}, render:draw, getOverlayAboveSubtitle:()=>true, setOverlayAboveSubtitle:()=>{} };
@@ -617,9 +663,12 @@ function reelsToggleBatchTable(options = {}) {
             }
             _batchTableState.openSnapshotTasks = _batchTasksSnapshot(window._reelsState?.tasks || []);
             console.log('[BatchTable.toggle] 关闭表格，已保存 changes');
-            if (window._reelsState && window._reelsState.selectedIdx >= 0 && typeof reelsSelectTask === 'function') {
-                reelsSelectTask(window._reelsState.selectedIdx);
+            if (window._reelsState?.tasks.length && typeof reelsSelectTask === 'function') {
+                const idx = Math.max(0, Math.min(window._reelsState.selectedIdx, window._reelsState.tasks.length - 1));
+                window._reelsState.selectedIdx = -1;
+                reelsSelectTask(idx);
             }
+            _batchAutoSave({ skipSync: true });
         } else {
             const originalSnapshot = _batchTableState.openSnapshotTasks;
             const projectedSnapshot = _getProjectedBatchTasksSnapshot();
@@ -1335,7 +1384,8 @@ function _renderBatchTable() {
                             <input type="hidden" id="rbt-align-lang" value="英语">
                         </div>
                         <button class="rbt-btn" id="rbt-align-all-btn" style="padding:2px 8px;font-size:11px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#ccc;">一键对齐字幕</button>
-                        <button class="rbt-btn" id="rbt-align-multikey-btn" style="padding:2px 8px;font-size:11px;background:rgba(34,197,94,0.12);border:1px solid rgba(74,222,128,0.35);color:#86efac;" title="按可用 Gladia Key 数量并行对齐；每条任务优先使用不同 Key">多 Key 并行对齐</button>
+                        <button class="rbt-btn" id="rbt-align-multikey-btn" style="padding:2px 8px;font-size:11px;background:rgba(34,197,94,0.12);border:1px solid rgba(74,222,128,0.35);color:#86efac;" title="按云端转录设置的并发数并行对齐（Deepgram 支持 20~50 并发）">⚡ 并发对齐字幕</button>
+                        <button class="rbt-btn" id="rbt-view-records-btn" style="padding:2px 8px;font-size:11px;background:rgba(59,130,246,0.15);border:1px solid rgba(96,165,250,0.35);color:#93c5fd;" title="查看每个片段发送给 Deepgram/Groq 的请求时间、响应耗时及详细记录">📜 片段发送记录</button>
                         <button class="rbt-btn" id="rbt-clear-all-cache-btn" style="padding:2px 8px;font-size:11px;background:rgba(255,100,100,0.1);border:1px solid rgba(255,100,100,0.3);color:#f88;" title="清除当前表格所有媒体文件的音频识别缓存">全局清缓存</button>
                         <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#999;cursor:pointer;" title="即使已有 SRT/已对齐，也重新从候选文案里查找匹配并重新生成 SRT；会复用已有语音识别缓存"><input type="checkbox" id="rbt-force-realign" style="margin:0;transform:scale(0.8);"> 强制重新查找/对齐</label>
                         <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#999;cursor:pointer;" title="删除该音频的语音识别缓存，重新调用 Gladia 转录，再重新查找文案并生成 SRT"><input type="checkbox" id="rbt-force-transcribe" style="margin:0;transform:scale(0.8);"> 强制重新转录</label>
@@ -2507,7 +2557,19 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates, textcards, s
                     ${task.txtContent && !task.srtPath ? `<button class="rbt-field-clear" data-idx="${idx}" data-field="txt" title="清除文案" style="position:absolute;top:2px;right:2px;">✕</button>` : ''}
                 </div>
                 <div style="display:flex;align-items:center;gap:4px;margin-top:2px;min-height:14px;">
-                    <span style="font-size:10px;color:${(task.aligned || !!task.srtPath) ? '#4ade80' : task.txtContent && !task.srtPath ? '#facc15' : '#666'};" title="${task.alignedAt ? '对齐时间: ' + task.alignedAt + (task.alignSource === 'gladia_fresh' ? ' (重新转录)' : task.alignSource === 'gladia_cache' ? ' (缓存转录)' : '') + (task.alignMatchedText ? ' | 匹配: ' + task.alignMatchedText : '') : ''}">${(task.aligned || !!task.srtPath) ? ('✅ 已对齐' + (task.alignSource === 'gladia_fresh' ? ' 🎙️' : task.alignSource === 'gladia_cache' ? ' 📦' : '') + (task.alignMatchedText ? ' <span style="' + matchBadgeStyle + '">' + _escHtml(task.alignMatchedText) + '</span>' : '') + (task.alignedAt ? ' <span style="color:#888;font-size:9px;">' + task.alignedAt + '</span>' : '')) : task.txtContent && !task.srtPath ? '⏳ 待对齐' : ''}</span>
+                    ${(() => {
+                        const srcDesc = task.alignSource?.includes('deepgram') ? ' (Deepgram 🎙️)'
+                            : task.alignSource?.includes('groq') ? ' (Groq 🎙️)'
+                            : (task.alignSource === 'gladia_fresh' || task.alignSource === 'gladia') ? ' (Gladia 🎙️)'
+                            : task.alignSource?.includes('cache') ? ' (缓存 📦)'
+                            : (task.alignSource?.includes('fresh') ? ' (重新转录 🎙️)' : '');
+                        const titleText = task.alignedAt ? `对齐时间: ${task.alignedAt}${srcDesc}${task.alignMatchedText ? ' | 匹配: ' + task.alignMatchedText : ''}` : '';
+                        const textHtml = (task.aligned || !!task.srtPath)
+                            ? `✅ 已对齐${srcDesc}${task.alignMatchedText ? ' <span style="' + matchBadgeStyle + '">' + _escHtml(task.alignMatchedText) + '</span>' : ''}${task.alignedAt ? ' <span style="color:#888;font-size:9px;">' + task.alignedAt + '</span>' : ''}`
+                            : task.txtContent && !task.srtPath ? '⏳ 待对齐' : '';
+                        const colorStyle = (task.aligned || !!task.srtPath) ? '#4ade80' : task.txtContent && !task.srtPath ? '#facc15' : '#666';
+                        return `<span style="font-size:10px;color:${colorStyle};" title="${titleText}">${textHtml}</span>`;
+                    })()}
                     <button class="rbt-row-realign-btn" data-idx="${idx}" data-force="0" title="单独重新查找文案并生成SRT" style="padding:1px 4px;font-size:9px;background:#243447;border:1px solid #36506b;color:#9fd0ff;border-radius:3px;cursor:pointer;">重找</button>
                     <button class="rbt-row-realign-btn" data-idx="${idx}" data-force="1" title="单独强制重新转录，然后重新查找文案并生成SRT" style="padding:1px 4px;font-size:9px;background:#3a2d1d;border:1px solid #6b4d22;color:#ffd08a;border-radius:3px;cursor:pointer;">强重找</button>
                     <button class="rbt-row-clear-cache-btn" data-idx="${idx}" title="单独清除该任务的识别缓存" style="padding:1px 4px;font-size:9px;background:#3d2424;border:1px solid #6b3636;color:#fca5a5;border-radius:3px;cursor:pointer;">🧹清缓存</button>
@@ -2698,12 +2760,7 @@ function _bindBatchTableEvents() {
         }
     });
     container.querySelector('#rbt-apply-btn')?.addEventListener('click', () => {
-        _applyBatchTableChanges();
-        _batchTableState.openSnapshotTasks = _batchTasksSnapshot(window._reelsState?.tasks || []);
-        reelsToggleBatchTable({ saveOnClose: false });
-        if (window._reelsState && window._reelsState.selectedIdx >= 0 && typeof reelsSelectTask === 'function') {
-            reelsSelectTask(window._reelsState.selectedIdx);
-        }
+        reelsToggleBatchTable({ saveOnClose: true });
     });
 
 
@@ -4239,10 +4296,15 @@ function _bindBatchTableEvents() {
     });
 
     container.querySelector('#rbt-align-all-btn')?.addEventListener('click', () => {
-        _batchAlignAllTasks();
+        _batchAlignWithMultipleKeys();
     });
     container.querySelector('#rbt-align-multikey-btn')?.addEventListener('click', () => {
         _batchAlignWithMultipleKeys();
+    });
+    container.querySelector('#rbt-view-records-btn')?.addEventListener('click', () => {
+        if (typeof window.showTranscriptionRecordsModal === 'function') {
+            window.showTranscriptionRecordsModal();
+        }
     });
     container.querySelector('#rbt-clear-all-cache-btn')?.addEventListener('click', () => {
         _batchClearAllCache();
@@ -14714,23 +14776,22 @@ async function _batchAlignAllTasks(overrideForce = false) {
     }
 }
 
-/** 使用多个 Gladia Key 并行处理不同任务；每个 worker 优先分配不同的 Key。 */
+/** 使用配置的云端转录并发数（如 Deepgram 20 并发，或多 Key）并行处理对齐任务 */
 async function _batchAlignWithMultipleKeys() {
     _applyBatchTableChanges();
     const state = window._reelsState;
     if (!state?.tasks?.length) return;
 
-    let keys = [];
+    let concurrency = 1;
+    let providerName = 'deepgram';
     try {
-        const resp = await apiFetch(`${API_BASE}/settings/gladia-keys`);
-        const data = await resp.json();
-        keys = (data?.keys || []).filter(key => typeof key === 'string' && key.trim());
+        const resp = await apiFetch(`${API_BASE}/settings/transcription-providers`);
+        const conf = await resp.json();
+        providerName = conf.primary || 'deepgram';
+        concurrency = Number(conf.concurrency) || (providerName === 'deepgram' ? 20 : (providerName === 'groq' ? 5 : 1));
+        if (concurrency < 1) concurrency = 1;
     } catch (error) {
-        console.warn('[BatchAlign] Failed to load Gladia keys for parallel alignment:', error);
-    }
-    if (keys.length < 2) {
-        if (typeof showToast === 'function') showToast('当前只有 1 个可用 Gladia Key，将按顺序对齐。', 'warning', 4500);
-        return _batchAlignAllTasks();
+        console.warn('[BatchAlign] Failed to load transcription config for parallel alignment:', error);
     }
 
     const alignSource = document.getElementById('rbt-align-source')?.value || 'video';
@@ -14751,35 +14812,56 @@ async function _batchAlignWithMultipleKeys() {
         .map(({ index }) => index);
     if (!targetIndices.length) return _batchAlignAllTasks();
 
+    if (concurrency < 2) {
+        return _batchAlignAllTasks();
+    }
+
     const primaryBtn = document.getElementById('rbt-align-all-btn');
     const parallelBtn = document.getElementById('rbt-align-multikey-btn');
     const progressEl = document.getElementById('rbt-align-progress');
     if (primaryBtn) primaryBtn.disabled = true;
-    if (parallelBtn) { parallelBtn.disabled = true; parallelBtn.textContent = `⏳ ${Math.min(keys.length, targetIndices.length)} Key 并行中...`; }
+    const workerCount = Math.min(concurrency, targetIndices.length);
+    if (parallelBtn) { parallelBtn.disabled = true; parallelBtn.textContent = `⏳ ${workerCount} 路并发中...`; }
 
     let next = 0;
     let completed = 0;
     let ok = 0;
     let fail = 0;
     const failures = [];
-    const workerCount = Math.min(keys.length, targetIndices.length);
+    const activeTasks = new Set();
+
     const workers = Array.from({ length: workerCount }, (_, workerIndex) => (async () => {
+        // 每个 worker 错开 60ms 启动，避免瞬时 20 个 FFmpeg 进程并发读写磁盘造成 I/O 尖峰
+        if (workerIndex > 0) {
+            await new Promise(r => setTimeout(r, Math.min(workerIndex * 60, 1000)));
+        }
         while (true) {
             const queueIndex = next++;
             if (queueIndex >= targetIndices.length) return;
             const taskIndex = targetIndices[queueIndex];
-            // 不同 worker 的首选 Key 不同；其余 Key 仍作为同一请求的故障切换备选。
-            const orderedKeys = [...keys.slice(workerIndex), ...keys.slice(0, workerIndex)];
-            const result = await _batchAlignAllTasks({
-                targetIndices: [taskIndex],
-                silent: true,
-                gladiaKeys: orderedKeys,
-            });
-            completed++;
-            ok += result?.ok || 0;
-            fail += result?.fail || 0;
-            if (result?.failDetails?.length) failures.push(...result.failDetails);
-            if (progressEl) progressEl.textContent = `⚡ 多 Key 并行对齐 ${completed}/${targetIndices.length}（成功 ${ok}，失败 ${fail}）`;
+            activeTasks.add(taskIndex + 1);
+
+            if (progressEl) {
+                const activeList = Array.from(activeTasks).slice(0, 8).join(', ') + (activeTasks.size > 8 ? '...' : '');
+                progressEl.textContent = `⚡ 并发对齐中 (${workerCount} 路并发) | 正在处理行: [${activeList}] | 已完成: ${completed}/${targetIndices.length}（成功 ${ok}，失败 ${fail}）`;
+            }
+
+            try {
+                const result = await _batchAlignAllTasks({
+                    targetIndices: [taskIndex],
+                    silent: true,
+                });
+                ok += result?.ok || 0;
+                fail += result?.fail || 0;
+                if (result?.failDetails?.length) failures.push(...result.failDetails);
+            } finally {
+                activeTasks.delete(taskIndex + 1);
+                completed++;
+                if (progressEl) {
+                    const activeList = Array.from(activeTasks).slice(0, 8).join(', ') + (activeTasks.size > 8 ? '...' : '');
+                    progressEl.textContent = `⚡ 并发对齐中 (${workerCount} 路并发) | 正在处理行: [${activeList || '收尾'}] | 已完成: ${completed}/${targetIndices.length}（成功 ${ok}，失败 ${fail}）`;
+                }
+            }
         }
     })());
 
@@ -14787,20 +14869,20 @@ async function _batchAlignWithMultipleKeys() {
         await Promise.all(workers);
     } finally {
         if (primaryBtn) primaryBtn.disabled = false;
-        if (parallelBtn) { parallelBtn.disabled = false; parallelBtn.textContent = '多 Key 并行对齐'; }
+        if (parallelBtn) { parallelBtn.disabled = false; parallelBtn.textContent = '⚡ 并发对齐字幕'; }
     }
     _renderBatchTable();
     if (typeof _renderTaskList === 'function') _renderTaskList();
     if (progressEl) {
         progressEl.textContent = fail > 0
-            ? `⚠️ 多 Key 对齐完成 ${ok}/${targetIndices.length}，失败 ${fail}`
-            : `✅ 多 Key 对齐完成（${ok} 个）`;
+            ? `⚠️ 并发对齐完成 ${ok}/${targetIndices.length}，失败 ${fail}`
+            : `✅ 并发对齐完成（${ok} 个）`;
         setTimeout(() => { if (progressEl) progressEl.textContent = ''; }, 8000);
     }
     if (fail > 0) {
-        alert(`多 Key 并行对齐完成：成功 ${ok}/${targetIndices.length}，失败 ${fail}\n\n${failures.slice(0, 8).join('\n')}`);
+        alert(`并发对齐完成：成功 ${ok}/${targetIndices.length}，失败 ${fail}\n\n${failures.slice(0, 8).join('\n')}`);
     } else {
-        alert(`✅ 多 Key 并行对齐完成：${ok} 个任务\n已按 ${workerCount} 个 Gladia Key 并行处理。`);
+        alert(`✅ 并发对齐完成：${ok} 个任务\n已按 ${workerCount} 路并发同时处理。`);
     }
 }
 

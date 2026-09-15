@@ -1556,7 +1556,7 @@ input[type="number"]::-webkit-outer-spin-button {
 .reels-resize-handle-1 { order: 2; display: block; }
 #reels-col-preview { order: 3; }
 .reels-resize-handle-2 { order: 4; display: block; }
-#reels-col-subtitle { order: 5; border-left: 1px solid var(--border-color); }
+#reels-col-subtitle { order: 5; border-left: 1px solid var(--border-color); min-width: 270px; box-sizing: border-box; }
 
 /* Hide obsolete handles safely */
 .reels-resize-handle[data-left="reels-col-tasks"][data-right="reels-col-subtitle"],

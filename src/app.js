@@ -2752,6 +2752,8 @@ class ApiKeyTableManager {
 function initKeyTableManagers() {
     const targets = [
         { id: 'gladia-keys', title: 'Gladia API Key 轮询池' },
+        { id: 'deepgram-keys', title: 'Deepgram API Key 轮询池' },
+        { id: 'groq-keys', title: 'Groq API Key 轮询池' },
         { id: 'gemini-keys', title: 'Gemini API Key 轮询池' },
         { id: 'settings-elevenlabs-keys', title: 'ElevenLabs API Key 轮询池 (全局设置)' },
         { id: 'elevenlabs-api-keys', title: 'ElevenLabs API Key 轮询池 (快捷栏)' }
@@ -2774,15 +2776,30 @@ function refreshKeyTable(id) {
 // 加载设置
 async function loadSettings(autoLoadVoices = false) {
     try {
-        const response = await apiFetch(`${API_BASE}/settings/gladia-keys`);
+        const response = await apiFetch(`${API_BASE}/settings/transcription-providers`);
         const data = await response.json();
-        if (data.keys) {
-            document.getElementById('gladia-keys').value = data.keys.join('\n');
-            refreshKeyTable('gladia-keys');
+        const primary = document.getElementById('transcription-primary');
+        if (primary && data.primary) primary.value = data.primary;
+        const concurrencyEl = document.getElementById('transcription-concurrency');
+        if (concurrencyEl && data.concurrency) concurrencyEl.value = String(data.concurrency);
+        for (const name of ['deepgram', 'groq', 'gladia']) {
+            const item = data.providers?.[name];
+            const input = document.getElementById(`${name}-keys`);
+            const keys = Array.isArray(item?.editableKeys) ? item.editableKeys
+                : (Array.isArray(item?.keys) ? item.keys : []);
+            if (input) {
+                input.value = keys.join('\n');
+                refreshKeyTable(`${name}-keys`);
+            }
+            const status = document.getElementById(name === 'gladia' ? 'gladia-provider-key-status' : `${name}-key-status`);
+            if (status) {
+                const count = keys.length;
+                status.textContent = count === 0
+                    ? '尚未配置'
+                    : `已配置 ${count} 个 Key`;
+            }
         }
-    } catch (error) {
-        // 忽略
-    }
+    } catch (_) { /* 设置页尚未加载时忽略 */ }
 
     try {
         const response = await apiFetch(`${API_BASE}/settings/gemini-keys`);
@@ -2877,6 +2894,212 @@ async function loadSettings(autoLoadVoices = false) {
         // 忽略
     }
 }
+
+function openExternalUrl(url) {
+    try {
+        if (window.electronAPI && typeof window.electronAPI.openExternal === 'function') {
+            window.electronAPI.openExternal(url);
+        } else if (window.bridge && typeof window.bridge.openExternal === 'function') {
+            window.bridge.openExternal(url);
+        } else {
+            window.open(url, '_blank');
+        }
+    } catch (e) {
+        window.open(url, '_blank');
+    }
+}
+
+function toggleTranscriptionQuotaHelp() {
+    const panel = document.getElementById('transcription-quota-help-panel');
+    const btn = document.getElementById('transcription-quota-toggle-btn');
+    if (!panel) return;
+    const isHidden = panel.style.display === 'none';
+    panel.style.display = isHidden ? 'block' : 'none';
+    if (btn) {
+        btn.textContent = isHidden ? '📊 收起平台额度与并发对比' : '📊 查看各平台免费额度、并发限制对比及官网获取入口';
+    }
+}
+
+function onTranscriptionPrimaryChange() {
+    const primary = document.getElementById('transcription-primary')?.value || 'deepgram';
+    const concurrencyEl = document.getElementById('transcription-concurrency');
+    if (!concurrencyEl) return;
+    if (primary === 'deepgram') {
+        concurrencyEl.value = '20';
+    } else if (primary === 'groq') {
+        concurrencyEl.value = '5';
+    } else if (primary === 'gladia') {
+        concurrencyEl.value = '1';
+    }
+}
+
+async function saveTranscriptionProviders() {
+    // 确保表格模式和文本模式下的最新数据都被完整收集
+    for (const name of ['deepgram', 'groq', 'gladia']) {
+        const mgr = window.keyTableManagers?.[`${name}-keys`];
+        if (mgr) {
+            const tableKeys = mgr.getKeysFromTable();
+            if (tableKeys.length > 0 || mgr.mode === 'table') {
+                const ta = document.getElementById(`${name}-keys`);
+                if (ta) ta.value = tableKeys.join('\n');
+            }
+        }
+    }
+    const primary = document.getElementById('transcription-primary')?.value || 'deepgram';
+    const concurrencyVal = Number(document.getElementById('transcription-concurrency')?.value) || 20;
+    const keys = name => String(document.getElementById(`${name}-keys`)?.value || '')
+        .split(/\r?\n/).map(key => key.trim()).filter(Boolean);
+    const payload = { primary, concurrency: concurrencyVal };
+    for (const name of ['deepgram', 'groq', 'gladia']) {
+        payload[`${name}_keys`] = keys(name);
+    }
+    try {
+        const response = await apiFetch(`${API_BASE}/settings/transcription-providers`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+        });
+        if (!response.ok) throw new Error((await response.json()).error || '保存失败');
+        showToast('云端转录设置已成功保存', 'success');
+        await loadSettings();
+    } catch (error) { showToast(`保存失败: ${error.message}`, 'error'); }
+}
+
+window.showTranscriptionRecordsModal = async function showTranscriptionRecordsModal() {
+    let modal = document.getElementById('transcription-records-modal');
+    if (modal) modal.remove();
+
+    modal = document.createElement('div');
+    modal.id = 'transcription-records-modal';
+    modal.style.cssText = 'position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,0.75);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:20px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;';
+
+    const container = document.createElement('div');
+    container.style.cssText = 'width:min(1100px, 95vw);max-height:88vh;background:#18181b;color:#f4f4f5;border:1px solid rgba(255,255,255,0.15);border-radius:14px;box-shadow:0 24px 80px rgba(0,0,0,0.6);display:flex;flex-direction:column;overflow:hidden;';
+
+    const esc = text => String(text ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+
+    async function loadAndRender() {
+        let records = [];
+        try {
+            const resp = await apiFetch(`${API_BASE}/settings/transcription-records`);
+            const data = await resp.json();
+            records = Array.isArray(data.records) ? data.records : [];
+        } catch (e) {
+            console.error('Failed to load transcription records:', e);
+        }
+
+        const successItems = records.filter(r => r.status === 'success');
+        const failItems = records.filter(r => r.status === 'failed');
+        const totalDurationMs = successItems.reduce((acc, r) => acc + (r.durationMs || 0), 0);
+        const avgSec = successItems.length > 0 ? (totalDurationMs / successItems.length / 1000).toFixed(2) : '0.00';
+
+        const rowsHtml = records.length ? records.map((r, i) => {
+            const providerColor = r.provider === 'deepgram' ? '#38bdf8' : (r.provider === 'groq' ? '#f59e0b' : '#ec4899');
+            const providerBg = r.provider === 'deepgram' ? 'rgba(56,189,248,0.15)' : (r.provider === 'groq' ? 'rgba(245,158,11,0.15)' : 'rgba(236,72,153,0.15)');
+            const statusBadge = r.status === 'success'
+                ? '<span style="color:#4ade80;background:rgba(74,222,128,0.12);padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600;">✅ 成功</span>'
+                : (r.status === 'failed'
+                    ? `<span style="color:#f87171;background:rgba(248,113,113,0.12);padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600;" title="${esc(r.error || '')}">❌ 失败</span>`
+                    : '<span style="color:#fbbf24;background:rgba(251,191,36,0.12);padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600;">⏳ 发送中</span>');
+            const durationHtml = r.durationSec
+                ? `<span style="color:#4ade80;font-family:monospace;font-weight:700;background:rgba(74,222,128,0.1);padding:2px 5px;border-radius:3px;">${esc(r.durationSec)}</span>`
+                : '<span style="color:#71717a;">-</span>';
+
+            return `
+                <tr style="border-bottom:1px solid rgba(255,255,255,0.06);font-size:11px;transition:background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.03)'" onmouseout="this.style.background='transparent'">
+                    <td style="padding:8px 10px;color:#a1a1aa;white-space:nowrap;">#${records.length - i}</td>
+                    <td style="padding:8px 10px;font-weight:600;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(r.mediaName)}">
+                        ${esc(r.mediaName)}
+                        ${r.totalSegments > 1 ? `<span style="color:#71717a;font-size:10px;"> (${r.segmentIndex}/${r.totalSegments})</span>` : ''}
+                    </td>
+                    <td style="padding:8px 10px;white-space:nowrap;">
+                        <span style="background:${providerBg};color:${providerColor};padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600;">
+                            ${esc(r.providerLabel)} <span style="opacity:0.7;font-size:9px;">[${esc(r.model)}]</span>
+                        </span>
+                    </td>
+                    <td style="padding:8px 10px;color:#e4e4e7;font-family:monospace;white-space:nowrap;">${esc(r.sendTime || '-')}</td>
+                    <td style="padding:8px 10px;color:#a1a1aa;font-family:monospace;white-space:nowrap;">${esc(r.finishTime || '-')}</td>
+                    <td style="padding:8px 10px;white-space:nowrap;">${durationHtml}</td>
+                    <td style="padding:8px 10px;color:#a1a1aa;white-space:nowrap;">${esc(r.fileSize || '-')}</td>
+                    <td style="padding:8px 10px;white-space:nowrap;">${statusBadge}</td>
+                    <td style="padding:8px 10px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#d4d4d8;" title="${esc(r.textPreview || r.error || '')}">
+                        ${esc(r.textPreview || (r.error ? `错误: ${r.error}` : '无文字'))}
+                    </td>
+                </tr>
+            `;
+        }).join('') : `
+            <tr>
+                <td colspan="9" style="text-align:center;padding:40px;color:#71717a;font-size:13px;">
+                    暂无片段发送记录。发起对齐或转录后，这里将实时追踪每一路并发请求的发送、响应耗时与文字结果。
+                </td>
+            </tr>
+        `;
+
+        container.innerHTML = `
+            <div style="padding:16px 20px;border-bottom:1px solid rgba(255,255,255,0.1);display:flex;justify-content:space-between;align-items:center;background:#202024;">
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <span style="font-size:18px;">📜</span>
+                    <div>
+                        <div style="font-size:15px;font-weight:700;color:#fff;">云端转录每个片段发送与耗时记录</div>
+                        <div style="font-size:11px;color:#a1a1aa;">实时追踪每一路并发任务向 Deepgram / Groq / Gladia 的请求时间戳与处理耗时</div>
+                    </div>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <button id="tr-refresh-btn" style="background:#27272a;border:1px solid rgba(255,255,255,0.15);color:#e4e4e7;padding:4px 10px;border-radius:6px;font-size:11px;cursor:pointer;">🔄 刷新</button>
+                    <button id="tr-copy-btn" style="background:#27272a;border:1px solid rgba(255,255,255,0.15);color:#e4e4e7;padding:4px 10px;border-radius:6px;font-size:11px;cursor:pointer;">📋 复制记录</button>
+                    <button id="tr-clear-btn" style="background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.3);color:#fca5a5;padding:4px 10px;border-radius:6px;font-size:11px;cursor:pointer;">🧹 清空记录</button>
+                    <button id="tr-close-btn" style="background:#3f3f46;border:none;color:#fff;padding:4px 10px;border-radius:6px;font-size:12px;cursor:pointer;margin-left:8px;">✕</button>
+                </div>
+            </div>
+
+            <!-- 统计摘要栏 -->
+            <div style="padding:10px 20px;background:#18181b;border-bottom:1px solid rgba(255,255,255,0.06);display:flex;gap:20px;flex-wrap:wrap;font-size:12px;">
+                <div style="color:#a1a1aa;">累计发送切片: <strong style="color:#fff;font-size:13px;">${records.length}</strong></div>
+                <div style="color:#a1a1aa;">平均响应耗时: <strong style="color:#4ade80;font-size:13px;font-family:monospace;">${avgSec}s</strong></div>
+                <div style="color:#a1a1aa;">成功: <strong style="color:#4ade80;font-size:13px;">${successItems.length}</strong></div>
+                <div style="color:#a1a1aa;">失败: <strong style="color:${failItems.length ? '#f87171' : '#a1a1aa'};font-size:13px;">${failItems.length}</strong></div>
+            </div>
+
+            <!-- 记录表格 -->
+            <div style="flex:1;overflow:auto;padding:0;">
+                <table style="width:100%;border-collapse:collapse;text-align:left;">
+                    <thead style="position:sticky;top:0;background:#202024;z-index:2;border-bottom:1px solid rgba(255,255,255,0.1);">
+                        <tr style="font-size:11px;color:#a1a1aa;">
+                            <th style="padding:8px 10px;font-weight:600;width:50px;">序号</th>
+                            <th style="padding:8px 10px;font-weight:600;">媒体/切片</th>
+                            <th style="padding:8px 10px;font-weight:600;">服务与模型</th>
+                            <th style="padding:8px 10px;font-weight:600;">发送时间</th>
+                            <th style="padding:8px 10px;font-weight:600;">完成时间</th>
+                            <th style="padding:8px 10px;font-weight:600;">响应耗时</th>
+                            <th style="padding:8px 10px;font-weight:600;">音频大小</th>
+                            <th style="padding:8px 10px;font-weight:600;">状态</th>
+                            <th style="padding:8px 10px;font-weight:600;">识别文案预览</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rowsHtml}</tbody>
+                </table>
+            </div>
+        `;
+
+        container.querySelector('#tr-close-btn')?.addEventListener('click', () => modal.remove());
+        container.querySelector('#tr-refresh-btn')?.addEventListener('click', loadAndRender);
+        container.querySelector('#tr-clear-btn')?.addEventListener('click', async () => {
+            if (!confirm('确定清空当前所有转录发送记录？')) return;
+            await apiFetch(`${API_BASE}/settings/transcription-records/clear`, { method: 'POST' });
+            loadAndRender();
+        });
+        container.querySelector('#tr-copy-btn')?.addEventListener('click', () => {
+            if (!records.length) return showToast('暂无记录可复制', 'info');
+            const lines = records.map(r => `[${r.sendTime}] -> [${r.finishTime || '处理中'}] (${r.durationSec || '-'}) | ${r.providerLabel} | ${r.mediaName} | 状态: ${r.status} | 文案: ${r.textPreview || r.error || ''}`);
+            navigator.clipboard.writeText(lines.join('\n')).then(() => showToast('已成功复制发送记录到剪贴板', 'success'));
+        });
+    }
+
+    modal.appendChild(container);
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) modal.remove();
+    });
+    document.body.appendChild(modal);
+    await loadAndRender();
+};
 
 // ==================== 批量字幕对齐功能 ====================
 
@@ -3375,12 +3598,13 @@ async function startBatchGeneration() {
     const sourceUp = document.getElementById('source-up')?.checked || false;
     const mergeSrt = document.getElementById('merge-srt')?.checked || false;
 
-    const gladiaKeysText = document.getElementById('gladia-keys')?.value || '';
-    const gladiaKeys = gladiaKeysText.split('\n').map(k => k.trim()).filter(Boolean);
-
-    // 并行数 = Key 数量（至少1个）
-    const concurrency = Math.max(gladiaKeys.length, 1);
-    console.log(`并行数: ${concurrency}, Key 数量: ${gladiaKeys.length}`);
+    // 云端转录并发数（Deepgram 推荐 20~30，Groq 推荐 3~5，Gladia 建议 1）
+    let concurrency = 20;
+    const concurrencyEl = document.getElementById('transcription-concurrency');
+    if (concurrencyEl && Number(concurrencyEl.value) > 0) {
+        concurrency = Number(concurrencyEl.value);
+    }
+    console.log(`云端转录批量并行数: ${concurrency}`);
 
     const generateBtn = document.getElementById('generate-btn');
     generateBtn.disabled = true;
@@ -3410,7 +3634,6 @@ async function startBatchGeneration() {
     // 处理单个任务
     async function processTask(taskIndex, keyIndex) {
         const task = subtitleBatchTasks[taskIndex];
-        const keyToUse = gladiaKeys.length > 0 ? [gladiaKeys[keyIndex % gladiaKeys.length]] : [];
 
         updateStatus(`处理中 ${processedCount + 1}/${totalTasks}: ${task.fileName}`, 'processing');
 
@@ -3424,7 +3647,6 @@ async function startBatchGeneration() {
         }
         formData.append('language', language);
         formData.append('audio_cut_length', cutLength);
-        formData.append('gladia_keys', JSON.stringify(keyToUse));
         formData.append('gen_merge_srt', mergeSrt);
         formData.append('source_up_order', sourceUp);
         formData.append('export_fcpxml', exportFcpxml);
@@ -3495,7 +3717,7 @@ async function startBatchGeneration() {
         }
     }
 
-    // 并行执行（每个 Key 处理一个任务）
+    // 并行执行（Key 始终由主进程安全持有）。
     let taskQueue = [...readyTaskIndices];
     const runningTasks = [];
 
@@ -3692,8 +3914,6 @@ async function retrySingleSubtitleTask(index) {
     const exportFcpxml = document.getElementById('export-fcpxml')?.checked || false;
     const sourceUp = document.getElementById('source-up')?.checked || false;
     const mergeSrt = document.getElementById('merge-srt')?.checked || false;
-    const gladiaKeysText = document.getElementById('gladia-keys')?.value || '';
-    const gladiaKeys = gladiaKeysText.split('\n').map(k => k.trim()).filter(Boolean);
     const sourceTextCandidates = subtitleBatchTasks
         .map((t, idx) => ({
             index: idx,
@@ -3712,7 +3932,6 @@ async function retrySingleSubtitleTask(index) {
     }
     formData.append('language', language);
     formData.append('audio_cut_length', cutLength);
-    formData.append('gladia_keys', JSON.stringify(gladiaKeys));
     formData.append('gen_merge_srt', mergeSrt);
     formData.append('source_up_order', sourceUp);
     formData.append('export_fcpxml', exportFcpxml);
@@ -3827,16 +4046,12 @@ async function startGeneration() {
     const sourceUp = document.getElementById('source-up').checked;
     const mergeSrt = document.getElementById('merge-srt').checked;
 
-    const gladiaKeysText = document.getElementById('gladia-keys').value;
-    const gladiaKeys = gladiaKeysText.split('\n').map(k => k.trim()).filter(Boolean);
-
     const requestData = {
         audio_path: audioPath,
         source_text: sourceText,
         translate_text: translateText,
         language: language,
         audio_cut_length: cutLength,
-        gladia_keys: gladiaKeys,
         gen_merge_srt: mergeSrt,
         source_up_order: sourceUp,
         export_fcpxml: exportFcpxml,
@@ -4464,7 +4679,7 @@ const MTB_HELP = {
     autoedit: {
         purpose: '把一组已经切成小段的视频，自动匹配到整段文案中的位置，裁切有效语音后按文案顺序拼接，并生成最终 SRT。',
         steps: ['选择多个视频片段。', '粘贴最终成片文案，断行用于字幕显示。', '选择整段匹配或一行一片段兼容模式。', '点击开始处理。'],
-        notes: ['需要已配置 Gladia API Key。', '默认不会把断行当成片段边界；只有选择一行一片段模式时才逐行对应。', '片段里多说、少说或提前结束时，会按词级时间轴寻找最接近文案的范围。']
+        notes: ['需要已配置至少一个云端转录服务（Deepgram、Groq 或 Gladia）。', '默认不会把断行当成片段边界；只有选择一行一片段模式时才逐行对应。', '片段里多说、少说或提前结束时，会按词级时间轴寻找最接近文案的范围。']
     },
     lipsync: {
         purpose: '根据音频生成口型同步视频。',
@@ -4890,6 +5105,28 @@ function visualReviewBuildSuites(mediaList, groupingMode = visualReviewState.gro
             files: files.sort((a, b) => a.relativePath.localeCompare(b.relativePath, undefined, { numeric: true }))
         })).sort((a, b) => a.key.localeCompare(b.key, undefined, { numeric: true }))
     })).sort((a, b) => a.key.localeCompare(b.key, undefined, { numeric: true }));
+}
+
+// 文件夹分组时仍保留名称子组。颜色只由名称决定，因此同名素材即使位于
+// 不同文件夹，也会得到同一种细边框，方便在一个大文件夹中快速辨认。
+function visualReviewNameSubgroups(files) {
+    const groups = new Map();
+    (files || []).forEach(file => {
+        const key = visualReviewGroupKey(file.name);
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(file);
+    });
+    return [...groups.entries()].map(([key, groupFiles]) => ({
+        key,
+        files: groupFiles.sort((a, b) => a.relativePath.localeCompare(b.relativePath, undefined, { numeric: true })),
+    })).sort((a, b) => a.key.localeCompare(b.key, undefined, { numeric: true }));
+}
+
+function visualReviewNameGroupColor(key) {
+    const palette = ['#38bdf8', '#a78bfa', '#34d399', '#fbbf24', '#fb7185', '#22d3ee', '#f472b6', '#a3e635'];
+    let hash = 0;
+    for (const char of String(key || '')) hash = ((hash << 5) - hash + char.charCodeAt(0)) | 0;
+    return palette[Math.abs(hash) % palette.length];
 }
 function visualReviewSetGroupingMode(mode) {
     const nextMode = mode === 'folder' ? 'folder' : 'name';
@@ -5677,8 +5914,10 @@ async function visualReviewDuplicateCard(encodedOrRawPath) {
             copyFromStem: baseStem
         };
 
-        const optimalIdx = findOptimalNonAdjacentIndex(targetGroup.files, targetFile);
-        targetGroup.files.splice(optimalIdx, 0, newFile);
+        // 用户点“+副本”时，副本必须紧跟当前文件；需要分散同图时再由上方“智能错开”单独执行。
+        const currentIndex = targetGroup.files.findIndex(file => file.path === filePath);
+        const insertIndex = currentIndex >= 0 ? currentIndex + 1 : targetGroup.files.length;
+        targetGroup.files.splice(insertIndex, 0, newFile);
 
         if (visualReviewState.statuses[filePath]) {
             visualReviewState.statuses[copyPath] = visualReviewState.statuses[filePath];
@@ -5688,10 +5927,7 @@ async function visualReviewDuplicateCard(encodedOrRawPath) {
         visualReviewPersist();
         visualReviewRender();
 
-        const origIdx = targetGroup.files.findIndex(f => f.path === filePath);
-        const distance = Math.abs(optimalIdx - origIdx);
-
-        showToast(`已生成素材副本并智能错开排入队列（与原素材间隔 ${distance} 个位置）`, 'success');
+        showToast('已生成素材副本，并紧挨当前文件插入队列', 'success');
 
         const modal = document.getElementById('visual-review-batch-rename-modal');
         if (modal) {
@@ -5898,6 +6134,10 @@ function generateBatchRenameFileName({
     separator = '_',
     findText = '',
     replaceText = '',
+    trimStart = 0,
+    trimEnd = 0,
+    keepStart = 0,
+    keepEnd = 0,
     isRegex = false,
     caseSensitive = true,
     caseMode = 'none'
@@ -5906,6 +6146,16 @@ function generateBatchRenameFileName({
     let base = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
 
     let processedBase = base;
+    // “仅保留”先截取原名；随后仍可再裁剪和替换。扩展名始终保留。
+    const keepStartCount = Math.max(0, Number(keepStart) || 0);
+    const keepEndCount = Math.max(0, Number(keepEnd) || 0);
+    if (keepStartCount) processedBase = processedBase.slice(0, keepStartCount);
+    else if (keepEndCount) processedBase = processedBase.slice(-keepEndCount);
+    // 再裁剪原名，然后进行查找替换；扩展名始终保留，不会被删除。
+    const startCount = Math.max(0, Number(trimStart) || 0);
+    const endCount = Math.max(0, Number(trimEnd) || 0);
+    if (startCount) processedBase = processedBase.slice(startCount);
+    if (endCount) processedBase = processedBase.slice(0, Math.max(0, processedBase.length - endCount));
     if (findText) {
         if (isRegex) {
             try {
@@ -5967,6 +6217,10 @@ const visualReviewBatchRenameState = {
     customSeparator: '',
     findText: '',
     replaceText: '',
+    trimStart: 0,
+    trimEnd: 0,
+    keepStart: 0,
+    keepEnd: 0,
     isRegex: false,
     caseSensitive: false,
     caseMode: 'none',
@@ -5975,13 +6229,24 @@ const visualReviewBatchRenameState = {
     suiteIndex: 0,
     groupIndex: -1,
     statusFilter: 'all',
+    // 仅改变批量重命名的排序/编号队列；不会移动素材，也不会删除文件夹归属。
+    ignoreFoldersForOrdering: false,
+    // 独立于审核状态和定额导出：用于“只重命名我勾选的文件”。
+    onlySelected: false,
+    selectedPaths: [],
+    // 默认模式由 copyMode 决定；分组和单文件可覆盖默认模式（'copy' | 'move'）。
+    folderOperationModes: {},
+    fileOperationModes: {},
     moveRejectsAfter: false,
     quotaEnabled: false,
     quotaCount: 3,
     quotaStrategy: 'prefer_pass', // 'prefer_pass' | 'first_n' | 'random' | 'manual'
     // { [folderKey]: string[] }。手动模式只导出这里明确勾选的素材。
     quotaManualSelection: {},
+    // 手动排序只影响本次批量重命名的编号和预览，不修改素材文件夹结构。
+    manualOrder: [],
     exportDestDir: '',
+    preserveTargetHierarchy: true,
     quotaShortageList: [], // Array<{ folderKey, folderName, actualCount, neededCount, missingCount }>
     showShortageDetails: false
 };
@@ -5999,7 +6264,9 @@ function visualReviewApplyQuotaSelection(allFiles, state, quotaCount, quotaStrat
         folderMap.get(key).push(item);
     });
 
-    const expectedSuites = (scope === 'all'
+    const expectedSuites = (scope === 'all_tabs'
+        ? [...new Set(allFiles.map(item => item.suiteKey).filter(Boolean))]
+        : scope === 'all'
         ? (state?.suites || []).map(s => s.key)
         : (scope === 'suite'
             ? [state?.suites?.[suiteIndex]?.key].filter(Boolean)
@@ -6018,8 +6285,8 @@ function visualReviewApplyQuotaSelection(allFiles, state, quotaCount, quotaStrat
             sorted = list.filter(item => chosenPaths.has(item.file.path));
         } else if (quotaStrategy === 'pass_first' || quotaStrategy === 'prefer_pass') {
             sorted.sort((a, b) => {
-                const sa = statuses[a.file.path] || '';
-                const sb = statuses[b.file.path] || '';
+                const sa = a.status || statuses[a.file.path] || '';
+                const sb = b.status || statuses[b.file.path] || '';
                 const score = s => s === 'pass' ? 2 : (s === 'usable' ? 1 : 0);
                 return score(sb) - score(sa);
             });
@@ -6053,26 +6320,51 @@ if (typeof window !== 'undefined') {
 function visualReviewGetBatchRenameCandidates() {
     let files = [];
     const state = visualReviewState;
+    const makeCandidate = (file, suite, suiteIndex, group, groupIndex, sourceState, tab) => ({
+        file,
+        // 多审核标签时，以“标签 / 套名”作为文件夹键：既不会把不同目录混成一组，
+        // 也会让每个文件夹内序号分别从 01 开始。
+        suiteKey: tab ? `${tab.label} / ${suite.key}` : suite.key,
+        suiteIndex,
+        groupKey: group.key,
+        groupIndex,
+        tabId: tab?.id || visualReviewActiveTabId,
+        tabLabel: tab?.label || '',
+        sourceRoot: sourceState.root || '',
+        status: sourceState.statuses?.[file.path] || ''
+    });
+
     if (visualReviewBatchRenameState.scope === 'group') {
         const suite = state.suites[visualReviewBatchRenameState.suiteIndex];
         const group = suite?.groups?.[visualReviewBatchRenameState.groupIndex];
         if (group) {
-            files = group.files.map(f => ({ file: f, suiteKey: suite.key, suiteIndex: visualReviewBatchRenameState.suiteIndex, groupKey: group.key, groupIndex: visualReviewBatchRenameState.groupIndex }));
+            files = group.files.map(f => makeCandidate(f, suite, visualReviewBatchRenameState.suiteIndex, group, visualReviewBatchRenameState.groupIndex, state));
         }
     } else if (visualReviewBatchRenameState.scope === 'suite') {
         const suite = state.suites[visualReviewBatchRenameState.suiteIndex];
         if (suite) {
             suite.groups.forEach((g, gIdx) => {
                 g.files.forEach(f => {
-                    files.push({ file: f, suiteKey: suite.key, suiteIndex: visualReviewBatchRenameState.suiteIndex, groupKey: g.key, groupIndex: gIdx });
+                    files.push(makeCandidate(f, suite, visualReviewBatchRenameState.suiteIndex, g, gIdx, state));
                 });
             });
         }
+    } else if (visualReviewBatchRenameState.scope === 'all_tabs') {
+        // 当前活动标签可能有未落盘的点选结果，先同步回标签快照后再汇总。
+        visualReviewSyncActiveTab();
+        visualReviewTabs.forEach(tab => {
+            const tabState = tab.state || {};
+            (tabState.suites || []).forEach((suite, sIdx) => {
+                (suite.groups || []).forEach((g, gIdx) => {
+                    (g.files || []).forEach(f => files.push(makeCandidate(f, suite, sIdx, g, gIdx, tabState, tab)));
+                });
+            });
+        });
     } else {
         state.suites.forEach((suite, sIdx) => {
             suite.groups.forEach((g, gIdx) => {
                 g.files.forEach(f => {
-                    files.push({ file: f, suiteKey: suite.key, suiteIndex: sIdx, groupKey: g.key, groupIndex: gIdx });
+                    files.push(makeCandidate(f, suite, sIdx, g, gIdx, state));
                 });
             });
         });
@@ -6080,22 +6372,75 @@ function visualReviewGetBatchRenameCandidates() {
 
     const filter = visualReviewBatchRenameState.statusFilter;
     if (filter === 'pass_usable') {
-        files = files.filter(item => ['pass', 'usable'].includes(state.statuses[item.file.path]));
+        files = files.filter(item => ['pass', 'usable'].includes(item.status));
     } else if (filter === 'pass') {
-        files = files.filter(item => state.statuses[item.file.path] === 'pass');
+        files = files.filter(item => item.status === 'pass');
     } else if (filter === 'usable') {
-        files = files.filter(item => state.statuses[item.file.path] === 'usable');
+        files = files.filter(item => item.status === 'usable');
     } else if (filter === 'reject') {
-        files = files.filter(item => state.statuses[item.file.path] === 'reject');
+        files = files.filter(item => item.status === 'reject');
     } else if (filter === 'pending') {
-        files = files.filter(item => !state.statuses[item.file.path] || state.statuses[item.file.path] === 'pending');
+        files = files.filter(item => !item.status || item.status === 'pending');
     }
+
+    // 已手动调整过的素材固定按手动队列在前；新出现/未调整的素材保持原顺序接在后。
+    const manualIndex = new Map((visualReviewBatchRenameState.manualOrder || []).map((path, index) => [path, index]));
+    files.sort((a, b) => {
+        const ai = manualIndex.has(a.file.path) ? manualIndex.get(a.file.path) : Number.MAX_SAFE_INTEGER;
+        const bi = manualIndex.has(b.file.path) ? manualIndex.get(b.file.path) : Number.MAX_SAFE_INTEGER;
+        return ai - bi;
+    });
 
     return files;
 }
 
-function visualReviewGetBatchRenameFiles() {
+function visualReviewSetBatchRenamePosition(encodedPath, oneBasedPosition) {
+    const path = decodeURIComponent(encodedPath);
     const files = visualReviewGetBatchRenameCandidates();
+    const from = files.findIndex(item => item.file.path === path);
+    if (from < 0) return;
+    const target = Math.max(0, Math.min(files.length - 1, (Number(oneBasedPosition) || 1) - 1));
+    const [moved] = files.splice(from, 1);
+    files.splice(target, 0, moved);
+    visualReviewBatchRenameState.manualOrder = files.map(item => item.file.path);
+    visualReviewUpdateBatchRenamePreview();
+}
+
+function visualReviewMoveBatchRenameItem(encodedPath, direction) {
+    const files = visualReviewGetBatchRenameCandidates();
+    const path = decodeURIComponent(encodedPath);
+    const current = files.findIndex(item => item.file.path === path);
+    if (current < 0) return;
+    visualReviewSetBatchRenamePosition(encodedPath, current + 1 + Number(direction || 0));
+}
+
+function visualReviewStartBatchRenameDrag(encodedPath, event) {
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', encodedPath);
+}
+
+function visualReviewDropBatchRenameItem(targetEncodedPath, event) {
+    event.preventDefault();
+    const sourceEncodedPath = event.dataTransfer.getData('text/plain');
+    if (!sourceEncodedPath || sourceEncodedPath === targetEncodedPath) return;
+    const files = visualReviewGetBatchRenameCandidates();
+    const sourcePath = decodeURIComponent(sourceEncodedPath);
+    const targetPath = decodeURIComponent(targetEncodedPath);
+    const from = files.findIndex(item => item.file.path === sourcePath);
+    const to = files.findIndex(item => item.file.path === targetPath);
+    if (from < 0 || to < 0) return;
+    const [moved] = files.splice(from, 1);
+    files.splice(to, 0, moved);
+    visualReviewBatchRenameState.manualOrder = files.map(item => item.file.path);
+    visualReviewUpdateBatchRenamePreview();
+}
+
+function visualReviewGetBatchRenameFiles() {
+    let files = visualReviewGetBatchRenameCandidates();
+    if (visualReviewBatchRenameState.onlySelected) {
+        const selected = new Set(visualReviewBatchRenameState.selectedPaths || []);
+        files = files.filter(item => selected.has(item.file.path));
+    }
     if (visualReviewBatchRenameState.quotaEnabled) {
         const quotaRes = visualReviewApplyQuotaSelection(
             files,
@@ -6113,6 +6458,73 @@ function visualReviewGetBatchRenameFiles() {
     }
 }
 
+function visualReviewSetOnlySelected(enabled) {
+    visualReviewBatchRenameState.onlySelected = Boolean(enabled);
+    // 首次开启时先保留当前可见素材，用户再逐项取消；不会修改审核选择状态。
+    if (enabled && !(visualReviewBatchRenameState.selectedPaths || []).length) {
+        visualReviewBatchRenameState.selectedPaths = visualReviewGetBatchRenameCandidates().map(item => item.file.path);
+    }
+    visualReviewRenderBatchRenameModalContent();
+}
+
+function visualReviewToggleBatchRenameFile(encodedPath) {
+    const path = decodeURIComponent(encodedPath);
+    const selected = new Set(visualReviewBatchRenameState.selectedPaths || []);
+    if (selected.has(path)) selected.delete(path);
+    else selected.add(path);
+    visualReviewBatchRenameState.selectedPaths = [...selected];
+    visualReviewUpdateBatchRenamePreview();
+}
+
+function visualReviewSetAllBatchRenameFiles(selected) {
+    visualReviewBatchRenameState.selectedPaths = selected
+        ? visualReviewGetBatchRenameCandidates().map(item => item.file.path)
+        : [];
+    visualReviewUpdateBatchRenamePreview();
+}
+
+function visualReviewSetGroupBatchRenameSelection(encodedFolderKey, mode) {
+    const folderKey = decodeURIComponent(encodedFolderKey);
+    const candidates = visualReviewGetBatchRenameCandidates().filter(item => item.suiteKey === folderKey);
+    const selected = new Set(visualReviewBatchRenameState.selectedPaths || []);
+    if (mode === 'all') candidates.forEach(item => selected.add(item.file.path));
+    else if (mode === 'none') candidates.forEach(item => selected.delete(item.file.path));
+    else if (mode === 'invert') candidates.forEach(item => selected.has(item.file.path) ? selected.delete(item.file.path) : selected.add(item.file.path));
+    visualReviewBatchRenameState.selectedPaths = [...selected];
+    visualReviewUpdateBatchRenamePreview();
+}
+
+function visualReviewSortBatchRenameByName(direction = 'asc') {
+    const files = visualReviewGetBatchRenameCandidates().slice().sort((a, b) =>
+        direction === 'desc'
+            ? b.file.name.localeCompare(a.file.name, undefined, { numeric: true, sensitivity: 'base' })
+            : a.file.name.localeCompare(b.file.name, undefined, { numeric: true, sensitivity: 'base' })
+    );
+    visualReviewBatchRenameState.manualOrder = files.map(item => item.file.path);
+    visualReviewUpdateBatchRenamePreview();
+}
+
+function visualReviewSetFolderOperationMode(encodedFolderKey, mode) {
+    const folderKey = decodeURIComponent(encodedFolderKey);
+    if (mode === 'default') delete visualReviewBatchRenameState.folderOperationModes[folderKey];
+    else visualReviewBatchRenameState.folderOperationModes[folderKey] = mode;
+    visualReviewUpdateBatchRenamePreview();
+}
+
+function visualReviewSetFileOperationMode(encodedPath, mode) {
+    const path = decodeURIComponent(encodedPath);
+    if (mode === 'default') delete visualReviewBatchRenameState.fileOperationModes[path];
+    else visualReviewBatchRenameState.fileOperationModes[path] = mode;
+    visualReviewUpdateBatchRenamePreview();
+}
+
+function visualReviewResolveRenameCopyMode(item) {
+    const fileMode = visualReviewBatchRenameState.fileOperationModes[item.file.path];
+    const folderMode = visualReviewBatchRenameState.folderOperationModes[item.suiteKey];
+    const mode = fileMode || folderMode;
+    return mode ? mode === 'copy' : Boolean(visualReviewBatchRenameState.copyMode);
+}
+
 function visualReviewPrepareBatchItems(files) {
     let globalIndex = 0;
     const folderIndexMap = new Map();
@@ -6121,13 +6533,19 @@ function visualReviewPrepareBatchItems(files) {
         ? visualReviewBatchRenameState.customSeparator
         : visualReviewBatchRenameState.separator;
 
-    const isQuotaExport = visualReviewBatchRenameState.quotaEnabled && Boolean(visualReviewBatchRenameState.exportDestDir);
-    const destRoot = isQuotaExport ? visualReviewBatchRenameState.exportDestDir.trim() : '';
+    // 目标文件夹不再依赖“定额抽取”：普通改名也可按每行复制/移动设置进入目标目录。
+    const destRoot = visualReviewBatchRenameState.exportDestDir.trim();
 
     const items = files.map(item => {
-        const folderName = item.suiteKey === '未分套' ? (visualReviewState.root ? visualReviewState.root.replace(/.*[/\\]/, '') : '素材') : item.suiteKey;
-        const currentFolderIndex = folderIndexMap.get(folderName) || 0;
-        folderIndexMap.set(folderName, currentFolderIndex + 1);
+        const folderName = item.suiteKey === '未分套'
+            ? (item.sourceRoot ? item.sourceRoot.replace(/.*[/\\]/, '') : (visualReviewState.root ? visualReviewState.root.replace(/.*[/\\]/, '') : '素材'))
+            : item.suiteKey;
+        const currentFolderIndex = visualReviewBatchRenameState.ignoreFoldersForOrdering
+            ? globalIndex
+            : (folderIndexMap.get(folderName) || 0);
+        if (!visualReviewBatchRenameState.ignoreFoldersForOrdering) {
+            folderIndexMap.set(folderName, currentFolderIndex + 1);
+        }
 
         const newName = generateBatchRenameFileName({
             file: item.file,
@@ -6138,6 +6556,10 @@ function visualReviewPrepareBatchItems(files) {
             separator: separator,
             findText: visualReviewBatchRenameState.findText,
             replaceText: visualReviewBatchRenameState.replaceText,
+            trimStart: visualReviewBatchRenameState.trimStart,
+            trimEnd: visualReviewBatchRenameState.trimEnd,
+            keepStart: visualReviewBatchRenameState.keepStart,
+            keepEnd: visualReviewBatchRenameState.keepEnd,
             isRegex: visualReviewBatchRenameState.isRegex,
             caseSensitive: visualReviewBatchRenameState.caseSensitive,
             caseMode: visualReviewBatchRenameState.caseMode
@@ -6151,12 +6573,14 @@ function visualReviewPrepareBatchItems(files) {
 
         if (destRoot) {
             let rel = item.file.relativePath || '';
-            if (!rel && visualReviewState.root && item.file.path.startsWith(visualReviewState.root)) {
-                rel = item.file.path.slice(visualReviewState.root.length).replace(/^[/\\]+/, '');
+            if (!rel && item.sourceRoot && item.file.path.startsWith(item.sourceRoot)) {
+                rel = item.file.path.slice(item.sourceRoot.length).replace(/^[/\\]+/, '');
             }
             if (!rel) rel = item.file.name;
             const destSep = destRoot.includes('\\') ? '\\' : '/';
-            const relSubDir = rel.includes('/') || rel.includes('\\') ? rel.replace(/[^/\\]+$/, '') : '';
+            const relSubDir = visualReviewBatchRenameState.preserveTargetHierarchy && (rel.includes('/') || rel.includes('\\'))
+                ? rel.replace(/[^/\\]+$/, '')
+                : '';
             targetSubDir = relSubDir
                 ? `${destRoot.replace(/[/\\]+$/, '')}${destSep}${relSubDir.replace(/^[/\\]+|[/\\]+$/g, '')}`
                 : destRoot.replace(/[/\\]+$/, '');
@@ -6168,6 +6592,7 @@ function visualReviewPrepareBatchItems(files) {
 
         return {
             ...item,
+            copyMode: visualReviewResolveRenameCopyMode(item),
             globalIndex: gIdx,
             folderIndex: currentFolderIndex,
             folderName,
@@ -6203,7 +6628,7 @@ function visualReviewPrepareBatchItems(files) {
 }
 
 function visualReviewOpenBatchRenameModal(opts = {}) {
-    if (!visualReviewState.suites.length) {
+    if (!visualReviewState.suites.length && !visualReviewTabs.some(tab => tab.state?.suites?.length)) {
         showToast('请先选择或拖入包含素材的文件夹', 'info');
         return;
     }
@@ -6270,6 +6695,11 @@ function visualReviewSetRenameScope(scope) {
     visualReviewRenderBatchRenameModalContent();
 }
 
+function visualReviewSetIgnoreFoldersForOrdering(enabled) {
+    visualReviewBatchRenameState.ignoreFoldersForOrdering = Boolean(enabled);
+    visualReviewRenderBatchRenameModalContent();
+}
+
 function visualReviewSetRenameSeparator(sep) {
     visualReviewBatchRenameState.separator = sep;
     visualReviewRenderBatchRenameModalContent();
@@ -6283,6 +6713,28 @@ function visualReviewSetRenameFind(val) {
 function visualReviewSetRenameReplace(val) {
     visualReviewBatchRenameState.replaceText = val;
     visualReviewUpdateBatchRenamePreview();
+}
+
+function visualReviewSetRenameTrimStart(val) {
+    visualReviewBatchRenameState.trimStart = Math.max(0, Number(val) || 0);
+    visualReviewUpdateBatchRenamePreview();
+}
+
+function visualReviewSetRenameTrimEnd(val) {
+    visualReviewBatchRenameState.trimEnd = Math.max(0, Number(val) || 0);
+    visualReviewUpdateBatchRenamePreview();
+}
+
+function visualReviewSetRenameKeepStart(val) {
+    visualReviewBatchRenameState.keepStart = Math.max(0, Number(val) || 0);
+    if (visualReviewBatchRenameState.keepStart) visualReviewBatchRenameState.keepEnd = 0;
+    visualReviewRenderBatchRenameModalContent();
+}
+
+function visualReviewSetRenameKeepEnd(val) {
+    visualReviewBatchRenameState.keepEnd = Math.max(0, Number(val) || 0);
+    if (visualReviewBatchRenameState.keepEnd) visualReviewBatchRenameState.keepStart = 0;
+    visualReviewRenderBatchRenameModalContent();
 }
 
 function visualReviewSetRenameRegex(enabled) {
@@ -6411,6 +6863,11 @@ function visualReviewClearExportDir() {
     visualReviewRenderBatchRenameModalContent();
 }
 
+function visualReviewSetPreserveTargetHierarchy(enabled) {
+    visualReviewBatchRenameState.preserveTargetHierarchy = Boolean(enabled);
+    visualReviewUpdateBatchRenamePreview();
+}
+
 function visualReviewToggleShortageDetails() {
     visualReviewBatchRenameState.showShortageDetails = !visualReviewBatchRenameState.showShortageDetails;
     visualReviewUpdateBatchRenamePreview();
@@ -6427,7 +6884,7 @@ function visualReviewRenderBatchRenameModalContent() {
     const groupOptions = currentSuite ? currentSuite.groups.map((g, idx) => `<option value="${idx}" ${visualReviewBatchRenameState.groupIndex === idx ? 'selected' : ''}>${mtbEsc(g.key)} (${g.files.length}个素材)</option>`).join('') : '';
 
     modal.innerHTML = `
-        <div style="width:1280px;max-width:96vw;height:min(94vh, 920px);max-height:calc(100vh - 24px);background:#131722;border:1px solid rgba(255,255,255,0.16);border-radius:12px;box-shadow:0 24px 60px rgba(0,0,0,0.85);display:flex;flex-direction:column;overflow:hidden;color:#e2e8f0;font-size:13px;">
+        <div style="width:1540px;max-width:99vw;height:min(94vh, 920px);max-height:calc(100vh - 12px);background:#131722;border:1px solid rgba(255,255,255,0.16);border-radius:12px;box-shadow:0 24px 60px rgba(0,0,0,0.85);display:flex;flex-direction:column;overflow:hidden;color:#e2e8f0;font-size:13px;">
             <!-- Modal Header -->
             <div style="flex-shrink:0;display:flex;align-items:center;justify-content:space-between;padding:12px 20px;border-bottom:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.03);">
                 <div style="display:flex;align-items:center;gap:10px;">
@@ -6443,13 +6900,14 @@ function visualReviewRenderBatchRenameModalContent() {
             <!-- Modal Body (Two-Column Layout: Left Controls, Right Dedicated Full-Height Preview) -->
             <div style="flex:1 1 0;min-height:0;display:flex;flex-direction:row;overflow:hidden;padding:14px 18px;gap:16px;">
                 <!-- Left Column: 规则与参数配置 (独立滚动，绝不挤占右侧表格空间) -->
-                <div style="width:430px;flex-shrink:0;overflow-y:auto;padding-right:6px;display:flex;flex-direction:column;gap:12px;">
+                <div style="width:min(390px,32vw);flex-shrink:0;overflow-y:auto;padding-right:6px;display:flex;flex-direction:column;gap:12px;">
                     <!-- Section 1: 适用范围与模式 -->
                     <div style="padding:12px 14px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:8px;display:flex;flex-direction:column;gap:10px;">
                         <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;">
                             <strong style="color:#cbd5e1;font-size:12px;">重命名范围:</strong>
                             <select class="select" onchange="visualReviewSetRenameScope(this.value)" style="padding:3px 8px;font-size:12px;">
-                                <option value="all" ${visualReviewBatchRenameState.scope === 'all' ? 'selected' : ''}>全部素材 (跨套/全部文件夹)</option>
+                                <option value="all_tabs" ${visualReviewBatchRenameState.scope === 'all_tabs' ? 'selected' : ''}>所有审核文件夹（${visualReviewTabs.length} 个标签）</option>
+                                <option value="all" ${visualReviewBatchRenameState.scope === 'all' ? 'selected' : ''}>当前审核文件夹：全部素材</option>
                                 <option value="suite" ${visualReviewBatchRenameState.scope === 'suite' ? 'selected' : ''}>仅指定套</option>
                                 <option value="group" ${visualReviewBatchRenameState.scope === 'group' ? 'selected' : ''}>仅指定片段组</option>
                             </select>
@@ -6474,6 +6932,18 @@ function visualReviewRenderBatchRenameModalContent() {
                             </select>
                         </div>
 
+                        <label style="cursor:pointer;display:flex;align-items:flex-start;gap:7px;padding:7px 9px;background:${visualReviewBatchRenameState.ignoreFoldersForOrdering ? 'rgba(56,189,248,.12)' : 'rgba(255,255,255,.025)'};border:1px solid ${visualReviewBatchRenameState.ignoreFoldersForOrdering ? 'rgba(56,189,248,.48)' : 'rgba(255,255,255,.10)'};border-radius:6px;font-size:12px;">
+                            <input type="checkbox" ${visualReviewBatchRenameState.ignoreFoldersForOrdering ? 'checked' : ''} onchange="visualReviewSetIgnoreFoldersForOrdering(this.checked)">
+                            <span><b style="color:${visualReviewBatchRenameState.ignoreFoldersForOrdering ? '#7dd3fc' : '#cbd5e1'};">↕ 忽略文件夹，按全局队列排序</b><br><span style="font-size:11px;color:#94a3b8;">可跨文件夹拖拽、改编号和上下移动；素材仍保留在原文件夹。文件夹内序号也将按全局队列连续编号。</span></span>
+                        </label>
+
+                        <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;padding:7px 9px;background:${visualReviewBatchRenameState.onlySelected ? 'rgba(34,197,94,.10)' : 'rgba(255,255,255,.025)'};border:1px solid ${visualReviewBatchRenameState.onlySelected ? 'rgba(74,222,128,.48)' : 'rgba(255,255,255,.10)'};border-radius:6px;">
+                            <label style="cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:${visualReviewBatchRenameState.onlySelected ? '#86efac' : '#cbd5e1'};">
+                                <input type="checkbox" ${visualReviewBatchRenameState.onlySelected ? 'checked' : ''} onchange="visualReviewSetOnlySelected(this.checked)"> ✓ 仅重命名我勾选的素材
+                            </label>
+                            ${visualReviewBatchRenameState.onlySelected ? `<button class="btn btn-secondary" onclick="visualReviewSetAllBatchRenameFiles(true)" style="padding:2px 7px;font-size:11px;">全选</button><button class="btn btn-secondary" onclick="visualReviewSetAllBatchRenameFiles(false)" style="padding:2px 7px;font-size:11px;">清空</button><span style="font-size:11px;color:#94a3b8;">右侧每行勾选；未勾选不会改名</span>` : ''}
+                        </div>
+
                         <div style="display:flex;align-items:center;gap:12px;padding-top:4px;border-top:1px dashed rgba(255,255,255,0.08);">
                             <strong style="color:#cbd5e1;font-size:12px;">操作模式:</strong>
                             <label style="cursor:pointer;display:inline-flex;align-items:center;gap:4px;font-size:12px;" title="在当前位置修改文件名，或若指定了导出目录则直接移动文件">
@@ -6482,6 +6952,14 @@ function visualReviewRenderBatchRenameModalContent() {
                             <label style="cursor:pointer;display:inline-flex;align-items:center;gap:4px;font-size:12px;" title="保留原文件，生成重命名后的副本">
                                 <input type="radio" name="vr-rename-mode" ${visualReviewBatchRenameState.copyMode ? 'checked' : ''} onchange="visualReviewSetRenameCopyMode(true)"> 复制模式 (保留原件)
                             </label>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px 9px;background:rgba(56,189,248,.06);border:1px solid rgba(56,189,248,.23);border-radius:6px;">
+                            <strong style="font-size:12px;color:#bae6fd;white-space:nowrap;">📂 目标文件夹:</strong>
+                            <span style="flex:1;min-width:110px;font-size:11px;color:${visualReviewBatchRenameState.exportDestDir ? '#7dd3fc' : '#94a3b8'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${mtbEsc(visualReviewBatchRenameState.exportDestDir || '未设置：在原文件夹改名')}" >${mtbEsc(visualReviewBatchRenameState.exportDestDir || '未设置：在原文件夹改名')}</span>
+                            <button class="btn btn-secondary" onclick="visualReviewSelectExportDir()" style="padding:2px 7px;font-size:11px;">选择</button>
+                            ${visualReviewBatchRenameState.exportDestDir ? `<button class="btn btn-secondary" onclick="visualReviewClearExportDir()" style="padding:2px 6px;font-size:11px;color:#f87171;">清除</button>` : ''}
+                            <label style="flex-basis:100%;display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#cbd5e1;cursor:pointer;"><input type="checkbox" ${visualReviewBatchRenameState.preserveTargetHierarchy ? 'checked' : ''} onchange="visualReviewSetPreserveTargetHierarchy(this.checked)"> 保留原有子文件夹层级</label>
+                            <span style="flex-basis:100%;font-size:10px;color:#94a3b8;">设置后：本行选“复制”即复制到目标；选“移动”即移动到目标。取消上项则直接进入目标文件夹根目录。</span>
                         </div>
                     </div>
 
@@ -6505,18 +6983,6 @@ function visualReviewRenderBatchRenameModalContent() {
                                     </div>
                                     <div style="font-size:11px;color:#7dd3fc;background:rgba(14,165,233,.12);border:1px solid rgba(56,189,248,.3);border-radius:5px;padding:4px 7px;">右侧缩略图直接勾选保留</div>
                                 </div>
-
-                                <div style="display:flex;align-items:center;gap:6px;">
-                                    <span style="color:#cbd5e1;font-size:12px;white-space:nowrap;">导出目录:</span>
-                                    <div style="flex:1;min-width:100px;background:#0d1117;border:1px solid ${visualReviewBatchRenameState.exportDestDir ? '#38bdf8' : '#475569'};border-radius:4px;padding:3px 8px;font-size:11px;color:${visualReviewBatchRenameState.exportDestDir ? '#38bdf8' : '#64748b'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${mtbEsc(visualReviewBatchRenameState.exportDestDir || '留空则在原素材文件夹中操作')}">
-                                        ${mtbEsc(visualReviewBatchRenameState.exportDestDir || '留空在原文件夹中就地处理')}
-                                    </div>
-                                    <button class="btn btn-secondary" onclick="visualReviewSelectExportDir()" style="padding:3px 8px;font-size:11px;white-space:nowrap;background:rgba(56,189,248,0.15);border:1px solid rgba(56,189,248,0.4);color:#38bdf8;">📁 选择</button>
-                                    ${visualReviewBatchRenameState.exportDestDir ? `
-                                        <button class="btn btn-secondary" onclick="visualReviewClearExportDir()" style="padding:3px 6px;font-size:11px;color:#f87171;" title="清除目标目录">✕</button>
-                                    ` : ''}
-                                </div>
-                                <div style="font-size:11px;color:#94a3b8;">* 导出至新目录时，将完全保留原始子文件夹的相对层级</div>
                             </div>
                         ` : ''}
                     </div>
@@ -6599,6 +7065,20 @@ function visualReviewRenderBatchRenameModalContent() {
                         </div>
 
                         <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+                            <strong style="color:#cbd5e1;font-size:12px;">仅保留:</strong>
+                            <label style="font-size:11px;display:inline-flex;align-items:center;gap:3px;">前 <input type="number" min="0" value="${visualReviewBatchRenameState.keepStart}" oninput="visualReviewSetRenameKeepStart(this.value)" style="width:42px;padding:2px 4px;background:#0d1117;border:1px solid ${visualReviewBatchRenameState.keepStart ? '#38bdf8' : '#30363d'};border-radius:3px;color:#fff;text-align:center;"> 字符</label>
+                            <label style="font-size:11px;display:inline-flex;align-items:center;gap:3px;">后 <input type="number" min="0" value="${visualReviewBatchRenameState.keepEnd}" oninput="visualReviewSetRenameKeepEnd(this.value)" style="width:42px;padding:2px 4px;background:#0d1117;border:1px solid ${visualReviewBatchRenameState.keepEnd ? '#38bdf8' : '#30363d'};border-radius:3px;color:#fff;text-align:center;"> 字符</label>
+                            <span style="font-size:10px;color:#64748b;">（二选一；填 0 关闭）</span>
+                        </div>
+
+                        <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+                            <strong style="color:#cbd5e1;font-size:12px;">裁剪原名:</strong>
+                            <label style="font-size:11px;display:inline-flex;align-items:center;gap:3px;">删除前 <input type="number" min="0" value="${visualReviewBatchRenameState.trimStart}" oninput="visualReviewSetRenameTrimStart(this.value)" style="width:42px;padding:2px 4px;background:#0d1117;border:1px solid #30363d;border-radius:3px;color:#fff;text-align:center;"> 字符</label>
+                            <label style="font-size:11px;display:inline-flex;align-items:center;gap:3px;">删除后 <input type="number" min="0" value="${visualReviewBatchRenameState.trimEnd}" oninput="visualReviewSetRenameTrimEnd(this.value)" style="width:42px;padding:2px 4px;background:#0d1117;border:1px solid #30363d;border-radius:3px;color:#fff;text-align:center;"> 字符</label>
+                            <span style="font-size:10px;color:#64748b;">（扩展名不受影响）</span>
+                        </div>
+
+                        <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
                             <strong style="color:#cbd5e1;font-size:12px;">替换:</strong>
                             <input type="text" value="${mtbEsc(visualReviewBatchRenameState.findText)}" placeholder="查找字符" oninput="visualReviewSetRenameFind(this.value)" style="width:85px;padding:2px 5px;background:#0d1117;border:1px solid #30363d;border-radius:3px;color:#fff;font-size:11px;">
                             <span>→</span>
@@ -6618,6 +7098,10 @@ function visualReviewRenderBatchRenameModalContent() {
                             <span style="font-size:12px;color:#94a3b8;background:rgba(255,255,255,0.05);padding:2px 8px;border-radius:4px;">共 <b id="vr-rename-group-count" style="color:#a78bfa;">0</b> 个分组</span>
                         </div>
                         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                            <span style="font-size:11px;color:#cbd5e1;background:rgba(56,189,248,.10);border:1px solid rgba(56,189,248,.28);padding:3px 7px;border-radius:5px;" title="拖拽整行、填顺序编号，或点 ↑ ↓。调整后会立即更新新文件名中的整体序号和文件夹内序号。">↕ 可拖拽 / 改编号 / ↑↓</span>
+                            <button class="btn btn-secondary" onclick="visualReviewSortBatchRenameByName('asc')" style="font-size:11px;padding:3px 8px;" title="按当前原文件名自然排序，例如 2 会排在 10 前">A→Z 按名字排序</button>
+                            <button class="btn btn-secondary" onclick="visualReviewSortBatchRenameByName('desc')" style="font-size:11px;padding:3px 8px;" title="按当前原文件名倒序排序">Z→A</button>
+                            <button class="btn btn-secondary" onclick="visualReviewBatchRenameState.manualOrder=[];visualReviewUpdateBatchRenamePreview();" style="font-size:11px;padding:3px 8px;" title="恢复素材当前读取顺序">恢复读取顺序</button>
                             <button class="btn btn-secondary" onclick="visualReviewDisperseDuplicates()" style="font-size:11px;padding:3px 10px;background:rgba(168,85,247,0.15);border:1px solid rgba(168,85,247,0.4);color:#c084fc;border-radius:5px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;" title="智能重排队列中的同图副本，保证同图副本绝不挨在一起">🔀 智能错开同图副本</button>
                             <div id="vr-rename-conflict-status"></div>
                         </div>
@@ -6627,7 +7111,7 @@ function visualReviewRenderBatchRenameModalContent() {
                     <div id="vr-rename-shortage-alert-area" style="flex-shrink:0;"></div>
 
                     <!-- Full-Height Preview Table Container (纵向撑满、自带独立滚动条，永不被遮挡) -->
-                    <div id="vr-rename-preview-container" style="flex:1 1 0;min-height:0;overflow-y:auto;background:#0b0e14;border:1px solid rgba(255,255,255,0.1);border-radius:8px;position:relative;">
+                    <div id="vr-rename-preview-container" style="flex:1 1 0;min-height:0;overflow:auto;background:#0b0e14;border:1px solid rgba(255,255,255,0.1);border-radius:8px;position:relative;">
                         <!-- Table populated by visualReviewUpdateBatchRenamePreview -->
                     </div>
                 </div>
@@ -6637,15 +7121,15 @@ function visualReviewRenderBatchRenameModalContent() {
             <div style="flex-shrink:0;z-index:10;display:flex;align-items:center;justify-content:space-between;padding:12px 20px;border-top:1px solid rgba(255,255,255,0.12);background:#11141e;box-shadow:0 -4px 16px rgba(0,0,0,0.5);flex-wrap:wrap;gap:12px;">
                 <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
                     <div id="vr-rename-status-text" style="font-size:12px;color:#94a3b8;">准备就绪</div>
-                    <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#facc15;font-weight:600;background:rgba(250,204,21,0.08);padding:4px 10px;border-radius:6px;border:1px solid rgba(250,204,21,0.25);" title="勾选后，在执行重命名后，将自动把未标记合格/勉强的素材移动到「审核批次/不合格」文件夹（保留各套文件夹层级）">
+                    ${!visualReviewBatchRenameState.onlySelected ? `<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#facc15;font-weight:600;background:rgba(250,204,21,0.08);padding:4px 10px;border-radius:6px;border:1px solid rgba(250,204,21,0.25);" title="勾选后，在执行重命名后，将自动把未标记合格/勉强的素材移动到「审核批次/不合格」文件夹（保留各套文件夹层级）">
                         <input type="checkbox" id="vr-rename-auto-move-rejects" ${visualReviewBatchRenameState.moveRejectsAfter ? 'checked' : ''} onchange="visualReviewBatchRenameState.moveRejectsAfter=this.checked;">
                         <span>📦 重命名后同时移动未选素材到「本批不合格」</span>
-                    </label>
+                    </label>` : `<span style="font-size:12px;color:#86efac;">✓ 仅处理勾选素材，其他文件不会改名或移动</span>`}
                 </div>
                 <div style="display:flex;align-items:center;gap:10px;">
                     <button class="btn btn-secondary" onclick="visualReviewCloseBatchRenameModal()">取消</button>
                     <button id="vr-rename-exec-btn" class="btn btn-primary" onclick="visualReviewExecuteBatchRename()" style="font-weight:700;padding:8px 16px;background:linear-gradient(135deg,#2563eb,#1d4ed8);border:none;box-shadow:0 2px 10px rgba(37,99,235,0.4);" title="仅执行批量重命名">🚀 仅执行重命名</button>
-                    <button id="vr-rename-exec-move-btn" class="btn" onclick="visualReviewExecuteBatchRename({ moveRejects: true })" style="font-weight:700;padding:8px 18px;background:linear-gradient(135deg,#d97706,#b45309);color:#fff;border:none;border-radius:6px;box-shadow:0 2px 10px rgba(217,119,6,0.4);cursor:pointer;" title="执行批量重命名，并立即将未选/不合格素材移动到「本批不合格」">📦 重命名并移动未选素材</button>
+                    ${!visualReviewBatchRenameState.onlySelected ? `<button id="vr-rename-exec-move-btn" class="btn" onclick="visualReviewExecuteBatchRename({ moveRejects: true })" style="font-weight:700;padding:8px 18px;background:linear-gradient(135deg,#d97706,#b45309);color:#fff;border:none;border-radius:6px;box-shadow:0 2px 10px rgba(217,119,6,0.4);cursor:pointer;" title="执行批量重命名，并立即将未选/不合格素材移动到「本批不合格」">📦 重命名并移动未选素材</button>` : ''}
                 </div>
             </div>
         </div>
@@ -6670,17 +7154,23 @@ function visualReviewUpdateBatchRenamePreview() {
     const files = visualReviewGetBatchRenameFiles();
     const items = visualReviewPrepareBatchItems(files);
     const selectedByPath = new Map(items.map(item => [item.file.path, item]));
-    // 定额模式右侧必须保留全部候选行；未勾选的行仅不参与执行，不再从界面消失。
-    const displayItems = visualReviewBatchRenameState.quotaEnabled
+    const selectedRenamePaths = new Set(visualReviewBatchRenameState.selectedPaths || []);
+    // 定额模式或“仅勾选”模式，右侧都保留全部候选行，未选素材不会消失，方便继续勾选。
+    const displayItems = (visualReviewBatchRenameState.quotaEnabled || visualReviewBatchRenameState.onlySelected)
         ? candidates.map(candidate => selectedByPath.get(candidate.file.path) || ({
             ...candidate,
-            folderName: candidate.suiteKey === '未分套' ? (visualReviewState.root ? visualReviewState.root.replace(/.*[/\\]/, '') : '素材') : candidate.suiteKey,
+            folderName: candidate.suiteKey === '未分套' ? (candidate.sourceRoot ? candidate.sourceRoot.replace(/.*[/\\]/, '') : (visualReviewState.root ? visualReviewState.root.replace(/.*[/\\]/, '') : '素材')) : candidate.suiteKey,
             origName: candidate.file.name,
             newName: '未勾选 · 不会处理', targetPath: '', targetSubDir: '', conflict: false,
-            isCopy: Boolean(candidate.file?.isCopy), isAdjacentDuplicate: false, selected: false
+            copyMode: visualReviewResolveRenameCopyMode(candidate),
+            isCopy: Boolean(candidate.file?.isCopy), isAdjacentDuplicate: false, selected: false,
+            renameSelected: visualReviewBatchRenameState.onlySelected ? selectedRenamePaths.has(candidate.file.path) : true
         }))
         : items;
-    items.forEach(item => { item.selected = true; });
+    items.forEach(item => {
+        item.selected = true;
+        item.renameSelected = visualReviewBatchRenameState.onlySelected ? selectedRenamePaths.has(item.file.path) : true;
+    });
     const shortages = visualReviewBatchRenameState.quotaShortageList || [];
 
     if (countEl) countEl.textContent = items.length;
@@ -6758,7 +7248,7 @@ function visualReviewUpdateBatchRenamePreview() {
         folderStats.get(it.folderName).count++;
     });
 
-    if (groupCountEl) groupCountEl.textContent = folderStats.size;
+    if (groupCountEl) groupCountEl.textContent = visualReviewBatchRenameState.ignoreFoldersForOrdering ? '1（全局队列）' : folderStats.size;
 
     const VR_GROUP_PALETTES = [
         { name: 'sky', text: '#38bdf8', bg: 'rgba(56, 189, 248, 0.08)', border: 'rgba(56, 189, 248, 0.35)', badgeBg: 'rgba(56, 189, 248, 0.2)', badgeText: '#bae6fd' },
@@ -6784,8 +7274,9 @@ function visualReviewUpdateBatchRenamePreview() {
     displayItems.forEach((it, idx) => {
         const pal = folderPalettes.get(it.folderName) || VR_GROUP_PALETTES[0];
         const stats = folderStats.get(it.folderName) || { count: 1, firstIdx: idx };
+        const encodedFolderKey = encodeURIComponent(it.suiteKey || '未分套');
 
-        if (it.folderName !== lastFolderName) {
+        if (!visualReviewBatchRenameState.ignoreFoldersForOrdering && it.folderName !== lastFolderName) {
             lastFolderName = it.folderName;
             const shortageInfo = shortages.find(s => s.folderName === it.folderName);
             const shortageBadge = shortageInfo
@@ -6809,6 +7300,10 @@ function visualReviewUpdateBatchRenamePreview() {
                                 整体序号: #${stats.firstIdx + 1} ~ #${stats.firstIdx + stats.count}
                             </span>
                         </div>
+                        <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-top:5px;flex-wrap:wrap;">
+                            ${visualReviewBatchRenameState.onlySelected ? `<div style="display:flex;gap:4px;align-items:center;"><span style="font-size:10px;color:#94a3b8;">本组选择:</span><button class="btn btn-secondary" onclick="visualReviewSetGroupBatchRenameSelection('${encodedFolderKey}','all')" style="padding:1px 6px;font-size:10px;">全选</button><button class="btn btn-secondary" onclick="visualReviewSetGroupBatchRenameSelection('${encodedFolderKey}','invert')" style="padding:1px 6px;font-size:10px;">反选</button><button class="btn btn-secondary" onclick="visualReviewSetGroupBatchRenameSelection('${encodedFolderKey}','none')" style="padding:1px 6px;font-size:10px;">取消选择</button></div>` : ''}
+                            <div style="display:flex;gap:4px;align-items:center;margin-left:auto;"><span style="font-size:10px;color:#94a3b8;">本组操作:</span><button class="btn btn-secondary" onclick="visualReviewSetFolderOperationMode('${encodedFolderKey}','move')" style="padding:1px 6px;font-size:10px;${visualReviewBatchRenameState.folderOperationModes[it.suiteKey] === 'move' ? 'border-color:#f59e0b;color:#fbbf24;' : ''}">移动</button><button class="btn btn-secondary" onclick="visualReviewSetFolderOperationMode('${encodedFolderKey}','copy')" style="padding:1px 6px;font-size:10px;${visualReviewBatchRenameState.folderOperationModes[it.suiteKey] === 'copy' ? 'border-color:#38bdf8;color:#7dd3fc;' : ''}">复制</button><button class="btn btn-secondary" onclick="visualReviewSetFolderOperationMode('${encodedFolderKey}','default')" style="padding:1px 6px;font-size:10px;">跟默认</button></div>
+                        </div>
                     </td>
                 </tr>
             `);
@@ -6816,6 +7311,7 @@ function visualReviewUpdateBatchRenamePreview() {
 
         const encodedPath = encodeURIComponent(it.file.path);
         const isSelected = it.selected !== false;
+        const isRenameSelected = it.renameSelected !== false;
         const previewSrc = window.electronAPI?.toFileUrl ? window.electronAPI.toFileUrl(it.file.path) : it.file.path;
         const isImagePreview = it.file.type === 'image' || visualReviewIsImage(it.file);
         const thumbnailHtml = isImagePreview
@@ -6828,7 +7324,7 @@ function visualReviewUpdateBatchRenamePreview() {
             ? 'rgba(239,68,68,0.18)'
             : it.isAdjacentDuplicate
                 ? 'rgba(245,158,11,0.12)'
-                : (idx % 2 === 0 ? pal.bg : 'transparent');
+                : (!isRenameSelected ? 'rgba(255,255,255,.025)' : (idx % 2 === 0 ? pal.bg : 'transparent'));
 
         const copyBadge = it.isCopy
             ? `<span style="font-size:10px;font-weight:700;padding:1px 4px;border-radius:3px;background:rgba(168,85,247,0.25);color:#c084fc;border:1px solid rgba(168,85,247,0.4);margin-left:3px;" title="该素材为副本">📑 副本</span>`
@@ -6839,7 +7335,7 @@ function visualReviewUpdateBatchRenamePreview() {
             : '';
 
         let destDisplay = '';
-        if (visualReviewBatchRenameState.quotaEnabled && visualReviewBatchRenameState.exportDestDir) {
+        if (visualReviewBatchRenameState.exportDestDir) {
             const destRoot = visualReviewBatchRenameState.exportDestDir.trim();
             const relSub = it.targetSubDir ? it.targetSubDir.slice(destRoot.length).replace(/^[/\\]+/, '') : '';
             const sep = destRoot.includes('\\') ? '\\' : '/';
@@ -6848,23 +7344,29 @@ function visualReviewUpdateBatchRenamePreview() {
         }
 
         rowsHtml.push(`
-            <tr style="border-bottom:1px solid rgba(255,255,255,0.04);border-left:3px solid ${pal.text};background:${rowBg};">
-                <td style="padding:5px 8px;color:${pal.text};font-weight:700;width:34px;">${idx + 1}</td>
+            <tr draggable="true" ondragstart="visualReviewStartBatchRenameDrag('${encodedPath}',event)" ondragover="event.preventDefault();event.dataTransfer.dropEffect='move'" ondrop="visualReviewDropBatchRenameItem('${encodedPath}',event)" style="border-bottom:1px solid rgba(255,255,255,0.04);border-left:3px solid ${pal.text};background:${rowBg};cursor:grab;">
+                <td style="padding:5px 6px;color:${pal.text};font-weight:700;width:72px;white-space:nowrap;">
+                    <span title="拖拽整行可调整顺序" style="cursor:grab;color:#94a3b8;">⠿</span>
+                    <input type="number" min="1" max="${displayItems.length}" value="${idx + 1}" onchange="visualReviewSetBatchRenamePosition('${encodedPath}',this.value)" onclick="event.stopPropagation()" style="width:34px;padding:1px 2px;margin-left:3px;text-align:center;background:#0b0e14;border:1px solid ${pal.border};border-radius:3px;color:${pal.badgeText};font-size:11px;">
+                    <button class="btn btn-secondary" onclick="event.stopPropagation();visualReviewMoveBatchRenameItem('${encodedPath}',-1)" style="min-width:18px;padding:0 3px;font-size:11px;" title="上移">↑</button><button class="btn btn-secondary" onclick="event.stopPropagation();visualReviewMoveBatchRenameItem('${encodedPath}',1)" style="min-width:18px;padding:0 3px;font-size:11px;" title="下移">↓</button>
+                </td>
                 <td style="padding:5px 8px;width:120px;">
                     <span style="background:${pal.badgeBg};color:${pal.badgeText};border:1px solid ${pal.border};padding:2px 6px;border-radius:10px;font-size:11px;font-weight:600;display:inline-block;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${mtbEsc(it.folderName)}${it.groupKey ? ` · ${mtbEsc(it.groupKey)}` : ''}">${mtbEsc(it.folderName)}${it.groupKey ? `<span style="opacity:0.75;font-size:10px;"> · ${mtbEsc(it.groupKey)}</span>` : ''}</span>
                 </td>
                 <td style="padding:3px 5px;width:54px;"><span ${thumbnailAction} style="display:block;padding:0;border:1px solid rgba(255,255,255,0.16);border-radius:3px;overflow:hidden;background:#05070a;cursor:${isImagePreview ? 'pointer' : 'default'};">${thumbnailHtml}</span></td>
-                <td style="padding:5px 8px;color:#cbd5e1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px;" title="${mtbEsc(it.origName)}">
+                <td style="padding:5px 8px;color:#cbd5e1;white-space:normal;overflow-wrap:anywhere;word-break:break-word;min-width:150px;" title="${mtbEsc(it.origName)}">
                     ${mtbEsc(it.origName)}${copyBadge}${adjacentBadge}
                 </td>
                 <td style="padding:5px 4px;color:#64748b;text-align:center;width:16px;">→</td>
-                <td style="padding:5px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px;" title="${mtbEsc(it.newName)}">
+                <td style="padding:5px 8px;white-space:normal;overflow-wrap:anywhere;word-break:break-word;min-width:240px;" title="${mtbEsc(it.newName)}">
                     <span style="${!isSelected ? 'color:#94a3b8;' : (it.conflict ? 'color:#ef4444;font-weight:700;background:rgba(239,68,68,0.25);padding:1px 5px;border-radius:4px;' : 'color:#4ade80;font-weight:600;')}">
                         ${mtbEsc(it.newName)} ${it.conflict ? '⚠️ 重名冲突' : ''}
                     </span>
                     ${destDisplay}
                 </td>
                 <td style="padding:5px 8px;width:145px;text-align:right;white-space:nowrap;">
+                    ${visualReviewBatchRenameState.onlySelected ? `<label style="display:inline-flex;align-items:center;gap:3px;margin-right:5px;font-size:10px;color:${isRenameSelected ? '#86efac' : '#94a3b8'};cursor:pointer;" title="只有勾选的素材会被批量重命名"><input type="checkbox" ${isRenameSelected ? 'checked' : ''} onchange="visualReviewToggleBatchRenameFile('${encodedPath}')"> 改名</label>` : ''}
+                    <select onchange="visualReviewSetFileOperationMode('${encodedPath}',this.value)" onclick="event.stopPropagation()" style="max-width:58px;padding:2px 2px;font-size:10px;background:${it.copyMode ? 'rgba(56,189,248,.13)' : 'rgba(245,158,11,.12)'};border:1px solid ${it.copyMode ? 'rgba(56,189,248,.45)' : 'rgba(245,158,11,.45)'};border-radius:4px;color:${it.copyMode ? '#7dd3fc' : '#fbbf24'};" title="单文件操作模式会覆盖本组和默认设置"><option value="default" ${!visualReviewBatchRenameState.fileOperationModes[it.file.path] ? 'selected' : ''}>${it.copyMode ? '复制' : '移动'}</option><option value="copy" ${visualReviewBatchRenameState.fileOperationModes[it.file.path] === 'copy' ? 'selected' : ''}>复制</option><option value="move" ${visualReviewBatchRenameState.fileOperationModes[it.file.path] === 'move' ? 'selected' : ''}>移动</option></select>
                     ${visualReviewBatchRenameState.quotaEnabled ? `<button class="btn" onclick="event.stopPropagation();visualReviewToggleQuotaManualFile('${encodedPath}')" style="font-size:10px;padding:2px 6px;line-height:1.2;background:${isSelected ? 'rgba(34,197,94,.2)' : 'rgba(255,255,255,.06)'};border:1px solid ${isSelected ? 'rgba(74,222,128,.55)' : 'rgba(255,255,255,.18)'};color:${isSelected ? '#86efac' : '#cbd5e1'};border-radius:4px;" title="勾选后此文件才会参与定额导出">${isSelected ? '✓ 保留' : '□ 保留'}</button>` : ''}
                     <button class="btn btn-secondary" onclick="event.stopPropagation();visualReviewDuplicateCard('${encodedPath}')" style="font-size:10px;padding:2px 5px;line-height:1.2;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);border-radius:4px;" title="为此素材复制副本并智能错开插入序号队列">+副本</button>
                     <button class="btn btn-secondary" onclick="event.stopPropagation();visualReviewOpenMoveGroupModal('${encodedPath}')" style="font-size:10px;padding:2px 5px;line-height:1.2;background:rgba(168,85,247,0.15);border:1px solid rgba(168,85,247,0.35);color:#d8b4fe;border-radius:4px;margin-left:3px;" title="将此素材归入其他分组重新排序">⇄ 换组</button>
@@ -6874,15 +7376,15 @@ function visualReviewUpdateBatchRenamePreview() {
     });
 
     const tableHtml = `
-        <table style="width:100%;border-collapse:collapse;font-size:12px;text-align:left;">
+        <table style="width:100%;min-width:850px;table-layout:fixed;border-collapse:collapse;font-size:12px;text-align:left;">
             <thead style="position:sticky;top:0;z-index:4;background:#141822;box-shadow:0 2px 6px rgba(0,0,0,0.5);">
                 <tr style="background:rgba(255,255,255,0.06);border-bottom:1px solid rgba(255,255,255,0.12);color:#94a3b8;">
-                    <th style="padding:8px 8px;width:34px;">#</th>
+                    <th style="padding:8px 8px;width:72px;" title="可拖拽整行、填编号或点上下箭头调整；顺序决定新文件名中的整体序号">顺序 ↕</th>
                     <th style="padding:8px 8px;width:120px;">所在分组/文件夹</th>
                     <th style="padding:8px 5px;width:54px;">缩略图</th>
-                    <th style="padding:8px 8px;width:160px;">当前原文件名</th>
+                    <th style="padding:8px 8px;width:19%;">当前原文件名</th>
                     <th style="padding:8px 4px;width:16px;text-align:center;">→</th>
-                    <th style="padding:8px 8px;">新文件名 / 导出目标</th>
+                    <th style="padding:8px 8px;width:31%;">新文件名 / 导出目标</th>
                     <th style="padding:8px 8px;width:145px;text-align:right;">保留 / 操作</th>
                 </tr>
             </thead>
@@ -6900,26 +7402,28 @@ function visualReviewUpdateBatchRenamePreview() {
     container.scrollTop = previousScrollTop;
 
     if (execBtn) {
-        const hasBlockingConflict = conflictCount > 0 && !visualReviewBatchRenameState.copyMode;
-        const noSelection = visualReviewBatchRenameState.quotaEnabled && items.length === 0;
+        const hasBlockingConflict = items.some(it => it.conflict && !it.copyMode);
+        const noSelection = (visualReviewBatchRenameState.quotaEnabled || visualReviewBatchRenameState.onlySelected) && items.length === 0;
         execBtn.disabled = hasBlockingConflict || noSelection;
         if (execMoveBtn) execMoveBtn.disabled = hasBlockingConflict || noSelection;
 
         let btnLabel = `🚀 仅执行重命名 (${items.length} 个文件)`;
-        if (visualReviewBatchRenameState.quotaEnabled && visualReviewBatchRenameState.exportDestDir) {
-            btnLabel = visualReviewBatchRenameState.copyMode
-                ? `📤 复制导出并重命名 (${items.length} 个文件)`
-                : `🚀 移动导出并重命名 (${items.length} 个文件)`;
+        if (visualReviewBatchRenameState.exportDestDir) {
+            const copyCount = items.filter(item => item.copyMode).length;
+            const moveCount = items.length - copyCount;
+            btnLabel = copyCount && moveCount
+                ? `📤 执行复制 ${copyCount} / 移动 ${moveCount} (${items.length} 个)`
+                : (copyCount ? `📤 复制到目标并重命名 (${items.length} 个文件)` : `🚀 移动到目标并重命名 (${items.length} 个文件)`);
         }
 
         execBtn.textContent = noSelection
-            ? '请在右侧勾选要保留的素材'
+            ? (visualReviewBatchRenameState.onlySelected ? '请勾选要重命名的素材' : '请在右侧勾选要保留的素材')
             : hasBlockingConflict
             ? '⚠️ 存在重名冲突无法执行'
             : btnLabel;
         if (execMoveBtn) {
             execMoveBtn.textContent = noSelection
-                ? '请先勾选要保留的素材'
+                ? (visualReviewBatchRenameState.onlySelected ? '请勾选要重命名的素材' : '请先勾选要保留的素材')
                 : hasBlockingConflict
                 ? '⚠️ 存在重名冲突无法执行'
                 : `📦 重命名并移动未选素材`;
@@ -6927,21 +7431,24 @@ function visualReviewUpdateBatchRenamePreview() {
     }
 }
 
-function visualReviewReplaceRenamedPath(oldPath, newPath, newName, newRelPath) {
+function visualReviewReplaceRenamedPath(oldPath, newPath, newName, newRelPath, tabId = visualReviewActiveTabId) {
     if (!oldPath || !newPath || oldPath === newPath) return;
-    const status = visualReviewState.statuses[oldPath];
+    visualReviewSyncActiveTab();
+    const targetTab = visualReviewTabs.find(tab => tab.id === tabId);
+    const targetState = targetTab?.state || visualReviewState;
+    const status = targetState.statuses[oldPath];
     if (status) {
-        visualReviewState.statuses[newPath] = status;
-        delete visualReviewState.statuses[oldPath];
+        targetState.statuses[newPath] = status;
+        delete targetState.statuses[oldPath];
     }
-    if (visualReviewState.activePath === oldPath) {
-        visualReviewState.activePath = newPath;
+    if (targetState.activePath === oldPath) {
+        targetState.activePath = newPath;
     }
-    if (Array.isArray(visualReviewState.newlyAddedPaths)) {
-        const idx = visualReviewState.newlyAddedPaths.indexOf(oldPath);
-        if (idx !== -1) visualReviewState.newlyAddedPaths[idx] = newPath;
+    if (Array.isArray(targetState.newlyAddedPaths)) {
+        const idx = targetState.newlyAddedPaths.indexOf(oldPath);
+        if (idx !== -1) targetState.newlyAddedPaths[idx] = newPath;
     }
-    visualReviewState.suites.forEach(suite => {
+    targetState.suites.forEach(suite => {
         suite.groups.forEach(group => {
             group.files.forEach(file => {
                 if (file.path === oldPath) {
@@ -6956,6 +7463,7 @@ function visualReviewReplaceRenamedPath(oldPath, newPath, newName, newRelPath) {
             });
         });
     });
+    if (tabId === visualReviewActiveTabId) Object.assign(visualReviewState, targetState);
 }
 
 async function visualReviewExecuteBatchRename(opts = {}) {
@@ -6964,7 +7472,7 @@ async function visualReviewExecuteBatchRename(opts = {}) {
     if (!items.length) return showToast('没有符合条件的素材需要重命名', 'warning');
 
     const conflicts = items.filter(it => it.conflict);
-    if (conflicts.length > 0 && !visualReviewBatchRenameState.copyMode) {
+    if (conflicts.some(it => !it.copyMode)) {
         return showToast(`存在 ${conflicts.length} 个重名冲突！请调整序号规则以防覆盖`, 'error');
     }
 
@@ -6981,7 +7489,10 @@ async function visualReviewExecuteBatchRename(opts = {}) {
         }
     }
 
-    const shouldMoveRejects = Boolean(opts.moveRejects || visualReviewBatchRenameState.moveRejectsAfter);
+    // “移动未选素材”有审核批次目录语义，只能针对当前标签；跨文件夹时仅做改名/复制。
+    const shouldMoveRejects = !visualReviewBatchRenameState.onlySelected
+        && visualReviewBatchRenameState.scope !== 'all_tabs'
+        && Boolean(opts.moveRejects || visualReviewBatchRenameState.moveRejectsAfter);
 
     const execBtn = document.getElementById('vr-rename-exec-btn');
     const execMoveBtn = document.getElementById('vr-rename-exec-move-btn');
@@ -6991,7 +7502,7 @@ async function visualReviewExecuteBatchRename(opts = {}) {
 
     let successCount = 0;
     let failCount = 0;
-    const isCopy = visualReviewBatchRenameState.copyMode;
+    let hasMovedFile = false;
 
     for (let i = 0; i < items.length; i++) {
         const item = items[i];
@@ -7009,14 +7520,15 @@ async function visualReviewExecuteBatchRename(opts = {}) {
             await window.electronAPI.apiCall('file/rename', {
                 source: item.file.path,
                 target: targetPath,
-                copy: isCopy
+                copy: item.copyMode
             });
-            if (!isCopy) {
+            if (!item.copyMode) {
                 let relAfter = '';
-                if (visualReviewBatchRenameState.exportDestDir && visualReviewState.root) {
+                if (visualReviewBatchRenameState.exportDestDir && item.sourceRoot) {
                     relAfter = targetPath;
                 }
-                visualReviewReplaceRenamedPath(item.file.path, targetPath, item.newName, relAfter);
+                visualReviewReplaceRenamedPath(item.file.path, targetPath, item.newName, relAfter, item.tabId);
+                hasMovedFile = true;
             }
             successCount++;
         } catch (err) {
@@ -7025,8 +7537,16 @@ async function visualReviewExecuteBatchRename(opts = {}) {
         }
     }
 
-    if (!isCopy) {
-        visualReviewPersist();
+    if (hasMovedFile) {
+        // 多个拖入文件夹可一次改名；每个目录都写回自己的审核记录，避免下次刷新丢状态。
+        visualReviewSyncActiveTab();
+        visualReviewTabs.forEach(tab => {
+            const tabState = tab.state;
+            if (!tabState?.root) return;
+            const data = { version: 1, root: tabState.root, savedAt: new Date().toISOString(), suites: tabState.suites, statuses: tabState.statuses, batchName: tabState.batchName, groupHoverPreview: tabState.groupHoverPreview !== false, groupingMode: tabState.groupingMode || 'name' };
+            try { localStorage.setItem(`visual-review:${tabState.root}`, JSON.stringify(data)); } catch (_) {}
+            window.electronAPI?.apiCall?.('media/visual-review-save', { rootDir: tabState.root, batchName: tabState.batchName, session: data }).catch?.(() => {});
+        });
         visualReviewRender();
     }
 
@@ -7268,6 +7788,48 @@ async function visualReviewLoadDroppedFolder(folderPath, { silent = false } = {}
         return false;
     }
 }
+async function visualReviewLoadDroppedFiles(filePaths, { silent = false } = {}) {
+    const uniquePaths = [...new Set((filePaths || []).filter(Boolean))];
+    const mediaList = uniquePaths.map(filePath => ({
+        path: filePath,
+        name: String(filePath).split(/[/\\]/).pop() || String(filePath),
+        // 固定放入“直接拖入”套，追加到文件夹审核时不会混进该文件夹原有的套。
+        relativePath: `直接拖入/${String(filePath).split(/[/\\]/).pop() || String(filePath)}`,
+        isDirectory: false,
+    })).filter(visualReviewIsSupportedMedia);
+    if (!mediaList.length) {
+        if (!silent) showToast('没有找到支持的图片或视频文件', 'warning');
+        return false;
+    }
+    const existingFiles = visualReviewState.suites.flatMap(suite => suite.groups.flatMap(group => group.files));
+    const existingPaths = new Set(existingFiles.map(file => file.path));
+    const additions = mediaList.filter(file => !existingPaths.has(file.path));
+    if (!additions.length) {
+        if (!silent) showToast('这些文件已经在当前审核标签中', 'info');
+        return false;
+    }
+    // 已有审核标签时直接追加，便于分多次从 Finder 补素材；无标签才新建。
+    if (!visualReviewState.suites.length) {
+        const label = `直接拖入 ${mediaList.length} 个文件`;
+        visualReviewStartTab(label);
+        visualReviewState.root = '';
+    }
+    visualReviewState.suites = visualReviewBuildSuites([...existingFiles, ...additions], visualReviewState.groupingMode);
+    visualReviewState.suiteIndex = 0;
+    visualReviewState.current = 0;
+    if (!existingFiles.length) visualReviewState.statuses = {};
+    visualReviewState.batchName = `审核批次_${new Date().toISOString().slice(0,16).replace(/[:T]/g, '-')}`;
+    visualReviewRender();
+    if (!silent) showToast(`已追加 ${additions.length} 个图片/视频到当前审核标签`, 'success');
+    return true;
+}
+async function visualReviewChooseFiles() {
+    const paths = await window.electronAPI?.selectFiles?.({
+        properties: ['openFile', 'multiSelections'],
+        filters: [{ name: '图片和视频', extensions: ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'avif', 'svg', 'mp4', 'mov', 'mkv', 'avi', 'webm', 'm4v'] }],
+    });
+    if (paths?.length) await visualReviewLoadDroppedFiles(paths);
+}
 async function visualReviewHandleFolderDrop(event) {
     event.preventDefault();
     event.stopPropagation();
@@ -7281,13 +7843,16 @@ async function visualReviewHandleFolderDrop(event) {
     if (!droppedPaths.length) return showToast('没有取得拖入文件夹的路径；请重启热启动窗口后再试', 'warning');
 
     const folderPaths = droppedPaths.filter(folderPath => !window.electronAPI?.isDirectory || window.electronAPI.isDirectory(folderPath));
-    if (!folderPaths.length) return showToast('请拖入文件夹，不是单个文件', 'warning');
+    const directFilePaths = droppedPaths.filter(filePath => window.electronAPI?.isDirectory && !window.electronAPI.isDirectory(filePath));
     const loaded = [];
     for (const folderPath of folderPaths) {
         if (await visualReviewLoadDroppedFolder(folderPath, { silent: true })) loaded.push(folderPath);
     }
+    const directLoaded = await visualReviewLoadDroppedFiles(directFilePaths, { silent: true });
     if (loaded.length) showToast(`已添加 ${loaded.length} 个审核文件夹（每个文件夹一个审核标签）`, 'success');
     if (loaded.length < folderPaths.length) showToast(`${folderPaths.length - loaded.length} 个文件夹读取失败`, 'warning');
+    if (directLoaded) showToast(`已添加 ${directFilePaths.length} 个直接拖入的图片/视频`, 'success');
+    if (!loaded.length && !directLoaded) showToast('没有找到可审核的文件夹、图片或视频', 'warning');
 }
 function visualReviewSetDropActive(event, active) {
     event.preventDefault();
@@ -7609,6 +8174,13 @@ function visualReviewSuiteSection(suite, suiteIndex, globalOffset = 0) {
                 const passCount = group.files.filter(f => visualReviewState.statuses[f.path] === 'pass').length;
                 const usableCount = group.files.filter(f => visualReviewState.statuses[f.path] === 'usable').length;
                 const badge = visualReviewFormatGroupBadge(passCount, usableCount);
+                const nameSubgroups = visualReviewState.groupingMode === 'folder' ? visualReviewNameSubgroups(group.files) : [];
+                const cardContent = nameSubgroups.length
+                    ? `<div style="display:flex;flex-wrap:wrap;gap:5px;align-items:flex-start;padding:1px 1px 5px;">${nameSubgroups.map(subgroup => {
+                        const color = visualReviewNameGroupColor(subgroup.key);
+                        return `<div style="display:flex;flex-direction:column;flex:0 0 auto;max-width:100%;border:1px solid ${color};border-radius:5px;padding:4px;background:color-mix(in srgb, ${color} 6%, transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb, ${color} 16%, transparent);"><div style="font-size:10px;color:${color};font-weight:700;margin:0 1px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${mtbEsc(subgroup.key)} · ${subgroup.files.length} 个</div><div style="display:flex;flex-wrap:wrap;gap:6px;">${subgroup.files.map(visualReviewCard).join('')}</div></div>`;
+                    }).join('')}</div>`
+                    : `<div style="display:flex;flex-wrap:wrap;gap:6px;padding:1px 1px 5px;">${group.files.map(visualReviewCard).join('')}</div>`;
                 return `<section class="${passCount > 0 ? 'vr-group-has-pass' : ''}" id="visual-review-group-${suiteIndex}-${originalGroupIndex}" style="min-width:0;${group.files.length > 3 ? 'grid-column:1 / -1;' : ''}border:1px solid var(--border-color);border-radius:7px;padding:6px;background:var(--bg-tertiary);">
                     <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;flex-wrap:wrap;">
                         <strong style="min-width:100px;">${globalOffset + originalGroupIndex + 1}. ${mtbEsc(group.key)}</strong>
@@ -7616,7 +8188,7 @@ function visualReviewSuiteSection(suite, suiteIndex, globalOffset = 0) {
                         <span data-group-badge="${suiteIndex}-${originalGroupIndex}" style="${badge.style}">${badge.text}</span>
                         <button class="btn btn-secondary" style="padding:2px 8px;font-size:11px;margin-left:auto;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.18);border-radius:4px;color:#e2e8f0;cursor:pointer;display:inline-flex;align-items:center;gap:4px;" onclick="visualReviewOpenBatchRenameModal({ suiteIndex: ${suiteIndex}, groupIndex: ${originalGroupIndex} })" title="重命名本组素材">🏷️ 重命名本组</button>
                     </div>
-                    <div style="display:flex;flex-wrap:wrap;gap:6px;padding:1px 1px 5px;">${group.files.map(visualReviewCard).join('')}</div>
+                    ${cardContent}
                 </section>`;
             }).join('')}
         </div>` : `<div class="hint" style="padding:10px 14px;border-radius:6px;background:rgba(74,222,128,0.06);border:1px dashed rgba(74,222,128,0.25);color:#86efac;font-size:13px;font-weight:600;">${visualReviewState.view === 'pass' ? '本套暂时没有已选素材。' : (isNeedsReview ? '🎉 本套所有片段组均已选出合格/勉强素材！（已隐藏全部完成组）' : '本套没有可审核素材。')}</div>`}
@@ -7631,7 +8203,8 @@ function visualReviewRender() {
         <strong>审核标签：</strong>${visualReviewTabs.map(tab => `<span style="display:inline-flex;align-items:stretch;"><button class="btn ${tab.id === visualReviewActiveTabId ? 'btn-primary' : 'btn-secondary'}" title="${mtbEsc(tab.state.root)}" onclick="visualReviewActivateTab('${tab.id}')" style="border-radius:6px 0 0 6px;">${mtbEsc(tab.label)}</button><button class="btn btn-secondary" title="关闭此审核标签（不删除文件，也不删除审核记录）" aria-label="关闭 ${mtbEsc(tab.label)}" onclick="event.stopPropagation();visualReviewCloseTab('${tab.id}')" style="min-width:32px;padding:0 8px;border-left:0;border-radius:0 6px 6px 0;font-size:16px;">×</button></span>`).join('')}
         <button class="btn btn-secondary" onclick="visualReviewChooseFolder()">＋ 添加文件夹</button>
         <button class="btn btn-secondary" onclick="visualReviewRefreshCurrentFolder()">↻ 刷新当前文件夹</button>
-        <button class="btn btn-primary" onclick="visualReviewOpenBatchRenameModal()" style="margin-left:auto;font-weight:700;display:inline-flex;align-items:center;gap:5px;background:linear-gradient(135deg,#3b82f6,#2563eb);border:none;box-shadow:0 2px 8px rgba(37,99,235,0.35);">🏷️ 批量重命名</button>
+        ${visualReviewTabs.length > 1 ? `<button class="btn btn-secondary" onclick="visualReviewOpenBatchRenameModal({ scope: 'all_tabs' })" title="一次处理所有已拖入的审核文件夹；各文件夹内部序号独立重置">🏷️ 重命名所有文件夹 (${visualReviewTabs.length})</button>` : ''}
+        <button class="btn btn-primary" onclick="visualReviewOpenBatchRenameModal({ scope: 'all' })" style="margin-left:auto;font-weight:700;display:inline-flex;align-items:center;gap:5px;background:linear-gradient(135deg,#3b82f6,#2563eb);border:none;box-shadow:0 2px 8px rgba(37,99,235,0.35);">🏷️ 重命名当前文件夹</button>
     </div>` : '';
     if (!visualReviewState.suites.length) {
         root.innerHTML = `${tabBar}<div class="hint" style="padding:14px 0;">选择一个总文件夹后，会递归读取子文件夹中的视频和图片素材。每个一级子文件夹是一套。</div>`;
@@ -8047,6 +8620,7 @@ async function visualReviewOpenReviewFolder(selectedOnly) {
     if (!result?.success) showToast(selectedOnly ? '合格文件夹尚未生成，请先点击“收集合格＋勉强”' : '打开审核文件夹失败', 'error');
 }
 window.visualReviewChooseFolder = visualReviewChooseFolder;
+window.visualReviewChooseFiles = visualReviewChooseFiles;
 window.visualReviewRefreshCurrentFolder = visualReviewRefreshCurrentFolder;
 window.visualReviewActivateTab = visualReviewActivateTab;
 window.visualReviewCloseTab = visualReviewCloseTab;
@@ -8088,20 +8662,37 @@ window.visualReviewMoveComponent = visualReviewMoveComponent;
 window.visualReviewToggleComp = visualReviewToggleComp;
 window.visualReviewUpdateCompParam = visualReviewUpdateCompParam;
 window.visualReviewSetRenameScope = visualReviewSetRenameScope;
+window.visualReviewSetIgnoreFoldersForOrdering = visualReviewSetIgnoreFoldersForOrdering;
 window.visualReviewSetRenameSeparator = visualReviewSetRenameSeparator;
 window.visualReviewSetRenameFind = visualReviewSetRenameFind;
 window.visualReviewSetRenameReplace = visualReviewSetRenameReplace;
+window.visualReviewSetRenameTrimStart = visualReviewSetRenameTrimStart;
+window.visualReviewSetRenameTrimEnd = visualReviewSetRenameTrimEnd;
+window.visualReviewSetRenameKeepStart = visualReviewSetRenameKeepStart;
+window.visualReviewSetRenameKeepEnd = visualReviewSetRenameKeepEnd;
 window.visualReviewSetRenameRegex = visualReviewSetRenameRegex;
 window.visualReviewSetRenameCaseSensitive = visualReviewSetRenameCaseSensitive;
 window.visualReviewSetRenameCaseMode = visualReviewSetRenameCaseMode;
 window.visualReviewSetRenameCopyMode = visualReviewSetRenameCopyMode;
 window.visualReviewSetRenameStatusFilter = visualReviewSetRenameStatusFilter;
+window.visualReviewSetOnlySelected = visualReviewSetOnlySelected;
+window.visualReviewToggleBatchRenameFile = visualReviewToggleBatchRenameFile;
+window.visualReviewSetAllBatchRenameFiles = visualReviewSetAllBatchRenameFiles;
+window.visualReviewSetGroupBatchRenameSelection = visualReviewSetGroupBatchRenameSelection;
+window.visualReviewSortBatchRenameByName = visualReviewSortBatchRenameByName;
+window.visualReviewSetFolderOperationMode = visualReviewSetFolderOperationMode;
+window.visualReviewSetFileOperationMode = visualReviewSetFileOperationMode;
+window.visualReviewSetBatchRenamePosition = visualReviewSetBatchRenamePosition;
+window.visualReviewMoveBatchRenameItem = visualReviewMoveBatchRenameItem;
+window.visualReviewStartBatchRenameDrag = visualReviewStartBatchRenameDrag;
+window.visualReviewDropBatchRenameItem = visualReviewDropBatchRenameItem;
 window.visualReviewSetQuotaEnabled = visualReviewSetQuotaEnabled;
 window.visualReviewSetQuotaCount = visualReviewSetQuotaCount;
 window.visualReviewSetQuotaStrategy = visualReviewSetQuotaStrategy;
 window.visualReviewToggleQuotaManualFile = visualReviewToggleQuotaManualFile;
 window.visualReviewSelectExportDir = visualReviewSelectExportDir;
 window.visualReviewClearExportDir = visualReviewClearExportDir;
+window.visualReviewSetPreserveTargetHierarchy = visualReviewSetPreserveTargetHierarchy;
 window.visualReviewToggleShortageDetails = visualReviewToggleShortageDetails;
 window.visualReviewExecuteBatchRename = visualReviewExecuteBatchRename;
 window.visualReviewDuplicateCard = visualReviewDuplicateCard;
@@ -11301,22 +11892,7 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 async function saveGladiaKeys() {
-    const keysText = document.getElementById('gladia-keys').value;
-    const keys = keysText.split('\n').map(k => k.trim()).filter(Boolean);
-
-    try {
-        const response = await apiFetch(`${API_BASE}/settings/gladia-keys`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ keys })
-        });
-
-        if (response.ok) {
-            showToast('Gladia Keys 已保存！', 'success');
-        }
-    } catch (error) {
-        showToast('保存失败: ' + error.message, 'error');
-    }
+    return saveTranscriptionProviders();
 }
 
 async function saveGeminiKeys() {
@@ -15793,12 +16369,30 @@ function filterAutoEditSourceVideos(entries, videoExt) {
         .sort((a, b) => String(a.relativePath || a.name).localeCompare(String(b.relativePath || b.name), undefined, { numeric: true, sensitivity: 'base' }));
 }
 
+// 批量选择时可能同时选到父目录和其中的子目录。扫描本身是递归的，若不在
+// 此处去重，父批次会把子批次的原素材再拿一遍，造成看似“上一批视频串进来”。
+function normalizeAutoEditBatchPath(value) {
+    return String(value || '').replace(/\\/g, '/').replace(/\/+$|^\/+$/g, '').normalize('NFC').toLocaleLowerCase();
+}
+
+function isAutoEditBatchPathInside(childPath, parentPath) {
+    const child = normalizeAutoEditBatchPath(childPath);
+    const parent = normalizeAutoEditBatchPath(parentPath);
+    return Boolean(child && parent && (child === parent || child.startsWith(`${parent}/`)));
+}
+
 async function loadAutoEditBatchFolders(dirs, { replace = false } = {}) {
     const videoExt = /\.(mp4|mov|mkv|avi|wmv|flv|webm|m4v)$/i;
     const sourceScripts = autoEditBatchScriptCells.slice();
-    if (replace) autoEditBatchTasks = [];
+    if (replace) {
+        resetAutoEditBatchReview();
+        autoEditBatchTasks = [];
+        // 兼容旧版单独保存的批量清单；不清除它会在下一次启动时把很久以前
+        // 的文件夹重新塞回当前任务，用户只拖一个新文件夹也会被一起导出。
+        try { localStorage.removeItem('videokit_autoedit_batch_review'); } catch (_) {}
+    }
     autoEditBatchSmartPairingComplete = false;
-    const existingFolders = new Set(autoEditBatchTasks.map(task => String(task.folder || '').toLocaleLowerCase()));
+    const existingFolders = new Set(autoEditBatchTasks.map(task => normalizeAutoEditBatchPath(task.folder)));
     // Native multi-folder dialogs do not guarantee click order (macOS commonly
     // returns Finder order). Use one deterministic natural order so task N,
     // pasted script cell N and Reels task N always refer to the same folder.
@@ -15810,12 +16404,31 @@ async function loadAutoEditBatchFolders(dirs, { replace = false } = {}) {
             return compared || a.selectionIndex - b.selectionIndex;
         })
         .map(item => item.folder);
+    // 已存在任务和本次选择的所有目录都参与重叠判断；子目录拥有其内部素材，
+    // 父目录只保留不属于任何已选子目录的文件。
+    const selectedFolderKeys = [...new Set([
+        ...autoEditBatchTasks.map(task => normalizeAutoEditBatchPath(task.folder)),
+        ...orderedDirs.map(normalizeAutoEditBatchPath),
+    ].filter(Boolean))];
+    const claimedClipPaths = new Set(autoEditBatchTasks.flatMap(task => task.clips || []).map(normalizeAutoEditBatchPath));
     let added = 0;
+    let excludedOverlapCount = 0;
     for (const folder of orderedDirs) {
-        const folderKey = String(folder).toLocaleLowerCase();
+        const folderKey = normalizeAutoEditBatchPath(folder);
         if (existingFolders.has(folderKey)) continue;
         const entries = await scanAutoEditBatchFolderRecursive(folder);
-        const clips = filterAutoEditSourceVideos(entries, videoExt).map(x => x.path);
+        const nestedSelectedFolders = selectedFolderKeys.filter(other => other !== folderKey && isAutoEditBatchPathInside(other, folderKey));
+        const candidates = filterAutoEditSourceVideos(entries, videoExt);
+        const clips = candidates
+            .filter(entry => !nestedSelectedFolders.some(childFolder => isAutoEditBatchPathInside(entry.path, childFolder)))
+            .map(entry => entry.path)
+            .filter(clipPath => {
+                const clipKey = normalizeAutoEditBatchPath(clipPath);
+                if (!clipKey || claimedClipPaths.has(clipKey)) return false;
+                claimedClipPaths.add(clipKey);
+                return true;
+            });
+        excludedOverlapCount += candidates.length - clips.length;
         const index = autoEditBatchTasks.length;
         const script = sourceScripts[index] || '';
         const name = window.electronAPI.pathBasename(folder);
@@ -15834,6 +16447,7 @@ async function loadAutoEditBatchFolders(dirs, { replace = false } = {}) {
     for (const task of tasksNeedingThumbnail) {
         if (task.clips[0]) { task.thumbnail = await batchCutGenThumb(task.clips[0]); renderAutoEditBatchTasks(); }
     }
+    if (excludedOverlapCount) showToast(`已排除 ${excludedOverlapCount} 个与其他批次重叠的素材，避免跨批次串入`, 'info', 7000);
     return added;
 }
 
@@ -15845,7 +16459,7 @@ function setAutoEditBatchFolderDropActive(active) {
     zone.style.borderColor = active ? '#60a5fa' : 'rgba(96,165,250,.6)';
     zone.style.background = active ? 'rgba(59,130,246,.18)' : 'rgba(59,130,246,.06)';
     zone.style.boxShadow = active ? '0 0 0 3px rgba(59,130,246,.18)' : 'none';
-    if (title) title.textContent = active ? '松开鼠标，添加这些文件夹' : '把一个或多个任务文件夹拖到这里';
+    if (title) title.textContent = active ? '松开鼠标，开始本次批量任务' : '把本次的一个或多个任务文件夹拖到这里';
 }
 function autoEditBatchDragHasFiles(event) {
     return Array.from(event.dataTransfer?.types || []).includes('Files');
@@ -15881,18 +16495,33 @@ async function handleAutoEditBatchFolderDrop(event) {
     const dirs = [...new Set(droppedPaths)].filter(path => window.electronAPI?.isDirectory?.(path));
     if (!dirs.length) return showToast('请拖入文件夹，不是视频文件', 'error');
     const rejectedCount = droppedPaths.length - dirs.length;
-    const added = await loadAutoEditBatchFolders(dirs, { replace: false });
-    if (!added) return showToast('这些文件夹已经在任务列表中', 'info');
-    showToast(`已拖入 ${added} 个文件夹${rejectedCount ? `，忽略 ${rejectedCount} 个非文件夹项目` : ''}`, 'success');
+    const added = await loadAutoEditBatchFolders(dirs, { replace: true });
+    if (!added) return showToast('没有在这些文件夹中找到可用视频', 'info');
+    showToast(`已载入本次 ${added} 个文件夹，旧批次不会参与${rejectedCount ? `；忽略 ${rejectedCount} 个非文件夹项目` : ''}`, 'success');
 }
+function resetAutoEditBatchReview() {
+    clearTimeout(autoEditProjectPersistTimer);
+    autoEditProjectPersistTimer = null;
+    autoEditActiveBatchIndex = -1;
+    autoEditLastResult = null;
+    autoEditFiles = [];
+    autoEditResultFiles = [];
+    document.getElementById('autoedit-timeline-review-modal')?.remove();
+    document.getElementById('autoedit-result-section')?.classList.add('hidden');
+}
+
 function clearAutoEditBatchTasks() {
+    if (autoEditBatchRunning || autoEditActiveRequestIds.size) return showToast('请等待当前任务完成后清空', 'info');
+    resetAutoEditBatchReview();
     autoEditBatchTasks = [];
     autoEditBatchScriptCells = [];
     autoEditBatchUnmatchedScripts = [];
     autoEditBatchSmartPairingComplete = false;
+    try { localStorage.removeItem('videokit_autoedit_batch_review'); } catch (_) {}
     const el = document.getElementById('autoedit-batch-paste'); if (el) el.value = '';
     const names = document.getElementById('autoedit-batch-output-names'); if (names) names.value = '';
     renderAutoEditBatchTasks();
+    saveAutoEditWorkspaceState();
 }
 function updateAutoEditBatchScript(index, value) {
     if (!autoEditBatchTasks[index]) return;
@@ -16597,8 +17226,14 @@ window.refreshAutoEditBatchSelectedTaskFolders = refreshAutoEditBatchSelectedTas
 function restoreAutoEditMissingBlockAssignments(data, previous, aliases = []) {
     const normalize = value => String(value || '').replace(/\\/g, '/');
     const oldSegments = previous?.segments || [];
+    let restoredCount = 0;
     for (const block of data.missing_blocks || []) {
-        const old = (previous?.missing_blocks || []).find(item => item.review_assignment && item.startLine === block.startLine && item.endLine === block.endLine && normalizeAutoEditReviewText(item.text) === normalizeAutoEditReviewText(block.text));
+        const oldCandidates = (previous?.missing_blocks || []).filter(item => item.review_assignment
+            && normalizeAutoEditReviewText(item.text) === normalizeAutoEditReviewText(block.text));
+        // 文案本身相同才可恢复；优先保持原行号。重分析可能因断行或边界校正
+        // 改变行号，此时只有唯一同文案的旧处理记录才允许沿用，避免错贴状态。
+        const old = oldCandidates.find(item => item.startLine === block.startLine && item.endLine === block.endLine)
+            || (oldCandidates.length === 1 ? oldCandidates[0] : null);
         if (!old) continue;
         const targets = (old.review_assignment.targets || []).map(target => {
             let source = normalize(target.source || oldSegments.find(segment => Number(segment.source_index || segment.index) === Number(target.source_index))?.source);
@@ -16606,8 +17241,12 @@ function restoreAutoEditMissingBlockAssignments(data, previous, aliases = []) {
             const segment = (data.segments || []).find(item => normalize(item.source) === source);
             return segment ? { ...target, source: segment.source, source_index: segment.source_index || segment.index } : null;
         });
-        if (targets.length && targets.every(Boolean)) block.review_assignment = { ...old.review_assignment, targets };
+        if (targets.length && targets.every(Boolean)) {
+            block.review_assignment = { ...old.review_assignment, targets };
+            restoredCount++;
+        }
     }
+    return restoredCount;
 }
 function hasAutoEditHumanReview(segment) {
     return Boolean(segment && (segment.manually_modified || segment.review_acknowledged || segment.is_hook
@@ -16625,6 +17264,8 @@ function renderAutoEditBatchMatchResult(task) {
     const hasIssues = summary.error > 0 || summary.warning > 0 || summary.missingBlocks > 0;
     const orderedSegments = segments.slice().sort((a, b) => Number(a.source_index || a.index) - Number(b.source_index || b.index));
     const missingBlocks = Array.isArray(task.result.missing_blocks) ? task.result.missing_blocks : [];
+    const duplicateSegments = orderedSegments.filter(segment => Number(segment?.duplicate_of_source_index) > 0 && segment?.review_acknowledged !== true);
+    const ordinaryWarnings = orderedSegments.filter(segment => segment?.review_acknowledged !== true && segment?.status === 'warning' && !(Number(segment?.duplicate_of_source_index) > 0));
     const missingPlacement = missingBlocks.map((block, index) => {
         const startLine = Number(block.startLine) + 1;
         const endLine = Number(block.endLine) + 1;
@@ -16638,9 +17279,24 @@ function renderAutoEditBatchMatchResult(task) {
     });
     const renderMissingRow = item => {
         const { block, index, startLine, endLine, previous, next } = item;
-
-        const label = previous && next ? `位于片段 #${previous} 与 #${next} 之间` : (previous ? `位于片段 #${previous} 后` : (next ? `位于片段 #${next} 前` : '位置待确认'));
-        return `<div class="ae-batch-match-row" data-batch-match-state="${block.review_assignment ? 'handled' : 'failed'}" style="grid-column:1/-1;margin:3px 0;padding:6px 8px;border-left:3px solid ${block.review_assignment ? '#51cf66' : (isMultilingualV2 ? '#fbbf24' : '#ff6b6b')};border-radius:4px;background:${block.review_assignment ? 'rgba(81,207,102,.08)' : (isMultilingualV2 ? 'rgba(251,191,36,.08)' : 'rgba(255,107,107,.08)')};font-size:11px;color:${block.review_assignment ? '#86efac' : (isMultilingualV2 ? '#fcd34d' : '#fca5a5')};"><strong>${block.review_assignment ? '✓ 已归属（审核页可撤销）' : (isMultilingualV2 ? '⚠️ 待确认文案' : '❌ 缺失文案')} #${index + 1}</strong> · ${escapeHtml(label)} · 第 ${startLine}${endLine > startLine ? `–${endLine}` : ''} 行<br><span style="white-space:pre-wrap;word-break:break-word;">${escapeHtml(block.text || '')}</span></div>`;
+        const segmentName = sourceIndex => {
+            const segment = orderedSegments.find(entry => Number(entry?.source_index || entry?.index) === Number(sourceIndex));
+            return String(segment?.source || '').split(/[/\\]/).pop() || `片段 #${sourceIndex}`;
+        };
+        const previousLabel = previous ? `#${previous}「${segmentName(previous)}」` : '';
+        const nextLabel = next ? `#${next}「${segmentName(next)}」` : '';
+        const label = previous && next ? `位于片段 ${previousLabel} 与 ${nextLabel} 之间` : (previous ? `位于片段 ${previousLabel} 后` : (next ? `位于片段 ${nextLabel} 前` : '位置待确认'));
+        const confirmedMissing = block.issue_type === 'confirmed_missing_script' || block.detection_method;
+        const issueLabel = block.review_assignment ? '✓ 已归属（审核页可撤销）'
+            : (confirmedMissing ? '❌ 确认缺失文案' : '⚠️ 归属待确认文案');
+        const explanation = block.review_assignment ? ''
+            : (confirmedMissing
+                ? '已核对所有素材识别全文及相邻片段边界，仍未被任何片段覆盖。'
+                : (block.issue_reason || '存在多个可能归属或识别证据不足，请试听相邻片段。'));
+        const border = block.review_assignment ? '#51cf66' : (confirmedMissing ? '#ff6b6b' : '#fbbf24');
+        const background = block.review_assignment ? 'rgba(81,207,102,.08)' : (confirmedMissing ? 'rgba(255,107,107,.08)' : 'rgba(251,191,36,.08)');
+        const color = block.review_assignment ? '#86efac' : (confirmedMissing ? '#fca5a5' : '#fcd34d');
+        return `<div class="ae-batch-match-row" data-batch-match-state="${block.review_assignment ? 'handled' : 'failed'}" style="grid-column:1/-1;margin:3px 0;padding:6px 8px;border-left:3px solid ${border};border-radius:4px;background:${background};font-size:11px;color:${color};"><strong>${issueLabel} #${index + 1}</strong> · ${escapeHtml(label)} · 第 ${startLine}${endLine > startLine ? `–${endLine}` : ''} 行<br><span style="display:block;margin-top:2px;color:${color};opacity:.9;">${escapeHtml(explanation)}</span><span style="display:block;margin-top:3px;white-space:pre-wrap;word-break:break-word;">${escapeHtml(block.text || '')}</span></div>`;
     };
     const renderMissingWithCopy = item => `<div>${renderMissingRow(item)}<button class="btn btn-secondary" data-copy="${escapeHtml(encodeURIComponent('"' + (item.block.text || '') + '"'))}" onclick="copyAutoEditMissingText(decodeURIComponent(this.dataset.copy))">复制当前文案</button></div>`;
     const renderedMissing = new Set();
@@ -16656,10 +17312,15 @@ function renderAutoEditBatchMatchResult(task) {
         const color = handled ? '#86efac' : (status === 'ready' ? '#51cf66' : (status === 'error' ? '#ff6b6b' : '#ff9f43'));
         const fileName = String(segment?.source || '').split(/[/\\]/).pop() || `片段 #${index + 1}`;
         const similarity = Number.isFinite(Number(segment?.similarity)) ? `${Number(segment.similarity)}%` : '未知';
-        const reason = segment?.issue_reason || segment?.ambiguity || (status === 'ready' ? '匹配通过' : '需人工审核');
+        const duplicateOf = Number(segment?.duplicate_of_source_index) || null;
+        const reason = duplicateOf
+            ? `重复朗读：与片段 #${duplicateOf} 内容重复，已复用相同文案位置`
+            : (segment?.issue_reason || segment?.ambiguity || (status === 'ready' ? '匹配通过' : '需人工审核'));
         // 文件名是人工复核时最重要的信息；通过状态不再重复占一列，
         // 让长文件名完整换行显示，异常原因仍可在右侧看到。
-        const compactStatus = handled ? '已处理（审核页可撤销）' : status === 'ready'
+        const compactStatus = handled ? '已处理（审核页可撤销）' : duplicateOf
+            ? `🔁 重复片段 · 原片段 #${duplicateOf}`
+            : status === 'ready'
             ? `✓ ${escapeHtml(similarity)}`
             : `${icon} ${escapeHtml(similarity)} · ${escapeHtml(reason)}`;
         const encodedSource = encodeURIComponent(segment?.source || '');
@@ -16678,7 +17339,7 @@ function renderAutoEditBatchMatchResult(task) {
         + missingBlocks.filter(block => block.review_assignment).length;
     return `<details ${hasIssues ? 'open' : ''} style="margin-top:8px;border:1px solid ${hasIssues ? 'rgba(255,159,67,.45)' : 'rgba(81,207,102,.35)'};border-radius:7px;padding:7px;background:rgba(0,0,0,.14);">
         <summary style="cursor:pointer;font-size:12px;color:${hasIssues ? '#ffd8a8' : '#b2f2bb'};">
-            ${engineLabel}匹配结果：${summary.ready}/${summary.total} 通过 · ${summary.warning} 警告 · ${summary.error} 失败${summary.missingBlocks ? ` · ${summary.missingBlocks} 段${isMultilingualV2 ? '待确认文案' : '缺失文案'}` : ''}${summary.handled ? ` · 已处理 ${summary.handled}（可撤销）` : ''}
+            ${engineLabel}匹配结果：${summary.ready}/${summary.total} 通过 · ${summary.warning} 警告 · ${summary.error} 失败${summary.missingBlocks ? ` · ${summary.missingBlocks} 段确认缺失文案` : ''}${duplicateSegments.length ? ` · ${duplicateSegments.length} 个重复片段` : ''}${ordinaryWarnings.length ? ` · ${ordinaryWarnings.length} 个识别差异待试听` : ''}${summary.handled ? ` · 已处理 ${summary.handled}（可撤销）` : ''}
         </summary>
         <div class="ae-batch-match-filter" style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;margin-top:7px;">
             <span class="hint">素材筛选：</span>
@@ -16694,7 +17355,13 @@ function filterAutoEditBatchMatchRows(button, filter) {
     const details = button?.closest('details');
     if (!details) return;
     details.querySelectorAll('.ae-batch-match-row').forEach(row => {
-        row.hidden = filter !== 'all' && row.dataset.batchMatchState !== filter;
+        // 每行本身带有 inline display:grid；仅设置 hidden 在某些窗口样式中会
+        // 被这个内联布局重新覆盖，造成“仅不合格”仍显示绿色通过项。
+        // 保存原显示方式，筛选时直接控制 display，确保筛选实际生效。
+        if (row.dataset.batchMatchDisplay === undefined) row.dataset.batchMatchDisplay = row.style.display || '';
+        const visible = filter === 'all' || row.dataset.batchMatchState === filter;
+        row.hidden = !visible;
+        row.style.display = visible ? row.dataset.batchMatchDisplay : 'none';
     });
     details.querySelectorAll('.ae-batch-match-filter .btn').forEach(item => {
         item.classList.toggle('btn-primary', item === button);
@@ -16897,8 +17564,11 @@ function playAutoEditBatchSource(index) {
 }
 
 async function analyzeAutoEditBatchTask(task, settings = task.settings || getAutoEditRequestSettings()) {
-    const previousResult = task.result;
-    const savedReviews = Array.isArray(task.reviewSegments) ? task.reviewSegments.map(item => ({ ...item })) : [];
+    flushAutoEditProjectReview();
+    const previousResult = findAutoEditBatchReviewProject(task, settings) || task.result;
+    const reviewSource = task.reviewSegments?.length ? task.reviewSegments
+        : (previousResult?.review_segments?.length ? previousResult.review_segments : previousResult?.segments || []);
+    const savedReviews = reviewSource.map(item => ({ ...item }));
     task.status='analyzing'; task.message='正在分析'; renderAutoEditBatchTasks();
     const requestId=`autoedit-batch-analysis-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     autoEditActiveRequestIds.add(requestId);
@@ -16923,15 +17593,22 @@ async function analyzeAutoEditBatchTask(task, settings = task.settings || getAut
             task.reviewSegments = data.segments.map(segment => ({ ...segment }));
             data.review_segments = task.reviewSegments.map(segment => ({ ...segment }));
         } else task.reviewSegments = null;
-        restoreAutoEditMissingBlockAssignments(data, previousResult);
+        const restoredMissingAssignments = restoreAutoEditMissingBlockAssignments(data, previousResult);
+        reconcileAutoEditMissingBlocks(data, data.segments);
+        data.clips = task.clips.slice();
+        data.script_text = task.script;
+        task.restoredReviewCount = (data.segments || []).filter(segment => savedBySource.has(String(segment.source || '').replace(/\\/g, '/'))).length + restoredMissingAssignments;
+        if (task.restoredReviewCount && data.project_path) {
+            saveAutoEditReviewProject(data, task.settings);
+        }
         task.result=data;
         const match = getAutoEditBatchMatchSummary(data);
         task.status = match.error > 0 ? 'error' : ((match.warning > 0 || match.missingBlocks > 0) ? 'warning' : 'ready');
         task.message = match.error > 0
             ? `${match.ready}/${match.total} 通过 · ${match.error} 失败`
             : ((match.warning > 0 || match.missingBlocks > 0)
-                ? `${match.ready}/${match.total} 通过 · ${match.warning} 警告${match.missingBlocks ? ` · ${match.missingBlocks} 段缺失` : ''}`
-                : `${match.ready}/${match.total} 全部匹配通过`);
+                ? `${match.ready}/${match.total} 通过 · ${match.warning} 警告${match.missingBlocks ? ` · ${match.missingBlocks} 段缺失` : ''}${task.restoredReviewCount ? ` · 已沿用 ${task.restoredReviewCount} 项历史审核` : ''}`
+                : `${match.ready}/${match.total} 全部匹配通过${task.restoredReviewCount ? ` · 已沿用 ${task.restoredReviewCount} 项历史审核` : ''}`);
     } catch (e) { task.status='error'; task.message=e.message; }
     finally { autoEditActiveRequestIds.delete(requestId); if(typeof unsubscribe==='function')unsubscribe(); setAutoEditBatchRunning(autoEditBatchRunning); }
     renderAutoEditBatchTasks();
@@ -17136,14 +17813,14 @@ function autoEditBatchProjectFileNames(settings = {}) {
     const preferred = settings.matching_engine === 'compare_v2'
         ? 'auto_edit_comparison_project.json'
         : (settings.matching_engine === 'legacy' ? 'auto_edit_project.json' : 'auto_edit_project_v2.json');
-    return [preferred, 'auto_edit_project_v2.json', 'auto_edit_comparison_project.json', 'auto_edit_project.json']
+    return ['auto_edit_review_history.json', preferred, 'auto_edit_project_v2.json', 'auto_edit_comparison_project.json', 'auto_edit_project.json']
         .filter((name, index, list) => list.indexOf(name) === index);
 }
 
 function findAutoEditBatchReviewProject(task, settings = {}) {
     // 当前列表内已有审核快照时优先使用它；这也是“不重新拖入、直接再分析”
     // 的情况。重新拖入后 task 是新的，才会继续查 _auto_edit 的工程文件。
-    if (task?.result?.analysis_only && Array.isArray(task.result.segments)) return task.result;
+    if (Array.isArray(task?.result?.segments) && autoEditBatchProjectHasHumanReview(task.result)) return task.result;
     if (!task?.folder || !window.electronAPI?.readFileText || !window.electronAPI?.pathJoin) return null;
     const currentClips = new Set((task.clips || []).map(path => String(path).replace(/\\/g, '/')));
     for (const fileName of autoEditBatchProjectFileNames(settings)) {
@@ -17151,10 +17828,21 @@ function findAutoEditBatchReviewProject(task, settings = {}) {
             const raw = window.electronAPI.readFileText(window.electronAPI.pathJoin(task.folder, '_auto_edit', fileName));
             if (!raw) continue;
             const project = JSON.parse(raw);
-            if (!Array.isArray(project?.segments) || !Array.isArray(project?.clips)) continue;
-            // 避免目录内残留的其他项目误被带入；至少要有一个原片路径仍相同。
-            const sharesSource = project.clips.some(path => currentClips.has(String(path).replace(/\\/g, '/')));
-            if (sharesSource) return project;
+            if (!Array.isArray(project?.segments)) continue;
+            // 兼容旧版审核保存漏写 clips 的工程，从片段恢复素材清单。
+            if (!Array.isArray(project.clips) || !project.clips.length) {
+                project.clips = [...new Set(project.segments.map(segment => segment.source).filter(Boolean))];
+            }
+            // 不能只因“有一个素材相同”就把旧审核结果带回来：同一目录重新
+            // 分批处理时会串任务。但素材增删时，仍须保留未改变片段的人工处理。
+            // 因此要求素材集合有显著重合；真正回填时还会再次按每个片段的完整
+            // 路径匹配，所以新增素材不会继承旧状态，已删除素材也不会被带入。
+            const savedClips = new Set(project.clips.map(path => String(path).replace(/\\/g, '/')));
+            const sharedSourceCount = [...savedClips].filter(path => currentClips.has(path)).length;
+            const smallerSetSize = Math.min(savedClips.size, currentClips.size);
+            const overlapRatio = smallerSetSize ? sharedSourceCount / smallerSetSize : 0;
+            const isSameTaskFamily = sharedSourceCount > 0 && overlapRatio >= 0.7;
+            if (isSameTaskFamily && autoEditBatchProjectHasHumanReview(project)) return project;
         } catch (error) {
             console.warn('[文案自动剪辑] 读取旧审核工程失败:', error);
         }
@@ -17195,25 +17883,7 @@ async function startAutoEditBatchAnalysis() {
 
     const n=Math.max(1,Math.min(4,parseInt(document.getElementById('autoedit-batch-concurrency')?.value||'2',10))); let cursor=0;
     const settings={...getAutoEditRequestSettings()};
-    // 重新拖入同一文件夹会创建全新的批量 task，过去不会自动带回该文件夹
-    // _auto_edit 下的审核工程。这里在真正开始分析前恢复可用快照，并把是否
-    // 沿用的决定交给用户，行为与单套“重新分析”保持一致。
-    const restoreCandidates = tasksToAnalyze.map(task => ({ task, project: findAutoEditBatchReviewProject(task, settings) }))
-        .filter(item => item.project && autoEditBatchProjectHasHumanReview(item.project));
-    if (restoreCandidates.length) {
-        const keepReviewedResults = confirm(`检测到 ${restoreCandidates.length} 个文件夹有之前的人工审核记录。\n\n确定：沿用已归属/已确认、手动文案、切点、速度、字幕和排除状态，并重新识别匹配。\n取消：不沿用旧审核记录，按本次素材重新分析。`);
-        restoreCandidates.forEach(({ task, project }) => {
-            if (keepReviewedResults) {
-                // 让 analyzeAutoEditBatchTask 复用同路径片段的人工作业字段，
-                // 同时用旧 missing_blocks 恢复“归属到上一/下一段”的可撤销记录。
-                task.result = project;
-                task.reviewSegments = Array.isArray(project.segments) ? project.segments.map(segment => ({ ...segment })) : [];
-            } else {
-                task.result = null;
-                task.reviewSegments = null;
-            }
-        });
-    }
+    // 所有分析入口统一在 analyzeAutoEditBatchTask 中自动恢复审核记录。
     setAutoEditBatchRunning(true);
     try {
         const worker=async()=>{ while(cursor<tasksToAnalyze.length) await analyzeAutoEditBatchTask(tasksToAnalyze[cursor++],settings); };
@@ -19880,7 +20550,48 @@ function positionAutoEditMissingPlaceholders() {
         const next = bySourceIndex.get(Number(placeholder.dataset.nextSourceIndex));
         if (next?.parentNode) next.parentNode.insertBefore(placeholder, next);
         else if (previous?.parentNode) previous.parentNode.insertBefore(placeholder, previous.nextSibling);
+
+        // 卡片被放置到轨道后，邻接关系必须以当前 DOM 中的人工排序为准。
+        // previous/nextSourceIndex 最初来自分析结果；若用户随后拖动了某段，
+        // 它们不能继续作为“归上一段/下一段”的目标。
+        const neighbors = getAutoEditMissingPlaceholderNeighbors(placeholder, rows);
+        const previousIndex = Number(neighbors.previous?.dataset?.sourceIndex) || 0;
+        const nextIndex = Number(neighbors.next?.dataset?.sourceIndex) || 0;
+        if (previousIndex) placeholder.dataset.previousSourceIndex = String(previousIndex);
+        else delete placeholder.dataset.previousSourceIndex;
+        if (nextIndex) placeholder.dataset.nextSourceIndex = String(nextIndex);
+        else delete placeholder.dataset.nextSourceIndex;
+
+        // 同步卡片提示，避免画面仍显示分析阶段的旧相邻片段。
+        const title = placeholder.querySelector('.ae-missing-placeholder-title');
+        if (title) {
+            const previousLabel = neighbors.previous?.dataset?.sourceLabel || '';
+            const nextLabel = neighbors.next?.dataset?.sourceLabel || '';
+            const hint = previousLabel && nextLabel
+                ? `位于 ${previousLabel} 与 ${nextLabel} 之间`
+                : (previousLabel ? `位于 ${previousLabel} 之后` : (nextLabel ? `位于 ${nextLabel} 之前` : '位置待人工确认'));
+            title.textContent = title.textContent.replace(/位于 .*? · 文案第/, `${hint} · 文案第`);
+        }
     });
+}
+
+// 漏读占位卡可能位于片段卡之间，也可能紧挨边界提示卡。只把审核片段卡
+// 视为轨道项目，以页面中当前的前后位置为权威，而不是初次分析的素材编号。
+function getAutoEditMissingPlaceholderNeighbors(placeholder, rows = Array.from(document.querySelectorAll('.autoedit-review-row'))) {
+    if (!placeholder) return { previous: null, next: null };
+    const rowSet = new Set(rows);
+    const items = Array.from(placeholder.parentElement?.children || []);
+    const index = items.indexOf(placeholder);
+    if (index < 0) return { previous: null, next: null };
+    let previous = null;
+    let next = null;
+    for (let i = index - 1; i >= 0; i--) {
+        if (rowSet.has(items[i])) { previous = items[i]; break; }
+    }
+    for (let i = index + 1; i < items.length; i++) {
+        if (rowSet.has(items[i])) { next = items[i]; break; }
+    }
+    return { previous, next };
 }
 
 function getAutoEditBoundaryRow(sourceIndex) {
@@ -20165,13 +20876,30 @@ function refreshAutoEditReviewAfterMissingResolution() {
     document.getElementById('autoedit-result-section')?.classList.remove('hidden');
 }
 
+function saveAutoEditReviewProject(result, settings) {
+    if (!result?.project_path || !window.electronAPI?.writeFileText) return;
+    const snapshot = {
+        ...result,
+        clips: result.clips?.length ? result.clips : [...new Set((result.segments || []).map(segment => segment.source).filter(Boolean))],
+        review_settings: settings,
+    };
+    const text = JSON.stringify(snapshot, null, 2);
+    // 独立历史文件不受后端重新识别写入分析工程的影响。
+    const historyPath = result.project_path.replace(/[^/\\]+$/, 'auto_edit_review_history.json');
+    const historySaved = window.electronAPI.writeFileText(historyPath, text);
+    const projectSaved = window.electronAPI.writeFileText(result.project_path, text);
+    if (historySaved === false || projectSaved === false) {
+        showToast('审核记录写入失败，请检查素材文件夹权限后重试保存', 'error');
+    }
+}
+
 function flushAutoEditProjectReview() {
     if (!autoEditProjectPersistTimer) return;
     clearTimeout(autoEditProjectPersistTimer);
     autoEditProjectPersistTimer = null;
     const result = autoEditLastResult;
     if (result?.analysis_only === true && result.project_path && window.electronAPI?.writeFileText) {
-        try { window.electronAPI.writeFileText(result.project_path, JSON.stringify({ ...result, review_settings: getAutoEditRequestSettings() }, null, 2)); } catch (_) {}
+        try { saveAutoEditReviewProject(result, getAutoEditRequestSettings()); } catch (_) {}
     }
 }
 window.addEventListener('beforeunload', flushAutoEditProjectReview);
@@ -20194,7 +20922,7 @@ function persistAutoEditBatchReview() {
             const projectSnapshot = JSON.stringify({ ...autoEditLastResult, review_settings: getAutoEditRequestSettings() }, null, 2);
             autoEditProjectPersistTimer = setTimeout(() => {
                 try {
-                    window.electronAPI.writeFileText(projectPath, projectSnapshot);
+                    saveAutoEditReviewProject(JSON.parse(projectSnapshot), JSON.parse(projectSnapshot).review_settings);
                 } catch (error) {
                     console.warn('[文案自动剪辑] 保存审核项目失败:', error);
                 }
@@ -20614,6 +21342,54 @@ async function openAutoEditMissedSpeechFix(button) {
         }
     };
 }
+// “归到上一/下一段”表示用户确认这句话应当出现在成片里，但 ASR 很可能
+// 恰好没有识别到它。仅把文字写进审核框会让导出时的逐词定位找不到它，进而
+// 静默漏掉 SRT。同步保存为手工字幕，才能保证人工确认的文字一定被导出。
+function getAutoEditManualSubtitles(row) {
+    let items = [];
+    try { items = JSON.parse(decodeURIComponent(row?.dataset?.manualSubtitles || '')); } catch (_) {}
+    return Array.isArray(items) ? items : [];
+}
+
+function addAutoEditAssignedMissingSubtitle(row, text, position) {
+    const caption = String(text || '').trim();
+    if (!row || !caption) return [];
+    const before = getAutoEditManualSubtitles(row);
+    const normalized = value => String(value || '').toLocaleLowerCase().normalize('NFKC').replace(/[^\p{L}\p{N}]/gu, '');
+    if (before.some(item => normalized(item?.text) === normalized(caption))) return before;
+    const cutStart = Number(row.querySelector('.ae-review-start')?.value) || 0;
+    const cutEnd = Number(row.querySelector('.ae-review-end')?.value) || cutStart + .1;
+    const available = Math.max(.1, cutEnd - cutStart);
+    const wordCount = caption.match(/[\p{L}\p{N}]+/gu)?.length || 1;
+    const duration = Math.min(available, Math.max(.6, Math.min(2, wordCount * .45)));
+    const start = position === 'end' ? Math.max(cutStart, cutEnd - duration) : cutStart;
+    const end = position === 'end' ? cutEnd : Math.min(cutEnd, start + duration);
+    const items = [...before, { start, end: Math.max(start + .05, end), text: caption }]
+        .sort((a, b) => Number(a.start) - Number(b.start));
+    row.dataset.manualSubtitles = encodeURIComponent(JSON.stringify(items));
+    return before;
+}
+
+// 兼容已经保存过的旧审核稿：旧版本只存了“归属到哪一段”，没有保存
+// 手工字幕。正式导出前补齐一次，避免用户必须撤销后再重新点“归到上一段”。
+function ensureAutoEditAssignedMissingSubtitles() {
+    const blocks = Array.isArray(autoEditLastResult?.missing_blocks) ? autoEditLastResult.missing_blocks : [];
+    const rows = Array.from(document.querySelectorAll('.autoedit-review-row'));
+    let added = 0;
+    for (const block of blocks) {
+        const assignment = block?.review_assignment;
+        if (!assignment || assignment.mode === 'split') continue;
+        const text = String(block.text || '').trim();
+        const sourceIndex = Number(assignment.targets?.[0]?.source_index);
+        const row = rows.find(item => Number(item.dataset.sourceIndex) === sourceIndex);
+        if (!row || !text) continue;
+        const beforeCount = getAutoEditManualSubtitles(row).length;
+        addAutoEditAssignedMissingSubtitle(row, text, assignment.mode === 'previous' ? 'end' : 'start');
+        if (getAutoEditManualSubtitles(row).length > beforeCount) added++;
+    }
+    return added;
+}
+
 function assignAutoEditMissingBlock(button, direction) {
     const placeholder = button?.closest('.autoedit-missing-placeholder');
     if (!placeholder) return;
@@ -20621,13 +21397,16 @@ function assignAutoEditMissingBlock(button, direction) {
     const endLine = Number(placeholder.dataset.scriptEndLine) || startLine;
     const rows = Array.from(document.querySelectorAll('.autoedit-review-row'));
     let target = null;
-    // The placeholder already records the actual neighboring source clips.  Prefer
-    // those IDs over script-line ranges: a clip can span multiple lines or have an
-    // incomplete match, which otherwise makes "next" skip over the adjacent clip.
+    // 人工拖动后，DOM 里的轨道相邻关系才是“上一段/下一段”的定义。占位卡
+    // 上保留的 source index 只作为无法取得轨道位置时的兼容回退。
+    const liveNeighbors = getAutoEditMissingPlaceholderNeighbors(placeholder, rows);
+    target = direction === 'previous' ? liveNeighbors.previous : liveNeighbors.next;
+    // 若占位不在当前轨道 DOM 内（例如旧工程恢复的瞬间），再使用保存的相邻
+    // 素材编号；片段可跨多行，不能只依赖脚本文案范围。
     const adjacentSourceIndex = Number(direction === 'previous'
         ? placeholder.dataset.previousSourceIndex
         : placeholder.dataset.nextSourceIndex);
-    if (Number.isFinite(adjacentSourceIndex) && adjacentSourceIndex > 0) {
+    if (!target && Number.isFinite(adjacentSourceIndex) && adjacentSourceIndex > 0) {
         target = rows.find(row => Number(row.dataset.sourceIndex) === adjacentSourceIndex);
     }
     if (direction === 'previous') {
@@ -20652,8 +21431,8 @@ function assignAutoEditMissingBlock(button, direction) {
     if (direction === 'split') {
         const prevIndex = Number(placeholder.dataset.previousSourceIndex);
         const nextIndex = Number(placeholder.dataset.nextSourceIndex);
-        const prev = prevIndex > 0 ? rows.find(row => Number(row.dataset.sourceIndex) === prevIndex) : null;
-        const next = nextIndex > 0 ? rows.find(row => Number(row.dataset.sourceIndex) === nextIndex) : null;
+        const prev = liveNeighbors.previous || (prevIndex > 0 ? rows.find(row => Number(row.dataset.sourceIndex) === prevIndex) : null);
+        const next = liveNeighbors.next || (nextIndex > 0 ? rows.find(row => Number(row.dataset.sourceIndex) === nextIndex) : null);
         if (!prev || !next) return showToast('只有同时找到相邻的上一段和下一段，才能自动均分', 'warning');
         // 英文按词、中文等无空格文案按字符拆；让前半紧接上段、后半紧接下段。
         const units = /\s/.test(cleanMissing) ? cleanMissing.split(/\s+/).filter(Boolean) : Array.from(cleanMissing);
@@ -20665,9 +21444,11 @@ function assignAutoEditMissingBlock(button, direction) {
         if (!prevTextarea || !nextTextarea || !before || !after) return showToast('这段文案无法自动拆分，请改用归上一段/下一段', 'warning');
         const prevBefore = prevTextarea.value;
         const nextBefore = nextTextarea.value;
+        const prevManualBefore = getAutoEditManualSubtitles(prev);
+        const nextManualBefore = getAutoEditManualSubtitles(next);
         recordAssignment({ mode: 'split', targets: [
-            { source_index: Number(prev.dataset.sourceIndex), script_before: prevBefore },
-            { source_index: Number(next.dataset.sourceIndex), script_before: nextBefore },
+            { source_index: Number(prev.dataset.sourceIndex), script_before: prevBefore, manual_subtitles_before: prevManualBefore },
+            { source_index: Number(next.dataset.sourceIndex), script_before: nextBefore, manual_subtitles_before: nextManualBefore },
         ] });
         prevTextarea.value = `${prevTextarea.value.trim()} ${before}`.trim();
         nextTextarea.value = `${after} ${nextTextarea.value.trim()}`.trim();
@@ -20677,6 +21458,8 @@ function assignAutoEditMissingBlock(button, direction) {
             const recalcButton = Array.from(row.querySelectorAll('button')).find(item => item.textContent.includes('重算切点'));
             if (recalcButton) recalculateAutoEditReviewRow(recalcButton);
         });
+        addAutoEditAssignedMissingSubtitle(prev, before, 'end');
+        addAutoEditAssignedMissingSubtitle(next, after, 'start');
         placeholder.dataset.assigned = 'true';
         placeholder.style.opacity = '.65';
         placeholder.style.borderStyle = 'solid';
@@ -20695,7 +21478,8 @@ function assignAutoEditMissingBlock(button, direction) {
     const textarea = target.querySelector('.ae-review-script');
     if (!textarea) return;
     const scriptBefore = textarea.value;
-    recordAssignment({ mode: direction, targets: [{ source_index: Number(target.dataset.sourceIndex), script_before: scriptBefore }] });
+    const manualSubtitlesBefore = getAutoEditManualSubtitles(target);
+    recordAssignment({ mode: direction, targets: [{ source_index: Number(target.dataset.sourceIndex), script_before: scriptBefore, manual_subtitles_before: manualSubtitlesBefore }] });
     textarea.value = direction === 'previous'
         ? `${textarea.value.trim()} ${cleanMissing}`.trim()
         : `${cleanMissing} ${textarea.value.trim()}`.trim();
@@ -20703,6 +21487,7 @@ function assignAutoEditMissingBlock(button, direction) {
     target.dataset.modified = 'true';
     const recalcButton = Array.from(target.querySelectorAll('button')).find(item => item.textContent.includes('重算切点'));
     const cutUpdated = recalcButton ? recalculateAutoEditReviewRow(recalcButton) : false;
+    addAutoEditAssignedMissingSubtitle(target, cleanMissing, direction === 'previous' ? 'end' : 'start');
     placeholder.dataset.assigned = 'true';
     placeholder.style.opacity = '.65';
     placeholder.style.borderStyle = 'solid';
@@ -20737,6 +21522,9 @@ function undoAutoEditMissingBlock(button) {
         const textarea = row?.querySelector('.ae-review-script');
         if (!textarea) return;
         textarea.value = String(target.script_before || '');
+        if (Array.isArray(target.manual_subtitles_before)) {
+            row.dataset.manualSubtitles = encodeURIComponent(JSON.stringify(target.manual_subtitles_before));
+        }
         textarea.dispatchEvent(new Event('input', { bubbles: true }));
         row.dataset.modified = 'true';
         const recalcButton = Array.from(row.querySelectorAll('button')).find(item => item.textContent.includes('重算切点'));
@@ -23826,6 +24614,8 @@ async function exportReviewedAutoEdit() {
     if (!autoEditLastResult?.analysis_only) return;
     const linkedReelsTaskId = autoEditLastResult.reels_task_id || '';
     const rows = Array.from(document.querySelectorAll('.autoedit-review-row'));
+    const restoredManualCaptions = ensureAutoEditAssignedMissingSubtitles();
+    if (restoredManualCaptions) persistAutoEditBatchReview();
     const reviewSegments = collectAutoEditReviewSegments();
     const enabledRows = rows.filter(row => row.querySelector('.ae-review-enabled')?.checked !== false);
     const excludedCount = rows.length - enabledRows.length;

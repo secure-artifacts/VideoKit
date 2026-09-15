@@ -857,80 +857,160 @@ class ReelsCanvasRenderer {
                 }
             };
 
-            if (boxBlur > 0) {
-                const steps = Math.min(20, Math.max(6, Math.floor(boxBlur * 0.5)));
-                for (let si = steps; si >= 0; si--) {
-                    const t = si / Math.max(1, steps);
-                    const expand = t * boxBlur;
-                    const alphaFactor = Math.exp(-((t * 2.8) ** 2));
-                    const layerAlpha = bgAlpha * alphaFactor / steps * 3.5;
-                    if (layerAlpha < 0.004) continue;
-                    ctx.save();
-                    ctx.globalAlpha = globalAlpha * Math.min(1, layerAlpha);
-                    ctx.fillStyle = bgColor;
-                    buildBoxPath(expand);
-                    ctx.fill();
-                    ctx.restore();
-                }
-            }
+            const brushEngine = (typeof window !== 'undefined' && (window.ReelsBrushEngine || window.ReelsOverlay?.ReelsBrushEngine));
+            const bStyle = s.box_brush_style;
+            const isBrush = brushEngine && bStyle && bStyle !== 'rect' && bStyle !== 'none';
 
-            ctx.fillStyle = bgColor;
-
-            // Box color transition
-            if (s.box_transition_enabled && anim) {
-                const fromColor = this._parseColor(bgColor);
-                const toColor = this._parseColor(s.box_transition_color_to || '#FF6600');
-                const transColor = anim.computeBoxColorTransition(
-                    currentTime, segStart, segEnd, wordsInfo,
-                    [...fromColor, Math.round(bgAlpha * 255)],
-                    [...toColor, Math.round(bgAlpha * 255)]
-                );
-                ctx.fillStyle = `rgba(${transColor[0]},${transColor[1]},${transColor[2]},${transColor[3] / 255})`;
-            }
-
-            // Gradient background
-            if (s.bg_gradient_enabled) {
-                const colors = typeof s.bg_gradient_colors === 'string'
-                    ? s.bg_gradient_colors.split(',').map(c => c.trim())
-                    : (Array.isArray(s.bg_gradient_colors) ? s.bg_gradient_colors : [bgColor, '#333333']);
-                if (colors.length >= 2) {
-                    let grad;
-                    const gradType = s.bg_gradient_type || 'linear_h';
-                    if (gradType === 'linear_v') {
-                        grad = ctx.createLinearGradient(rectX, rectY, rectX, rectY + rectH);
-                    } else if (gradType === 'center') {
-                        grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(rectW, rectH) / 2);
-                    } else if (gradType === 'fresnel') {
-                        grad = ctx.createLinearGradient(rectX, rectY, rectX + rectW, rectY);
-                        const edgeC = colors[0]; const midC = colors[colors.length - 1];
-                        grad.addColorStop(0, edgeC);
-                        grad.addColorStop(0.15, midC + '1E'); // alpha ~30
-                        grad.addColorStop(0.85, midC + '1E');
-                        grad.addColorStop(1.0, edgeC);
-                        ctx.fillStyle = grad;
-                    } else {
-                        grad = ctx.createLinearGradient(rectX, rectY, rectX + rectW, rectY);
+            if (isBrush) {
+                let brushColor = bgColor;
+                let brushDir = 'horizontal';
+                if (s.bg_gradient_enabled) {
+                    const colors = typeof s.bg_gradient_colors === 'string'
+                        ? s.bg_gradient_colors.split(',').map(c => c.trim())
+                        : (Array.isArray(s.bg_gradient_colors) ? s.bg_gradient_colors : [bgColor, '#333333']);
+                    if (colors.length >= 2) {
+                        brushColor = colors.join(',');
+                        brushDir = s.bg_gradient_type === 'linear_v' ? 'vertical' : 'horizontal';
                     }
-                    if (gradType !== 'fresnel') {
-                        colors.forEach((c, i) => {
-                            grad.addColorStop(i / Math.max(1, colors.length - 1), c);
-                        });
-                        ctx.fillStyle = grad;
+                } else if (s.box_transition_enabled && anim) {
+                    const fromColor = this._parseColor(bgColor);
+                    const toColor = this._parseColor(s.box_transition_color_to || '#FF6600');
+                    const transColor = anim.computeBoxColorTransition(
+                        currentTime, segStart, segEnd, wordsInfo,
+                        [...fromColor, Math.round(bgAlpha * 255)],
+                        [...toColor, Math.round(bgAlpha * 255)]
+                    );
+                    brushColor = `rgba(${transColor[0]},${transColor[1]},${transColor[2]},${transColor[3] / 255})`;
+                }
+                const bColorMode = s.box_brush_color_mode || 'tint';
+                const bCustomData = s.box_custom_brush_data || null;
+                const bSolid = (s.box_brush_solid != null && !isNaN(s.box_brush_solid)) ? Number(s.box_brush_solid) : 100;
+                const brushW = Number(s.box_brush_w) || 0;
+                const brushH = Number(s.box_brush_h) || 0;
+                const brushX = Number(s.box_brush_x) || 0;
+                const brushY = Number(s.box_brush_y) || 0;
+
+                if (isAdaptive) {
+                    for (let i = 0; i < visibleLines.length; i++) {
+                        const lineW = lineWidths[i];
+                        const effectiveLineW = (actualLineWidths[i] != null && actualLineWidths[i] > lineW) ? actualLineWidths[i] : lineW;
+                        let xStart = cx - effectiveLineW / 2; // Usually center
+                        const y = tempStartY + (lineTopOffsets[i] || 0);
+                        let lRectX = xStart - effectivePadLeft;
+                        const glyphBounds = lineGlyphBounds[i] || { top: 0, bottom: lineH, height: lineH };
+                        const tightLine = canTightFitGlyphs;
+                        let lRectY = y + (tightLine ? glyphBounds.top : 0) - effectivePadTop;
+                        let lRectW = effectiveLineW + effectivePadLeft + effectivePadRight;
+                        const contentH = tightLine ? glyphBounds.height : (lineHeights[i] || lineH);
+                        let lRectH = contentH + effectivePadTop + effectivePadBottom;
+
+                        if (brushW > 0) {
+                            const bcx = lRectX + lRectW / 2;
+                            lRectW = brushW;
+                            lRectX = bcx - lRectW / 2;
+                        }
+                        if (brushH > 0) {
+                            const bcy = lRectY + lRectH / 2;
+                            lRectH = brushH;
+                            lRectY = bcy - lRectH / 2;
+                        }
+                        lRectX += brushX;
+                        lRectY += brushY;
+
+                        brushEngine.drawBrush(ctx, lRectX, lRectY, lRectW, lRectH, bStyle, brushColor, 1, bColorMode, brushDir, bCustomData, bSolid);
+                    }
+                } else {
+                    let bx = rectX, by = rectY, bw = rectW, bh = rectH;
+                    if (brushW > 0) {
+                        const bcx = bx + bw / 2;
+                        bw = brushW;
+                        bx = bcx - bw / 2;
+                    }
+                    if (brushH > 0) {
+                        const bcy = by + bh / 2;
+                        bh = brushH;
+                        by = bcy - bh / 2;
+                    }
+                    bx += brushX;
+                    by += brushY;
+                    brushEngine.drawBrush(ctx, bx, by, bw, bh, bStyle, brushColor, 1, bColorMode, brushDir, bCustomData, bSolid);
+                }
+            } else {
+                if (boxBlur > 0) {
+                    const steps = Math.min(20, Math.max(6, Math.floor(boxBlur * 0.5)));
+                    for (let si = steps; si >= 0; si--) {
+                        const t = si / Math.max(1, steps);
+                        const expand = t * boxBlur;
+                        const alphaFactor = Math.exp(-((t * 2.8) ** 2));
+                        const layerAlpha = bgAlpha * alphaFactor / steps * 3.5;
+                        if (layerAlpha < 0.004) continue;
+                        ctx.save();
+                        ctx.globalAlpha = globalAlpha * Math.min(1, layerAlpha);
+                        ctx.fillStyle = bgColor;
+                        buildBoxPath(expand);
+                        ctx.fill();
+                        ctx.restore();
                     }
                 }
-            }
 
-            buildBoxPath(0);
-            ctx.fill();
+                ctx.fillStyle = bgColor;
 
-            // Highlight overlay
-            if (s.bg_gradient_highlight) {
-                const hlGrad = ctx.createLinearGradient(rectX, rectY, rectX, rectY + rectH * 0.3);
-                hlGrad.addColorStop(0, 'rgba(255,255,255,0.24)');
-                hlGrad.addColorStop(1, 'rgba(255,255,255,0)');
-                ctx.fillStyle = hlGrad;
+                // Box color transition
+                if (s.box_transition_enabled && anim) {
+                    const fromColor = this._parseColor(bgColor);
+                    const toColor = this._parseColor(s.box_transition_color_to || '#FF6600');
+                    const transColor = anim.computeBoxColorTransition(
+                        currentTime, segStart, segEnd, wordsInfo,
+                        [...fromColor, Math.round(bgAlpha * 255)],
+                        [...toColor, Math.round(bgAlpha * 255)]
+                    );
+                    ctx.fillStyle = `rgba(${transColor[0]},${transColor[1]},${transColor[2]},${transColor[3] / 255})`;
+                }
+
+                // Gradient background
+                if (s.bg_gradient_enabled) {
+                    const colors = typeof s.bg_gradient_colors === 'string'
+                        ? s.bg_gradient_colors.split(',').map(c => c.trim())
+                        : (Array.isArray(s.bg_gradient_colors) ? s.bg_gradient_colors : [bgColor, '#333333']);
+                    if (colors.length >= 2) {
+                        let grad;
+                        const gradType = s.bg_gradient_type || 'linear_h';
+                        if (gradType === 'linear_v') {
+                            grad = ctx.createLinearGradient(rectX, rectY, rectX, rectY + rectH);
+                        } else if (gradType === 'center') {
+                            grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(rectW, rectH) / 2);
+                        } else if (gradType === 'fresnel') {
+                            grad = ctx.createLinearGradient(rectX, rectY, rectX + rectW, rectY);
+                            const edgeC = colors[0]; const midC = colors[colors.length - 1];
+                            grad.addColorStop(0, edgeC);
+                            grad.addColorStop(0.15, midC + '1E'); // alpha ~30
+                            grad.addColorStop(0.85, midC + '1E');
+                            grad.addColorStop(1.0, edgeC);
+                            ctx.fillStyle = grad;
+                        } else {
+                            grad = ctx.createLinearGradient(rectX, rectY, rectX + rectW, rectY);
+                        }
+                        if (gradType !== 'fresnel') {
+                            colors.forEach((c, i) => {
+                                grad.addColorStop(i / Math.max(1, colors.length - 1), c);
+                            });
+                            ctx.fillStyle = grad;
+                        }
+                    }
+                }
+
                 buildBoxPath(0);
                 ctx.fill();
+
+                // Highlight overlay
+                if (s.bg_gradient_highlight) {
+                    const hlGrad = ctx.createLinearGradient(rectX, rectY, rectX, rectY + rectH * 0.3);
+                    hlGrad.addColorStop(0, 'rgba(255,255,255,0.24)');
+                    hlGrad.addColorStop(1, 'rgba(255,255,255,0)');
+                    ctx.fillStyle = hlGrad;
+                    buildBoxPath(0);
+                    ctx.fill();
+                }
             }
             ctx.restore();
         }

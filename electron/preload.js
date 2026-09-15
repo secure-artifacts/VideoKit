@@ -1,5 +1,36 @@
 const { contextBridge, ipcRenderer, webUtils, webFrame, clipboard } = require('electron');
 
+// 预设过去只在 Chromium localStorage 中保存；重打包后只要页面 origin 改变，
+// 那套数据库就可能不可见。启动时同步从 userData/videokit-presets 恢复，随后
+// 定期镜像回文件。只收集预设/模板相关键，绝不触碰 API Key 等设置。
+const _persistentPresetKey = (key) => /(?:preset|template|watermark|brush)/i.test(String(key || ''));
+const _readPersistentPresetValues = () => {
+    const values = {};
+    try {
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && _persistentPresetKey(key)) values[key] = localStorage.getItem(key);
+        }
+    } catch (_) { }
+    return values;
+};
+try {
+    const response = ipcRenderer.sendSync('persistent-presets:hydrate', _readPersistentPresetValues());
+    if (response?.ok) {
+        for (const [key, value] of Object.entries(response.values || {})) localStorage.setItem(key, value);
+    }
+} catch (_) { /* The main process may not have registered during an abnormal early startup. */ }
+let _persistentPresetLast = '';
+const _savePersistentPresets = () => {
+    const values = _readPersistentPresetValues();
+    const serialised = JSON.stringify(values);
+    if (serialised === _persistentPresetLast) return;
+    _persistentPresetLast = serialised;
+    ipcRenderer.invoke('persistent-presets:save', values).catch(() => {});
+};
+setInterval(_savePersistentPresets, 2000);
+window.addEventListener('beforeunload', _savePersistentPresets);
+
 // File objects passed through contextBridge can lose the identity required by
 // webUtils.getPathForFile().  Capture paths in the preload world while handling
 // the original drop event, then let the renderer consume that one drop's paths.
@@ -287,6 +318,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     pathBasename: (p) => path.basename(p),
     pathDirname: (p) => path.dirname(p),
     getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+    exportOverlayPresetPackage: (presets) => ipcRenderer.invoke('export-overlay-preset-package', presets),
+    importOverlayPresetPackage: (packagePath) => ipcRenderer.invoke('import-overlay-preset-package', packagePath),
+    saveOverlayPresetAssets: (preset) => ipcRenderer.invoke('save-overlay-preset-assets', preset),
     writeClipboardText: (text) => {
         clipboard.writeText(String(text || ''));
         return true;

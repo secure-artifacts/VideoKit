@@ -286,9 +286,13 @@ function assessSegment({ plan = {}, info = {}, language = 'en' }) {
 function assessMissingBlock(block = {}) {
     return {
         ...block,
-        status: 'warning',
-        verification_level: 'review',
-        issue_reason: '识别结果中没有可靠归属，但这也可能是转写或片段边界误差；请试听相邻片段确认',
+        // 到这里的区块已经经过全文与相邻片段边界二次核对，仍没有归属。
+        // 这表示“识别覆盖层面确认缺失”，不是笼统的低分待确认；仍保留
+        // transcript 限定，避免把 ASR 漏识别误说成演员一定漏读。
+        issue_type: 'confirmed_missing_script',
+        status: 'error',
+        verification_level: 'full_transcript_recheck',
+        issue_reason: '已在所有片段的识别全文及相邻片段边界二次核对，仍没有任何片段覆盖该文案；属于识别覆盖层面的确认缺失。若试听实际读到了，请在审核页归属到相邻片段。',
     };
 }
 

@@ -21,6 +21,7 @@ const fileOrganizer = require('./services/fileOrganizer');
 
 const ytdlpService = require('./services/ytdlp');
 const gladiaService = require('./services/gladia');
+const cloudTranscription = require('./services/cloudTranscription');
 const imageClassifyService = require('./services/imageClassify');
 const workflowService = require('./services/workflow');
 const subtitleUtils = require('./services/subtitleUtils');
@@ -186,6 +187,7 @@ async function runAutoEditByScript(data = {}, progressSender = null) {
             } catch {}
         }
     }
+    const transcriptionConfig = settingsService.loadTranscriptionProviders();
 
     return await autoEditService.autoEditByScript({
         clips,
@@ -198,6 +200,7 @@ async function runAutoEditByScript(data = {}, progressSender = null) {
         matchMode: data.match_mode || data.matchMode,
         workflowMode: data.workflow_mode || data.workflowMode || 'cut_first',
         gladiaKeys,
+        transcriptionConfig,
         leadPad: data.lead_pad,
         tailPad: data.tail_pad,
         keepAudienceResponses: data.keep_audience_responses === true || data.keep_audience_responses === 'true',
@@ -421,9 +424,22 @@ async function routeAPI(endpoint, data, progressSender = null, sender = null) {
 
         // ==================== 设置 ====================
         case 'settings/gladia-keys':
-            if (data._method === 'GET') return settingsService.loadGladiaKeys();
+            // Compatibility view: the settings screen intentionally shows the
+            // user's own Gladia pool in its editable textarea.
+            if (data._method === 'GET') return { keys: settingsService.loadTranscriptionProviders().providers.gladia.keys || [] };
             settingsService.saveGladiaKeys(data);
             return { message: '保存成功' };
+
+        case 'settings/transcription-providers':
+            if (data._method === 'GET') return settingsService.getPublicTranscriptionProviders();
+            return settingsService.saveTranscriptionProviders(data);
+
+        case 'settings/transcription-records':
+            return { records: cloudTranscription.getTranscriptionRecords() };
+
+        case 'settings/transcription-records/clear':
+            cloudTranscription.clearTranscriptionRecords();
+            return { message: '清空成功' };
 
         case 'settings/gemini-keys':
             if (data._method === 'GET') return settingsService.loadGeminiKeys();
@@ -1539,11 +1555,13 @@ async function routeAPI(endpoint, data, progressSender = null, sender = null) {
             if (data.regenerate_subtitles === true || data.retranscribe_audio === true) {
                 const gladiaKeysData = settingsService.loadGladiaKeys();
                 const gladiaKeys = gladiaKeysData.keys || [];
+                const transcriptionConfig = settingsService.loadTranscriptionProviders();
                 const srtResult = await autoEditService.generateSrtForAudioScript({
                     audioPath,
                     scriptText: data.script_text || data.scriptText || '',
                     language: data.language || 'auto',
                     gladiaKeys,
+                    transcriptionConfig,
                     srtPath: outputPath.replace(/\.[^.]+$/, '.srt'),
                     force: true,
                     minScore: data.min_score,
@@ -1910,21 +1928,10 @@ async function routeAPI(endpoint, data, progressSender = null, sender = null) {
                 }
                 throw new Error(`无法读取音频文件（${audioPath}）: ${error.message}`);
             }
-            const gladiaKeysData = settingsService.loadGladiaKeys();
-            let gladiaKeys = gladiaKeysData.keys || [];
-            if (data.gladia_keys) {
-                if (Array.isArray(data.gladia_keys)) {
-                    gladiaKeys = data.gladia_keys.map(k => typeof k === 'string' ? k.trim() : '').filter(Boolean);
-                } else if (typeof data.gladia_keys === 'string') {
-                    try {
-                        const parsed = JSON.parse(data.gladia_keys);
-                        if (Array.isArray(parsed)) {
-                            gladiaKeys = parsed.map(k => typeof k === 'string' ? k.trim() : '').filter(Boolean);
-                        }
-                    } catch {}
-                }
+            const transcriptionConfig = settingsService.loadTranscriptionProviders();
+            if (!Object.values(transcriptionConfig.providers || {}).some(provider => provider.keys?.length)) {
+                throw new Error('未配置 Deepgram 或 Groq API Key');
             }
-            if (gladiaKeys.length === 0) throw new Error('未配置 Gladia API Key');
 
             // 确定语言
             const langInput = data.language || 'english';
@@ -1980,21 +1987,20 @@ async function routeAPI(endpoint, data, progressSender = null, sender = null) {
                 fs.writeFileSync(txtPath, generationSubtitleText, 'utf-8');
                 transcriptionSource = 'json_file';
             } else if (forceTranscribe || !fs.existsSync(jsonPath)) {
-                // Gladia 转录
-                console.log(`[字幕对齐] 🎙️ 正在调用 Gladia 进行语音识别${forceTranscribe ? '（强制重新转录）' : ''}...`);
+                console.log(`[字幕对齐] 🎙️ 正在调用云端语音识别${forceTranscribe ? '（强制重新转录）' : ''}...`);
                 const cutLength = parseFloat(data.audio_cut_length || 5.0);
-                const result = await gladiaService.transcribeAudioFull(
-                    audioPath, gladiaKeys, langEnName, jsonPath, txtPath, cutLength,
+                const result = await cloudTranscription.transcribeWithFallback(
+                    audioPath, transcriptionConfig, langEnName, jsonPath, txtPath, cutLength,
                     (message) => progressSender?.({ stage: 'transcribe', message })
                 );
                 generationSubtitleArray = result.wordTimeInfo;
                 generationSubtitleText = result.fullText;
-                transcriptionSource = 'gladia_fresh';
-                console.log(`[字幕对齐] ✅ Gladia 转录完成，${generationSubtitleArray.length} 个片段`);
+                transcriptionSource = `${result.provider || 'cloud'}_fresh`;
+                console.log(`[字幕对齐] ✅ 云端转录完成，${generationSubtitleArray.length} 个片段`);
             } else {
                 generationSubtitleArray = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
                 generationSubtitleText = fs.readFileSync(txtPath, 'utf-8').trim();
-                transcriptionSource = 'gladia_cache';
+                transcriptionSource = 'cloud_cache';
                 console.log(`[字幕对齐] 📦 使用缓存转录数据: ${path.basename(jsonPath)}`);
             }
 
@@ -2575,11 +2581,7 @@ async function routeUpload(endpoint, fileBuffer, fileName, formData) {
             fs.writeFileSync(tempPath, Buffer.from(fileBuffer));
 
             try {
-                const gladiaKeysData = settingsService.loadGladiaKeys();
-                let gladiaKeys = gladiaKeysData.keys || [];
-                if (formData.gladia_keys) {
-                    try { gladiaKeys = JSON.parse(formData.gladia_keys); } catch { }
-                }
+                const transcriptionConfig = settingsService.loadTranscriptionProviders();
 
                 let sourceText = formData.source_text || '';
                 let translateText = formData.translate_text || '';
@@ -2600,10 +2602,10 @@ async function routeUpload(endpoint, fileBuffer, fileName, formData) {
                 const jsonPath = path.join(logDir, `${currentLanguage}_${baseName}_${audioCacheKey}_audio_text_whittime.json`);
                 const txtPath = path.join(logDir, `${currentLanguage}_${baseName}_${audioCacheKey}_finally.txt`);
 
-                // Gladia 转录
+                // 云端转录：按设置的主用/备用服务自动切换。
                 const cutLength = parseFloat(formData.audio_cut_length || 5.0);
-                const result = await gladiaService.transcribeAudioFull(
-                    tempPath, gladiaKeys, langEnName, jsonPath, txtPath, cutLength
+                const result = await cloudTranscription.transcribeWithFallback(
+                    tempPath, transcriptionConfig, langEnName, jsonPath, txtPath, cutLength
                 );
 
                 const sourceTextCandidates = parseSourceTextCandidates(formData.source_text_candidates);

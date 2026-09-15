@@ -6,8 +6,8 @@
 
 class PresetThumbRenderer {
     constructor() {
-        this.THUMB_W = 540;
-        this.THUMB_H = 960;
+        this.THUMB_W = 360;
+        this.THUMB_H = 640;
         this.SCALE = this.THUMB_W / 1080; // 从 1080x1920 缩放
         this.canvas = document.createElement('canvas');
         this.canvas.width = this.THUMB_W;
@@ -84,8 +84,8 @@ class PresetThumbRenderer {
         ctx.restore();
         
         try {
-            // 压缩成 WebP 返回
-            return this.canvas.toDataURL('image/webp', 0.8);
+            // 压缩成 WebP 返回 (0.75 兼顾画质与轻量体积)
+            return this.canvas.toDataURL('image/webp', 0.75);
         } catch (e) {
             console.warn('[PresetThumb] toDataURL 失败(可能是本地图片跨域污染):', e);
             return ''; // 返回空字符串以触发 fallback
@@ -117,7 +117,11 @@ class PresetThumbRenderer {
         }
         
         // 1. 先触发一次绘制，让底层的 ReelsOverlay 发起本地文件预载请求
+        let needsWait = false;
         for (const ov of layers) {
+            if (ov.title_bg_brush || ov.body_bg_brush || ov.card_brush || ov.bg_image || ov.title_custom_brush_data || ov.body_custom_brush_data) {
+                needsWait = true;
+            }
             const renderOv = JSON.parse(JSON.stringify(ov));
             const currentTime = Math.max(parseFloat(renderOv.start || 0), 0);
             if (typeof ReelsOverlay !== 'undefined' && ReelsOverlay.drawOverlay) {
@@ -125,8 +129,10 @@ class PresetThumbRenderer {
             }
         }
         
-        // 2. 等待 500ms 让图片完成读取（本地文件通常瞬间完成）
-        await new Promise(resolve => setTimeout(resolve, 500));
+        // 2. 如果包含笔刷或外部图片才稍微等待，否则立即完成，避免无谓阻塞
+        if (needsWait) {
+            await new Promise(resolve => setTimeout(resolve, 60));
+        }
         
         // 3. 再次正式渲染并返回
         return this.renderThumb(layers, bgColor, previewText);

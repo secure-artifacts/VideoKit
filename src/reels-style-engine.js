@@ -53,6 +53,14 @@ const DEFAULT_SUBTITLE_STYLE = {
     box_radius: 8,
     box_blur: 0,
     box_adaptive_width: false,
+    box_brush_style: 'rect',
+    box_brush_color_mode: 'tint',
+    box_custom_brush_data: '',
+    box_brush_w: 0,
+    box_brush_h: 0,
+    box_brush_x: 0,
+    box_brush_y: 0,
+    box_brush_solid: 100,
 
     // ── Basic stroke ──
     use_stroke: true,

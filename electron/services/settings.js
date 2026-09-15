@@ -11,30 +11,36 @@ const archiver = require('archiver');
 // ==================== JSON Settings ====================
 
 function getBackendDir() {
-    let isPackaged = false;
+    let dir = null;
     try {
         const { app } = require('electron');
-        isPackaged = app.isPackaged;
+        if (app && typeof app.getPath === 'function') {
+            dir = path.join(app.getPath('userData'), 'backend');
+        }
     } catch { }
 
-    if (isPackaged) {
-        const { app } = require('electron');
-        const userDataBackend = path.join(app.getPath('userData'), 'backend');
-        if (!fs.existsSync(userDataBackend)) {
-            fs.mkdirSync(userDataBackend, { recursive: true });
-            const resourceBackend = path.join(process.resourcesPath, 'backend');
-            if (fs.existsSync(resourceBackend)) {
-                const jsonFiles = fs.readdirSync(resourceBackend).filter(f => f.endsWith('.json'));
-                for (const f of jsonFiles) {
-                    try {
-                        fs.copyFileSync(path.join(resourceBackend, f), path.join(userDataBackend, f));
-                    } catch { }
-                }
-            }
-        }
-        return userDataBackend;
+    if (!dir) {
+        dir = path.join(os.homedir(), 'Library', 'Application Support', 'videokit', 'backend');
     }
-    return path.join(__dirname, '..', '..', 'backend');
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
+}
+
+function getAllCandidateBackendDirs() {
+    const list = [getBackendDir()];
+    try {
+        const legacy1 = path.join(os.homedir(), 'Library', 'Application Support', 'videokit', 'backend');
+        if (!list.includes(legacy1) && fs.existsSync(legacy1)) list.push(legacy1);
+    } catch { }
+    try {
+        const legacy2 = path.join(os.homedir(), 'Library', 'Application Support', 'pymediatools', 'backend');
+        if (!list.includes(legacy2) && fs.existsSync(legacy2)) list.push(legacy2);
+    } catch { }
+    try {
+        const workspaceDir = path.join(__dirname, '..', '..', 'backend');
+        if (!list.includes(workspaceDir) && fs.existsSync(workspaceDir)) list.push(workspaceDir);
+    } catch { }
+    return list;
 }
 
 function getSecureTmpDir(subDir) {
@@ -67,18 +73,235 @@ function writeJSON(filePath, data) {
 
 // Gladia Keys
 function getGladiaKeysPath() { return path.join(getBackendDir(), 'gladia_keys.json'); }
+
 function loadGladiaKeys() {
-    const data = readJSON(getGladiaKeysPath()) || { keys: [] };
-    if (data && Array.isArray(data.keys)) {
-        data.keys = data.keys.map(k => typeof k === 'string' ? k.trim() : '').filter(Boolean);
+    const allKeys = [];
+    for (const dir of getAllCandidateBackendDirs()) {
+        const file = path.join(dir, 'gladia_keys.json');
+        const data = readJSON(file);
+        if (data && Array.isArray(data.keys)) {
+            for (const k of data.keys) {
+                const clean = String(k || '').trim();
+                if (clean && !allKeys.includes(clean)) allKeys.push(clean);
+            }
+        }
     }
-    return data;
+    // Also check if transcription_providers.json has Gladia keys
+    for (const dir of getAllCandidateBackendDirs()) {
+        const transPath = path.join(dir, 'transcription_providers.json');
+        const trans = readJSON(transPath);
+        if (Array.isArray(trans?.providers?.gladia?.keys)) {
+            for (const k of trans.providers.gladia.keys) {
+                const clean = String(k || '').trim();
+                if (clean && !allKeys.includes(clean)) allKeys.push(clean);
+            }
+        }
+    }
+    return { keys: allKeys };
 }
+
 function saveGladiaKeys(data) {
-    if (data && Array.isArray(data.keys)) {
-        data.keys = data.keys.map(k => typeof k === 'string' ? k.trim() : '').filter(Boolean);
+    let keys = Array.isArray(data?.keys) ? data.keys : [];
+    keys = keys.map(k => String(k || '').trim()).filter(Boolean);
+    const payload = { keys: [...new Set(keys)] };
+    const primaryFile = getGladiaKeysPath();
+    writeJSON(primaryFile, payload);
+    
+    // Also sync to workspace backend if available
+    try {
+        const workspaceDir = path.join(__dirname, '..', '..', 'backend');
+        if (fs.existsSync(workspaceDir) && workspaceDir !== path.dirname(primaryFile)) {
+            writeJSON(path.join(workspaceDir, 'gladia_keys.json'), payload);
+        }
+    } catch { }
+
+    // Also sync to transcription_providers.json
+    try {
+        const transPath = getTranscriptionSettingsPath();
+        const trans = readJSON(transPath) || { version: 1, providers: {} };
+        if (!trans.providers) trans.providers = {};
+        if (!trans.providers.gladia) trans.providers.gladia = {};
+        trans.providers.gladia.keys = payload.keys;
+        writeJSON(transPath, trans);
+    } catch { }
+}
+
+// Cloud transcription providers (Deepgram, Groq, Gladia)
+function getTranscriptionSettingsPath() { return path.join(getBackendDir(), 'transcription_providers.json'); }
+
+function getSafeStorage() {
+    try { return require('electron').safeStorage; } catch { return null; }
+}
+
+function decryptTranscriptionKeys(payload) {
+    if (Array.isArray(payload?.keys) && payload.keys.length > 0) {
+        return payload.keys.map(k => String(k || '').trim()).filter(Boolean);
     }
-    writeJSON(getGladiaKeysPath(), data);
+    if (!payload?.keys_encrypted) return [];
+    const safeStorage = getSafeStorage();
+    if (!safeStorage?.isEncryptionAvailable?.()) return [];
+    try {
+        const keys = JSON.parse(safeStorage.decryptString(Buffer.from(payload.keys_encrypted, 'base64')));
+        return Array.isArray(keys) ? keys.map(k => String(k || '').trim()).filter(Boolean) : [];
+    } catch { return []; }
+}
+
+function normalizeProvider(value) {
+    return ['deepgram', 'groq', 'gladia'].includes(value) ? value : null;
+}
+
+function getEffectiveConcurrency(config) {
+    if (typeof config?.concurrency === 'number' && config.concurrency > 0) {
+        return Math.min(Math.max(1, Math.round(config.concurrency)), 50);
+    }
+    const primary = normalizeProvider(config?.primary) || 'deepgram';
+    if (primary === 'deepgram') return 20;
+    if (primary === 'groq') return 4;
+    return 1;
+}
+
+function loadTranscriptionProviders() {
+    const commonPath = getTranscriptionSettingsPath();
+    const raw = readJSON(commonPath);
+    
+    // Auto-migrate from all candidate backend dirs
+    const candidateDirs = getAllCandidateBackendDirs();
+    const mergedProviders = { deepgram: [], groq: [], gladia: [] };
+    let foundPrimary = null;
+    let foundConcurrency = null;
+
+    for (const dir of candidateDirs) {
+        const file = path.join(dir, 'transcription_providers.json');
+        const fileData = readJSON(file);
+        if (fileData) {
+            if (!foundPrimary && fileData.primary) foundPrimary = fileData.primary;
+            if (!foundConcurrency && fileData.concurrency) foundConcurrency = fileData.concurrency;
+            for (const name of ['deepgram', 'groq', 'gladia']) {
+                const p = fileData.providers?.[name];
+                if (p) {
+                    const keys = decryptTranscriptionKeys(p);
+                    for (const k of keys) {
+                        if (k && !mergedProviders[name].includes(k)) mergedProviders[name].push(k);
+                    }
+                }
+            }
+        }
+    }
+
+    // Always merge historical gladia_keys.json into gladia provider
+    const gladiaLegacy = loadGladiaKeys().keys || [];
+    for (const k of gladiaLegacy) {
+        if (k && !mergedProviders.gladia.includes(k)) mergedProviders.gladia.push(k);
+    }
+
+    const primary = normalizeProvider(foundPrimary || raw?.primary) || 'deepgram';
+    const allProviders = ['deepgram', 'groq', 'gladia'];
+    const others = allProviders.filter(p => p !== primary);
+
+    const result = {
+        primary,
+        fallback: others[0] || 'groq',
+        rescue: others[1] || 'gladia',
+        concurrency: getEffectiveConcurrency({ concurrency: foundConcurrency || raw?.concurrency, primary }),
+        providers: {
+            deepgram: { keys: mergedProviders.deepgram, source: mergedProviders.deepgram.length ? 'saved' : 'none' },
+            groq: { keys: mergedProviders.groq, source: mergedProviders.groq.length ? 'saved' : 'none' },
+            gladia: { keys: mergedProviders.gladia, source: mergedProviders.gladia.length ? 'saved' : 'none' }
+        }
+    };
+
+    // If common storage was missing or didn't have plain keys, persist the merged plain keys now
+    if (!raw || !raw.providers || !Array.isArray(raw.providers?.gladia?.keys)) {
+        try {
+            saveTranscriptionProviders({
+                primary: result.primary,
+                concurrency: result.concurrency,
+                deepgram_keys: result.providers.deepgram.keys,
+                groq_keys: result.providers.groq.keys,
+                gladia_keys: result.providers.gladia.keys,
+            });
+        } catch (_) { }
+    }
+
+    return result;
+}
+
+function getPublicTranscriptionProviders() {
+    const data = loadTranscriptionProviders();
+    const maskKey = key => {
+        const value = String(key || '');
+        if (value.length <= 8) return '••••••••';
+        return `${value.slice(0, 4)}••••${value.slice(-4)}`;
+    };
+    return {
+        primary: data.primary,
+        fallback: data.fallback,
+        rescue: data.rescue,
+        concurrency: data.concurrency,
+        providers: Object.fromEntries(Object.entries(data.providers).map(([name, item]) => [name, {
+            configured: item.keys.length > 0,
+            keyCount: item.keys.length,
+            keyPreviews: item.keys.map(maskKey),
+            editableKeys: item.keys || [],
+            source: item.source,
+        }])),
+    };
+}
+
+function saveTranscriptionProviders(input = {}) {
+    const existing = loadTranscriptionProviders();
+    const providers = {};
+    for (const name of ['deepgram', 'groq', 'gladia']) {
+        let keys;
+        if (Object.prototype.hasOwnProperty.call(input, `${name}_keys`)) {
+            keys = (Array.isArray(input[`${name}_keys`]) ? input[`${name}_keys`] : [])
+                .map(k => String(k || '').trim()).filter(Boolean);
+        } else {
+            keys = existing.providers?.[name]?.keys || [];
+        }
+        providers[name] = { keys: [...new Set(keys)] };
+    }
+
+    const primary = normalizeProvider(input.primary) || normalizeProvider(existing.primary) || 'deepgram';
+    const allProviders = ['deepgram', 'groq', 'gladia'];
+    const others = allProviders.filter(p => p !== primary);
+    const rawConcurrency = input.concurrency !== undefined ? Number(input.concurrency) : existing.concurrency;
+    const concurrency = (typeof rawConcurrency === 'number' && !isNaN(rawConcurrency) && rawConcurrency > 0)
+        ? Math.min(Math.max(1, Math.round(rawConcurrency)), 50)
+        : (primary === 'deepgram' ? 20 : (primary === 'groq' ? 4 : 1));
+
+    const payload = {
+        version: 1,
+        primary,
+        fallback: others[0] || 'groq',
+        rescue: others[1] || 'gladia',
+        concurrency,
+        providers,
+    };
+
+    // 1. Write to the unified common location
+    const commonPath = getTranscriptionSettingsPath();
+    writeJSON(commonPath, payload);
+
+    // 2. Also mirror to workspace backend directory if it exists
+    try {
+        const workspaceDir = path.join(__dirname, '..', '..', 'backend');
+        if (fs.existsSync(workspaceDir) && workspaceDir !== path.dirname(commonPath)) {
+            writeJSON(path.join(workspaceDir, 'transcription_providers.json'), payload);
+        }
+    } catch { }
+
+    // 3. Keep gladia_keys.json in sync for legacy compatibility
+    try {
+        const gladiaPayload = { keys: providers.gladia.keys };
+        writeJSON(getGladiaKeysPath(), gladiaPayload);
+        const workspaceDir = path.join(__dirname, '..', '..', 'backend');
+        if (fs.existsSync(workspaceDir)) {
+            writeJSON(path.join(workspaceDir, 'gladia_keys.json'), gladiaPayload);
+        }
+    } catch { }
+
+    return getPublicTranscriptionProviders();
 }
 
 // Gemini Keys
@@ -358,6 +581,10 @@ module.exports = {
     writeJSON,
     loadGladiaKeys,
     saveGladiaKeys,
+    loadTranscriptionProviders,
+    getPublicTranscriptionProviders,
+    saveTranscriptionProviders,
+    getEffectiveConcurrency,
     loadGeminiKeys,
     saveGeminiKeys,
     loadElevenLabsSettings,

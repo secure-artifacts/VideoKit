@@ -156,6 +156,7 @@
       let batchDefaultSort = restoredDraft?.defaultSort || (() => {
         try { return localStorage.getItem(BATCH_DEFAULT_SORT_KEY) || 'main'; } catch (_) { return 'main'; }
       })();
+      let nameRule = restoredDraft?.nameRule || { trimStart: 0, trimEnd: 0, find: '', replace: '' };
       let draftSaveTimer = null;
       let orderMediaObserver = null;
       let queueMediaObserver = null;
@@ -195,7 +196,7 @@
           <button class="su-batch-order-click" style="padding:5px 10px;border:1px solid #f59e0b;border-radius:7px;background:#fffbeb;color:#b45309;cursor:pointer;font-size:11px;">⚡ 点选编号</button>
           <button class="su-batch-order-layout-toggle" type="button" style="padding:5px 10px;border:1px solid #8b5cf6;border-radius:7px;background:#f5f3ff;color:#6d28d9;cursor:pointer;font-size:11px;">☷ 列表</button>
           <button class="su-batch-order-clear" style="display:none;padding:5px 10px;border:1px solid #cbd5e1;border-radius:7px;background:#fff;color:#475569;cursor:pointer;font-size:11px;">清空编号</button>
-          <span class="su-batch-order-hint" style="font-size:11px;color:#94a3b8;">拖拽、点选编号或直接填写位置</span>
+          <span class="su-batch-order-hint" style="font-size:11px;color:#94a3b8;">直接填排序号、点 ↑↓、拖拽或点选编号</span>
         </div>
         <div class="su-batch-order-queue-wrap" style="display:none;margin-bottom:10px;">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px;">
@@ -211,6 +212,15 @@
           <button class="su-batch-group-all" type="button" style="padding:6px 9px;border:1px solid #86efac;border-radius:6px;background:#fff;color:#15803d;cursor:pointer;font-size:11px;">应用到全部</button>
           <button class="su-batch-group-clear" type="button" style="padding:6px 9px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#64748b;cursor:pointer;font-size:11px;">清除全部分组</button>
           <span class="su-batch-group-status" style="font-size:11px;color:#64748b;"></span>
+        </div>
+        <div class="su-batch-name-rule" style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:10px;padding:7px 9px;border:1px solid #bfdbfe;border-radius:8px;background:#eff6ff;">
+          <strong style="font-size:12px;color:#1d4ed8;white-space:nowrap;">🏷️ 名称规则</strong>
+          <label style="font-size:11px;color:#475569;">删除前 <input class="su-batch-trim-start" type="number" min="0" value="${Number(nameRule.trimStart) || 0}" style="width:48px;padding:4px;border:1px solid #93c5fd;border-radius:5px;"> 个字符</label>
+          <label style="font-size:11px;color:#475569;">删除后 <input class="su-batch-trim-end" type="number" min="0" value="${Number(nameRule.trimEnd) || 0}" style="width:48px;padding:4px;border:1px solid #93c5fd;border-radius:5px;"> 个字符</label>
+          <label style="font-size:11px;color:#475569;">查找 <input class="su-batch-find-name" value="${String(nameRule.find || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;')}" placeholder="可留空" style="width:104px;padding:4px;border:1px solid #93c5fd;border-radius:5px;"></label>
+          <label style="font-size:11px;color:#475569;">替换为 <input class="su-batch-replace-name" value="${String(nameRule.replace || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;')}" placeholder="可留空" style="width:104px;padding:4px;border:1px solid #93c5fd;border-radius:5px;"></label>
+          <button class="su-batch-apply-name-rule" type="button" style="padding:5px 10px;border:1px solid #2563eb;border-radius:6px;background:#fff;color:#1d4ed8;cursor:pointer;font-size:11px;font-weight:650;">生成到右侧名称</button>
+          <span class="su-batch-name-rule-status" style="font-size:10px;color:#64748b;">保留扩展名；生成后仍可逐行修改</span>
         </div>
         <div class="su-batch-main-grid" style="display:grid;grid-template-columns:minmax(0,1.25fr) minmax(280px,0.75fr);gap:12px;margin-bottom:14px;">
           <div>
@@ -250,6 +260,12 @@
       const textarea = box.querySelector('.su-batch-rename-input');
       const status = box.querySelector('.su-batch-rename-status');
       const confirmBtn = box.querySelector('.su-batch-rename-confirm');
+      const trimStartInput = box.querySelector('.su-batch-trim-start');
+      const trimEndInput = box.querySelector('.su-batch-trim-end');
+      const findNameInput = box.querySelector('.su-batch-find-name');
+      const replaceNameInput = box.querySelector('.su-batch-replace-name');
+      const applyNameRuleBtn = box.querySelector('.su-batch-apply-name-rule');
+      const nameRuleStatus = box.querySelector('.su-batch-name-rule-status');
       operationModeInput.value = operationMode;
       defaultSortInput.value = batchDefaultSort;
       if (restoredDraft) draftBadge.style.display = '';
@@ -276,6 +292,7 @@
             operationMode,
             orderGridView,
             defaultSort: batchDefaultSort,
+            nameRule,
             updatedAt: Date.now()
           });
         };
@@ -283,6 +300,33 @@
         if (immediate) write();
         else draftSaveTimer = setTimeout(write, 120);
       };
+
+      const syncNameRule = () => {
+        nameRule = {
+          trimStart: Math.max(0, Number.parseInt(trimStartInput.value, 10) || 0),
+          trimEnd: Math.max(0, Number.parseInt(trimEndInput.value, 10) || 0),
+          find: findNameInput.value || '',
+          replace: replaceNameInput.value || ''
+        };
+        persistDraft();
+      };
+      [trimStartInput, trimEndInput, findNameInput, replaceNameInput].forEach(input => input?.addEventListener('input', syncNameRule));
+      applyNameRuleBtn?.addEventListener('click', () => {
+        syncNameRule();
+        const names = files.map(file => {
+          const dot = String(file.name || '').lastIndexOf('.');
+          let base = dot > 0 ? String(file.name).slice(0, dot) : String(file.name || '');
+          const chars = Array.from(base);
+          const end = Math.max(nameRule.trimStart, chars.length - nameRule.trimEnd);
+          base = chars.slice(nameRule.trimStart, end).join('');
+          if (nameRule.find) base = base.split(nameRule.find).join(nameRule.replace);
+          return base.trim() || '未命名';
+        });
+        textarea.value = names.join('\n');
+        nameRuleStatus.textContent = `已按规则生成 ${names.length} 个名称；可继续在右侧逐行修改`;
+        nameRuleStatus.style.color = '#166534';
+        persistDraft(true);
+      });
 
       const updateOperationModeUi = () => {
         operationMode = operationModeInput.value;
@@ -525,8 +569,30 @@
             persistDraft();
             renderOrder();
           });
+          const moveControls = document.createElement('span');
+          moveControls.title = '自定义顺序：逐项上移或下移';
+          moveControls.style.cssText = `display:flex;gap:3px;flex:0 0 auto;${clickPickMode ? 'display:none;' : ''}`;
+          const moveBy = (delta) => {
+            const target = index + delta;
+            if (target < 0 || target >= files.length) return;
+            const [moved] = files.splice(index, 1);
+            files.splice(target, 0, moved);
+            setActiveOrderButton('custom');
+            persistDraft();
+            renderOrder();
+          };
+          [['↑', -1, '上移一位'], ['↓', 1, '下移一位']].forEach(([text, delta, title]) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = text;
+            button.title = title;
+            button.disabled = (delta < 0 && index === 0) || (delta > 0 && index === files.length - 1);
+            button.style.cssText = 'width:24px;height:27px;padding:0;border:1px solid #93c5fd;border-radius:5px;background:#fff;color:#1d4ed8;cursor:pointer;font-size:14px;line-height:1;';
+            button.addEventListener('click', event => { event.stopPropagation(); moveBy(delta); });
+            moveControls.appendChild(button);
+          });
           meta.append(name, hint);
-          row.append(handle, number, preview, meta, groupInput, positionInput);
+          row.append(handle, number, preview, meta, groupInput, positionInput, moveControls);
           row.addEventListener('click', event => {
             if (!clickPickMode || event.target.closest('input')) return;
             const existing = clickOrderIds.indexOf(file.id);

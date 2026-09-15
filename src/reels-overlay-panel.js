@@ -82,24 +82,27 @@ class ReelsOverlayPanel {
             <div class="rop-section">
                 <div class="rop-group">
                     <div class="rop-group-title">覆层组预设</div>
-                    <div style="display:flex;gap:4px;align-items:center;">
-                        <select id="rop-group-preset-select" class="rop-select" style="flex:1;"></select>
-                        <button class="btn btn-secondary rop-btn" id="rop-group-preset-load" style="padding:2px 8px;">加载</button>
-                        <button class="btn btn-secondary rop-btn" id="rop-group-preset-gallery" style="padding:2px 8px;background:var(--accent-primary,#7b8bef);color:#fff;" title="打开可视化预设库">📂 预设库</button>
+                    <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;">
+                        <select id="rop-group-preset-select" class="rop-select" style="flex:1;min-width:110px;"></select>
+                        <div style="display:flex;gap:4px;flex-shrink:0;">
+                            <button class="btn btn-secondary rop-btn" id="rop-group-preset-load" style="padding:2px 8px;" title="加载预设（已有覆层时可选择合并追加或覆盖替换）">加载</button>
+                            <button class="btn btn-secondary rop-btn" id="rop-group-preset-append" style="padding:2px 8px;background:rgba(16,185,129,0.18);color:#34d399;border:1px solid rgba(16,185,129,0.35);" title="直接将预设合并追加到现有覆层（不覆盖当前图层）">➕追加</button>
+                            <button class="btn btn-secondary rop-btn" id="rop-group-preset-gallery" style="padding:2px 8px;background:var(--accent-primary,#7b8bef);color:#fff;" title="打开可视化预设库">📂 预设库</button>
+                        </div>
                     </div>
-                    <div style="display:flex;gap:4px;margin-top:4px;">
-                        <button class="btn btn-secondary rop-btn" id="rop-group-preset-update" style="flex:1;background:var(--accent-primary,#5b6abf);color:#fff;" title="直接覆盖更新当前选中的预设">更新</button>
-                        <button class="btn btn-secondary rop-btn" id="rop-group-preset-save" style="flex:1;" title="另存为新预设">另存</button>
-                        <button class="btn btn-secondary rop-btn" id="rop-group-preset-rename" style="flex:1;">重命名</button>
-                        <button class="btn btn-secondary rop-btn" id="rop-group-preset-del" style="flex:1;">删除</button>
-                        <button class="btn btn-secondary rop-btn" id="rop-group-preset-import" style="flex:1;">导入</button>
-                        <button class="btn btn-secondary rop-btn" id="rop-group-preset-export" style="flex:1;">导出</button>
+                    <div class="rop-btn-grid" style="margin-top:4px;">
+                        <button class="btn btn-secondary rop-btn" id="rop-group-preset-update" style="background:var(--accent-primary,#5b6abf);color:#fff;" title="直接覆盖更新当前选中的预设">更新</button>
+                        <button class="btn btn-secondary rop-btn" id="rop-group-preset-save" title="另存为新预设">另存</button>
+                        <button class="btn btn-secondary rop-btn" id="rop-group-preset-rename">重命名</button>
+                        <button class="btn btn-secondary rop-btn" id="rop-group-preset-del">删除</button>
+                        <button class="btn btn-secondary rop-btn" id="rop-group-preset-import">导入</button>
+                        <button class="btn btn-secondary rop-btn" id="rop-group-preset-export">导出</button>
                     </div>
-                    <div style="display:flex;align-items:center;gap:4px;margin-top:6px;padding-top:6px;border-top:1px solid var(--border-color);">
+                    <div style="display:flex;align-items:center;gap:4px;margin-top:6px;padding-top:6px;border-top:1px solid var(--border-color);flex-wrap:wrap;">
                         <span style="font-size:11px;color:var(--text-secondary);white-space:nowrap;">仅预览背景</span>
                         <button class="btn btn-secondary rop-btn" id="rop-preset-preview-bg-pick" style="padding:2px 7px;">选择</button>
                         <button class="btn btn-secondary rop-btn" id="rop-preset-preview-bg-clear" style="padding:2px 7px;">清除</button>
-                        <span id="rop-preset-preview-bg-label" title="不保存到预设或任务，也不影响导出" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;color:var(--text-muted);">未设置</span>
+                        <span id="rop-preset-preview-bg-label" title="不保存到预设或任务，也不影响导出" style="flex:1;min-width:50px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;color:var(--text-muted);">未设置</span>
                     </div>
                 </div>
             </div>
@@ -107,17 +110,19 @@ class ReelsOverlayPanel {
             <!-- 覆层列表 -->
             <div class="rop-section">
                 <div class="rop-header">
-                    <span>覆层列表</span>
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <span>覆层列表</span>
+                    </div>
                     <div class="rop-header-actions">
                         <button class="btn btn-secondary rop-btn" id="rop-add-text" title="添加文本覆层">+ 文本</button>
                         <button class="btn btn-secondary rop-btn" id="rop-add-textcard" title="添加文字卡片" style="background:#FFD700;color:#000;">+ 文字卡片</button>
                         <button class="btn btn-secondary rop-btn" id="rop-add-solidmask" title="添加纯色蒙版" style="background:#4CAF50;color:#fff;">+ 纯色蒙版</button>
                         <button class="btn btn-secondary rop-btn" id="rop-add-image" title="添加图片/视频/动图覆层">+ 媒体</button>
-                        <button class="btn btn-secondary rop-btn" id="rop-media-library" title="打开固定覆层素材库" style="padding:2px 6px;">📂</button>
+                        <button class="btn btn-secondary rop-btn" id="rop-media-library" title="打开固定覆层素材库" style="padding:2px 6px;">📂 素材</button>
                         <button class="btn btn-secondary rop-btn" id="rop-add-scroll" title="添加滚动字幕" style="background:#FF6B35;color:#fff;">+ 滚动字幕</button>
                     </div>
                 </div>
-                <label style="display:flex;align-items:center;gap:6px;margin:6px 0;font-size:11px;cursor:pointer;color:var(--text-secondary);" title="关闭后，动态字幕会显示在所有覆层上方">
+                <label style="display:flex;align-items:center;gap:6px;margin:6px 0;font-size:11px;cursor:pointer;color:var(--text-secondary);flex-wrap:wrap;" title="关闭后，动态字幕会显示在所有覆层上方">
                     <input type="checkbox" id="rop-overlay-above-subtitle" checked> 覆层显示在动态字幕上方
                 </label>
                 <div id="rop-overlay-list" class="rop-list"></div>
@@ -144,17 +149,17 @@ class ReelsOverlayPanel {
                             <span title="批量生成的任务会限制在当前任务组内">应用到当前任务组</span>
                         </label>
                     </div>
-                    <div style="display:flex;gap:4px;margin-top:4px;">
-                        <select id="rop-card-tpl-select" class="rop-select" style="flex:1;">
+                    <div style="display:flex;gap:4px;margin-top:4px;flex-wrap:wrap;">
+                        <select id="rop-card-tpl-select" class="rop-select" style="flex:1;min-width:110px;">
                             <option value="">-- 选择模板 --</option>
                         </select>
                         <button class="btn btn-secondary rop-btn" id="rop-card-load-tpl" style="padding:2px 8px;">加载</button>
                     </div>
-                    <div style="display:flex;gap:4px;margin-top:4px;">
-                        <button class="btn btn-secondary rop-btn" id="rop-card-save-tpl" style="flex:1;">保存</button>
-                        <button class="btn btn-secondary rop-btn" id="rop-card-del-tpl" style="flex:1;">删除</button>
-                        <button class="btn btn-secondary rop-btn" id="rop-card-import-tpl" style="flex:1;">导入</button>
-                        <button class="btn btn-secondary rop-btn" id="rop-card-export-tpl" style="flex:1;">导出</button>
+                    <div class="rop-btn-grid" style="margin-top:4px;">
+                        <button class="btn btn-secondary rop-btn" id="rop-card-save-tpl">保存</button>
+                        <button class="btn btn-secondary rop-btn" id="rop-card-del-tpl">删除</button>
+                        <button class="btn btn-secondary rop-btn" id="rop-card-import-tpl">导入</button>
+                        <button class="btn btn-secondary rop-btn" id="rop-card-export-tpl">导出</button>
                     </div>
                     <div class="rop-grid" style="margin-top:8px;">
                         <label>卡片开始(s)</label><input type="number" id="rop-card-start" class="rop-input" step="0.1" min="0" title="卡片文字和它的蒙版同时出现">
@@ -808,6 +813,31 @@ class ReelsOverlayPanel {
                         <select id="rop-title-bg-mode" class="rop-select rop-defaultable" data-default="block">
                             <option value="block">整块</option><option value="inline">每行独立包裹</option><option value="inline-joined">连体包裹</option>
                         </select>
+                        <label>艺术笔刷</label><input type="checkbox" id="rop-title-bg-brush" class="rop-defaultable" data-default="false">
+                        <label>笔刷风格</label>
+                        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+                            <select id="rop-title-bg-brush-style" class="rop-select rop-defaultable" data-default="acrylic" style="flex:1; min-width:140px;">
+                                <option value="acrylic">丙烯干画拉丝 (推荐)</option>
+                                <option value="watercolor">水彩通透水痕</option>
+                                <option value="drybrush">粗砺宣纸飞白</option>
+                                <option value="tornpaper">复古手撕纸边</option>
+                                <option value="custom">➕ 导入单张笔刷图...</option>
+                            </select>
+                            <button id="rop-title-brush-upload-btn" class="rop-btn" type="button" title="选取单张笔刷图片导入 (PNG/JPG/WEBP)" style="padding:4px 7px; font-size:11px; white-space:nowrap; cursor:pointer; background:var(--bg-secondary, #333); border:1px solid var(--border-color, #555); border-radius:4px; color:var(--text-color, #fff);">📁 导入单图</button>
+                            <button id="rop-title-brush-folder-btn" class="rop-btn" type="button" title="选取包含笔刷图片的文件夹批量导入" style="padding:4px 7px; font-size:11px; white-space:nowrap; cursor:pointer; background:var(--bg-secondary, #333); border:1px solid var(--border-color, #555); border-radius:4px; color:var(--text-color, #fff);">📂 导入文件夹</button>
+                            <input type="file" id="rop-title-brush-file-input" accept="image/png,image/jpeg,image/webp,image/jpg" style="display:none;">
+                            <input type="file" id="rop-title-brush-folder-input" webkitdirectory directory multiple style="display:none;">
+                        </div>
+                        <label title="0表示自动根据文字宽度自适应，也可手动拖动指定固定宽度">笔刷宽度</label>
+                        <div class="rop-slider-combo"><input type="range" id="rop-title-bg-brush-w" class="rop-range rop-defaultable" data-default="0" min="0" max="1080" value="0"><input type="number" class="rop-num-readout" data-link="rop-title-bg-brush-w" min="0" max="1080" value="0"><button class="rop-reset-btn" data-target="rop-title-bg-brush-w" title="恢复默认(0=自动适配)">↺</button></div>
+                        <label title="0表示自动根据文字高度自适应，也可手动拖动指定固定高度">笔刷高度</label>
+                        <div class="rop-slider-combo"><input type="range" id="rop-title-bg-brush-h" class="rop-range rop-defaultable" data-default="0" min="0" max="600" value="0"><input type="number" class="rop-num-readout" data-link="rop-title-bg-brush-h" min="0" max="600" value="0"><button class="rop-reset-btn" data-target="rop-title-bg-brush-h" title="恢复默认(0=自动适配)">↺</button></div>
+                        <label title="强化笔刷主体不透明度，中间100%纯实心遮挡背景视频，同时保留边缘柔和羽化半透明（默认100%）">笔刷实心度</label>
+                        <div class="rop-slider-combo"><input type="range" id="rop-title-bg-brush-solid" class="rop-range rop-defaultable" data-default="100" min="0" max="100" value="100"><input type="number" class="rop-num-readout" data-link="rop-title-bg-brush-solid" min="0" max="100" value="100"><button class="rop-reset-btn" data-target="rop-title-bg-brush-solid" title="恢复默认(100%)">↺</button></div>
+                        <label title="笔刷横向位置微调偏移量（像素）">笔刷位置X</label>
+                        <div class="rop-slider-combo"><input type="range" id="rop-title-bg-brush-x" class="rop-range rop-defaultable" data-default="0" min="-500" max="500" value="0"><input type="number" class="rop-num-readout" data-link="rop-title-bg-brush-x" min="-500" max="500" value="0"><button class="rop-reset-btn" data-target="rop-title-bg-brush-x" title="恢复默认(0)">↺</button></div>
+                        <label title="笔刷纵向位置微调偏移量（像素）">笔刷位置Y</label>
+                        <div class="rop-slider-combo"><input type="range" id="rop-title-bg-brush-y" class="rop-range rop-defaultable" data-default="0" min="-500" max="500" value="0"><input type="number" class="rop-num-readout" data-link="rop-title-bg-brush-y" min="-500" max="500" value="0"><button class="rop-reset-btn" data-target="rop-title-bg-brush-y" title="恢复默认(0)">↺</button></div>
                         <label>背景颜色</label><input type="color" id="rop-title-bg-color" class="rop-color rop-defaultable" data-default="#000000" value="#000000">
                         <label>背景透明</label>
                         <div class="rop-slider-combo"><input type="range" id="rop-title-bg-opacity" class="rop-range rop-defaultable" data-default="60" min="0" max="100" value="60"><input type="number" class="rop-num-readout" data-link="rop-title-bg-opacity" min="0" max="100" value="60"><button class="rop-reset-btn" data-target="rop-title-bg-opacity" title="恢复默认">↺</button></div>
@@ -909,6 +939,31 @@ class ReelsOverlayPanel {
                         <select id="rop-body-bg-mode" class="rop-select rop-defaultable" data-default="block">
                             <option value="block">整块</option><option value="inline">每行独立包裹</option><option value="inline-joined">连体包裹</option>
                         </select>
+                        <label>艺术笔刷</label><input type="checkbox" id="rop-body-bg-brush" class="rop-defaultable" data-default="false">
+                        <label>笔刷风格</label>
+                        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+                            <select id="rop-body-bg-brush-style" class="rop-select rop-defaultable" data-default="acrylic" style="flex:1; min-width:140px;">
+                                <option value="acrylic">丙烯干画拉丝 (推荐)</option>
+                                <option value="watercolor">水彩通透水痕</option>
+                                <option value="drybrush">粗砺宣纸飞白</option>
+                                <option value="tornpaper">复古手撕纸边</option>
+                                <option value="custom">➕ 导入单张笔刷图...</option>
+                            </select>
+                            <button id="rop-body-brush-upload-btn" class="rop-btn" type="button" title="选取单张笔刷图片导入 (PNG/JPG/WEBP)" style="padding:4px 7px; font-size:11px; white-space:nowrap; cursor:pointer; background:var(--bg-secondary, #333); border:1px solid var(--border-color, #555); border-radius:4px; color:var(--text-color, #fff);">📁 导入单图</button>
+                            <button id="rop-body-brush-folder-btn" class="rop-btn" type="button" title="选取包含笔刷图片的文件夹批量导入" style="padding:4px 7px; font-size:11px; white-space:nowrap; cursor:pointer; background:var(--bg-secondary, #333); border:1px solid var(--border-color, #555); border-radius:4px; color:var(--text-color, #fff);">📂 导入文件夹</button>
+                            <input type="file" id="rop-body-brush-file-input" accept="image/png,image/jpeg,image/webp,image/jpg" style="display:none;">
+                            <input type="file" id="rop-body-brush-folder-input" webkitdirectory directory multiple style="display:none;">
+                        </div>
+                        <label title="0表示自动根据文字宽度自适应，也可手动拖动指定固定宽度">笔刷宽度</label>
+                        <div class="rop-slider-combo"><input type="range" id="rop-body-bg-brush-w" class="rop-range rop-defaultable" data-default="0" min="0" max="1080" value="0"><input type="number" class="rop-num-readout" data-link="rop-body-bg-brush-w" min="0" max="1080" value="0"><button class="rop-reset-btn" data-target="rop-body-bg-brush-w" title="恢复默认(0=自动适配)">↺</button></div>
+                        <label title="0表示自动根据文字高度自适应，也可手动拖动指定固定高度">笔刷高度</label>
+                        <div class="rop-slider-combo"><input type="range" id="rop-body-bg-brush-h" class="rop-range rop-defaultable" data-default="0" min="0" max="600" value="0"><input type="number" class="rop-num-readout" data-link="rop-body-bg-brush-h" min="0" max="600" value="0"><button class="rop-reset-btn" data-target="rop-body-bg-brush-h" title="恢复默认(0=自动适配)">↺</button></div>
+                        <label title="强化笔刷主体不透明度，中间100%纯实心遮挡背景视频，同时保留边缘柔和羽化半透明（默认100%）">笔刷实心度</label>
+                        <div class="rop-slider-combo"><input type="range" id="rop-body-bg-brush-solid" class="rop-range rop-defaultable" data-default="100" min="0" max="100" value="100"><input type="number" class="rop-num-readout" data-link="rop-body-bg-brush-solid" min="0" max="100" value="100"><button class="rop-reset-btn" data-target="rop-body-bg-brush-solid" title="恢复默认(100%)">↺</button></div>
+                        <label title="笔刷横向位置微调偏移量（像素）">笔刷位置X</label>
+                        <div class="rop-slider-combo"><input type="range" id="rop-body-bg-brush-x" class="rop-range rop-defaultable" data-default="0" min="-500" max="500" value="0"><input type="number" class="rop-num-readout" data-link="rop-body-bg-brush-x" min="-500" max="500" value="0"><button class="rop-reset-btn" data-target="rop-body-bg-brush-x" title="恢复默认(0)">↺</button></div>
+                        <label title="笔刷纵向位置微调偏移量（像素）">笔刷位置Y</label>
+                        <div class="rop-slider-combo"><input type="range" id="rop-body-bg-brush-y" class="rop-range rop-defaultable" data-default="0" min="-500" max="500" value="0"><input type="number" class="rop-num-readout" data-link="rop-body-bg-brush-y" min="-500" max="500" value="0"><button class="rop-reset-btn" data-target="rop-body-bg-brush-y" title="恢复默认(0)">↺</button></div>
                         <label>背景颜色</label><input type="color" id="rop-body-bg-color" class="rop-color rop-defaultable" data-default="#000000" value="#000000">
                         <label>背景透明</label>
                         <div class="rop-slider-combo"><input type="range" id="rop-body-bg-opacity" class="rop-range rop-defaultable" data-default="60" min="0" max="100" value="60"><input type="number" class="rop-num-readout" data-link="rop-body-bg-opacity" min="0" max="100" value="60"><button class="rop-reset-btn" data-target="rop-body-bg-opacity" title="恢复默认">↺</button></div>
@@ -1174,13 +1229,21 @@ class ReelsOverlayPanel {
             'rop-footer-color',
             'rop-scroll-title-color',
             'rop-scroll-color',
-            'rop-color'
+            'rop-color',
+            // 背景与笔刷底色渐变
+            'rop-title-bg-color',
+            'rop-body-bg-color',
+            'rop-footer-bg-color',
+            'rop-card-color',
+            'rop-scroll-title-bg-color',
+            'rop-scroll-body-bg-color',
+            'rop-scroll-bg-color'
         ];
         if (gradientIds.includes(colorEl.id)) {
             const gradBtn = document.createElement('button');
             gradBtn.type = 'button';
             gradBtn.className = 'rop-gradient-btn';
-            gradBtn.title = '设置渐变色 (支持多节点自定义)';
+            gradBtn.title = '设置渐变色 (支持多节点自定义与流行预设)';
             gradBtn.innerHTML = '🌈';
             colorEl._ropGradBtn = gradBtn;
             gradBtn.addEventListener('click', (e) => {
@@ -1193,15 +1256,22 @@ class ReelsOverlayPanel {
                 let curDir = colorEl.dataset.gradientDirection || 'horizontal';
                 if (ov) {
                     if (colorEl.id === 'rop-title-color' && ov.title_gradient_direction) curDir = ov.title_gradient_direction;
+                    else if (colorEl.id === 'rop-title-bg-color' && ov.title_bg_gradient_direction) curDir = ov.title_bg_gradient_direction;
                     else if (colorEl.id === 'rop-body-color' && ov.body_gradient_direction) curDir = ov.body_gradient_direction;
+                    else if (colorEl.id === 'rop-body-bg-color' && ov.body_bg_gradient_direction) curDir = ov.body_bg_gradient_direction;
                     else if (colorEl.id === 'rop-footer-color' && ov.footer_gradient_direction) curDir = ov.footer_gradient_direction;
+                    else if (colorEl.id === 'rop-footer-bg-color' && ov.footer_bg_gradient_direction) curDir = ov.footer_bg_gradient_direction;
+                    else if (colorEl.id === 'rop-card-color' && ov.card_gradient_direction) curDir = ov.card_gradient_direction;
                     else if (colorEl.id === 'rop-scroll-title-color' && ov.scroll_title_gradient_direction) curDir = ov.scroll_title_gradient_direction;
+                    else if (colorEl.id === 'rop-scroll-title-bg-color' && ov.scroll_title_bg_gradient_direction) curDir = ov.scroll_title_bg_gradient_direction;
+                    else if (colorEl.id === 'rop-scroll-body-bg-color' && ov.scroll_body_bg_gradient_direction) curDir = ov.scroll_body_bg_gradient_direction;
                     else if (colorEl.id === 'rop-scroll-color' && (ov.scroll_gradient_direction || ov.gradient_direction)) curDir = ov.scroll_gradient_direction || ov.gradient_direction;
                     else if (colorEl.id === 'rop-color' && ov.gradient_direction) curDir = ov.gradient_direction;
                 }
 
+                const isBgColor = colorEl.id.includes('bg') || colorEl.id === 'rop-card-color';
                 window.ReelsGradientPicker.open({
-                    title: '自定义文字渐变色',
+                    title: isBgColor ? '自定义背景/笔刷渐变色' : '自定义文字渐变色',
                     value: currentVal,
                     direction: curDir,
                     anchorEl: gradBtn,
@@ -1244,15 +1314,33 @@ class ReelsOverlayPanel {
                             if (colorEl.id === 'rop-title-color') {
                                 ov.title_color = value;
                                 ov.title_gradient_direction = direction;
+                            } else if (colorEl.id === 'rop-title-bg-color') {
+                                ov.title_bg_color = value;
+                                ov.title_bg_gradient_direction = direction;
                             } else if (colorEl.id === 'rop-body-color') {
                                 ov.body_color = value;
                                 ov.body_gradient_direction = direction;
+                            } else if (colorEl.id === 'rop-body-bg-color') {
+                                ov.body_bg_color = value;
+                                ov.body_bg_gradient_direction = direction;
                             } else if (colorEl.id === 'rop-footer-color') {
                                 ov.footer_color = value;
                                 ov.footer_gradient_direction = direction;
+                            } else if (colorEl.id === 'rop-footer-bg-color') {
+                                ov.footer_bg_color = value;
+                                ov.footer_bg_gradient_direction = direction;
+                            } else if (colorEl.id === 'rop-card-color') {
+                                ov.card_color = value;
+                                ov.card_gradient_direction = direction;
                             } else if (colorEl.id === 'rop-scroll-title-color') {
                                 ov.scroll_title_color = value;
                                 ov.scroll_title_gradient_direction = direction;
+                            } else if (colorEl.id === 'rop-scroll-title-bg-color') {
+                                ov.scroll_title_bg_color = value;
+                                ov.scroll_title_bg_gradient_direction = direction;
+                            } else if (colorEl.id === 'rop-scroll-body-bg-color') {
+                                ov.scroll_body_bg_color = value;
+                                ov.scroll_body_bg_gradient_direction = direction;
                             } else if (colorEl.id === 'rop-scroll-color') {
                                 ov.color = value;
                                 ov.scroll_gradient_direction = direction;
@@ -1428,6 +1516,7 @@ class ReelsOverlayPanel {
         this.container.querySelector('#rop-group-preset-update')?.addEventListener('click', () => this._updateOverlayGroupPreset());
         this.container.querySelector('#rop-group-preset-save')?.addEventListener('click', () => this._saveOverlayGroupPreset());
         this.container.querySelector('#rop-group-preset-load')?.addEventListener('click', () => this._loadOverlayGroupPreset());
+        this.container.querySelector('#rop-group-preset-append')?.addEventListener('click', () => this._loadOverlayGroupPreset('merge'));
         this.container.querySelector('#rop-group-preset-gallery')?.addEventListener('click', () => this._showPresetGallery());
         this.container.querySelector('#rop-group-preset-del')?.addEventListener('click', () => this._deleteOverlayGroupPreset());
         this.container.querySelector('#rop-group-preset-rename')?.addEventListener('click', () => this._renameOverlayGroupPreset());
@@ -1602,12 +1691,14 @@ class ReelsOverlayPanel {
             'rop-title-shadow-color', 'rop-title-shadow-blur', 'rop-title-shadow-x', 'rop-title-shadow-y',
             'rop-title-bg-enabled', 'rop-title-bg-mode', 'rop-title-bg-color', 'rop-title-bg-opacity', 'rop-title-bg-radius',
             'rop-title-bg-pad-h', 'rop-title-bg-pad-top', 'rop-title-bg-pad-bottom',
+            'rop-title-bg-brush', 'rop-title-bg-brush-style', 'rop-title-bg-brush-w', 'rop-title-bg-brush-h', 'rop-title-bg-brush-solid', 'rop-title-bg-brush-x', 'rop-title-bg-brush-y',
             'rop-title-deco-enabled', 'rop-title-deco-position', 'rop-title-deco-style', 'rop-title-deco-align',
             'rop-title-deco-color', 'rop-title-deco-color2', 'rop-title-deco-thickness', 'rop-title-deco-length', 'rop-title-deco-gap', 'rop-title-deco-opacity',
             'rop-body-stroke-color', 'rop-body-stroke-width',
             'rop-body-shadow-color', 'rop-body-shadow-blur', 'rop-body-shadow-x', 'rop-body-shadow-y',
             'rop-body-bg-enabled', 'rop-body-bg-mode', 'rop-body-bg-color', 'rop-body-bg-opacity', 'rop-body-bg-radius',
             'rop-body-bg-pad-h', 'rop-body-bg-pad-top', 'rop-body-bg-pad-bottom',
+            'rop-body-bg-brush', 'rop-body-bg-brush-style', 'rop-body-bg-brush-w', 'rop-body-bg-brush-h', 'rop-body-bg-brush-solid', 'rop-body-bg-brush-x', 'rop-body-bg-brush-y',
             'rop-footer-stroke-color', 'rop-footer-stroke-width',
             'rop-footer-shadow-color', 'rop-footer-shadow-blur', 'rop-footer-shadow-x', 'rop-footer-shadow-y',
             'rop-footer-bg-enabled', 'rop-footer-bg-mode', 'rop-footer-bg-color', 'rop-footer-bg-opacity', 'rop-footer-bg-radius',
@@ -2043,6 +2134,9 @@ class ReelsOverlayPanel {
 
         this._refreshCardTemplateSelect();
 
+        this._bindCustomBrushUpload('title');
+        this._bindCustomBrushUpload('body');
+
         // VideoCanvas 回调
         if (this.videoCanvas) {
             this.videoCanvas.onSelect = (ov) => this.selectOverlay(ov);
@@ -2063,6 +2157,175 @@ class ReelsOverlayPanel {
                 }
             };
         }
+    }
+
+    _refreshAllBrushSelects() {
+        const engine = window.ReelsOverlay?.ReelsBrushEngine;
+        if (!engine) return;
+        const customBrushes = typeof engine.getCustomBrushes === 'function' ? engine.getCustomBrushes() : {};
+        const brushKeys = Object.keys(customBrushes);
+
+        const selects = this.container.querySelectorAll('#rop-title-bg-brush-style, #rop-body-bg-brush-style, #rop-card-brush-style');
+        selects.forEach(sel => {
+            const curVal = sel.value;
+            let customGroup = sel.querySelector('optgroup[data-custom-brush-group="1"]');
+            if (!customGroup) {
+                customGroup = document.createElement('optgroup');
+                customGroup.label = '📂 自定义笔刷库';
+                customGroup.dataset.customBrushGroup = '1';
+                sel.appendChild(customGroup);
+            }
+            customGroup.innerHTML = '';
+            brushKeys.forEach(k => {
+                const item = customBrushes[k];
+                const opt = document.createElement('option');
+                opt.value = k;
+                opt.textContent = `📁 ${item.displayName || k}`;
+                customGroup.appendChild(opt);
+            });
+            if (curVal && sel.querySelector(`option[value="${curVal}"]`)) {
+                sel.value = curVal;
+            }
+        });
+
+        if (typeof window.reelsSyncBoxBrushSelect === 'function') {
+            window.reelsSyncBoxBrushSelect();
+        }
+    }
+
+    _bindCustomBrushUpload(prefix) {
+        const btnSingle = this.container.querySelector(`#rop-${prefix}-brush-upload-btn`);
+        const btnFolder = this.container.querySelector(`#rop-${prefix}-brush-folder-btn`);
+        const fileInput = this.container.querySelector(`#rop-${prefix}-brush-file-input`);
+        const folderInput = this.container.querySelector(`#rop-${prefix}-brush-folder-input`);
+        const select = this.container.querySelector(`#rop-${prefix}-bg-brush-style`);
+        if (!select) return;
+
+        this._refreshAllBrushSelects();
+
+        if (btnSingle && fileInput) {
+            btnSingle.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                fileInput.value = '';
+                fileInput.click();
+            });
+
+            fileInput.addEventListener('change', () => {
+                const file = fileInput.files && fileInput.files[0];
+                if (!file) return;
+                const cleanName = file.name.replace(/\.[^/.]+$/, '').trim() || ('custom_' + Date.now());
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const dataUrl = e.target.result;
+                    if (window.ReelsOverlay?.ReelsBrushEngine) {
+                        window.ReelsOverlay.ReelsBrushEngine.saveCustomBrush(cleanName, dataUrl, cleanName);
+                    }
+                    this._refreshAllBrushSelects();
+                    select.value = cleanName;
+                    const brushCheck = this.container.querySelector(`#rop-${prefix}-bg-brush`);
+                    if (brushCheck) brushCheck.checked = true;
+
+                    const ov = this._selectedOv || this.currentOverlay;
+                    if (ov) {
+                        ov[prefix + '_bg_brush'] = true;
+                        ov[prefix + '_bg_brush_style'] = cleanName;
+                        ov[prefix + '_custom_brush_data'] = dataUrl;
+                        this._syncToOverlay();
+                        if (typeof this.videoCanvas?.render === 'function') this.videoCanvas.render();
+                        else if (this.mgr?.requestRender) this.mgr.requestRender();
+                    }
+                    if (typeof showToast === 'function') showToast(`笔刷「${cleanName}」导入成功！`, 'success');
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+
+        if (btnFolder && folderInput) {
+            btnFolder.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                folderInput.value = '';
+                folderInput.click();
+            });
+
+            folderInput.addEventListener('change', () => {
+                const files = Array.from(folderInput.files || []).filter(f => /\.(png|jpe?g|webp|bmp|svg)$/i.test(f.name));
+                if (files.length === 0) {
+                    if (typeof showToast === 'function') showToast('所选文件夹内未检测到支持的图片格式 (PNG/JPG/WEBP)', 'warning');
+                    return;
+                }
+                let importedCount = 0;
+                let firstCleanName = null;
+                let firstDataUrl = null;
+
+                const readPromises = files.map(file => {
+                    return new Promise((resolve) => {
+                        const cleanName = file.name.replace(/\.[^/.]+$/, '').trim();
+                        if (!cleanName) return resolve();
+                        const reader = new FileReader();
+                        reader.onload = (e) => {
+                            const dataUrl = e.target.result;
+                            if (window.ReelsOverlay?.ReelsBrushEngine) {
+                                window.ReelsOverlay.ReelsBrushEngine.saveCustomBrush(cleanName, dataUrl, cleanName);
+                            }
+                            if (!firstCleanName) {
+                                firstCleanName = cleanName;
+                                firstDataUrl = dataUrl;
+                            }
+                            importedCount++;
+                            resolve();
+                        };
+                        reader.onerror = () => resolve();
+                        reader.readAsDataURL(file);
+                    });
+                });
+
+                Promise.all(readPromises).then(() => {
+                    this._refreshAllBrushSelects();
+                    if (firstCleanName) {
+                        select.value = firstCleanName;
+                        const brushCheck = this.container.querySelector(`#rop-${prefix}-bg-brush`);
+                        if (brushCheck) brushCheck.checked = true;
+
+                        const ov = this._selectedOv || this.currentOverlay;
+                        if (ov) {
+                            ov[prefix + '_bg_brush'] = true;
+                            ov[prefix + '_bg_brush_style'] = firstCleanName;
+                            ov[prefix + '_custom_brush_data'] = firstDataUrl;
+                            this._syncToOverlay();
+                            if (typeof this.videoCanvas?.render === 'function') this.videoCanvas.render();
+                            else if (this.mgr?.requestRender) this.mgr.requestRender();
+                        }
+                    }
+                    if (typeof showToast === 'function') {
+                        showToast(`🎉 成功从文件夹导入 ${importedCount} 个自定义笔刷！`, 'success');
+                    }
+                });
+            });
+        }
+
+        select.addEventListener('change', () => {
+            if (select.value === 'custom') {
+                if (fileInput) {
+                    fileInput.value = '';
+                    fileInput.click();
+                }
+                return;
+            }
+            const ov = this._selectedOv || this.currentOverlay;
+            if (ov && window.ReelsOverlay?.ReelsBrushEngine) {
+                const customData = window.ReelsOverlay.ReelsBrushEngine.getCustomBrushData(select.value);
+                if (customData) {
+                    ov[prefix + '_custom_brush_data'] = customData;
+                } else {
+                    delete ov[prefix + '_custom_brush_data'];
+                }
+                this._syncToOverlay();
+                if (typeof this.videoCanvas?.render === 'function') this.videoCanvas.render();
+                else if (this.mgr?.requestRender) this.mgr.requestRender();
+            }
+        });
     }
 
     // ═══════════════════════════════════════════════
@@ -3335,6 +3598,11 @@ class ReelsOverlayPanel {
 
         if (ov.type === 'textcard' || ov.type === 'solid_mask') {
             this._val('rop-card-enabled', ov.card_enabled ?? true);
+            const cardColEl = this.container.querySelector('#rop-card-color');
+            if (cardColEl) {
+                if (ov.card_gradient_direction) cardColEl.dataset.gradientDirection = ov.card_gradient_direction;
+                else delete cardColEl.dataset.gradientDirection;
+            }
             this._val('rop-card-color', ov.card_color || '#ffffff');
             this._val('rop-card-opacity', ov.card_opacity ?? 80);
             this._val('rop-card-feather-enabled', ov.card_feather_enabled ?? false);
@@ -3432,8 +3700,31 @@ class ReelsOverlayPanel {
                 this._val('rop-title-shadow-x', (isIndep ? ov.title_shadow_x : ov.text_shadow_x) ?? (isIndep ? 0 : 2));
                 this._val('rop-title-shadow-y', (isIndep ? ov.title_shadow_y : ov.text_shadow_y) ?? (isIndep ? 0 : 2));
                 // Backgrounds
+                ['title', 'body'].forEach(pfx => {
+                    const cData = ov[pfx + '_custom_brush_data'];
+                    const sName = ov[pfx + '_bg_brush_style'];
+                    if (cData && sName) {
+                        if (window.ReelsOverlay && window.ReelsOverlay.ReelsBrushEngine) {
+                            window.ReelsOverlay.ReelsBrushEngine.registerBrush(sName, cData);
+                        }
+                    }
+                });
+                this._refreshAllBrushSelects();
+
                 this._val('rop-title-bg-enabled', ov.title_bg_enabled ?? false);
                 this._val('rop-title-bg-mode', ov.title_bg_mode || 'block');
+                this._val('rop-title-bg-brush', ov.title_bg_brush ?? false);
+                this._val('rop-title-bg-brush-style', ov.title_bg_brush_style || 'acrylic');
+                this._val('rop-title-bg-brush-w', ov.title_bg_brush_w ?? 0);
+                this._val('rop-title-bg-brush-h', ov.title_bg_brush_h ?? 0);
+                this._val('rop-title-bg-brush-solid', ov.title_bg_brush_solid ?? 100);
+                this._val('rop-title-bg-brush-x', ov.title_bg_brush_x ?? 0);
+                this._val('rop-title-bg-brush-y', ov.title_bg_brush_y ?? 0);
+                const titleBgEl = this.container.querySelector('#rop-title-bg-color');
+                if (titleBgEl) {
+                    if (ov.title_bg_gradient_direction) titleBgEl.dataset.gradientDirection = ov.title_bg_gradient_direction;
+                    else delete titleBgEl.dataset.gradientDirection;
+                }
                 this._val('rop-title-bg-color', ov.title_bg_color || '#000000');
                 this._val('rop-title-bg-opacity', ov.title_bg_opacity ?? 60);
                 this._val('rop-title-bg-radius', ov.title_bg_radius ?? 12);
@@ -3460,6 +3751,18 @@ class ReelsOverlayPanel {
                 this._val('rop-body-shadow-y', (isIndep ? ov.body_shadow_y : ov.text_shadow_y) ?? (isIndep ? 0 : 2));
                 this._val('rop-body-bg-enabled', ov.body_bg_enabled ?? false);
                 this._val('rop-body-bg-mode', ov.body_bg_mode || 'block');
+                this._val('rop-body-bg-brush', ov.body_bg_brush ?? false);
+                this._val('rop-body-bg-brush-style', ov.body_bg_brush_style || 'acrylic');
+                this._val('rop-body-bg-brush-w', ov.body_bg_brush_w ?? 0);
+                this._val('rop-body-bg-brush-h', ov.body_bg_brush_h ?? 0);
+                this._val('rop-body-bg-brush-solid', ov.body_bg_brush_solid ?? 100);
+                this._val('rop-body-bg-brush-x', ov.body_bg_brush_x ?? 0);
+                this._val('rop-body-bg-brush-y', ov.body_bg_brush_y ?? 0);
+                const bodyBgEl = this.container.querySelector('#rop-body-bg-color');
+                if (bodyBgEl) {
+                    if (ov.body_bg_gradient_direction) bodyBgEl.dataset.gradientDirection = ov.body_bg_gradient_direction;
+                    else delete bodyBgEl.dataset.gradientDirection;
+                }
                 this._val('rop-body-bg-color', ov.body_bg_color || '#000000');
                 this._val('rop-body-bg-opacity', ov.body_bg_opacity ?? 60);
                 this._val('rop-body-bg-radius', ov.body_bg_radius ?? 12);
@@ -3850,6 +4153,8 @@ class ReelsOverlayPanel {
         if (ov.type === 'textcard' || ov.type === 'solid_mask') {
             ov.card_enabled = this._get('rop-card-enabled');
             ov.card_color = this._get('rop-card-color');
+            const cardColEl = this.container.querySelector('#rop-card-color');
+            if (cardColEl?.dataset?.gradientDirection) ov.card_gradient_direction = cardColEl.dataset.gradientDirection;
             ov.card_opacity = this._get('rop-card-opacity');
             ov.card_feather_enabled = this._get('rop-card-feather-enabled');
             ov.card_feather_dir = this._get('rop-card-feather-dir');
@@ -3946,8 +4251,26 @@ class ReelsOverlayPanel {
                 ov.title_bg_enabled = this._get('rop-title-bg-enabled');
                 ov.title_bg_mode = this._get('rop-title-bg-mode');
                 ov.title_bg_color = this._get('rop-title-bg-color');
+                const titleBgColEl = this.container.querySelector('#rop-title-bg-color');
+                if (titleBgColEl?.dataset?.gradientDirection) ov.title_bg_gradient_direction = titleBgColEl.dataset.gradientDirection;
                 ov.title_bg_opacity = this._get('rop-title-bg-opacity');
                 ov.title_bg_radius = this._get('rop-title-bg-radius');
+                ov.title_bg_brush = this._get('rop-title-bg-brush');
+                ov.title_bg_brush_style = this._get('rop-title-bg-brush-style') || 'watercolor';
+                const tBrushW = this._get('rop-title-bg-brush-w');
+                const tBrushH = this._get('rop-title-bg-brush-h');
+                ov.title_bg_brush_w = typeof tBrushW === 'number' && !isNaN(tBrushW) ? tBrushW : 0;
+                ov.title_bg_brush_h = typeof tBrushH === 'number' && !isNaN(tBrushH) ? tBrushH : 0;
+                const tBrushSolid = this._get('rop-title-bg-brush-solid');
+                ov.title_bg_brush_solid = typeof tBrushSolid === 'number' && !isNaN(tBrushSolid) ? tBrushSolid : 100;
+                const tBrushX = this._get('rop-title-bg-brush-x');
+                const tBrushY = this._get('rop-title-bg-brush-y');
+                ov.title_bg_brush_x = typeof tBrushX === 'number' && !isNaN(tBrushX) ? tBrushX : 0;
+                ov.title_bg_brush_y = typeof tBrushY === 'number' && !isNaN(tBrushY) ? tBrushY : 0;
+                if (window.ReelsOverlay?.ReelsBrushEngine?.getCustomBrushData) {
+                    const cData = window.ReelsOverlay.ReelsBrushEngine.getCustomBrushData(ov.title_bg_brush_style);
+                    if (cData) ov.title_custom_brush_data = cData;
+                }
                 const tPadH = this._get('rop-title-bg-pad-h');
                 const tPadTop = this._get('rop-title-bg-pad-top');
                 const tPadBot = this._get('rop-title-bg-pad-bottom');
@@ -3974,7 +4297,25 @@ class ReelsOverlayPanel {
                 ov.body_shadow_y = this._get('rop-body-shadow-y');
                 ov.body_bg_enabled = this._get('rop-body-bg-enabled');
                 ov.body_bg_mode = this._get('rop-body-bg-mode');
+                ov.body_bg_brush = this._get('rop-body-bg-brush');
+                ov.body_bg_brush_style = this._get('rop-body-bg-brush-style') || 'watercolor';
+                const bBrushW = this._get('rop-body-bg-brush-w');
+                const bBrushH = this._get('rop-body-bg-brush-h');
+                ov.body_bg_brush_w = typeof bBrushW === 'number' && !isNaN(bBrushW) ? bBrushW : 0;
+                ov.body_bg_brush_h = typeof bBrushH === 'number' && !isNaN(bBrushH) ? bBrushH : 0;
+                const bBrushSolid = this._get('rop-body-bg-brush-solid');
+                ov.body_bg_brush_solid = typeof bBrushSolid === 'number' && !isNaN(bBrushSolid) ? bBrushSolid : 100;
+                const bBrushX = this._get('rop-body-bg-brush-x');
+                const bBrushY = this._get('rop-body-bg-brush-y');
+                ov.body_bg_brush_x = typeof bBrushX === 'number' && !isNaN(bBrushX) ? bBrushX : 0;
+                ov.body_bg_brush_y = typeof bBrushY === 'number' && !isNaN(bBrushY) ? bBrushY : 0;
+                if (window.ReelsOverlay?.ReelsBrushEngine?.getCustomBrushData) {
+                    const cData = window.ReelsOverlay.ReelsBrushEngine.getCustomBrushData(ov.body_bg_brush_style);
+                    if (cData) ov.body_custom_brush_data = cData;
+                }
                 ov.body_bg_color = this._get('rop-body-bg-color');
+                const bodyBgColEl = this.container.querySelector('#rop-body-bg-color');
+                if (bodyBgColEl?.dataset?.gradientDirection) ov.body_bg_gradient_direction = bodyBgColEl.dataset.gradientDirection;
                 ov.body_bg_opacity = this._get('rop-body-bg-opacity');
                 ov.body_bg_radius = this._get('rop-body-bg-radius');
                 const bPadH = this._get('rop-body-bg-pad-h');
@@ -3993,6 +4334,8 @@ class ReelsOverlayPanel {
                 ov.footer_bg_enabled = this._get('rop-footer-bg-enabled');
                 ov.footer_bg_mode = this._get('rop-footer-bg-mode');
                 ov.footer_bg_color = this._get('rop-footer-bg-color');
+                const footerBgColEl = this.container.querySelector('#rop-footer-bg-color');
+                if (footerBgColEl?.dataset?.gradientDirection) ov.footer_bg_gradient_direction = footerBgColEl.dataset.gradientDirection;
                 ov.footer_bg_opacity = this._get('rop-footer-bg-opacity');
                 ov.footer_bg_radius = this._get('rop-footer-bg-radius');
                 const fPadH = this._get('rop-footer-bg-pad-h');
@@ -4210,7 +4553,13 @@ class ReelsOverlayPanel {
         // Re-render canvas to reflect changes, coalesced to avoid intermediate frames while applying panel values.
         this._requestRender();
         if (typeof this.videoCanvas?.onOverlayChange === 'function') {
-            this.videoCanvas.onOverlayChange(ov);
+            if (this._overlayChangeRaf) cancelAnimationFrame(this._overlayChangeRaf);
+            this._overlayChangeRaf = requestAnimationFrame(() => {
+                this._overlayChangeRaf = null;
+                if (typeof this.videoCanvas?.onOverlayChange === 'function') {
+                    this.videoCanvas.onOverlayChange(ov);
+                }
+            });
         }
     }
 
@@ -4713,10 +5062,11 @@ class ReelsOverlayPanel {
             'offset_x', 'offset_y',
             'max_height', 'auto_shrink', 'title_max_lines', 'min_fontsize', 'fullscreen_mask',
             // 独立区段背景
-            'title_bg_enabled', 'title_bg_mode', 'title_bg_color', 'title_bg_opacity', 'title_bg_radius', 'title_bg_pad_h', 'title_bg_pad_top', 'title_bg_pad_bottom',
+            'title_bg_enabled', 'title_bg_mode', 'title_bg_color', 'title_bg_opacity', 'title_bg_radius', 'title_bg_pad_h', 'title_bg_pad_top', 'title_bg_pad_bottom', 'title_bg_brush', 'title_bg_brush_style', 'title_bg_brush_w', 'title_bg_brush_h', 'title_bg_brush_solid', 'title_bg_brush_x', 'title_bg_brush_y', 'title_custom_brush_data',
             'title_deco_enabled', 'title_deco_position', 'title_deco_style', 'title_deco_align', 'title_deco_color', 'title_deco_color2', 'title_deco_thickness', 'title_deco_length', 'title_deco_gap', 'title_deco_opacity',
-            'body_bg_enabled', 'body_bg_mode', 'body_bg_color', 'body_bg_opacity', 'body_bg_radius', 'body_bg_pad_h', 'body_bg_pad_top', 'body_bg_pad_bottom',
+            'body_bg_enabled', 'body_bg_mode', 'body_bg_color', 'body_bg_opacity', 'body_bg_radius', 'body_bg_pad_h', 'body_bg_pad_top', 'body_bg_pad_bottom', 'body_bg_brush', 'body_bg_brush_style', 'body_bg_brush_w', 'body_bg_brush_h', 'body_bg_brush_solid', 'body_bg_brush_x', 'body_bg_brush_y', 'body_custom_brush_data',
             'footer_bg_enabled', 'footer_bg_mode', 'footer_bg_color', 'footer_bg_opacity', 'footer_bg_radius', 'footer_bg_pad_h', 'footer_bg_pad_top', 'footer_bg_pad_bottom',
+            'card_brush', 'card_brush_style', 'card_brush_solid', 'card_brush_w', 'card_brush_h', 'card_brush_x', 'card_brush_y',
             // 独立效果
             'independent_effects',
             'title_stroke_color', 'title_stroke_width', 'title_shadow_color', 'title_shadow_blur', 'title_shadow_x', 'title_shadow_y',
@@ -4980,10 +5330,18 @@ class ReelsOverlayPanel {
     _importCardTemplates() {
         const input = document.createElement('input');
         input.type = 'file';
-        input.accept = '.json';
+        input.accept = '.json,.zip';
         input.onchange = (e) => {
             const file = e.target.files[0];
             if (!file) return;
+            const localPath = window.electronAPI?.getFilePath?.(file);
+            if (/\.zip$/i.test(file.name) && localPath && window.electronAPI?.importOverlayPresetPackage) {
+                window.electronAPI.importOverlayPresetPackage(localPath).then(result => {
+                    if (!result.ok) throw new Error(result.error || '预设包导入失败');
+                    this._mergeImportedOverlayGroupPresets(result.presets, result.missing || []);
+                }).catch(err => alert(`导入预设包失败：${err.message}`));
+                return;
+            }
             const reader = new FileReader();
             reader.onload = (e) => {
                 try {
@@ -5117,9 +5475,30 @@ class ReelsOverlayPanel {
         localStorage.setItem('reels_overlay_group_presets', JSON.stringify(data));
     }
 
+    _debouncedSavePresets(data) {
+        if (this._savePresetsTimer) clearTimeout(this._savePresetsTimer);
+        this._savePresetsTimer = setTimeout(() => {
+            this._savePresetsTimer = null;
+            try {
+                this._setOverlayGroupPresets(data);
+            } catch (err) {
+                console.warn('[ReelsOverlayPanel] debounced save error:', err);
+            }
+        }, 800);
+    }
+
+    _notifyOverlayPresetsChanged() {
+        this._refreshOverlayGroupPresetSelect();
+        if (window._reelsState?.overlayPanel && window._reelsState.overlayPanel !== this) {
+            try { window._reelsState.overlayPanel._refreshOverlayGroupPresetSelect(); } catch (_) {}
+        }
+        if (typeof _renderBatchTable === 'function') {
+            try { _renderBatchTable(); } catch (e) { console.warn('[ReelsOverlayPanel] _renderBatchTable refresh failed:', e); }
+        }
+    }
+
     _refreshOverlayGroupPresetSelect() {
-        if (!this.container) return;
-        const select = this.container.querySelector('#rop-group-preset-select');
+        const select = this.container?.querySelector('#rop-group-preset-select') || document.querySelector('#rop-group-preset-select');
         if (!select) return;
         const current = select.value;
         const presets = this._getOverlayGroupPresets();
@@ -5158,8 +5537,8 @@ class ReelsOverlayPanel {
         }
 
         let finalHtml = '<option value="">-- 选择预设 --</option>';
-        if (customHtml) finalHtml += `<optgroup label="我的预设">${customHtml}</optgroup>`;
         if (builtInHtml) finalHtml += `<optgroup label="内置预设">${builtInHtml}</optgroup>`;
+        if (customHtml) finalHtml += `<optgroup label="我的预设">${customHtml}</optgroup>`;
         
         select.innerHTML = finalHtml;
         if (current && presets[current]) select.value = current;
@@ -5180,7 +5559,7 @@ class ReelsOverlayPanel {
         if (!confirm(`确定要使用当前画布的图层覆盖更新预设 "${name}" 吗？`)) {
             return;
         }
-        this._executeSavePreset(name, true);
+        await this._executeSavePreset(name, true);
     }
 
     async _saveOverlayGroupPreset() {
@@ -5218,11 +5597,11 @@ class ReelsOverlayPanel {
         if (existingPresets[name]) {
             if (!confirm(`预设 "${name}" 已存在，确定要覆盖吗？`)) return;
         }
-        this._executeSavePreset(name, false, category);
+        await this._executeSavePreset(name, false, category);
         this._presetEditSourceName = '';
     }
 
-    _executeSavePreset(name, isUpdate = false, category = '') {
+    async _executeSavePreset(name, isUpdate = false, category = '') {
         const overlays = this.videoCanvas.overlayMgr?.overlays || [];
         // 确保被保存的所有层在内存中都有 ID
         overlays.forEach(ov => {
@@ -5270,11 +5649,22 @@ class ReelsOverlayPanel {
         const newPreset = this._migratePresetFormat(name, serialized);
         newPreset.meta.category = category || presets[name]?.meta?.category || '我的预设';
         if (thumbnail) newPreset.thumbnail = thumbnail;
+        const linkedMedia = serialized.filter(layer => ['video', 'image', 'audio'].includes(layer?.type) && typeof layer.content === 'string' && !layer.content.startsWith('data:'));
+        if (linkedMedia.length && window.electronAPI?.saveOverlayPresetAssets) {
+            const packageMedia = confirm(`检测到 ${linkedMedia.length} 个路径引用的媒体。\n\n确定：复制媒体到预设库，预设可长期使用且不怕原文件移动。\n取消：只保存原路径，不复制大文件。`);
+            if (packageMedia) {
+                const result = await window.electronAPI.saveOverlayPresetAssets(newPreset);
+                if (!result?.ok) { alert(`媒体保存到预设库失败：${result?.error || '未知错误'}`); return; }
+                Object.assign(newPreset, result.preset);
+            } else {
+                newPreset.meta = { ...(newPreset.meta || {}), mediaStorage: linkedMedia.length ? 'linked' : 'none', packagedMediaCount: 0 };
+            }
+        }
         
         presets[name] = newPreset;
         this._setOverlayGroupPresets(presets);
-        this._refreshOverlayGroupPresetSelect();
-        const select = this.container.querySelector('#rop-group-preset-select');
+        this._notifyOverlayPresetsChanged();
+        const select = this.container?.querySelector('#rop-group-preset-select') || document.querySelector('#rop-group-preset-select');
         if (select) select.value = name;
         if (isUpdate) {
             if (typeof window.showToast === 'function') {
@@ -5287,7 +5677,165 @@ class ReelsOverlayPanel {
         }
     }
 
-    _loadOverlayGroupPreset() {
+    _showPresetLoadChoiceDialog(presetName, existingCount, newCount) {
+        return new Promise((resolve) => {
+            const overlay = document.createElement('div');
+            overlay.className = 'rop-preset-choice-modal';
+            overlay.style.cssText = `
+                position: fixed;
+                inset: 0;
+                z-index: 999999;
+                background: rgba(0, 0, 0, 0.68);
+                backdrop-filter: blur(4px);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                animation: ropFadeIn 0.15s ease-out;
+            `;
+
+            const box = document.createElement('div');
+            box.className = 'rop-preset-choice-box';
+            box.style.cssText = `
+                background: #181926;
+                border: 1px solid rgba(255, 255, 255, 0.14);
+                border-radius: 12px;
+                padding: 22px 24px;
+                width: 470px;
+                max-width: 92vw;
+                box-shadow: 0 20px 50px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.05);
+                color: #e2e8f0;
+                display: flex;
+                flex-direction: column;
+                gap: 16px;
+                box-sizing: border-box;
+            `;
+
+            const esc = (str) => String(str || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            const safeName = esc(presetName);
+
+            box.innerHTML = `
+                <div style="display:flex;align-items:center;justify-content:space-between;">
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <span style="font-size:18px;">📦</span>
+                        <div style="font-size:15px;font-weight:600;color:#f8fafc;">加载覆层预设</div>
+                    </div>
+                    <button class="rop-choice-close-btn" style="background:transparent;border:none;color:#94a3b8;font-size:16px;cursor:pointer;padding:2px 6px;border-radius:4px;line-height:1;">✕</button>
+                </div>
+
+                <div style="font-size:13px;color:#cbd5e1;line-height:1.5;">
+                    即将加载预设「<b style="color:#60a5fa;">${safeName}</b>」（含 <b style="color:#f8fafc;">${newCount}</b> 个图层）。<br>
+                    当前画布已有 <b style="color:#f59e0b;">${existingCount}</b> 个覆层，请选择载入方式：
+                </div>
+
+                <div style="display:flex;flex-direction:column;gap:10px;">
+                    <button class="rop-choice-opt-btn" data-choice="merge" style="
+                        display:flex;align-items:flex-start;gap:12px;
+                        padding:12px 14px;border-radius:8px;
+                        background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.3);
+                        color:#e2e8f0;cursor:pointer;text-align:left;
+                        transition:all 0.15s ease;
+                    ">
+                        <span style="font-size:22px;line-height:1;margin-top:2px;">➕</span>
+                        <div style="flex:1;min-width:0;">
+                            <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">
+                                <span style="font-size:14px;font-weight:600;color:#34d399;">合并追加 (保留现有覆层)</span>
+                                <span style="font-size:11px;background:rgba(16,185,129,0.2);color:#6ee7b7;padding:1px 6px;border-radius:4px;">推荐</span>
+                            </div>
+                            <div style="font-size:12px;color:#94a3b8;line-height:1.4;">
+                                保留画布现有的 ${existingCount} 个图层，将该预设的 ${newCount} 个图层追加到上方（适合在文字卡片上叠加电话、水印、贴纸等）。
+                            </div>
+                        </div>
+                    </button>
+
+                    <button class="rop-choice-opt-btn" data-choice="replace" style="
+                        display:flex;align-items:flex-start;gap:12px;
+                        padding:12px 14px;border-radius:8px;
+                        background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.25);
+                        color:#e2e8f0;cursor:pointer;text-align:left;
+                        transition:all 0.15s ease;
+                    ">
+                        <span style="font-size:22px;line-height:1;margin-top:2px;">🔄</span>
+                        <div style="flex:1;min-width:0;">
+                            <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">
+                                <span style="font-size:14px;font-weight:600;color:#818cf8;">覆盖替换 (清空并套用)</span>
+                            </div>
+                            <div style="font-size:12px;color:#94a3b8;line-height:1.4;">
+                                清空当前已有图层，完全替换为该预设的层结构与样式（会尽量将现有文案迁移至新预设中）。
+                            </div>
+                        </div>
+                    </button>
+                </div>
+
+                <div style="display:flex;justify-content:flex-end;margin-top:4px;">
+                    <button class="rop-choice-cancel-btn" style="
+                        padding:6px 16px;border-radius:6px;
+                        background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);
+                        color:#94a3b8;font-size:13px;cursor:pointer;
+                        transition:all 0.15s;
+                    ">取消</button>
+                </div>
+            `;
+
+            overlay.appendChild(box);
+            document.body.appendChild(overlay);
+
+            const finish = (result) => {
+                window.removeEventListener('keydown', onKeyDown);
+                if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+                resolve(result);
+            };
+
+            const onKeyDown = (e) => {
+                if (e.key === 'Escape') finish(null);
+            };
+            window.addEventListener('keydown', onKeyDown);
+
+            const optButtons = box.querySelectorAll('.rop-choice-opt-btn');
+            optButtons.forEach(btn => {
+                const choice = btn.getAttribute('data-choice');
+                btn.onmouseenter = () => {
+                    if (choice === 'merge') {
+                        btn.style.background = 'rgba(16,185,129,0.18)';
+                        btn.style.borderColor = 'rgba(16,185,129,0.6)';
+                        btn.style.transform = 'translateY(-1px)';
+                    } else {
+                        btn.style.background = 'rgba(99,102,241,0.18)';
+                        btn.style.borderColor = 'rgba(99,102,241,0.6)';
+                        btn.style.transform = 'translateY(-1px)';
+                    }
+                };
+                btn.onmouseleave = () => {
+                    if (choice === 'merge') {
+                        btn.style.background = 'rgba(16,185,129,0.08)';
+                        btn.style.borderColor = 'rgba(16,185,129,0.3)';
+                    } else {
+                        btn.style.background = 'rgba(99,102,241,0.08)';
+                        btn.style.borderColor = 'rgba(99,102,241,0.25)';
+                    }
+                    btn.style.transform = 'none';
+                };
+                btn.onclick = () => finish(choice);
+            });
+
+            const cancelBtn = box.querySelector('.rop-choice-cancel-btn');
+            cancelBtn.onmouseenter = () => {
+                cancelBtn.style.background = 'rgba(255,255,255,0.12)';
+                cancelBtn.style.color = '#f8fafc';
+            };
+            cancelBtn.onmouseleave = () => {
+                cancelBtn.style.background = 'rgba(255,255,255,0.06)';
+                cancelBtn.style.color = '#94a3b8';
+            };
+
+            box.querySelector('.rop-choice-close-btn').onclick = () => finish(null);
+            cancelBtn.onclick = () => finish(null);
+            overlay.onclick = (e) => {
+                if (e.target === overlay) finish(null);
+            };
+        });
+    }
+
+    async _loadOverlayGroupPreset(specificMode = null) {
         const select = this.container.querySelector('#rop-group-preset-select');
         if (!select || !select.value) {
             alert('请先在下拉列表中选择一个预设');
@@ -5306,9 +5854,51 @@ class ReelsOverlayPanel {
         const mgr = this.videoCanvas.overlayMgr;
         if (!mgr) return;
 
-        // Confirm if there are existing overlays
-        if (mgr.overlays.length > 0) {
-            if (!confirm(`当前有 ${mgr.overlays.length} 个覆层，加载预设将替换样式与层结构，但会尽量保留现有文案。继续？`)) return;
+        let loadMode = specificMode || 'replace';
+        if (!specificMode && mgr.overlays.length > 0) {
+            const choice = await this._showPresetLoadChoiceDialog(name, mgr.overlays.length, layers.length);
+            if (!choice) return;
+            loadMode = choice;
+        }
+
+        if (loadMode === 'merge') {
+            const newlyAdded = [];
+            const idMap = {};
+            for (let i = 0; i < layers.length; i++) {
+                const layerData = layers[i];
+                const clone = JSON.parse(JSON.stringify(layerData));
+                const oldId = clone.id;
+                clone.id = 'ov_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+                if (oldId) idMap[oldId] = clone.id;
+
+                const loadedStart = Number(clone.start);
+                const loadedEnd = Number(clone.end);
+                clone.start = Number.isFinite(loadedStart) ? Math.max(0, loadedStart) : 0;
+                clone.end = Number.isFinite(loadedEnd) && loadedEnd >= clone.start ? loadedEnd : 9999;
+
+                mgr.overlays.push(clone);
+                newlyAdded.push(clone);
+            }
+
+            const firstScrollOv = newlyAdded.find(o => o.type === 'scroll') || mgr.overlays.find(o => o.type === 'scroll');
+            for (const ov of newlyAdded) {
+                if (ov.bind_scroll_overlay_id) {
+                    if (idMap[ov.bind_scroll_overlay_id]) {
+                        ov.bind_scroll_overlay_id = idMap[ov.bind_scroll_overlay_id];
+                    } else if (firstScrollOv) {
+                        ov.bind_scroll_overlay_id = firstScrollOv.id;
+                    }
+                }
+            }
+
+            this._selectedOv = newlyAdded[0] || mgr.overlays[0] || null;
+            this._refreshList();
+            if (this._selectedOv) this._syncFromOverlay(this._selectedOv);
+            if (this.videoCanvas) this.videoCanvas.render();
+            if (typeof showToast === 'function') {
+                showToast(`已成功合并追加 ${newlyAdded.length} 个覆层 (当前共 ${mgr.overlays.length} 层)`, 'success');
+            }
+            return;
         }
 
         // Save existing text before clearing. Older logic only copied by index,
@@ -5439,17 +6029,49 @@ class ReelsOverlayPanel {
     }
 
     _detectPresetCategory(name, presetData) {
-        const nameMatch = String(name || '').match(/^【(.*?)】/);
-        if (nameMatch && nameMatch[1]) return nameMatch[1];
-        if (presetData?.category) return presetData.category;
-        if (presetData?.meta?.category) return presetData.meta.category;
         const layers = Array.isArray(presetData) ? presetData : (presetData?.layers || []);
-        if (!layers.length) return '文字卡片';
-        if (layers.some(l => l.type === 'video' || l.type === 'image')) return '媒体覆层';
-        if (layers.some(l => l.type === 'scroll')) return '滚动字幕';
-        if (layers.some(l => l.layout_mode === 'side_by_side') || String(name).includes('双栏')) return '双栏对比';
-        if (layers.some(l => l.type === 'solid_mask')) return '遮罩蒙版';
-        const isPureText = layers.every(l => {
+        const nameMatch = String(name || '').match(/^【(.*?)】/);
+        const bracketTag = nameMatch ? nameMatch[1] : '';
+
+        // 1. 优先检测艺术笔刷（图层含笔刷背景/自定义笔刷，或名称/分类含画笔、水彩、笔刷）
+        const hasBrush = layers.some(l => l && (
+            l.title_bg_brush === true ||
+            l.body_bg_brush === true ||
+            l.card_brush === true ||
+            l.box_brush === true ||
+            l.type === 'brush' ||
+            l.title_custom_brush_data ||
+            l.body_custom_brush_data
+        ));
+        if (hasBrush || bracketTag.includes('画笔') || bracketTag.includes('水彩') || bracketTag.includes('笔刷') ||
+            presetData?.category === '艺术笔刷' || presetData?.category === '画笔水彩' ||
+            presetData?.meta?.category === '艺术笔刷' || presetData?.meta?.category === '画笔水彩' ||
+            String(name).includes('水彩笔刷') || String(name).includes('艺术笔刷')) {
+            return '艺术笔刷';
+        }
+
+        // 2. 双栏对比
+        if (bracketTag.includes('双栏') || String(name).includes('双栏') || layers.some(l => l.layout_mode === 'side_by_side')) {
+            return '双栏对比';
+        }
+
+        // 3. 滚动字幕（包含滚动长文）
+        if (bracketTag.includes('滚动') || layers.some(l => l.type === 'scroll')) {
+            return '滚动字幕';
+        }
+
+        // 4. 媒体覆层（包含图片、视频）
+        if (bracketTag.includes('媒体') || bracketTag.includes('图片') || layers.some(l => l.type === 'video' || l.type === 'image')) {
+            return '媒体覆层';
+        }
+
+        // 5. 遮罩蒙版
+        if (bracketTag.includes('遮罩') || bracketTag.includes('蒙版') || layers.some(l => l.type === 'solid_mask')) {
+            return '遮罩蒙版';
+        }
+
+        // 6. 纯文本
+        const isPureText = layers.length > 0 && layers.every(l => {
             if (l.type === 'text') return true;
             if (l.type === 'textcard') {
                 const hasCard = l.card_enabled !== false && Number(l.card_opacity) > 10;
@@ -5459,20 +6081,49 @@ class ReelsOverlayPanel {
             }
             return false;
         });
-        if (isPureText) return '纯文本';
+        if (isPureText || bracketTag.includes('纯文本')) {
+            return '纯文本';
+        }
+
+        // 7. 文字卡片
         return '文字卡片';
+    }
+
+    _hasFullscreenOverlay(name, presetData) {
+        const layers = Array.isArray(presetData) ? presetData : (presetData?.layers || []);
+        const hasProp = layers.some(l => {
+            if (!l) return false;
+            if (l.fullscreen_mask === true || l.fullscreen_mask === 1 || l.fullscreen_mask === '1') return true;
+            if (l.bg_fullscreen === true || l.bg_fullscreen === 1 || l.bg_fullscreen === '1') return true;
+            if (l.type === 'solid_mask') return true;
+            if (l.type === 'textcard' && l.card_enabled !== false && Number(l.card_opacity) > 10) {
+                if (Number(l.w) >= 1000 && Number(l.h) >= 1800) return true;
+            }
+            if ((l.type === 'image' || l.type === 'video') && Number(l.w) >= 1000 && Number(l.h) >= 1800 && (l.opacity === undefined || Number(l.opacity) > 10)) {
+                return true;
+            }
+            return false;
+        });
+        if (hasProp) return true;
+        const nameStr = String(name || '');
+        if (nameStr.includes('全屏蒙版') || nameStr.includes('全屏遮罩') || nameStr.includes('全屏覆层') || nameStr.includes('全屏背景') || nameStr.includes('全屏底色')) {
+            return true;
+        }
+        return false;
     }
 
     _getCategoryMeta(category) {
         const MAP = {
-            '纯文本': { key: 'text', icon: '📝', shortLabel: '纯文本' },
-            '文字卡片': { key: 'card', icon: '🃏', shortLabel: '卡片' },
-            '滚动字幕': { key: 'scroll', icon: '📜', shortLabel: '滚动' },
-            '媒体覆层': { key: 'media', icon: '🎬', shortLabel: '媒体' },
-            '双栏对比': { key: 'split', icon: '⚖️', shortLabel: '双栏' },
-            '遮罩蒙版': { key: 'mask', icon: '🎭', shortLabel: '遮罩' }
+            '纯文本': { key: 'text', icon: '', shortLabel: '纯文本' },
+            '文字卡片': { key: 'card', icon: '', shortLabel: '卡片' },
+            '艺术笔刷': { key: 'brush', icon: '', shortLabel: '笔刷' },
+            '画笔水彩': { key: 'brush', icon: '', shortLabel: '笔刷' },
+            '滚动字幕': { key: 'scroll', icon: '', shortLabel: '滚动' },
+            '媒体覆层': { key: 'media', icon: '', shortLabel: '媒体' },
+            '双栏对比': { key: 'split', icon: '', shortLabel: '双栏' },
+            '遮罩蒙版': { key: 'mask', icon: '', shortLabel: '遮罩' }
         };
-        return MAP[category] || { key: 'other', icon: '🏷️', shortLabel: category };
+        return MAP[category] || { key: 'card', icon: '', shortLabel: category || '卡片' };
     }
 
     _showPreviewTextEditorDialog(fieldKey, currentValue) {
@@ -5561,7 +6212,7 @@ class ReelsOverlayPanel {
         });
     }
 
-    _showPresetGallery(onSelectCallback, multiSelect = false) {
+    _showPresetGallery(onSelectCallback, multiSelect = false, defaultFilter = 'all') {
         this.multiSelectPicker = multiSelect;
         if (!onSelectCallback && (!this.videoCanvas || !this.videoCanvas.overlayMgr)) {
             alert('没有可用的覆层管理器');
@@ -5587,43 +6238,147 @@ class ReelsOverlayPanel {
             }
         }
 
-        // 统计各个类型的预设数量
-        const catStats = { '文字卡片': 0, '纯文本': 0, '滚动字幕': 0, '媒体覆层': 0, '双栏对比': 0, '遮罩蒙版': 0 };
+        // 统计各个类型的预设数量与自定义分组
+        const catStats = { '文字卡片': 0, '艺术笔刷': 0, '纯文本': 0, '滚动字幕': 0, '媒体覆层': 0, '双栏对比': 0, '遮罩蒙版': 0 };
+        let fullCount = 0;
+        let noFullCount = 0;
+        const customGroupsMap = {};
+        let customTotalCount = 0;
+        let builtinTotalCount = 0;
+
         for (const [name, data] of Object.entries(presets)) {
+            const isBuiltin = builtInKeys.includes(name);
+            if (isBuiltin) {
+                builtinTotalCount++;
+            } else {
+                customTotalCount++;
+                const g = String(data?.meta?.category || data?.category || '我的预设').trim() || '我的预设';
+                customGroupsMap[g] = (customGroupsMap[g] || 0) + 1;
+            }
+
             const cat = this._detectPresetCategory(name, data);
             if (catStats[cat] !== undefined) catStats[cat]++;
             else catStats[cat] = (catStats[cat] || 0) + 1;
+            if (this._hasFullscreenOverlay(name, data)) {
+                fullCount++;
+            } else {
+                noFullCount++;
+            }
         }
+
+        // 收集自定义分组名称（"我的预设"放最前，其余按数量排序）
+        const userDefinedGroups = Object.keys(customGroupsMap).sort((a, b) => {
+            if (a === '我的预设') return -1;
+            if (b === '我的预设') return 1;
+            return (customGroupsMap[b] || 0) - (customGroupsMap[a] || 0);
+        });
 
         const modal = document.createElement('div');
         modal.className = 'rop-gallery-modal';
         modal.innerHTML = `
             <div class="rop-gallery-content">
                 <div class="rop-gallery-header">
-                    <h3>📂 覆层预设可视化图库</h3>
-                    <div class="rop-gallery-tabs" style="display:flex;flex-wrap:wrap;gap:4px;max-width:none;flex:1;">
-                        <button class="rop-gallery-tab active" data-filter="all">全部 (${Object.keys(presets).length})</button>
-                        <button class="rop-gallery-tab" data-filter="cat-card">🃏 文字卡片 (${catStats['文字卡片'] || 0})</button>
-                        <button class="rop-gallery-tab" data-filter="cat-text">📝 纯文本 (${catStats['纯文本'] || 0})</button>
-                        <button class="rop-gallery-tab" data-filter="cat-scroll">📜 滚动字幕 (${catStats['滚动字幕'] || 0})</button>
-                        <button class="rop-gallery-tab" data-filter="cat-media">🎬 媒体覆层 (${catStats['媒体覆层'] || 0})</button>
-                        <button class="rop-gallery-tab" data-filter="cat-split">⚖️ 双栏对比 (${catStats['双栏对比'] || 0})</button>
-                        <button class="rop-gallery-tab" data-filter="custom">我的预设</button>
-                        <button class="rop-gallery-tab" data-filter="builtin">内置预设</button>
+                    <!-- 第一行：顶部工具条 (Title, Preview Settings, Actions, Close) -->
+                    <div class="rop-gallery-top-bar">
+                        <div class="rop-gallery-title-area">
+                            <h3 class="rop-gallery-main-title">覆层预设可视化图库</h3>
+                            <span class="rop-gallery-total-badge">${Object.keys(presets).length} 套预设</span>
+                        </div>
+
+                        <div class="rop-gallery-tools-area">
+                            <!-- 临时预览背景 -->
+                            <div class="rop-gallery-tool-group">
+                                <span class="rop-tool-group-label">临时背景</span>
+                                <button class="rop-gallery-preview-bg" title="更换缩略图临时渲染背景">选择背景</button>
+                                <span class="rop-gallery-preview-bg-label" title="${escAttr(this._presetGalleryPreviewBackground || '未设置')}">${this._presetGalleryPreviewBackground ? String(this._presetGalleryPreviewBackground).split(/[\\/]/).pop() : '默认深色'}</span>
+                                <button class="rop-gallery-preview-bg-clear" title="清除临时背景，恢复默认" style="${this._presetGalleryPreviewBackground ? '' : 'display:none;'}">清除</button>
+                            </div>
+
+                            <div class="rop-tool-divider"></div>
+
+                            <!-- 临时预览文案 -->
+                            <div class="rop-gallery-preview-copy">
+                                <span class="rop-tool-group-label">预览文案</span>
+                                <div class="rop-preview-input-wrap">
+                                    <span class="rop-input-tag">标题</span>
+                                    <input data-preview-copy="title" value="${escAttr(previewCopy.title)}" placeholder="标题文案" title="双击打开大窗编辑">
+                                    <button type="button" class="rop-preview-copy-btn" data-field="title" title="点击打开多行大窗编辑">✏️</button>
+                                </div>
+                                <div class="rop-preview-input-wrap">
+                                    <span class="rop-input-tag">正文</span>
+                                    <input data-preview-copy="body" value="${escAttr(previewCopy.body)}" placeholder="正文文案" title="双击打开大窗编辑">
+                                    <button type="button" class="rop-preview-copy-btn" data-field="body" title="点击打开多行大窗编辑">✏️</button>
+                                </div>
+                                <div class="rop-preview-input-wrap">
+                                    <span class="rop-input-tag">结尾</span>
+                                    <input data-preview-copy="footer" value="${escAttr(previewCopy.footer)}" placeholder="结尾文案" title="双击打开大窗编辑">
+                                    <button type="button" class="rop-preview-copy-btn" data-field="footer" title="点击打开多行大窗编辑">✏️</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="rop-gallery-actions-area">
+                            <button class="rop-gallery-clear-custom" title="仅删除自己导入或保存的预设，不影响内置预设">清空我的预设</button>
+                            <button class="rop-gallery-close" title="关闭预设库 (Esc)">✕</button>
+                        </div>
                     </div>
-                    <button class="rop-gallery-preview-bg" style="padding:5px 9px;border:1px solid rgba(96,165,250,.7);border-radius:6px;background:rgba(30,58,138,.48);color:#dbeafe;font-size:12px;font-weight:600;cursor:pointer;">临时预览背景</button><span class="rop-gallery-preview-bg-label" style="max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:#a5b4fc;">${this._presetGalleryPreviewBackground ? String(this._presetGalleryPreviewBackground).split(/[\\/]/).pop() : '未设置'}</span><button class="rop-gallery-preview-bg-clear" style="padding:5px 9px;border:1px solid rgba(148,163,184,.55);border-radius:6px;background:rgba(30,41,59,.8);color:#e2e8f0;font-size:12px;font-weight:600;cursor:pointer;">清除背景</button>
-                    <div class="rop-gallery-preview-copy">
-                        <label title="双击输入框可打开多行大窗编辑">标题<input data-preview-copy="title" value="${escAttr(previewCopy.title)}" placeholder="临时标题" title="双击打开大窗编辑"></label>
-                        <label title="双击输入框可打开多行大窗编辑">正文<input data-preview-copy="body" value="${escAttr(previewCopy.body)}" placeholder="临时正文" title="双击打开大窗编辑"></label>
-                        <label title="双击输入框可打开多行大窗编辑">结尾<input data-preview-copy="footer" value="${escAttr(previewCopy.footer)}" placeholder="临时结尾" title="双击打开大窗编辑"></label>
+
+                    <!-- 第二行：全宽分类与特性筛选导航条 -->
+                    <div class="rop-gallery-nav-bar">
+                        <div class="rop-gallery-tabs">
+                            <!-- 范围主分类：全部 / 内置预设 / 我的预设 -->
+                            <div class="rop-tab-group rop-scope-group">
+                                <button class="rop-gallery-tab active" data-filter="all">全部 <span class="rop-tab-num">${Object.keys(presets).length}</span></button>
+                                <button class="rop-gallery-tab rop-gallery-tab-builtin" data-filter="builtin">内置预设 <span class="rop-tab-num">${builtinTotalCount}</span></button>
+                                <button class="rop-gallery-tab" data-filter="custom">我的预设 <span class="rop-tab-num">${customTotalCount}</span></button>
+                            </div>
+
+                            <div class="rop-nav-divider"></div>
+
+                            <!-- 类型分类 -->
+                            <div class="rop-tab-group">
+                                <button class="rop-gallery-tab" data-filter="cat-card">文字卡片 <span class="rop-tab-num">${catStats['文字卡片'] || 0}</span></button>
+                                <button class="rop-gallery-tab" data-filter="cat-brush">艺术笔刷 <span class="rop-tab-num">${catStats['艺术笔刷'] || 0}</span></button>
+                                <button class="rop-gallery-tab" data-filter="cat-text">纯文本 <span class="rop-tab-num">${catStats['纯文本'] || 0}</span></button>
+                                <button class="rop-gallery-tab" data-filter="cat-scroll">滚动字幕 <span class="rop-tab-num">${catStats['滚动字幕'] || 0}</span></button>
+                                <button class="rop-gallery-tab" data-filter="cat-media">媒体覆层 <span class="rop-tab-num">${catStats['媒体覆层'] || 0}</span></button>
+                                <button class="rop-gallery-tab" data-filter="cat-split">双栏对比 <span class="rop-tab-num">${catStats['双栏对比'] || 0}</span></button>
+                                ${(catStats['遮罩蒙版'] || 0) > 0 ? `<button class="rop-gallery-tab" data-filter="cat-mask">遮罩蒙版 <span class="rop-tab-num">${catStats['遮罩蒙版']}</span></button>` : ''}
+                            </div>
+
+                            <div class="rop-nav-divider"></div>
+
+                            <!-- 特性筛选 -->
+                            <div class="rop-tab-group">
+                                <button class="rop-gallery-tab" data-filter="fullscreen-yes">有全屏覆层 <span class="rop-tab-num">${fullCount}</span></button>
+                                <button class="rop-gallery-tab" data-filter="fullscreen-no">无全屏覆层 <span class="rop-tab-num">${noFullCount}</span></button>
+                            </div>
+
+                            ${userDefinedGroups.filter(g => g !== '我的预设').length > 0 ? `
+                                <div class="rop-nav-divider"></div>
+                                <!-- 我的自定义文件夹分组 -->
+                                <div class="rop-tab-group rop-source-groups">
+                                    ${userDefinedGroups.filter(g => g !== '我的预设').map(g => `
+                                        <button class="rop-gallery-tab rop-gallery-tab-group" data-filter="group-${escAttr(g)}" title="自定义分组：${escAttr(g)}">📁 ${escAttr(g)} <span class="rop-tab-num">${customGroupsMap[g]}</span></button>
+                                    `).join('')}
+                                </div>
+                            ` : ''}
+                        </div>
                     </div>
-                    <button class="rop-gallery-clear-custom" title="仅删除自己导入或保存的预设，不影响内置预设" style="padding:5px 9px;border:1px solid rgba(248,113,113,.75);border-radius:6px;background:rgba(127,29,29,.42);color:#fecaca;font-size:12px;font-weight:600;cursor:pointer;">清空我的预设</button>
-                    <button class="rop-gallery-close">✕</button>
                 </div>
                 <div class="rop-gallery-main">
                     <div class="rop-gallery-sidebar">
+                        <div class="rop-sidebar-group-header">
+                            <select class="rop-sidebar-group-select" id="rop-sidebar-group-select" title="按分组筛选左侧列表与右侧预设">
+                                <option value="all">全部分组 (${Object.keys(presets).length})</option>
+                                <option value="builtin">内置预设 (${builtinTotalCount})</option>
+                                <option value="custom">全部我的预设 (${customTotalCount})</option>
+                                ${userDefinedGroups.map(g => `<option value="group-${escAttr(g)}">📁 ${escAttr(g)} (${customGroupsMap[g]}套)</option>`).join('')}
+                            </select>
+                        </div>
                         <div class="rop-gallery-sidebar-list" id="rop-gallery-sidebar-list"></div>
                     </div>
+                    <div class="rop-gallery-resizer" id="rop-gallery-resizer" title="按住左右拖动调整列表宽度，双击恢复默认"></div>
                     <div class="rop-gallery-body">
                         <div class="rop-gallery-grid" id="rop-gallery-grid"></div>
                     </div>
@@ -5633,41 +6388,95 @@ class ReelsOverlayPanel {
         document.body.appendChild(modal);
 
         const closeBtn = modal.querySelector('.rop-gallery-close');
-        closeBtn.onclick = () => document.body.removeChild(modal);
-        modal.querySelector('.rop-gallery-preview-bg').onclick = async () => {
+        const closeGalleryModal = (e) => {
+            if (e) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+            if (modal.parentNode) modal.parentNode.removeChild(modal);
+            document.removeEventListener('keydown', onGalleryEscKey);
+        };
+        const onGalleryEscKey = (e) => {
+            if (e.key === 'Escape') {
+                closeGalleryModal(e);
+            }
+        };
+        closeBtn.onclick = closeGalleryModal;
+        document.addEventListener('keydown', onGalleryEscKey);
+
+        // 遮罩点击关闭与内容区防冒泡
+        modal.onclick = (e) => {
+            if (e.target === modal) closeGalleryModal(e);
+        };
+        const galleryContent = modal.querySelector('.rop-gallery-content');
+        if (galleryContent) {
+            galleryContent.onclick = (e) => {
+                e.stopPropagation();
+            };
+        }
+
+        modal.querySelector('.rop-gallery-preview-bg').onclick = async (e) => {
+            e.stopPropagation();
             const paths = await window.electronAPI?.selectFiles?.({ title:'选择用于全部预设缩略图的临时背景', filters:[{name:'图片或视频',extensions:['mp4','mov','mkv','avi','webm','jpg','jpeg','png','webp','gif']}] });
             if (!paths?.[0]) return;
             this._presetGalleryPreviewBackground = paths[0];
-            this._showPresetGallery(onSelectCallback, multiSelect); document.body.removeChild(modal);
+            document.removeEventListener('keydown', onGalleryEscKey);
+            this._showPresetGallery(onSelectCallback, multiSelect);
+            if (modal.parentNode) modal.parentNode.removeChild(modal);
         };
-        modal.querySelector('.rop-gallery-preview-bg-clear').onclick = () => { delete this._presetGalleryPreviewBackground; this._showPresetGallery(onSelectCallback, multiSelect); document.body.removeChild(modal); };
+        modal.querySelector('.rop-gallery-preview-bg-clear').onclick = (e) => {
+            e.stopPropagation();
+            delete this._presetGalleryPreviewBackground;
+            document.removeEventListener('keydown', onGalleryEscKey);
+            this._showPresetGallery(onSelectCallback, multiSelect);
+            if (modal.parentNode) modal.parentNode.removeChild(modal);
+        };
+        
+        const openTextEdit = async (fieldKey, curVal) => {
+            const newVal = await this._showPreviewTextEditorDialog(fieldKey, curVal);
+            if (newVal !== null && newVal !== undefined) {
+                if (!this._presetGalleryPreviewText || typeof this._presetGalleryPreviewText !== 'object') {
+                    this._presetGalleryPreviewText = {};
+                }
+                this._presetGalleryPreviewText[fieldKey] = newVal;
+                document.removeEventListener('keydown', onGalleryEscKey);
+                this._showPresetGallery(onSelectCallback, multiSelect);
+                if (modal.parentNode) modal.parentNode.removeChild(modal);
+            }
+        };
+
+        modal.querySelectorAll('.rop-preview-copy-btn').forEach(btn => {
+            btn.onclick = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const fieldKey = btn.dataset.field;
+                const input = modal.querySelector(`input[data-preview-copy="${fieldKey}"]`);
+                const curVal = (this._presetGalleryPreviewText && typeof this._presetGalleryPreviewText === 'object' && this._presetGalleryPreviewText[fieldKey] !== undefined)
+                    ? this._presetGalleryPreviewText[fieldKey]
+                    : (input ? input.value : '');
+                openTextEdit(fieldKey, curVal);
+            };
+        });
+
         modal.querySelectorAll('[data-preview-copy]').forEach(input => {
             input.onchange = () => {
                 this._presetGalleryPreviewText = Object.fromEntries([...modal.querySelectorAll('[data-preview-copy]')].map(el => [el.dataset.previewCopy, el.value.trim()]));
-                this._showPresetGallery(onSelectCallback, multiSelect); document.body.removeChild(modal);
+                document.removeEventListener('keydown', onGalleryEscKey);
+                this._showPresetGallery(onSelectCallback, multiSelect);
+                if (modal.parentNode) modal.parentNode.removeChild(modal);
             };
             input.onkeydown = event => { if (event.key === 'Enter') event.target.blur(); };
-
-            const triggerDialog = async () => {
-                const fieldKey = input.dataset.previewCopy;
-                const curVal = (this._presetGalleryPreviewText && typeof this._presetGalleryPreviewText === 'object' && this._presetGalleryPreviewText[fieldKey] !== undefined)
-                    ? this._presetGalleryPreviewText[fieldKey]
-                    : input.value;
-                const newVal = await this._showPreviewTextEditorDialog(fieldKey, curVal);
-                if (newVal !== null && newVal !== undefined) {
-                    if (!this._presetGalleryPreviewText || typeof this._presetGalleryPreviewText !== 'object') {
-                        this._presetGalleryPreviewText = {};
-                    }
-                    this._presetGalleryPreviewText[fieldKey] = newVal;
-                    this._showPresetGallery(onSelectCallback, multiSelect);
-                    if (modal.parentNode) modal.parentNode.removeChild(modal);
-                }
-            };
 
             input.ondblclick = (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                triggerDialog();
+                const fieldKey = input.dataset.previewCopy;
+                const curVal = (this._presetGalleryPreviewText && typeof this._presetGalleryPreviewText === 'object' && this._presetGalleryPreviewText[fieldKey] !== undefined)
+                    ? this._presetGalleryPreviewText[fieldKey]
+                    : input.value;
+                openTextEdit(fieldKey, curVal);
             };
 
             if (input.parentElement) {
@@ -5675,12 +6484,17 @@ class ReelsOverlayPanel {
                     if (e.target !== input) {
                         e.preventDefault();
                         e.stopPropagation();
-                        triggerDialog();
+                        const fieldKey = input.dataset.previewCopy;
+                        const curVal = (this._presetGalleryPreviewText && typeof this._presetGalleryPreviewText === 'object' && this._presetGalleryPreviewText[fieldKey] !== undefined)
+                            ? this._presetGalleryPreviewText[fieldKey]
+                            : input.value;
+                        openTextEdit(fieldKey, curVal);
                     }
                 };
             }
         });
-        modal.querySelector('.rop-gallery-clear-custom').onclick = () => {
+        modal.querySelector('.rop-gallery-clear-custom').onclick = (e) => {
+            e.stopPropagation();
             // 必须以 localStorage 原始值为准：图库内存对象已混入内置预设，
             // 在它上面删除再回写会留下旧缓存或初始化时重写的自定义项。
             let storedPresets = {};
@@ -5690,41 +6504,121 @@ class ReelsOverlayPanel {
             if (!confirm(`确定清空 ${customNames.length} 个自己导入或保存的预设吗？\n\n内置预设不会删除。此操作不可撤销。`)) return;
             const builtinOnly = Object.fromEntries(Object.entries(storedPresets).filter(([key]) => builtInKeys.includes(key)));
             this._setOverlayGroupPresets(builtinOnly);
+            this._notifyOverlayPresetsChanged();
             this._showPresetGallery(onSelectCallback, multiSelect);
             document.body.removeChild(modal);
             if (typeof showToast === 'function') showToast(`已清空 ${customNames.length} 个我的预设`, 'success');
         };
 
         const tabs = modal.querySelectorAll('.rop-gallery-tab');
-        tabs.forEach(t => t.onclick = (e) => {
-            tabs.forEach(btn => btn.classList.remove('active'));
-            t.classList.add('active');
-            const filter = t.getAttribute('data-filter');
+        const sidebarGroupSelect = modal.querySelector('#rop-sidebar-group-select');
+
+        const applyFilter = (filter) => {
+            // 同步 Tabs 激活态
+            tabs.forEach(btn => {
+                if (btn.getAttribute('data-filter') === filter) btn.classList.add('active');
+                else btn.classList.remove('active');
+            });
+            // 同步左侧栏分组下拉框
+            if (sidebarGroupSelect) {
+                const hasOption = [...sidebarGroupSelect.options].some(opt => opt.value === filter);
+                if (hasOption) sidebarGroupSelect.value = filter;
+                else if (filter === 'all' || filter === 'custom' || filter === 'builtin') sidebarGroupSelect.value = filter;
+                else sidebarGroupSelect.value = 'all';
+            }
+
+            const isGroupFilter = filter.startsWith('group-');
+            const targetGroup = isGroupFilter ? filter.replace(/^group-/, '') : null;
+
             modal.querySelectorAll('.rop-gallery-card').forEach(card => {
                 if (filter === 'all') card.style.display = '';
                 else if (filter === 'custom') card.style.display = !card.classList.contains('builtin-card') ? '' : 'none';
                 else if (filter === 'builtin') card.style.display = card.classList.contains('builtin-card') ? '' : 'none';
+                else if (filter === 'fullscreen-yes') card.style.display = card.getAttribute('data-fullscreen') === 'yes' ? '' : 'none';
+                else if (filter === 'fullscreen-no') card.style.display = card.getAttribute('data-fullscreen') === 'no' ? '' : 'none';
                 else if (filter.startsWith('cat-')) card.style.display = card.getAttribute('data-category') === filter ? '' : 'none';
+                else if (isGroupFilter) card.style.display = (card.getAttribute('data-group') === targetGroup) ? '' : 'none';
                 else card.style.display = 'none';
             });
             modal.querySelectorAll('.rop-gallery-sidebar-item').forEach(item => {
                 if (filter === 'all') item.style.display = '';
                 else if (filter === 'custom') item.style.display = !item.classList.contains('builtin-item') ? '' : 'none';
                 else if (filter === 'builtin') item.style.display = item.classList.contains('builtin-item') ? '' : 'none';
+                else if (filter === 'fullscreen-yes') item.style.display = item.getAttribute('data-fullscreen') === 'yes' ? '' : 'none';
+                else if (filter === 'fullscreen-no') item.style.display = item.getAttribute('data-fullscreen') === 'no' ? '' : 'none';
                 else if (filter.startsWith('cat-')) item.style.display = item.getAttribute('data-category') === filter ? '' : 'none';
+                else if (isGroupFilter) item.style.display = (item.getAttribute('data-group') === targetGroup) ? '' : 'none';
                 else item.style.display = 'none';
             });
+        };
+
+        tabs.forEach(t => t.onclick = (e) => {
+            applyFilter(t.getAttribute('data-filter'));
         });
+
+        if (sidebarGroupSelect) {
+            sidebarGroupSelect.onchange = () => {
+                applyFilter(sidebarGroupSelect.value);
+            };
+        }
 
         const grid = modal.querySelector('#rop-gallery-grid');
         const sidebarList = modal.querySelector('#rop-gallery-sidebar-list');
+        const sidebar = modal.querySelector('.rop-gallery-sidebar');
+        const resizer = modal.querySelector('#rop-gallery-resizer');
+
+        // 侧栏宽度自由拉伸与本地记忆
+        if (sidebar && resizer) {
+            const savedWidth = parseInt(localStorage.getItem('rop_gallery_sidebar_width') || '260', 10);
+            if (!isNaN(savedWidth) && savedWidth >= 160 && savedWidth <= 650) {
+                sidebar.style.width = `${savedWidth}px`;
+            }
+
+            let startX = 0;
+            let startWidth = 0;
+
+            const onMouseMove = (e) => {
+                const deltaX = e.clientX - startX;
+                const newWidth = Math.max(160, Math.min(650, startWidth + deltaX));
+                sidebar.style.width = `${newWidth}px`;
+            };
+
+            const onMouseUp = () => {
+                resizer.classList.remove('dragging');
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+                window.removeEventListener('mousemove', onMouseMove);
+                window.removeEventListener('mouseup', onMouseUp);
+                const finalWidth = parseInt(sidebar.style.width, 10);
+                if (finalWidth) {
+                    try { localStorage.setItem('rop_gallery_sidebar_width', String(finalWidth)); } catch (_) {}
+                }
+            };
+
+            resizer.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                startX = e.clientX;
+                startWidth = sidebar.getBoundingClientRect().width;
+                resizer.classList.add('dragging');
+                document.body.style.cursor = 'col-resize';
+                document.body.style.userSelect = 'none';
+                window.addEventListener('mousemove', onMouseMove);
+                window.addEventListener('mouseup', onMouseUp);
+            });
+
+            resizer.addEventListener('dblclick', () => {
+                const defaultWidth = 260;
+                sidebar.style.width = `${defaultWidth}px`;
+                try { localStorage.setItem('rop_gallery_sidebar_width', String(defaultWidth)); } catch (_) {}
+            });
+        }
         
-        // 排序：自定义在前，内置在后
+        // 排序：内置在前，自定义在后
         const sortedEntries = Object.entries(presets).sort(([nameA], [nameB]) => {
             const isBuiltinA = builtInKeys.includes(nameA);
             const isBuiltinB = builtInKeys.includes(nameB);
-            if (isBuiltinA && !isBuiltinB) return 1;
-            if (!isBuiltinA && isBuiltinB) return -1;
+            if (isBuiltinA && !isBuiltinB) return -1;
+            if (!isBuiltinA && isBuiltinB) return 1;
             return 0;
         });
 
@@ -5735,15 +6629,23 @@ class ReelsOverlayPanel {
             const category = this._detectPresetCategory(name, data);
             const catInfo = this._getCategoryMeta(category);
             
+            const isFullscreen = this._hasFullscreenOverlay(name, data);
+            
+            const presetGroup = isBuiltin ? '内置预设' : (String(meta.category || data.category || '我的预设').trim() || '我的预设');
+            
             const cardId = `rop-gallery-card-${name.replace(/\W/g, '_')}`;
             const card = document.createElement('div');
             card.id = cardId;
             card.className = `rop-gallery-card ${isBuiltin ? 'builtin-card' : 'custom-card'}`;
             card.setAttribute('data-category', `cat-${catInfo.key}`);
+            card.setAttribute('data-fullscreen', isFullscreen ? 'yes' : 'no');
+            card.setAttribute('data-group', presetGroup);
             
             const sideItem = document.createElement('div');
             sideItem.className = `rop-gallery-sidebar-item ${isBuiltin ? 'builtin-item' : 'custom-item'}`;
             sideItem.setAttribute('data-category', `cat-${catInfo.key}`);
+            sideItem.setAttribute('data-fullscreen', isFullscreen ? 'yes' : 'no');
+            sideItem.setAttribute('data-group', presetGroup);
             sideItem.innerHTML = `<span class="rop-sidebar-cat-pill cat-${catInfo.key}">${catInfo.shortLabel}</span><span style="overflow:hidden;text-overflow:ellipsis;">${escAttr(name)}</span>`;
             sideItem.title = name;
             sideItem.onclick = () => {
@@ -5763,47 +6665,30 @@ class ReelsOverlayPanel {
             const imgHtml = thumbUrl ? `<img class="rop-gallery-thumb" src="${thumbUrl}" />` : `<div class="rop-gallery-thumb-placeholder" style="color:#666;">加载中...</div>`;
 
             if (!thumbUrl && typeof PresetThumbRenderer !== 'undefined') {
-                try {
-                    const renderer = new PresetThumbRenderer();
-                    renderer.renderThumbAsync(layers, '#1a1a2e', galleryPreviewBackground, galleryPreviewText).then(url => {
-                        if (!url) {
-                            const placeholder = card.querySelector('.rop-gallery-thumb-placeholder');
-                            if (placeholder) placeholder.textContent = '无预览 (受限)';
-                            return;
-                        }
-
-                        const imgEl = card.querySelector('.rop-gallery-thumb');
-                        if (imgEl) imgEl.src = url;
-                        else {
-                            const placeholder = card.querySelector('.rop-gallery-thumb-placeholder');
-                            if (placeholder) {
-                                const newImg = document.createElement('img');
-                                newImg.className = 'rop-gallery-thumb';
-                                newImg.src = url;
-                                placeholder.replaceWith(newImg);
-                            }
-                        }
-                        // 临时背景只用于本次图库查看，绝不覆盖预设原有缩略图缓存。
-                        if (!isBuiltin && !galleryPreviewBackground && !galleryPreviewText) {
-                            data.thumbnail = url;
-                            this._setOverlayGroupPresets(presets);
-                        }
-                    }).catch(err => {
-                        console.error('Thumb async failed:', err);
-                        const placeholder = card.querySelector('.rop-gallery-thumb-placeholder');
-                        if (placeholder) placeholder.textContent = '渲染失败';
-                    });
-                } catch(e) { 
-                    console.warn('Thumb gen failed', e);
-                    const placeholder = card.querySelector('.rop-gallery-thumb-placeholder');
-                    if (placeholder) placeholder.textContent = '渲染失败';
-                }
+                card.dataset.needsThumb = '1';
+                card._lazyThumbTask = {
+                    layers,
+                    presets,
+                    data,
+                    name,
+                    isBuiltin,
+                    galleryPreviewBackground,
+                    galleryPreviewText
+                };
             }
             const tags = [];
             if (isBuiltin) tags.push(`<span class="rop-badge builtin">内置</span>`);
             // 预设类型专属高亮标签（显示在第一位）
-            tags.push(`<span class="rop-badge rop-badge-category cat-${catInfo.key}">${catInfo.icon} ${category}</span>`);
+            tags.push(`<span class="rop-badge rop-badge-category cat-${catInfo.key}">${category}</span>`);
+            if (isFullscreen) {
+                tags.push(`<span class="rop-badge rop-badge-fullscreen yes" title="该预设包含全屏蒙版或背景底色">有全屏</span>`);
+            } else {
+                tags.push(`<span class="rop-badge rop-badge-fullscreen no" title="该预设无全屏蒙版">无全屏</span>`);
+            }
             tags.push(`<span class="rop-badge count">${layers.length} 层</span>`);
+            if (!isBuiltin && presetGroup) {
+                tags.push(`<span class="rop-badge rop-badge-custom-group" data-group-target="${escAttr(presetGroup)}" title="所属自定义分组：${escAttr(presetGroup)} (点击快速筛选)">📁 ${escAttr(presetGroup)}</span>`);
+            }
             if (meta.hasFixedText) tags.push(`<span class="rop-badge fixed">含固定文案</span>`);
             if (meta.needsBatchText) tags.push(`<span class="rop-badge batch">需批量填充</span>`);
 
@@ -5874,7 +6759,7 @@ class ReelsOverlayPanel {
                     presets[newName] = presetData;
                     delete presets[name];
                     this._setOverlayGroupPresets(presets);
-                    this._refreshOverlayGroupPresetSelect();
+                    this._notifyOverlayPresetsChanged();
                     // 更新 UI
                     const titleEl = card.querySelector('.rop-gallery-title');
                     if (titleEl) {
@@ -5901,13 +6786,15 @@ class ReelsOverlayPanel {
                             ? _showInputDialog('移动覆层预设分组', '例如：祷告 / 媒体 / 金色字幕', currentGroup)
                             : Promise.resolve(prompt('输入分组名称：', currentGroup)));
                     if (!nextGroup || !String(nextGroup).trim()) return;
+                    const cleanedGroup = String(nextGroup).trim();
                     presets[name].meta = presets[name].meta || {};
-                    presets[name].meta.category = String(nextGroup).trim();
+                    presets[name].meta.category = cleanedGroup;
                     presets[name].updatedAt = new Date().toISOString();
                     this._setOverlayGroupPresets(presets);
-                    this._refreshOverlayGroupPresetSelect();
+                    this._notifyOverlayPresetsChanged();
                     modal.remove();
-                    this._showPresetGallery();
+                    this._showPresetGallery(onSelectCallback, multiSelect, `group-${cleanedGroup}`);
+                    if (typeof showToast === 'function') showToast(`预设已移动到分组「${cleanedGroup}」`, 'success');
                 };
             }
             
@@ -5920,7 +6807,7 @@ class ReelsOverlayPanel {
                         this._setOverlayGroupPresets(presets);
                         card.remove();
                         sideItem.remove();
-                        this._refreshOverlayGroupPresetSelect();
+                        this._notifyOverlayPresetsChanged();
                     }
                 };
             }
@@ -5955,13 +6842,101 @@ class ReelsOverlayPanel {
                             }, 1500);
                         }
                     } else {
-                        this._applyPresetFromGallery(data, mode);
-                        document.body.removeChild(modal);
+                        (async () => {
+                            const ok = await this._applyPresetFromGallery(data, mode, name);
+                            if (ok && modal && modal.parentNode) {
+                                document.body.removeChild(modal);
+                            }
+                        })();
                     }
                 };
             });
 
             grid.appendChild(card);
+        }
+
+        // ── 视口懒加载与顺序队列（极大减轻290+预设并发渲染与存储造成的卡顿） ──
+        if (typeof PresetThumbRenderer !== 'undefined') {
+            const sharedThumbRenderer = new PresetThumbRenderer();
+            const thumbQueue = [];
+            let isThumbProcessing = false;
+
+            const processThumbQueue = () => {
+                if (isThumbProcessing || thumbQueue.length === 0) return;
+                isThumbProcessing = true;
+                const task = thumbQueue.shift();
+                if (!task || !task.card.isConnected) {
+                    isThumbProcessing = false;
+                    processThumbQueue();
+                    return;
+                }
+                const { card, layers, presets, data, isBuiltin, galleryPreviewBackground, galleryPreviewText } = task;
+                sharedThumbRenderer.renderThumbAsync(layers, '#1a1a2e', galleryPreviewBackground, galleryPreviewText).then(url => {
+                    if (url && card.isConnected) {
+                        const placeholder = card.querySelector('.rop-gallery-thumb-placeholder');
+                        const newImg = document.createElement('img');
+                        newImg.className = 'rop-gallery-thumb';
+                        newImg.src = url;
+                        if (placeholder) placeholder.replaceWith(newImg);
+                        if (!isBuiltin && !galleryPreviewBackground && !galleryPreviewText) {
+                            data.thumbnail = url;
+                            this._debouncedSavePresets(presets);
+                        }
+                    } else if (!url && card.isConnected) {
+                        const placeholder = card.querySelector('.rop-gallery-thumb-placeholder');
+                        if (placeholder) placeholder.textContent = '无预览 (受限)';
+                    }
+                }).catch(err => {
+                    console.warn('Thumb gen failed:', err);
+                    if (card.isConnected) {
+                        const placeholder = card.querySelector('.rop-gallery-thumb-placeholder');
+                        if (placeholder) placeholder.textContent = '渲染失败';
+                    }
+                }).finally(() => {
+                    isThumbProcessing = false;
+                    setTimeout(processThumbQueue, 16);
+                });
+            };
+
+            const thumbObserver = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        const card = entry.target;
+                        thumbObserver.unobserve(card);
+                        if (card._lazyThumbTask) {
+                            thumbQueue.push({ card, ...card._lazyThumbTask });
+                            delete card._lazyThumbTask;
+                            processThumbQueue();
+                        }
+                    }
+                });
+            }, {
+                root: modal.querySelector('.rop-gallery-main') || modal.querySelector('.rop-gallery-grid') || null,
+                rootMargin: '250px 0px'
+            });
+
+            grid.querySelectorAll('.rop-gallery-card[data-needs-thumb="1"]').forEach(c => thumbObserver.observe(c));
+
+            const origModalRemove = modal.remove.bind(modal);
+            modal.remove = () => {
+                thumbObserver.disconnect();
+                thumbQueue.length = 0;
+                origModalRemove();
+            };
+        }
+
+        // 点击卡片上的自定义分组标签快速筛选
+        modal.querySelectorAll('.rop-badge-custom-group').forEach(badge => {
+            badge.onclick = (e) => {
+                e.stopPropagation();
+                const g = badge.getAttribute('data-group-target');
+                if (g) applyFilter(`group-${g}`);
+            };
+        });
+
+        // 如果传入了指定的分组过滤（例如移动预设后重新加载定位）
+        if (defaultFilter && defaultFilter !== 'all') {
+            applyFilter(defaultFilter);
         }
     }
 
@@ -5989,13 +6964,152 @@ class ReelsOverlayPanel {
         const safeName = String(name).replace(/&/g, '&amp;').replace(/</g, '&lt;');
         const previewBackground = this._presetGalleryPreviewBackground || '';
         const previewBackgroundName = previewBackground ? previewBackground.split(/[\\/]/).pop() : '未设置（深色背景）';
-        content.innerHTML = `<div class="rop-gallery-header"><h3>✏️ 编辑预设：${safeName}</h3><button class="rop-library-back rop-library-action">← 返回预设库</button></div>
-          <div style="display:grid;grid-template-columns:minmax(240px,360px) minmax(340px,1fr);gap:14px;padding:14px;overflow:auto;">
-            <div><div style="aspect-ratio:9/16;background:#0b1020;position:relative;border-radius:8px;overflow:hidden;"><video data-lib-video muted loop playsinline style="position:absolute;width:100%;height:100%;object-fit:cover"></video><img data-lib-image style="position:absolute;width:100%;height:100%;object-fit:cover;display:none"><canvas data-lib-canvas width="1080" height="1920" style="position:absolute;width:100%;height:100%;pointer-events:none"></canvas></div>
-            <div class="rop-library-preview-note">临时预览背景：<span data-lib-label>${previewBackgroundName}</span></div><div style="font-size:11px;color:#94a3b8;margin-top:5px">背景由预设库顶部统一设置；仅用于预览，不写入预设、任务或导出。</div></div>
-            <div><div data-lib-panel></div><button data-lib-save style="margin:12px 0 0;width:100%;padding:9px;background:#2563eb;color:#fff;border:0;border-radius:6px;cursor:pointer">保存预设</button></div>
+        content.innerHTML = `<div class="rop-gallery-header" style="flex-shrink:0;"><h3>✏️ 编辑预设：${safeName}</h3><button class="rop-library-back rop-library-action">← 返回预设库</button></div>
+          <div style="flex:1;min-height:0;height:calc(100% - 56px);display:grid;grid-template-columns:minmax(280px,360px) minmax(380px,1fr);gap:16px;padding:12px 18px;overflow:hidden;box-sizing:border-box;">
+            <div style="display:flex;flex-direction:column;min-height:0;height:100%;overflow:hidden;">
+              <div data-lib-viewport style="position:relative;width:100%;aspect-ratio:9/16;max-height:calc(100vh - 165px);background:#0b1020;border-radius:10px;overflow:hidden;cursor:grab;user-select:none;border:1px solid rgba(255,255,255,0.15);box-shadow:0 8px 24px rgba(0,0,0,0.45);flex-shrink:0;">
+                <div style="position:absolute;top:8px;right:8px;z-index:20;display:flex;gap:4px;background:rgba(15,23,42,0.85);backdrop-filter:blur(8px);padding:4px 6px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);box-shadow:0 4px 12px rgba(0,0,0,0.5);">
+                  <span data-zoom-label style="font-size:11px;color:#e2e8f0;font-weight:600;align-self:center;min-width:38px;text-align:center;font-family:monospace;">100%</span>
+                  <button data-zoom-in style="padding:2px 7px;font-size:12px;background:rgba(255,255,255,0.12);color:#fff;border:0;border-radius:4px;cursor:pointer;" title="放大 (滚轮向上)">➕</button>
+                  <button data-zoom-out style="padding:2px 7px;font-size:12px;background:rgba(255,255,255,0.12);color:#fff;border:0;border-radius:4px;cursor:pointer;" title="缩小 (滚轮向下)">➖</button>
+                  <button data-zoom-reset style="padding:2px 7px;font-size:11px;background:rgba(255,255,255,0.12);color:#94a3b8;border:0;border-radius:4px;cursor:pointer;" title="重置缩放 (双击画布也可复位)">1:1</button>
+                </div>
+                <div data-lib-stage style="position:absolute;top:0;left:0;width:100%;height:100%;transform-origin:0 0;will-change:transform;">
+                  <video data-lib-video muted loop playsinline style="position:absolute;width:100%;height:100%;object-fit:cover"></video>
+                  <img data-lib-image style="position:absolute;width:100%;height:100%;object-fit:cover;display:none">
+                  <canvas data-lib-canvas width="1080" height="1920" style="position:absolute;width:100%;height:100%;pointer-events:none"></canvas>
+                </div>
+              </div>
+              <div class="rop-library-preview-note" style="margin-top:8px;font-size:12px;">临时预览背景：<span data-lib-label>${previewBackgroundName}</span></div>
+              <div style="font-size:11px;color:#94a3b8;margin-top:4px">💡 鼠标滚轮实时缩放，按住左键拖拽平移，双击复位。</div>
+            </div>
+            <div style="display:flex;flex-direction:column;min-height:0;height:100%;overflow-y:auto;overflow-x:hidden;padding-right:8px;box-sizing:border-box;">
+              <div data-lib-panel></div>
+              <button data-lib-save style="margin:12px 0 16px;width:100%;padding:10px;background:#2563eb;color:#fff;border:0;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;box-shadow:0 4px 12px rgba(37,99,235,0.3);flex-shrink:0;">保存预设</button>
+            </div>
           </div>`;
         const get = selector => content.querySelector(selector);
+
+        // ── 预览画面滚轮缩放与拖拽平移 ──
+        const viewport = get('[data-lib-viewport]');
+        const stage = get('[data-lib-stage]');
+        const zoomLabel = get('[data-zoom-label]');
+        const zoomInBtn = get('[data-zoom-in]');
+        const zoomOutBtn = get('[data-zoom-out]');
+        const zoomResetBtn = get('[data-zoom-reset]');
+
+        if (viewport && stage) {
+            let scale = 1.0;
+            let panX = 0, panY = 0;
+            let isPanning = false;
+            let startClientX = 0, startClientY = 0;
+            let origPanX = 0, origPanY = 0;
+
+            const applyTransform = () => {
+                stage.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+                if (zoomLabel) zoomLabel.textContent = `${Math.round(scale * 100)}%`;
+            };
+
+            viewport.addEventListener('wheel', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const rect = viewport.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const mouseY = e.clientY - rect.top;
+
+                const factor = e.deltaY < 0 ? 1.15 : (1 / 1.15);
+                const nextScale = Math.min(6.0, Math.max(0.6, scale * factor));
+
+                panX = mouseX - (mouseX - panX) * (nextScale / scale);
+                panY = mouseY - (mouseY - panY) * (nextScale / scale);
+                scale = nextScale;
+
+                if (Math.abs(scale - 1.0) < 0.04) {
+                    scale = 1.0;
+                    panX = 0;
+                    panY = 0;
+                }
+                applyTransform();
+            }, { passive: false });
+
+            viewport.addEventListener('pointerdown', (e) => {
+                if (e.target.closest('button')) return;
+                isPanning = true;
+                startClientX = e.clientX;
+                startClientY = e.clientY;
+                origPanX = panX;
+                origPanY = panY;
+                viewport.style.cursor = 'grabbing';
+                try { viewport.setPointerCapture(e.pointerId); } catch (_) {}
+            });
+
+            viewport.addEventListener('pointermove', (e) => {
+                if (!isPanning) return;
+                panX = origPanX + (e.clientX - startClientX);
+                panY = origPanY + (e.clientY - startClientY);
+                applyTransform();
+            });
+
+            const stopPanning = (e) => {
+                if (!isPanning) return;
+                isPanning = false;
+                viewport.style.cursor = 'grab';
+                try { viewport.releasePointerCapture(e.pointerId); } catch (_) {}
+            };
+            viewport.addEventListener('pointerup', stopPanning);
+            viewport.addEventListener('pointercancel', stopPanning);
+
+            if (zoomInBtn) {
+                zoomInBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    const rect = viewport.getBoundingClientRect();
+                    const cx = rect.width / 2, cy = rect.height / 2;
+                    const nextScale = Math.min(6.0, scale * 1.25);
+                    panX = cx - (cx - panX) * (nextScale / scale);
+                    panY = cy - (cy - panY) * (nextScale / scale);
+                    scale = nextScale;
+                    applyTransform();
+                };
+            }
+            if (zoomOutBtn) {
+                zoomOutBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    const rect = viewport.getBoundingClientRect();
+                    const cx = rect.width / 2, cy = rect.height / 2;
+                    const nextScale = Math.max(0.6, scale * 0.8);
+                    panX = cx - (cx - panX) * (nextScale / scale);
+                    panY = cy - (cy - panY) * (nextScale / scale);
+                    scale = nextScale;
+                    applyTransform();
+                };
+            }
+            if (zoomResetBtn) {
+                zoomResetBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    scale = 1.0;
+                    panX = 0;
+                    panY = 0;
+                    applyTransform();
+                };
+            }
+
+            viewport.addEventListener('dblclick', (e) => {
+                if (e.target.closest('button')) return;
+                if (Math.abs(scale - 1.0) < 0.1) {
+                    scale = 2.0;
+                    const rect = viewport.getBoundingClientRect();
+                    const mouseX = e.clientX - rect.left;
+                    const mouseY = e.clientY - rect.top;
+                    panX = mouseX - mouseX * 2;
+                    panY = mouseY - mouseY * 2;
+                } else {
+                    scale = 1.0;
+                    panX = 0;
+                    panY = 0;
+                }
+                applyTransform();
+            });
+        }
         if (previewBackground) {
             const isImage = /\.(jpg|jpeg|png|webp|gif)$/i.test(previewBackground);
             const media = isImage ? get('[data-lib-image]') : get('[data-lib-video]');
@@ -6006,8 +7120,16 @@ class ReelsOverlayPanel {
         }
         const mgr = new window.ReelsOverlay.OverlayManager(); mgr.overlays = layers;
         const draw = () => { const canvas = get('[data-lib-canvas]'); const ctx = canvas.getContext('2d'); ctx.clearRect(0, 0, 1080, 1920); mgr.overlays.forEach(ov => window.ReelsOverlay.drawOverlay(ctx, { ...ov, _exporting: true }, 0, 1080, 1920)); };
+        let _editorDrawRaf = null;
+        const requestDraw = () => {
+            if (_editorDrawRaf) cancelAnimationFrame(_editorDrawRaf);
+            _editorDrawRaf = requestAnimationFrame(() => {
+                _editorDrawRaf = null;
+                draw();
+            });
+        };
         let editor;
-        const proxy = { overlayMgr: mgr, getCanvasSize: () => ({ w:1080,h:1920,cx:540,cy:960 }), getDuration: () => 9999, previewEnd: () => {}, getOverlayAboveSubtitle: () => true, setOverlayAboveSubtitle: () => {}, addOverlay: ov => { mgr.addOverlay(ov); draw(); editor?._refreshList(); }, removeOverlay: id => { mgr.removeOverlay(id); draw(); editor?._refreshList(); }, render: draw };
+        const proxy = { overlayMgr: mgr, getCanvasSize: () => ({ w:1080,h:1920,cx:540,cy:960 }), getDuration: () => 9999, previewEnd: () => {}, getOverlayAboveSubtitle: () => true, setOverlayAboveSubtitle: () => {}, addOverlay: ov => { mgr.addOverlay(ov); requestDraw(); editor?._refreshList(); }, removeOverlay: id => { mgr.removeOverlay(id); requestDraw(); editor?._refreshList(); }, render: requestDraw };
         editor = new ReelsOverlayPanel(get('[data-lib-panel]'), proxy);
         get('[data-lib-panel]').querySelector('.rop-section')?.remove();
         editor._refreshList(); if (mgr.overlays[0]) editor.selectOverlay(mgr.overlays[0]); draw();
@@ -6018,20 +7140,67 @@ class ReelsOverlayPanel {
             // 仅把没有被用户实际改写的临时文案恢复为原来的空字段。
             temporaryTextFields.forEach(({ index, key, original }) => { const temp = key === 'title_text' || key === 'scroll_title' ? previewText.title : (key === 'footer_text' ? previewText.footer : previewText.body); if (layersToSave[index]?.[key] === temp) layersToSave[index][key] = original; });
             presets[target] = { ...(Array.isArray(data) ? {} : data), name:target, layers:layersToSave, meta:this._migratePresetFormat(target, layersToSave).meta, updatedAt:new Date().toISOString() };
-            localStorage.setItem('reels_overlay_group_presets', JSON.stringify(presets)); if (typeof showToast === 'function') showToast(`预设「${target}」已保存`, 'success');
+            localStorage.setItem('reels_overlay_group_presets', JSON.stringify(presets));
+            this._notifyOverlayPresetsChanged();
+            if (typeof showToast === 'function') showToast(`预设「${target}」已保存`, 'success');
         };
         // 返回图库时必须销毁当前编辑弹层；否则关闭新图库会露出它，像是自动进入编辑页。
         get('.rop-library-back').onclick = () => { this._showPresetGallery(); modal.remove(); };
     }
 
-    _applyPresetFromGallery(presetData, mode) {
+    async _applyPresetFromGallery(presetData, mode, presetName = '') {
         const mgr = this.videoCanvas.overlayMgr;
         if (!mgr) return false;
         
         const layers = Array.isArray(presetData) ? presetData : presetData.layers;
         if (!layers || layers.length === 0) return false;
 
-        if (mgr.overlays.length > 0 && !confirm(`加载预设将替换当前层结构。是否继续？`)) return false;
+        let loadMode = 'replace';
+        if (mgr.overlays.length > 0) {
+            const choice = await this._showPresetLoadChoiceDialog(presetName || '所选预设', mgr.overlays.length, layers.length);
+            if (!choice) return false;
+            loadMode = choice;
+        }
+
+        if (loadMode === 'merge') {
+            const newlyAdded = [];
+            const idMap = {};
+            for (let i = 0; i < layers.length; i++) {
+                const layerData = layers[i];
+                const clone = JSON.parse(JSON.stringify(layerData));
+                const oldId = clone.id;
+                clone.id = 'ov_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+                if (oldId) idMap[oldId] = clone.id;
+
+                const loadedStart = Number(clone.start);
+                const loadedEnd = Number(clone.end);
+                clone.start = Number.isFinite(loadedStart) ? Math.max(0, loadedStart) : 0;
+                clone.end = Number.isFinite(loadedEnd) && loadedEnd >= clone.start ? loadedEnd : 9999;
+
+                mgr.overlays.push(clone);
+                newlyAdded.push(clone);
+            }
+
+            const firstScrollOv = newlyAdded.find(o => o.type === 'scroll') || mgr.overlays.find(o => o.type === 'scroll');
+            for (const ov of newlyAdded) {
+                if (ov.bind_scroll_overlay_id) {
+                    if (idMap[ov.bind_scroll_overlay_id]) {
+                        ov.bind_scroll_overlay_id = idMap[ov.bind_scroll_overlay_id];
+                    } else if (firstScrollOv) {
+                        ov.bind_scroll_overlay_id = firstScrollOv.id;
+                    }
+                }
+            }
+
+            this._selectedOv = newlyAdded[0] || mgr.overlays[0] || null;
+            this._refreshList();
+            if (this._selectedOv) this._syncFromOverlay(this._selectedOv);
+            if (this.videoCanvas) this.videoCanvas.render();
+            if (typeof showToast === 'function') {
+                showToast(`已成功合并追加 ${newlyAdded.length} 个覆层 (当前共 ${mgr.overlays.length} 层)`, 'success');
+            }
+            return true;
+        }
 
         // Save existing text before clearing.
         const oldTextByIndex = [...mgr.overlays];
@@ -6212,11 +7381,11 @@ class ReelsOverlayPanel {
         const presets = this._getOverlayGroupPresets();
         delete presets[name];
         this._setOverlayGroupPresets(presets);
-        this._refreshOverlayGroupPresetSelect();
+        this._notifyOverlayPresetsChanged();
     }
 
     async _renameOverlayGroupPreset() {
-        const select = this.container.querySelector('#rop-group-preset-select');
+        const select = this.container?.querySelector('#rop-group-preset-select') || document.querySelector('#rop-group-preset-select');
         if (!select || !select.value) {
             alert('请先在下拉列表中选择要重命名的预设');
             return;
@@ -6236,7 +7405,7 @@ class ReelsOverlayPanel {
         presets[newName] = presetData;
         delete presets[oldName];
         this._setOverlayGroupPresets(presets);
-        this._refreshOverlayGroupPresetSelect();
+        this._notifyOverlayPresetsChanged();
         select.value = newName;
         if (typeof showToast === 'function') showToast(`覆层预设已重命名为「${newName}」`, 'success');
         else alert(`✅ 覆层预设已重命名为「${newName}」`);
@@ -6253,37 +7422,7 @@ class ReelsOverlayPanel {
             reader.onload = (ev) => {
                 try {
                     const data = JSON.parse(ev.target.result);
-                    const presets = this._getOverlayGroupPresets();
-                    let addedCount = 0;
-                    let overwrittenCount = 0;
-                    const conflicts = [];
-                    for (const name of Object.keys(data)) {
-                        if (presets[name]) {
-                            conflicts.push(name);
-                        }
-                    }
-                    if (conflicts.length > 0) {
-                        const ok = confirm(`导入的文件中包含以下已存在的预设：\n${conflicts.join(', ')}\n\n是否覆盖它们？(点击「取消」将跳过这些冲突的预设)`);
-                        for (const [name, val] of Object.entries(data)) {
-                            if (presets[name]) {
-                                if (ok) {
-                                    presets[name] = val;
-                                    overwrittenCount++;
-                                }
-                            } else {
-                                presets[name] = val;
-                                addedCount++;
-                            }
-                        }
-                    } else {
-                        for (const [name, val] of Object.entries(data)) {
-                            presets[name] = val;
-                            addedCount++;
-                        }
-                    }
-                    this._setOverlayGroupPresets(presets);
-                    this._refreshOverlayGroupPresetSelect();
-                    alert(`✅ 导入完成：新增了 ${addedCount} 个预设，覆盖了 ${overwrittenCount} 个预设。`);
+                    this._mergeImportedOverlayGroupPresets(data);
                 } catch (err) {
                     console.error('导入预设出错:', err);
                     alert('导入失败，不是有效的预设 JSON 文件。');
@@ -6292,6 +7431,18 @@ class ReelsOverlayPanel {
             reader.readAsText(file);
         };
         input.click();
+    }
+
+    _mergeImportedOverlayGroupPresets(data, missingMedia = []) {
+        const presets = this._getOverlayGroupPresets(); let addedCount = 0, overwrittenCount = 0;
+        const conflicts = Object.keys(data || {}).filter(name => presets[name]);
+        const overwrite = !conflicts.length || confirm(`导入中有已存在的预设：\n${conflicts.join(', ')}\n\n是否覆盖？取消将跳过冲突项。`);
+        for (const [name, value] of Object.entries(data || {})) {
+            if (presets[name]) { if (overwrite) { presets[name] = value; overwrittenCount++; } }
+            else { presets[name] = value; addedCount++; }
+        }
+        this._setOverlayGroupPresets(presets); this._notifyOverlayPresetsChanged();
+        alert(`✅ 导入完成：新增 ${addedCount} 个，覆盖 ${overwrittenCount} 个。${missingMedia.length ? `\n⚠️ 包内有 ${missingMedia.length} 个原路径媒体当时未找到，未被打包。` : ''}`);
     }
 
     _exportOverlayGroupPresets() {
@@ -6333,6 +7484,7 @@ class ReelsOverlayPanel {
                 </div>
             </div>
             <div style="overflow:auto;flex:1;">${list}</div>
+            <label style="padding:10px 16px;border-top:1px solid #333;color:#cbd5e1;font-size:12px;display:flex;gap:8px;align-items:flex-start;"><input class="rop-export-media" type="checkbox"> <span><b>导出预设包，并打包路径引用的媒体</b><br><span style="color:#94a3b8;font-size:11px;">会生成 ZIP 并复制图片/GIF/视频；不勾选则导出轻量 JSON。</span></span></label>
             <div style="padding:10px 16px;border-top:1px solid #333;display:flex;justify-content:space-between;align-items:center;">
                 <span class="rop-export-count" style="color:#888;font-size:11px;">已选 ${exportableNames.length}/${exportableNames.length}</span>
                 <div style="display:flex;gap:6px;">
@@ -6353,11 +7505,18 @@ class ReelsOverlayPanel {
         modal.querySelector('.rop-export-all').onclick = () => { modal.querySelectorAll('.rop-export-cb').forEach(cb => cb.checked = true); updateCount(); };
         modal.querySelector('.rop-export-none').onclick = () => { modal.querySelectorAll('.rop-export-cb').forEach(cb => cb.checked = false); updateCount(); };
         modal.querySelector('.rop-export-cancel').onclick = () => modal.remove();
-        modal.querySelector('.rop-export-ok').onclick = () => {
+        modal.querySelector('.rop-export-ok').onclick = async () => {
             const selected = Array.from(modal.querySelectorAll('.rop-export-cb:checked')).map(cb => cb.dataset.name);
             if (selected.length === 0) { alert('请至少选择一个预设'); return; }
             const exportData = {};
             selected.forEach(name => { if (presets[name]) exportData[name] = presets[name]; });
+            if (modal.querySelector('.rop-export-media').checked) {
+                const result = await window.electronAPI?.exportOverlayPresetPackage?.(exportData);
+                if (!result || result.canceled) return;
+                if (!result.ok) { alert(`导出预设包失败：${result.error || '未知错误'}`); return; }
+                alert(`✅ 已导出预设包：已收集 ${result.copied} 个媒体${result.missing?.length ? `，${result.missing.length} 个原路径文件未找到` : ''}`);
+                modal.remove(); return;
+            }
             const json = JSON.stringify(exportData, null, 2);
             const blob = new Blob([json], { type: 'application/json' });
             const a = document.createElement('a');
@@ -6379,18 +7538,19 @@ class ReelsOverlayPanel {
     const s = document.createElement('style');
     s.id = 'rop-styles';
     s.textContent = `
-        .rop-panel { font-size: 12px; color: #ccc; }
-        .rop-section { margin-bottom: 12px; }
-        .rop-header { display:flex; justify-content:space-between; align-items:center;
+        .rop-panel { font-size: 12px; color: #ccc; width: 100%; box-sizing: border-box; overflow-x: hidden; }
+        .rop-section { margin-bottom: 12px; width: 100%; box-sizing: border-box; }
+        .rop-header { display:flex; flex-direction:column; gap:6px; align-items:stretch;
                       padding: 8px 10px; background: var(--bg-secondary, #1e1e3a);
-                      border-radius: 6px 6px 0 0; font-weight: bold; font-size: 13px; }
-        .rop-header-actions { display:flex; gap:4px; }
-        .rop-btn { padding:3px 8px !important; font-size:11px !important; min-width:unset !important; }
+                      border-radius: 6px 6px 0 0; font-weight: bold; font-size: 13px; box-sizing: border-box; }
+        .rop-header-actions { display:grid; grid-template-columns:repeat(auto-fit, minmax(62px, 1fr)); gap:4px; width:100%; box-sizing: border-box; }
+        .rop-btn { padding:3px 6px !important; font-size:11px !important; min-width:unset !important; white-space:nowrap; text-align:center; box-sizing: border-box; }
+        .rop-btn-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(44px, 1fr)); gap:4px; width:100%; box-sizing: border-box; }
         .rop-btn-full { width:100%; margin-top:4px; }
         .rop-btn-danger { color:var(--error) !important; }
-        .rop-list { background:var(--bg-tertiary, #0f0f2e); border-radius:0 0 6px 6px; max-height:150px; overflow-y:auto; }
+        .rop-list { background:var(--bg-tertiary, #0f0f2e); border-radius:0 0 6px 6px; max-height:150px; overflow-y:auto; box-sizing: border-box; }
         .rop-list-item { display:flex; align-items:center; gap:6px; padding:6px 10px; cursor:pointer;
-                         border-bottom: 1px solid rgba(255,255,255,0.05); transition: background 0.15s; }
+                         border-bottom: 1px solid rgba(255,255,255,0.05); transition: background 0.15s; box-sizing: border-box; }
         .rop-list-item:hover { background:rgba(255,255,255,0.06); }
         .rop-list-item.selected { background:rgba(0,212,255,0.12); border-left:3px solid var(--accent); }
         .rop-list-arrow { font-size:9px; color:#666; width:10px; flex-shrink:0; }
@@ -6420,7 +7580,7 @@ class ReelsOverlayPanel {
         .rop-list-del { background:#34252b; border-color:rgba(248,113,113,0.3); color:#f87171; font-size:14px; }
         .rop-list-del:hover { background:#542d38; border-color:#f87171; color:#fff; }
         .rop-empty { padding:16px; text-align:center; color:#555; font-style:italic; }
-        .rop-group { padding:8px 10px; background:var(--bg-tertiary, #0f0f2e); border-radius:6px; margin-top:8px; }
+        .rop-group { padding:8px 10px; background:var(--bg-tertiary, #0f0f2e); border-radius:6px; margin-top:8px; box-sizing: border-box; }
         .rop-group-title { font-weight:bold; font-size:11px; color:#8899bb; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px; }
         .rop-collapsible-head { display:flex; align-items:center; justify-content:flex-start; gap:6px; }
         .rop-clickable { cursor:pointer; user-select:none; }
@@ -6439,14 +7599,14 @@ class ReelsOverlayPanel {
         .rop-subsection-head[data-section-tone="6"] { background:rgba(120, 220, 110, 0.14); color:#c9f7c3; border-color:rgba(120,220,110,0.34); }
         .rop-subsection-body { margin-bottom:6px; }
         .rop-subsection-body.rop-collapsed { display:none !important; }
-        .rop-grid { display:grid; grid-template-columns: auto 1fr; gap:4px 8px; align-items:center; }
+        .rop-grid { display:grid; grid-template-columns: minmax(50px, auto) minmax(0, 1fr); gap:4px 8px; align-items:center; }
         .rop-grid label { font-size:11px; color:#999; text-align:right; }
-        .rop-input { width:100%; padding:3px 6px; background:var(--bg-primary, #141414); border:1px solid var(--border-color, var(--border-color));
-                     border-radius:4px; color:#ddd; font-size:11px; font-family:monospace; }
+        .rop-input { width:100%; min-width:0; padding:3px 6px; background:var(--bg-primary, #141414); border:1px solid var(--border-color, var(--border-color));
+                     border-radius:4px; color:#ddd; font-size:11px; font-family:monospace; box-sizing:border-box; }
         .rop-input:focus { border-color:var(--accent); outline:none; }
-        .rop-range { width:100%; }
-        .rop-select { width:100%; padding:3px 6px; background:var(--bg-primary, #141414); border:1px solid var(--border-color, var(--border-color));
-                      border-radius:4px; color:#ddd; font-size:11px; }
+        .rop-range { width:100%; min-width:0; }
+        .rop-select { width:100%; min-width:0; padding:3px 6px; background:var(--bg-primary, #141414); border:1px solid var(--border-color, var(--border-color));
+                      border-radius:4px; color:#ddd; font-size:11px; box-sizing:border-box; }
         .rop-color-combo { display:flex; align-items:center; gap:6px; width:100%; min-width:0; }
         .rop-color { width:32px; min-width:32px; height:24px; padding:0; border:1px solid var(--border-color, var(--border-color)); border-radius:4px; cursor:pointer; }
         .rop-color-hex { flex:1; min-width:0; height:24px; padding:3px 6px; background:var(--bg-primary, #141414); border:1px solid var(--border-color, var(--border-color));
@@ -6476,31 +7636,73 @@ class ReelsOverlayPanel {
 
         /* Preset Gallery Modal */
         .rop-gallery-modal { position:fixed; top:var(--window-chrome-height, 38px); left:0; width:100%; height:calc(100vh - var(--window-chrome-height, 38px)); background:rgba(0,0,0,0.85); z-index:350000; display:flex; align-items:center; justify-content:center; -webkit-app-region:no-drag; }
-        .rop-gallery-content { width:100vw; max-width:none; height:100%; background:#1a1a2e; border-radius:0; display:flex; flex-direction:column; box-shadow:none; overflow:hidden; border:0; }
-        .rop-gallery-header { display:flex; justify-content:flex-start; align-items:center; flex-wrap:wrap; padding:14px 20px; background:#141424; border-bottom:1px solid #333; gap:10px 14px; }
-        .rop-gallery-header h3 { margin:0; font-size:18px; color:#fff; white-space:nowrap; }
+        .rop-gallery-content { width:100vw; max-width:none; height:100%; background:#131322; border-radius:0; display:flex; flex-direction:column; box-shadow:none; overflow:hidden; border:0; }
         
-        .rop-gallery-tabs { display:flex; gap:8px; background:#0f0f1d; padding:4px; border-radius:8px; flex:0 1 380px; min-width:300px; max-width:none; border: 1px solid #333; }
-        .rop-gallery-tab { flex:1; background:transparent; border:none; color:#888; font-size:13px; padding:6px 0; border-radius:6px; cursor:pointer; transition:all 0.2s; }
-        .rop-gallery-tab:hover { color:#ccc; background:rgba(255,255,255,0.05); }
-        .rop-gallery-tab.active { background:#3a3a5c; color:#fff; font-weight:bold; }
+        .rop-gallery-header { position:relative; display:flex; flex-direction:column; background:#141424; border-bottom:1px solid rgba(255,255,255,0.08); flex-shrink:0; }
         
-        .rop-gallery-close { background:none; border:none; color:#ccc; font-size:24px; cursor:pointer; margin-left:auto; }
-        .rop-gallery-close:hover { color:#fff; }
-        .rop-gallery-header .rop-gallery-preview-bg { background:rgba(30,58,138,.82) !important; color:#dbeafe !important; border:1px solid #60a5fa !important; padding:5px 9px !important; border-radius:6px !important; font-weight:600 !important; cursor:pointer !important; }
-        .rop-gallery-header .rop-gallery-preview-bg-clear { background:rgba(30,41,59,.96) !important; color:#e2e8f0 !important; border:1px solid #64748b !important; padding:5px 9px !important; border-radius:6px !important; font-weight:600 !important; cursor:pointer !important; }
-        .rop-gallery-preview-copy { display:flex; align-items:center; gap:6px; }
-        .rop-gallery-preview-copy label { display:flex; align-items:center; gap:4px; color:#ddd6fe; font-size:11px; font-weight:600; white-space:nowrap; }
-        .rop-gallery-preview-copy input { width:122px; padding:5px 7px; background:#21113f !important; color:#f5f3ff !important; border:1px solid #a78bfa !important; border-radius:6px; font-size:11px; outline:none; }
-        .rop-gallery-preview-copy input::placeholder { color:#c4b5fd; opacity:.72; }
-        .rop-gallery-header .rop-gallery-clear-custom { background:rgba(127,29,29,.72) !important; color:#fecaca !important; border:1px solid #f87171 !important; padding:5px 9px !important; border-radius:6px !important; font-weight:600 !important; cursor:pointer !important; }
-        .rop-gallery-header .rop-library-action { background:#1e293b !important; color:#e2e8f0 !important; border:1px solid #64748b !important; padding:6px 10px !important; border-radius:6px !important; font-weight:600 !important; cursor:pointer !important; }
-        .rop-gallery-header .rop-library-action:hover { background:#334155 !important; color:#fff !important; }
+        .rop-gallery-top-bar { display:flex; align-items:center; justify-content:space-between; padding:8px 16px; gap:14px; min-height:46px; border-bottom:1px solid rgba(255,255,255,0.05); }
+        .rop-gallery-title-area { display:flex; align-items:center; gap:8px; flex-shrink:0; }
+        .rop-gallery-main-title { margin:0; font-size:15px; font-weight:700; color:#f8fafc; white-space:nowrap; }
+        .rop-gallery-total-badge { font-size:11px; font-weight:600; color:#818cf8; background:rgba(99,102,241,0.15); border:1px solid rgba(99,102,241,0.3); padding:2px 8px; border-radius:12px; white-space:nowrap; }
+        
+        .rop-gallery-tools-area { display:flex; align-items:center; gap:12px; flex:1; justify-content:center; min-width:0; }
+        .rop-gallery-tool-group { display:flex; align-items:center; gap:6px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); padding:3px 8px; border-radius:6px; flex-shrink:0; }
+        .rop-tool-group-label { font-size:11px; color:#94a3b8; font-weight:600; white-space:nowrap; }
+        .rop-gallery-preview-bg { background:rgba(59,130,246,0.2) !important; color:#93c5fd !important; border:1px solid rgba(59,130,246,0.45) !important; padding:3px 8px !important; border-radius:4px !important; font-size:11px !important; font-weight:600 !important; cursor:pointer !important; transition:all 0.15s !important; }
+        .rop-gallery-preview-bg:hover { background:rgba(59,130,246,0.35) !important; color:#fff !important; }
+        .rop-gallery-preview-bg-label { max-width:90px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; color:#cbd5e1; }
+        .rop-gallery-preview-bg-clear { background:rgba(239,68,68,0.15) !important; color:#fca5a5 !important; border:1px solid rgba(239,68,68,0.3) !important; padding:2px 6px !important; border-radius:4px !important; font-size:11px !important; cursor:pointer !important; transition:all 0.15s !important; }
+        .rop-gallery-preview-bg-clear:hover { background:rgba(239,68,68,0.3) !important; color:#fff !important; }
+        
+        .rop-tool-divider { width:1px; height:18px; background:rgba(255,255,255,0.1); flex-shrink:0; }
+        
+        .rop-gallery-preview-copy { display:flex; align-items:center; gap:6px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); padding:3px 8px; border-radius:6px; flex-shrink:0; }
+        .rop-preview-input-wrap { display:flex; align-items:center; background:#0b0f19; border:1px solid #334155; border-radius:4px; overflow:hidden; padding-right:4px; transition:border-color 0.15s; }
+        .rop-preview-input-wrap:focus-within { border-color:#6366f1; }
+        .rop-input-tag { font-size:10px; font-weight:600; color:#818cf8; background:rgba(99,102,241,0.18); padding:3px 5px; line-height:1; user-select:none; border-right:1px solid #334155; }
+        .rop-preview-input-wrap input { width:96px; padding:3px 6px; background:transparent !important; color:#f1f5f9 !important; border:none !important; font-size:11px; outline:none; }
+        .rop-preview-input-wrap input::placeholder { color:#64748b; }
+        .rop-preview-copy-btn { background:none; border:none; cursor:pointer; padding:0 1px; font-size:11px; line-height:1; opacity:0.7; transition:opacity 0.15s; }
+        .rop-preview-copy-btn:hover { opacity:1; }
+        
+        .rop-gallery-actions-area { display:flex; align-items:center; gap:10px; flex-shrink:0; }
+        .rop-gallery-clear-custom { background:rgba(239,68,68,0.12) !important; color:#fca5a5 !important; border:1px solid rgba(239,68,68,0.28) !important; padding:4px 10px !important; border-radius:6px !important; font-size:11px !important; font-weight:500 !important; cursor:pointer !important; transition:all 0.15s !important; }
+        .rop-gallery-clear-custom:hover { background:rgba(239,68,68,0.25) !important; color:#fff !important; border-color:rgba(239,68,68,0.5) !important; }
+        .rop-gallery-close { width:28px; height:28px; border-radius:6px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); color:#cbd5e1; font-size:14px; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all 0.15s; margin:0; }
+        .rop-gallery-close:hover { background:rgba(239,68,68,0.3); border-color:#ef4444; color:#fff; }
+        
+        /* 第二行：分类与特性导航 */
+        .rop-gallery-nav-bar { display:flex; align-items:center; padding:6px 16px; background:#0c0d18; overflow-x:auto; scrollbar-width:none; border-bottom:1px solid rgba(255,255,255,0.04); }
+        .rop-gallery-nav-bar::-webkit-scrollbar { display:none; }
+        .rop-gallery-tabs { display:flex; align-items:center; gap:6px; flex-wrap:nowrap; background:transparent; padding:0; border:none; width:auto; }
+        .rop-tab-group { display:flex; align-items:center; gap:3px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); padding:2px 4px; border-radius:8px; flex-shrink:0; }
+        .rop-nav-divider { width:1px; height:18px; background:rgba(255,255,255,0.1); margin:0 4px; flex-shrink:0; }
+        
+        .rop-gallery-tab { flex:0 0 auto; white-space:nowrap; background:transparent; border:none; color:#94a3b8; font-size:12px; padding:5px 9px; border-radius:6px; cursor:pointer; transition:all 0.15s; line-height:1.2; display:flex; align-items:center; gap:5px; }
+        .rop-gallery-tab:hover { color:#f8fafc; background:rgba(255,255,255,0.06); }
+        .rop-gallery-tab.active { background:#4338ca !important; color:#ffffff !important; font-weight:600; box-shadow:0 2px 6px rgba(67,56,202,0.4); }
+        .rop-tab-num { font-size:10px; padding:1px 5px; border-radius:10px; background:rgba(255,255,255,0.08); color:#cbd5e1; font-weight:normal; }
+        .rop-gallery-tab.active .rop-tab-num { background:rgba(255,255,255,0.25); color:#fff; font-weight:600; }
         .rop-library-preview-note { margin-top:8px; padding:7px 9px; border:1px solid #334155; border-radius:6px; background:#111827; color:#93c5fd; font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         .rop-library-preview-note span { color:#e2e8f0; }
         
         .rop-gallery-main { display:flex; flex:1; overflow:hidden; height:100%; }
-        .rop-gallery-sidebar { width:210px; background:#0f0f1d; border-right:1px solid #333; overflow-y:auto; padding:12px; display:flex; flex-direction:column; gap:4px; flex-shrink:0; }
+        .rop-gallery-sidebar { width:260px; min-width:160px; max-width:650px; background:#0f0f1d; border-right:none; overflow-y:auto; padding:12px; display:flex; flex-direction:column; gap:4px; flex-shrink:0; }
+        .rop-gallery-resizer {
+            width: 6px;
+            background: rgba(255, 255, 255, 0.05);
+            border-left: 1px solid rgba(255, 255, 255, 0.08);
+            border-right: 1px solid rgba(0, 0, 0, 0.4);
+            cursor: col-resize;
+            flex-shrink: 0;
+            transition: background 0.15s, box-shadow 0.15s;
+            position: relative;
+            z-index: 5;
+        }
+        .rop-gallery-resizer:hover, .rop-gallery-resizer.dragging {
+            background: var(--accent, #7c5cff) !important;
+            box-shadow: 0 0 8px rgba(124, 92, 255, 0.6);
+        }
         .rop-gallery-sidebar-item { padding:8px 10px; color:#aaa; cursor:pointer; border-radius:6px; font-size:13px; text-overflow:ellipsis; overflow:hidden; white-space:nowrap; transition:background 0.15s, color 0.15s; border:1px solid transparent; }
         .rop-gallery-sidebar-item:hover { background:rgba(255,255,255,0.05); color:#fff; border-color:#333; }
         .rop-gallery-sidebar-item.active { background:#3a3a5c; color:#fff; font-weight:bold; border-color:#555; }
@@ -6531,14 +7733,35 @@ class ReelsOverlayPanel {
         .rop-badge-category { font-weight:700 !important; font-size:11px !important; padding:2px 7px !important; border-radius:4px !important; display:inline-flex !important; align-items:center !important; gap:3px !important; letter-spacing:0.2px; }
         .rop-badge-category.cat-text { background:rgba(16,185,129,0.22) !important; color:#34d399 !important; border:1px solid rgba(16,185,129,0.45) !important; }
         .rop-badge-category.cat-card { background:rgba(59,130,246,0.22) !important; color:#60a5fa !important; border:1px solid rgba(59,130,246,0.45) !important; }
+        .rop-badge-category.cat-brush { background:rgba(236,72,153,0.22) !important; color:#f472b6 !important; border:1px solid rgba(236,72,153,0.45) !important; }
         .rop-badge-category.cat-scroll { background:rgba(245,158,11,0.22) !important; color:#fbbf24 !important; border:1px solid rgba(245,158,11,0.45) !important; }
         .rop-badge-category.cat-media { background:rgba(168,85,247,0.22) !important; color:#c084fc !important; border:1px solid rgba(168,85,247,0.45) !important; }
         .rop-badge-category.cat-split { background:rgba(6,182,212,0.22) !important; color:#22d3ee !important; border:1px solid rgba(6,182,212,0.45) !important; }
         .rop-badge-category.cat-mask { background:rgba(244,63,94,0.22) !important; color:#fb7185 !important; border:1px solid rgba(244,63,94,0.45) !important; }
         
+        .rop-badge-fullscreen { font-weight:600 !important; font-size:10px !important; padding:2px 6px !important; border-radius:4px !important; display:inline-flex !important; align-items:center !important; gap:2px !important; }
+        .rop-badge-fullscreen.yes { background:rgba(99,102,241,0.22) !important; color:#a5b4fc !important; border:1px solid rgba(99,102,241,0.45) !important; }
+        .rop-badge-fullscreen.no { background:rgba(148,163,184,0.14) !important; color:#94a3b8 !important; border:1px solid rgba(148,163,184,0.28) !important; }
+        
+        .rop-badge-custom-group { font-weight:600 !important; font-size:10px !important; padding:2px 6px !important; border-radius:4px !important; display:inline-flex !important; align-items:center !important; gap:2px !important; background:rgba(16,185,129,0.18) !important; color:#6ee7b7 !important; border:1px solid rgba(16,185,129,0.38) !important; cursor:pointer !important; transition:all 0.15s !important; }
+        .rop-badge-custom-group:hover { background:rgba(16,185,129,0.35) !important; color:#fff !important; }
+        
+        .rop-sidebar-group-header { padding:0 0 8px 0; border-bottom:1px solid rgba(255,255,255,0.08); margin-bottom:4px; flex-shrink:0; }
+        .rop-sidebar-group-select { width:100%; box-sizing:border-box; padding:6px 8px; border-radius:6px; background:#18182b; border:1px solid #3b3b5c; color:#e2e8f0; font-size:12px; outline:none; cursor:pointer; transition:border-color 0.15s; }
+        .rop-sidebar-group-select:hover, .rop-sidebar-group-select:focus { border-color:#6366f1; }
+        
+        .rop-gallery-tab-group { background:rgba(16,185,129,0.1) !important; color:#6ee7b7 !important; border:1px solid rgba(16,185,129,0.25) !important; }
+        .rop-gallery-tab-group:hover { background:rgba(16,185,129,0.22) !important; color:#fff !important; }
+        .rop-gallery-tab-group.active { background:#059669 !important; color:#ffffff !important; border-color:#10b981 !important; box-shadow:0 2px 6px rgba(5,150,105,0.4) !important; }
+        
+        .rop-gallery-tab-builtin { background:rgba(99,102,241,0.12) !important; color:#a5b4fc !important; border:1px solid rgba(99,102,241,0.28) !important; }
+        .rop-gallery-tab-builtin:hover { background:rgba(99,102,241,0.22) !important; color:#fff !important; }
+        .rop-gallery-tab-builtin.active { background:#4f46e5 !important; color:#ffffff !important; border-color:#6366f1 !important; box-shadow:0 2px 6px rgba(79,70,229,0.4) !important; }
+        
         .rop-sidebar-cat-pill { font-size:10px; padding:1px 4px; border-radius:3px; margin-right:5px; font-weight:600; display:inline-block; flex-shrink:0; }
         .rop-sidebar-cat-pill.cat-text { background:rgba(16,185,129,0.25); color:#34d399; }
         .rop-sidebar-cat-pill.cat-card { background:rgba(59,130,246,0.25); color:#60a5fa; }
+        .rop-sidebar-cat-pill.cat-brush { background:rgba(236,72,153,0.25); color:#f472b6; }
         .rop-sidebar-cat-pill.cat-scroll { background:rgba(245,158,11,0.25); color:#fbbf24; }
         .rop-sidebar-cat-pill.cat-media { background:rgba(168,85,247,0.25); color:#c084fc; }
         .rop-sidebar-cat-pill.cat-split { background:rgba(6,182,212,0.25); color:#22d3ee; }
@@ -6552,12 +7775,22 @@ class ReelsOverlayPanel {
         .rop-gallery-actions .rop-btn:hover { filter:brightness(1.5); }
         @media (max-width: 980px) {
             .rop-gallery-content { width:100vw; height:100%; }
-            .rop-gallery-header { gap:8px; padding:10px 12px; }
-            .rop-gallery-header h3 { width:100%; }
-            .rop-gallery-tabs { flex:1 1 100%; min-width:0; order:2; }
+            .rop-gallery-top-bar { flex-wrap:wrap; gap:8px; padding:8px 12px; }
+            .rop-gallery-tools-area { order:3; width:100%; justify-content:flex-start; overflow-x:auto; }
             .rop-gallery-sidebar { width:150px; }
             .rop-gallery-body { padding:12px; }
             .rop-gallery-grid { grid-template-columns:repeat(auto-fill, minmax(205px, 1fr)); gap:12px; }
+        }
+        @keyframes ropFadeIn {
+            from { opacity: 0; transform: scale(0.96); }
+            to { opacity: 1; transform: scale(1); }
+        }
+        .rop-preset-choice-modal {
+            user-select: none;
+            -webkit-app-region: no-drag;
+        }
+        .rop-preset-choice-box {
+            animation: ropFadeIn 0.16s cubic-bezier(0.16, 1, 0.3, 1);
         }
     `;
     document.head.appendChild(s);

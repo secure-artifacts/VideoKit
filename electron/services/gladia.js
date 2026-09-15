@@ -124,9 +124,11 @@ function gladiaRequest(method, urlStr, headers, body, timeout = 120000, signal =
             timeout,
         };
         let settled = false;
+        let absoluteTimeoutTimer = null;
         const finish = (fn, value) => {
             if (settled) return;
             settled = true;
+            if (absoluteTimeoutTimer) clearTimeout(absoluteTimeoutTimer);
             signal?.removeEventListener?.('abort', abort);
             fn(value);
         };
@@ -143,6 +145,12 @@ function gladiaRequest(method, urlStr, headers, body, timeout = 120000, signal =
         });
         if (signal?.aborted) return abort();
         signal?.addEventListener?.('abort', abort, { once: true });
+        // ClientRequest 的 timeout 只是“socket 无活动”超时；上传持续写入时，
+        // 即使服务端永远不回包也不会触发。这里增加整体时限，避免 UI 无限等待。
+        absoluteTimeoutTimer = setTimeout(() => {
+            req.destroy();
+            finish(reject, new Error(`Gladia 请求总超时（${Math.round(timeout / 1000)} 秒）`));
+        }, timeout);
         req.on('timeout', () => { req.destroy(); finish(reject, new Error('Gladia 请求超时')); });
         req.on('error', error => finish(reject, signal?.aborted ? new Error('任务已停止') : error));
         if (requestBody) req.write(requestBody);
@@ -387,7 +395,9 @@ async function uploadAudio(apiKey, filePath, signal = null) {
         'x-gladia-key': apiKey,
         'Content-Type': `multipart/form-data; boundary=${boundary}`,
         'Content-Length': fullBody.length,
-    }, fullBody, 300000, signal);
+    // 分段后的 WAV 一般只有几十秒，正常上传不应超过一分钟。旧的 5 分钟
+    // 超时会让断网/服务端半开连接表现成“任务一直卡着不动”。
+    }, fullBody, 90000, signal);
 
     if (res.status !== 200 && res.status !== 201) {
         const errText = res.body.toString().slice(0, 500);
@@ -445,7 +455,12 @@ async function startTranscription(apiKey, audioUrl, language = 'english', signal
     }
 
     const data = JSON.parse(res.body.toString());
-    return data.result_url || data.id;
+    // result_url 仍可用，但它通常指向旧的 /v2/transcription/:id 路径。
+    // 优先使用 Gladia 当前文档推荐的 pre-recorded 结果端点，避免旧端点
+    // 在服务升级期间出现不必要的轮询异常或长时间等待。
+    return data.id
+        ? `${GLADIA_API_URL}/v2/pre-recorded/${data.id}`
+        : data.result_url;
 }
 
 /**

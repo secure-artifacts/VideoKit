@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, MessageChannelMain, dialog, powerSaveBlocker, protocol, shell, net, screen, desktopCapturer } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { spawnSync } = require('child_process');
 const { Readable } = require('stream');
 const ffmpegService = require('./services/ffmpeg');
 const { initAutoUpdater } = require('./updater');
@@ -10,6 +11,8 @@ const DEV_SERVER_URL = `http://localhost:${DEV_SERVER_PORT}`;
 
 // Node.js API 路由器 —— 替代 Python Flask 后端
 const { registerAPIHandlers } = require('./apiRouter');
+const persistentPresetStore = require('./services/persistentPresetStore');
+const overlayPresetPackage = require('./services/overlayPresetPackage');
 
 let mainWindow;
 let appIsReady = false;
@@ -508,6 +511,44 @@ function getResourcePath(relativePath) {
     return path.join(__dirname, '..', relativePath);
 }
 
+// Apple Silicon 版不能把 Intel-only 的 ffmpeg 当成可靠依赖。部分机器安装了
+// Rosetta 时它会碰巧工作，未安装时则所有媒体探测都失败，前端只能看到 0 秒
+// 和 0% 匹配，极难定位。这里同时校验 Mach-O 架构和实际可启动性。
+function isUsableMacMediaBinary(binaryPath) {
+    if (!binaryPath || !fs.existsSync(binaryPath)) return false;
+    try {
+        const archProbe = spawnSync('/usr/bin/lipo', ['-archs', binaryPath], {
+            timeout: 3000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe']
+        });
+        const arches = String(archProbe.stdout || '').trim().split(/\s+/).filter(Boolean);
+        const requiredArch = process.arch === 'arm64' ? 'arm64' : 'x86_64';
+        if (arches.length && !arches.includes(requiredArch)) {
+            log(`[FFmpeg] Skipping incompatible ${binaryPath}; needs ${requiredArch}, has ${arches.join(', ')}`);
+            return false;
+        }
+        const runProbe = spawnSync(binaryPath, ['-version'], {
+            timeout: 5000, stdio: 'ignore'
+        });
+        if (runProbe.error || runProbe.status !== 0) {
+            log(`[FFmpeg] Cannot start ${binaryPath}: ${runProbe.error?.message || `exit ${runProbe.status}`}`);
+            return false;
+        }
+        return true;
+    } catch (error) {
+        log(`[FFmpeg] Cannot validate ${binaryPath}: ${error.message}`);
+        return false;
+    }
+}
+
+function findUsableMacMediaPair(name) {
+    const systemDirs = ['/opt/homebrew/bin', '/usr/local/bin', '/opt/local/bin', '/usr/bin'];
+    for (const dir of systemDirs) {
+        const candidate = path.join(dir, name);
+        if (isUsableMacMediaBinary(candidate)) return candidate;
+    }
+    return '';
+}
+
 // 获取 FFmpeg 路径并注入到 PATH
 function setupFFmpegPath() {
     // macOS: 检查打包的 FFmpeg
@@ -525,7 +566,7 @@ function setupFFmpegPath() {
                 const ffprobeExe = path.join(vendorFfmpeg, 'ffprobe');
                 log(`[FFmpeg]   ffmpeg: ${ffmpegExe} exists=${fs.existsSync(ffmpegExe)}`);
                 log(`[FFmpeg]   ffprobe: ${ffprobeExe} exists=${fs.existsSync(ffprobeExe)}`);
-                if (fs.existsSync(ffmpegExe) || fs.existsSync(ffprobeExe)) {
+                if (isUsableMacMediaBinary(ffmpegExe) && isUsableMacMediaBinary(ffprobeExe)) {
                     log(`Using vendor FFmpeg on macOS: ${vendorFfmpeg}`);
                     process.env.PATH = `${vendorFfmpeg}${path.delimiter}${process.env.PATH || ''}`;
                     if (fs.existsSync(ffmpegExe)) process.env.FFMPEG_PATH = ffmpegExe;
@@ -533,6 +574,21 @@ function setupFFmpegPath() {
                     found = true;
                     break;
                 }
+            }
+        }
+        if (!found) {
+            // 内置二进制不存在、损坏或架构不匹配时，明确使用用户已安装的
+            // 系统版本。不能只修改 PATH，否则 ffmpeg.js 会再次扫描并选回
+            // 那个不可执行的内置 Intel 版本。
+            const systemFfmpeg = findUsableMacMediaPair('ffmpeg');
+            const systemFfprobe = findUsableMacMediaPair('ffprobe');
+            if (systemFfmpeg && systemFfprobe) {
+                process.env.FFMPEG_PATH = systemFfmpeg;
+                process.env.FFPROBE_PATH = systemFfprobe;
+                const systemDir = path.dirname(systemFfmpeg);
+                process.env.PATH = `${systemDir}${path.delimiter}${process.env.PATH || ''}`;
+                log(`Using compatible system FFmpeg on macOS: ${systemDir}`);
+                found = true;
             }
         }
         if (!found) {
@@ -828,6 +884,31 @@ app.whenReady().then(async () => {
     log(`FFmpeg PATH configured`);
 
     // ==================== IPC 处理 - 基本功能 ====================
+    // 预设先在 preload 同步恢复，确保页面脚本读取 localStorage 前已经拿到
+    // 免安装包之间共用的用户目录副本。
+    ipcMain.on('persistent-presets:hydrate', (event, values) => {
+        try { event.returnValue = { ok: true, values: persistentPresetStore.hydrate(values) }; }
+        catch (error) { event.returnValue = { ok: false, error: error.message, values: {} }; }
+    });
+    ipcMain.handle('persistent-presets:save', async (_event, values) => {
+        try { return { ok: true, ...persistentPresetStore.writeSnapshot(values) }; }
+        catch (error) { return { ok: false, error: error.message }; }
+    });
+    ipcMain.handle('export-overlay-preset-package', async (_event, presets) => {
+        const result = await dialog.showSaveDialog(mainWindow, { title: '导出含媒体的覆层预设包', defaultPath: `overlay_presets_${Date.now()}.zip`, filters: [{ name: 'VideoKit 预设包', extensions: ['zip'] }] });
+        if (result.canceled || !result.filePath) return { ok: false, canceled: true };
+        try { return { ok: true, ...(await overlayPresetPackage.exportPackage({ presets, outputPath: result.filePath })), path: result.filePath }; }
+        catch (error) { return { ok: false, error: error.message }; }
+    });
+    ipcMain.handle('import-overlay-preset-package', async (_event, packagePath) => {
+        try { return { ok: true, ...(await overlayPresetPackage.importPackage({ packagePath, destinationDir: path.join(app.getPath('userData'), 'videokit-presets', 'imported-overlay-assets') })) }; }
+        catch (error) { return { ok: false, error: error.message }; }
+    });
+    ipcMain.handle('save-overlay-preset-assets', async (_event, preset) => {
+        try { return { ok: true, ...(await overlayPresetPackage.savePresetAssets({ preset, destinationDir: path.join(app.getPath('userData'), 'videokit-presets', 'saved-overlay-assets') })) }; }
+        catch (error) { return { ok: false, error: error.message }; }
+    });
+
     ipcMain.handle('get-app-version', () => {
         return app.getVersion();
     });

@@ -57,6 +57,7 @@ Desktop.ini
 backend/elevenlabs_settings.json
 backend/gemini_keys.json
 backend/gladia_keys.json
+backend/transcription_providers.json
 
 # ==================== Electron Builder ====================
 builder-effective-config.yaml

@@ -1085,7 +1085,11 @@ function _initReelsModule() {
                 onOverlayChange() {
                     _syncCurrentOverlayEditorToSelectedTask();
                     reelsUpdatePreview();
-                    if (typeof window.ReelsPreviewV2?.render === 'function') window.ReelsPreviewV2.render();
+                    if (window.ReelsPreviewV2?.isOpen?.() && typeof window.ReelsPreviewV2?.requestRender === 'function') {
+                        window.ReelsPreviewV2.requestRender();
+                    } else if (typeof window.ReelsPreviewV2?.render === 'function') {
+                        window.ReelsPreviewV2.render();
+                    }
                 },
                 // 回调占位
                 onSelect: null,
@@ -2671,6 +2675,14 @@ function _readStyleFromUI() {
         // Box
         use_box: chk('reels-use-box'),
         box_adaptive_width: chk('reels-box-adaptive-width'),
+        box_brush_style: val('reels-box-brush-style') || 'rect',
+        box_brush_color_mode: val('reels-box-brush-color-mode') || 'tint',
+        box_custom_brush_data: val('reels-box-custom-brush-data') || '',
+        box_brush_w: num('reels-box-brush-w', 0),
+        box_brush_h: num('reels-box-brush-h', 0),
+        box_brush_x: num('reels-box-brush-x', 0),
+        box_brush_y: num('reels-box-brush-y', 0),
+        box_brush_solid: num('reels-box-brush-solid', 100),
         color_bg: val('reels-box-color') || '#000000',
         opacity_bg: num('reels-box-opacity', 150),
         box_radius: num('reels-box-radius', 8),
@@ -3103,6 +3115,22 @@ function _writeStyleToUI(style) {
     set('reels-shadow-offset-y', style.shadow_offset_y ?? 2);
     setChk('reels-use-box', style.use_box);
     setChk('reels-box-adaptive-width', style.box_adaptive_width);
+    set('reels-box-brush-style', style.box_brush_style || 'rect');
+    set('reels-box-brush-color-mode', style.box_brush_color_mode || 'tint');
+    set('reels-box-custom-brush-data', style.box_custom_brush_data || '');
+    set('reels-box-brush-w', style.box_brush_w ?? 0);
+    set('reels-box-brush-h', style.box_brush_h ?? 0);
+    set('reels-box-brush-x', style.box_brush_x ?? 0);
+    set('reels-box-brush-y', style.box_brush_y ?? 0);
+    set('reels-box-brush-solid', style.box_brush_solid ?? 100);
+    { const el = document.getElementById('reels-box-brush-w-range'); if (el) el.value = style.box_brush_w ?? 0; }
+    { const el = document.getElementById('reels-box-brush-h-range'); if (el) el.value = style.box_brush_h ?? 0; }
+    { const el = document.getElementById('reels-box-brush-x-range'); if (el) el.value = style.box_brush_x ?? 0; }
+    { const el = document.getElementById('reels-box-brush-y-range'); if (el) el.value = style.box_brush_y ?? 0; }
+    { const el = document.getElementById('reels-box-brush-solid-range'); if (el) el.value = style.box_brush_solid ?? 100; }
+    // This is a programmatic style restore during task switching.  Do not open
+    // the file picker when the saved brush style happens to be "custom".
+    if (typeof window.reelsOnBoxBrushStyleChange === 'function') window.reelsOnBoxBrushStyleChange(false);
     set('reels-box-color', style.color_bg || '#000000');
     set('reels-box-opacity', style.opacity_bg ?? 150);
     set('reels-box-radius', style.box_radius ?? 8);
@@ -3257,10 +3285,27 @@ function _writeStyleToUI(style) {
 }
 
 // ═══════════════════════════════════════════════════════
-// Preview rendering loop
+// Preview rendering loop (with RAF coalescing to prevent UI freeze)
 // ═══════════════════════════════════════════════════════
 
-function reelsUpdatePreview() {
+let _reelsUpdatePreviewRaf = null;
+function reelsUpdatePreview(immediate = false) {
+    if (immediate) {
+        if (_reelsUpdatePreviewRaf) {
+            cancelAnimationFrame(_reelsUpdatePreviewRaf);
+            _reelsUpdatePreviewRaf = null;
+        }
+        _reelsUpdatePreviewInternal();
+        return;
+    }
+    if (_reelsUpdatePreviewRaf) return;
+    _reelsUpdatePreviewRaf = requestAnimationFrame(() => {
+        _reelsUpdatePreviewRaf = null;
+        _reelsUpdatePreviewInternal();
+    });
+}
+
+function _reelsUpdatePreviewInternal() {
     reelsRefreshAnimationParameterAvailability();
     // 独立预览打开时由 ReelsPreviewV2 自己驱动画布。旧预览即使已隐藏，过去
     // 仍会继续运行并操作 ReelsOverlay 共用的视频缓存：V2 seek 到当前时间，
@@ -6138,9 +6183,7 @@ function _getPreviewDuration() {
     // 自定义时长优先
     const globalCustomEl = document.getElementById('reels-custom-duration');
     const globalCustomDuration = parseFloat(globalCustomEl ? globalCustomEl.value : '0') || 0;
-    const effectiveCustomDuration = (task && task.customDuration && task.customDuration > 0)
-        ? task.customDuration
-        : globalCustomDuration;
+    const effectiveCustomDuration = resolveReelsCustomDuration(task, globalCustomDuration);
     if (effectiveCustomDuration > 0) {
         return effectiveCustomDuration + offsetDur;
     }
@@ -6330,6 +6373,29 @@ function _saveReelsExportSettings() {
     } catch (error) {
         console.warn('[Reels] 保存导出设置失败:', error);
     }
+}
+
+// 只重置导出参数，不动任务、已导入素材或用户选定的输出目录。
+function reelsResetExportSettings() {
+    if (!confirm('恢复导出设置默认值？\n\n不会删除任务、素材或输出目录。')) return;
+    Object.entries(REELS_EXPORT_SETTING_DEFAULTS).forEach(([id, value]) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (el.type === 'checkbox') el.checked = Boolean(value);
+        else _setExportSettingValue(id, value);
+    });
+
+    reelsUpdateCustomBitrateUI();
+    reelsUpdateExportEngineUI();
+    if (typeof reelsHandleResolutionChange === 'function') {
+        reelsHandleResolutionChange((document.getElementById('reels-resolution-select') || {}).value);
+    }
+    // 多模板区有自己的展开/收起状态，需要主动刷新一次。
+    document.getElementById('reels-multi-preset-enabled')?.dispatchEvent(new Event('change'));
+    if (typeof _applyPreviewAudioMix === 'function') _applyPreviewAudioMix();
+    if (typeof reelsUpdatePreview === 'function') reelsUpdatePreview();
+    _saveReelsExportSettings();
+    if (typeof showToast === 'function') showToast('导出设置已恢复默认值', 'success');
 }
 
 function _initReelsExportSettingsPersistence() {
@@ -8487,7 +8553,16 @@ function reelsAutoMatchFiles() {
     if (receivedFiles) window.ReelsPreviewV2?.recover?.('素材导入完成');
 }
 
+function resolveReelsCustomDuration(task, globalDuration) {
+    const value = task?.customDuration ?? globalDuration;
+    const duration = Number(value);
+    return Number.isFinite(duration) && duration > 0 ? duration : 0;
+}
+
 function reelsClearTasks() {
+    delete _reelsState._overlayPresetPreviewBackground;
+    _setExportSettingValue('reels-custom-duration', '');
+    _saveReelsExportSettings();
     _reelsState.tasks = [];
     _reelsState.selectedIdx = -1;
     _reelsState.pendingFiles = { backgrounds: [], audios: [], srts: [], txts: [] };
@@ -10229,6 +10304,8 @@ function reelsOpenSubtitlePresetLibrary() {
         stopPreviewFrames();
         modal.remove();
         reelsOpenSubtitlePresetLibrary();
+        if (typeof _reelsRefreshPresetList === 'function') _reelsRefreshPresetList();
+        if (typeof _renderBatchTable === 'function') _renderBatchTable();
     };
     modal.querySelectorAll('.rsp-use').forEach(btn => btn.onclick = event => {
         const selectedVal = event.currentTarget.closest('.rsp-card').dataset.name;
@@ -12375,7 +12452,7 @@ async function reelsStartExport(options = {}) {
                     bgVolume: _getEffectiveBgVolumePercent(task, bgVolume) / 100,
                     loopFade,
                     loopFadeDur,
-                    customDuration: task.customDuration || customDuration || 0,
+                    customDuration: resolveReelsCustomDuration(task, customDuration),
                     bgmPath: _getEffectiveBgmPath(task, i) || '',
                     bgmVolume: _getEffectiveBgmVolumePercent(task, bgmVolume) / 100,
                     bgmStart: Math.max(0, parseFloat(task.bgmStart) || 0),
@@ -12632,7 +12709,7 @@ async function reelsStartExport(options = {}) {
                     contentVideoTrimEnd: task.contentVideoTrimEnd != null ? task.contentVideoTrimEnd : null,
                     voicePath: voiceSource || null,
                     bgmPath: _getEffectiveBgmPath(task, i) || '',
-                    customDuration: task.customDuration || customDuration || 0,
+                    customDuration: resolveReelsCustomDuration(task, customDuration),
                     taskName: baseName,
                     subtitleTimeMode: task.subtitleTimeMode || 'full',
                     subtitleTimeSlices: task.subtitleTimeSlices || [],
@@ -12867,7 +12944,7 @@ async function reelsStartExport(options = {}) {
                     bgVolume: _getEffectiveBgVolumePercent(task, bgVolume) / 100,
                     loopFade,
                     loopFadeDur,
-                    customDuration: task.customDuration || customDuration || 0,
+                    customDuration: resolveReelsCustomDuration(task, customDuration),
                     bgmPath: _getEffectiveBgmPath(task, i) || '',
                     bgmVolume: _getEffectiveBgmVolumePercent(task, bgmVolume) / 100,
                     bgmStart: Math.max(0, parseFloat(task.bgmStart) || 0),

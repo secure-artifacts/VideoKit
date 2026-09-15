@@ -84,7 +84,7 @@ class ReelsGradientPicker {
         overlay.className = 'rgp-modal-overlay';
         overlay.style.cssText = `
             position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.55); z-index: 99999;
+            background: rgba(0,0,0,0.55); z-index: 999999;
             display: flex; align-items: center; justify-content: center;
             backdrop-filter: blur(2px);
         `;
