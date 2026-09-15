@@ -414,14 +414,14 @@ function _bcOpenSelectedBackgroundPicker(groupKey) {
             const checked = selected.has(path);
             const url = _bcFileUrl(path);
             const preview = kind === 'video'
-                ? `<video src="${_bcEsc(url)}#t=1" muted preload="metadata" playsinline style="width:100%;height:78px;object-fit:cover;background:#070710;"></video><span style="position:absolute;left:5px;bottom:5px;padding:1px 4px;border-radius:3px;background:rgba(0,0,0,.72);font-size:10px;">▶ 预览</span>`
-                : `<img src="${_bcEsc(url)}" loading="lazy" style="width:100%;height:78px;object-fit:cover;background:#070710;">`;
+                ? `<video src="${_bcEsc(url)}#t=1" muted preload="metadata" playsinline style="width:100%;height:auto;max-height:260px;object-fit:contain;display:block;background:#070710;"></video><span style="position:absolute;left:5px;bottom:29px;padding:1px 4px;border-radius:3px;background:rgba(0,0,0,.72);font-size:10px;">▶ 预览</span>`
+                : `<img src="${_bcEsc(url)}" loading="lazy" style="width:100%;height:auto;max-height:260px;object-fit:contain;display:block;background:#070710;">`;
             return `<label data-path="${_bcEsc(path)}" style="position:relative;display:block;cursor:pointer;border:2px solid ${checked ? '#8b5cf6' : '#303145'};border-radius:6px;overflow:hidden;background:#141525;box-shadow:${checked ? '0 0 0 1px rgba(139,92,246,.35)' : 'none'};">
                 ${preview}<input type="checkbox" ${checked ? 'checked' : ''} style="position:absolute;top:5px;right:5px;accent-color:#8b5cf6;width:16px;height:16px;"><div style="padding:4px 5px;font-size:10px;color:#d5d7e8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${_bcEsc(path)}">${index + 1}. ${_bcEsc(_bcFileName(path))}</div>
             </label>`;
         }).join('');
         ov.innerHTML = `<div style="width:min(920px,96vw);max-height:88vh;display:flex;flex-direction:column;background:#151622;border:1px solid #464765;border-radius:10px;overflow:hidden;box-shadow:0 18px 70px #000;">
-            <div style="padding:12px 15px;border-bottom:1px solid #303145;display:flex;align-items:center;gap:10px;"><div style="flex:1;"><b style="color:#f3f4ff;">指定素材循环 · ${_bcEsc(groupKey)}</b><div style="font-size:10px;color:#9b9db8;margin-top:3px;">${_bcEsc(folder.name)}（含子文件夹）· 勾选 1 个或多个素材；视频可直接悬停/点击预览</div></div><button data-action="all" class="bc-btn bc-btn-default bc-btn-xs">全选</button><button data-action="none" class="bc-btn bc-btn-default bc-btn-xs">全不选</button></div>
+            <div style="padding:12px 15px;border-bottom:1px solid #303145;display:flex;align-items:center;gap:10px;"><div style="flex:1;"><b style="color:#f3f4ff;">指定素材循环 · ${_bcEsc(groupKey)}</b><div style="font-size:10px;color:#9b9db8;margin-top:3px;">${_bcEsc(folder.name)}（含子文件夹）· 按原始比例显示；勾选 1 个或多个素材，视频可点击预览</div></div><button data-action="all" class="bc-btn bc-btn-default bc-btn-xs">全选</button><button data-action="none" class="bc-btn bc-btn-default bc-btn-xs">全不选</button></div>
             <div data-grid style="padding:12px;overflow:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(135px,1fr));gap:9px;">${cards}</div>
             <div style="padding:10px 15px;border-top:1px solid #303145;display:flex;align-items:center;justify-content:space-between;"><span data-count style="font-size:11px;color:#c4b5fd;">已选 ${selected.size} 个</span><div style="display:flex;gap:7px;"><button data-action="cancel" class="bc-btn bc-btn-default bc-btn-sm">取消</button><button data-action="save" class="bc-btn bc-btn-purple bc-btn-sm">保存选择</button></div></div>
         </div>`;
@@ -452,6 +452,36 @@ function _bcClearMusicFiles() {
     });
     _bcRenderBindings();
     _bcScheduleDraftSave();
+}
+
+function _bcCreateEmptyProject() {
+    const hasCurrentWork = _bulkState.columns.length > 0 || _bulkState.rows.length > 0 || _bulkState.templates.length > 0
+        || _bulkState.backgroundFolders.length > 0 || _bulkState.musicFiles.length > 0 || (_bulkState.groupAssignments || []).length > 0;
+    if (hasCurrentWork && !confirm('新建空工程会清空当前大量制作页面的表格、模板、背景、配乐和编号任务组。\n\n不会删除已保存的爆帖工程组合库、工程模板或覆层预设。是否继续？')) return;
+    _bulkState.columns = [
+        { name: '原始完整文案', type: 'text' },
+        { name: '标题', type: 'text' },
+        { name: '正文', type: 'text' },
+    ];
+    _bulkState.rows = [];
+    _bulkState.templates = [];
+    _bulkState.backgroundFolders = [];
+    _bulkState.musicFiles = [];
+    _bulkState.groupAssignments = null;
+    _bulkState.allowTemplateReuse = false;
+    _bulkState.allowBackgroundReuse = false;
+    _bulkState.allowMusicReuse = false;
+    _bulkState.filterUnassignedTemplates = false;
+    _bulkState.filterUnassignedBackgrounds = false;
+    _bulkState.filterUnassignedMusic = false;
+    _bulkState.filterUnassignedGroups = false;
+    _bulkState.collapsedSections = { templates: false, backgrounds: false, music: false, groups: false };
+    _bcSelection = null;
+    _bcNormalizeStateShape();
+    _bcRenderTable();
+    _bcRenderBindings();
+    _bcScheduleDraftSave();
+    if (typeof showToast === 'function') showToast('已新建空工程；可在“爆帖工程组合库 / 添加”中加入组合', 'success', 5000);
 }
 
 function _bcApplyAssignedMusic(task, tpl, taskIndex = 0) {
@@ -1268,8 +1298,18 @@ function _bcNumberedColumnGroups() {
     const prefix = value('bc-header-prefix', 'reels').trim() + value('bc-header-before', '-');
     const after = value('bc-header-after', '-');
     const groups = new Map();
+    const namedGroups = (_bulkState.groupAssignments || []).filter(entry => entry.comboName)
+        .map(entry => entry.key).sort((a, b) => b.length - a.length);
     _bulkState.columns.forEach((col, ci) => {
         const name = String(col.name || '');
+        const namedKey = namedGroups.find(key => name.startsWith(key + after));
+        if (namedKey) {
+            const fieldName = name.slice(namedKey.length + after.length).trim();
+            if (!fieldName) return;
+            if (!groups.has(namedKey)) groups.set(namedKey, { key: namedKey, number: groups.size + 1, columns: [] });
+            groups.get(namedKey).columns.push({ ci, name: fieldName.toLowerCase() });
+            return;
+        }
         if (!name.startsWith(prefix)) return;
         const rest = name.slice(prefix.length);
         const match = rest.match(/^-?\d+/);
@@ -2994,6 +3034,7 @@ function _bcRenderBindings() {
                         <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
                             <div style="font-weight:600;color:#eee;font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${_bcEsc(folderName)}">${_bcEsc(folderName)}</div>
                             <div style="display:flex;gap:4px;align-items:center;flex-shrink:0;">
+                                <button class="bc-background-open-folder" data-fi="${fi}" style="padding:2px 6px;font-size:10px;cursor:pointer;background:#20202e;border:1px solid #3c3c52;border-radius:4px;color:#c4b5fd;" title="在 Finder 中打开此背景文件夹">打开文件夹</button>
                                 <button class="bc-background-refresh" data-fi="${fi}" style="padding:2px 6px;font-size:10px;cursor:pointer;background:#20202e;border:1px solid #3c3c52;border-radius:4px;color:#aaa;" title="重新扫描此文件夹">刷新</button>
                                 <button class="bc-background-remove" data-fi="${fi}" style="padding:2px 6px;font-size:10px;cursor:pointer;background:rgba(255,80,80,0.08);border:1px solid rgba(255,80,80,0.25);border-radius:4px;color:#f88;" title="移出背景库">移出库</button>
                             </div>
@@ -3114,9 +3155,10 @@ function _bcRenderBindings() {
                 visibleGroups.forEach(group => {
                     const entry = assignments?.find(item => item.key === group.key);
                     const assigned = entry ? _bcAssignedTemplate(entry, group) : null;
-                    gHtml += `<div class="bc-group-card">
+                    gHtml += `<div class="bc-group-card" data-bc-group-card="${_bcEsc(group.key)}">
             <div style="display:flex;align-items:center;gap:6px;">
-                <span class="bc-group-badge">${_bcEsc(group.key)}</span>
+                <span class="bc-group-badge" title="内部编号：${_bcEsc(group.key)}">${_bcEsc(group.key)}</span>
+                ${entry?.comboName && entry.comboName !== group.key ? `<span style="font-size:11px;color:#fbbf24;" title="来自组合库：${_bcEsc(entry.comboName)}">🔥 ${_bcEsc(entry.comboName)}</span>` : ''}
                 <span style="color:#6b7280;font-size:11px;">→</span>
                 <select class="bc-group-template" data-group="${_bcEsc(group.key)}" style="flex:1;min-width:0;">
                     <option value="-1">未分配（不生成）</option>
@@ -3125,7 +3167,7 @@ function _bcRenderBindings() {
             </div>
             <div class="bc-group-grid">
                 <div class="bc-group-field-item">
-                    <label>📁 背景</label>
+                    <label style="display:flex;align-items:center;justify-content:space-between;gap:6px;">📁 背景 <button type="button" class="bc-group-open-background-folder bc-btn bc-btn-default bc-btn-xs" data-group="${_bcEsc(group.key)}" ${entry?.backgroundFolder ? '' : 'disabled'} title="在 Finder 中打开当前任务组选择的背景文件夹" style="padding:1px 6px;font-size:10px;">打开文件夹</button></label>
                     <select class="bc-group-background" data-group="${_bcEsc(group.key)}" style="width:100%;">
                         <option value="">沿用模板 / 字段绑定背景</option>
                         ${_bulkState.backgroundFolders.map(folder => `<option value="${_bcEsc(folder.path)}" ${entry?.backgroundFolder === folder.path ? 'selected' : ''}>${_bcEsc(folder.name)}（${folder.files.length} 个素材）</option>`).join('')}
@@ -4019,7 +4061,7 @@ function _bcOpenViralProjectLibrary() {
 async function _bcSaveViralGroupPreset(groupKey) {
     const entry = (_bulkState.groupAssignments || []).find(item => item.key === groupKey);
     const template = _bulkState.templates[entry?.templateIndex];
-    if (!entry || !template) { alert('请先为该任务组分配模板，再保存为爆帖工程组合'); return; }
+    if (!entry || !template) { alert('请先为该任务组分配模板，再保存为爆帖工程组合'); return null; }
     // 一键保存：默认直接使用当前任务组名，不再打断用户填写名称。
     // 如需自定义名称，可在组合库中进行重命名。
     const presets = _bcGetViralGroupPresets();
@@ -4051,6 +4093,7 @@ async function _bcSaveViralGroupPreset(groupKey) {
     localStorage.setItem(BC_VIRAL_GROUP_PRESETS_KEY, JSON.stringify(presets));
     if (typeof showToast === 'function') showToast(`已保存爆帖工程组合「${name}」`, 'success');
     else alert(`✅ 已保存爆帖工程组合「${name}」`);
+    return name;
 }
 
 function _bcAddViralGroupsFromLibrary() {
@@ -4059,23 +4102,41 @@ function _bcAddViralGroupsFromLibrary() {
     if (!names.length) { alert('爆帖工程组合库还是空的。先在一个任务组点“保存为爆帖工程组合”。'); return; }
     const modal = document.createElement('div');
     modal.style.cssText = 'position:fixed;inset:0;z-index:1000003;background:rgba(0,0,0,.78);display:flex;align-items:center;justify-content:center;padding:20px;';
-    modal.innerHTML = `<div style="width:min(580px,95vw);max-height:74vh;display:flex;flex-direction:column;background:#171825;border:1px solid #4a3b69;border-radius:10px;overflow:hidden;"><div style="padding:13px 15px;border-bottom:1px solid #33344b;color:#f4efff;"><b>🔥 爆帖工程组合库</b><div style="margin-top:4px;font-size:10px;color:#aaa5be;">可多选。每个组合都会新增一个编号任务组，原有任务组与预设均不改动。</div></div><div style="overflow:auto;flex:1;">${names.map(name => { const p = presets[name]; return `<label style="padding:10px 13px;border-bottom:1px solid #2d2e42;display:flex;align-items:center;gap:9px;cursor:pointer;"><input class="bc-viral-add-check" type="checkbox" data-name="${_bcEsc(name)}" style="accent-color:#a855f7;"><div style="flex:1;min-width:0;"><div style="font-size:12px;color:#f2e8ff;font-weight:600;">🔥 ${_bcEsc(name)}</div><div style="font-size:10px;color:#9994b2;margin-top:3px;">来源任务组：${_bcEsc(p.sourceGroupKey || '未记录')} · ${p.template?.label ? _bcEsc(p.template.label) : '模板'} · ${p.savedAt ? new Date(p.savedAt).toLocaleDateString() : ''}</div></div></label>`; }).join('')}</div><div style="padding:10px 13px;border-top:1px solid #33344b;display:flex;justify-content:space-between;align-items:center;"><span style="font-size:10px;color:#9994b2;">加载后在新编号组中填文案/选择视频，随后统一批量生成。</span><div style="display:flex;gap:6px;"><button class="bc-viral-add-cancel bc-btn bc-btn-default bc-btn-xs">取消</button><button class="bc-viral-add-confirm bc-btn bc-btn-purple bc-btn-xs">加入已选组合</button></div></div></div>`;
+    modal.innerHTML = `<div style="width:min(580px,95vw);max-height:74vh;display:flex;flex-direction:column;background:#171825;border:1px solid #4a3b69;border-radius:10px;overflow:hidden;"><div style="padding:13px 15px;border-bottom:1px solid #33344b;color:#f4efff;"><b>🔥 爆帖工程组合库</b><div style="margin-top:4px;font-size:10px;color:#aaa5be;">可多选。每个组合都会新增一个编号任务组，原有任务组与预设均不改动。</div></div><div style="overflow:auto;flex:1;">${names.map(name => { const p = presets[name]; return `<label style="padding:10px 13px;border-bottom:1px solid #2d2e42;display:flex;align-items:center;gap:9px;cursor:pointer;"><input class="bc-viral-add-check" type="checkbox" data-name="${_bcEsc(name)}" style="accent-color:#a855f7;"><div style="flex:1;min-width:0;"><div style="font-size:12px;color:#f2e8ff;font-weight:600;">🔥 ${_bcEsc(name)}</div><div style="font-size:10px;color:#9994b2;margin-top:3px;">来源任务组：${_bcEsc(p.sourceGroupKey || '未记录')} · ${p.template?.label ? _bcEsc(p.template.label) : '模板'} · ${p.savedAt ? new Date(p.savedAt).toLocaleDateString() : ''}</div></div><button type="button" class="bc-viral-group-delete bc-btn bc-btn-danger bc-btn-xs" data-name="${_bcEsc(name)}" title="删除这个保存的组合；不会删除来源任务组" style="flex-shrink:0;">删除</button></label>`; }).join('')}</div><div style="padding:10px 13px;border-top:1px solid #33344b;display:flex;justify-content:space-between;align-items:center;"><span style="font-size:10px;color:#9994b2;">加载后在新编号组中填文案/选择视频，随后统一批量生成。</span><div style="display:flex;gap:6px;"><button class="bc-viral-add-cancel bc-btn bc-btn-default bc-btn-xs">取消</button><button class="bc-viral-add-confirm bc-btn bc-btn-purple bc-btn-xs">加入已选组合</button></div></div></div>`;
     modal.addEventListener('click', e => {
+        const deleteButton = e.target.closest?.('.bc-viral-group-delete');
+        if (deleteButton) {
+            e.preventDefault();
+            e.stopPropagation();
+            const name = deleteButton.dataset.name;
+            if (!name || !presets[name]) return;
+            if (!confirm(`删除爆帖工程组合「${name}」？\n\n只会删除组合库中的这一项，不会删除来源任务组、模板或预设。`)) return;
+            delete presets[name];
+            localStorage.setItem(BC_VIRAL_GROUP_PRESETS_KEY, JSON.stringify(presets));
+            modal.remove();
+            _bcAddViralGroupsFromLibrary();
+            return;
+        }
         if (e.target.classList.contains('bc-viral-add-cancel')) { modal.remove(); return; }
         if (!e.target.classList.contains('bc-viral-add-confirm')) return;
-        const selected = [...modal.querySelectorAll('.bc-viral-add-check:checked')].map(item => presets[item.dataset.name]).filter(Boolean);
+        const selected = [...modal.querySelectorAll('.bc-viral-add-check:checked')]
+            .map(item => ({ name: item.dataset.name, preset: presets[item.dataset.name] }))
+            .filter(item => Boolean(item.preset));
         if (!selected.length) { alert('请至少选择一个爆帖工程组'); return; }
         const value = id => document.getElementById(id)?.value ?? (id === 'bc-header-prefix' ? 'reels' : id === 'bc-header-before' || id === 'bc-header-after' ? '-' : '');
-        const prefix = `${value('bc-header-prefix').trim()}${value('bc-header-before')}`;
         const after = value('bc-header-after');
-        let nextNumber = Math.max(0, ..._bcNumberedColumnGroups().map(group => Number(group.number) || 0)) + 1;
+        const usedKeys = new Set(_bcNumberedColumnGroups().map(group => group.key));
         if (!_bulkState.groupAssignments) _bulkState.groupAssignments = [];
-        selected.forEach((preset, index) => {
+        const addedGroupKeys = [];
+        selected.forEach(({ name: presetName, preset }, index) => {
             if (!preset.template || !preset.assignment) return;
             if (preset.backgroundFolder && !_bulkState.backgroundFolders.some(item => item.path === preset.backgroundFolder.path)) _bulkState.backgroundFolders.push(JSON.parse(JSON.stringify(preset.backgroundFolder)));
             if (preset.music && !_bulkState.musicFiles.some(item => item.path === preset.music.path)) _bulkState.musicFiles.push(JSON.parse(JSON.stringify(preset.music)));
-            const number = nextNumber++;
-            const key = `${prefix}${number}`;
+            let key = presetName;
+            let copyNumber = 2;
+            while (usedKeys.has(key)) key = `${presetName} (${copyNumber++})`;
+            usedKeys.add(key);
+            addedGroupKeys.push(key);
             const schema = preset.columnSchema || [];
             schema.forEach((item, schemaIndex) => {
                 const column = JSON.parse(JSON.stringify(item.column || { type: 'text' }));
@@ -4086,10 +4147,22 @@ function _bcAddViralGroupsFromLibrary() {
             const copiedTemplate = { task: JSON.parse(JSON.stringify(preset.template.task || {})), label: preset.template.label || `爆帖工程${index + 1}`, bindings: { ...(preset.template.bindings || {}) }, bgCycle: preset.template.bgCycle || null, source: preset.template.source || null, materialFolder: preset.template.materialFolder || null };
             _bulkState.templates.push(copiedTemplate);
             // 新编号组的列名已改号，旧组的绝对列名不能直接复用；由字段类别重新绑定到新建列。
-            _bulkState.groupAssignments.push({ ...JSON.parse(JSON.stringify(preset.assignment)), key, bindings: {}, templateIndex: _bulkState.templates.length - 1 });
+            _bulkState.groupAssignments.push({ ...JSON.parse(JSON.stringify(preset.assignment)), key, comboName: presetName, bindings: {}, templateIndex: _bulkState.templates.length - 1 });
         });
+        _bulkState.collapsedSections.groups = false;
+        _bulkState.filterUnassignedGroups = false;
         _bcNormalizeStateShape(); modal.remove(); _bcRenderTable(); _bcRenderBindings(); _bcScheduleDraftSave();
-        if (typeof showToast === 'function') showToast(`已加入 ${selected.length} 个爆帖工程组，可填写后批量生成`, 'success');
+        const addedCount = addedGroupKeys.length;
+        if (typeof showToast === 'function') showToast(`已加入 ${addedCount} 个组合：${addedGroupKeys.join('、')}，表头和任务组已沿用组合名称。`, 'success', 7000);
+        // 组合已经写入状态和列，但此前没有把用户带到右侧的新任务组，容易误以为没有生效。
+        setTimeout(() => {
+            const newest = addedGroupKeys.at(-1);
+            const card = newest ? document.querySelector(`[data-bc-group-card="${CSS.escape(newest)}"]`) : null;
+            const section = document.getElementById('bc-groups-section');
+            (card || section)?.scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'nearest' });
+            (card || section)?.classList?.add('bc-quick-locate-target');
+            setTimeout(() => (card || section)?.classList?.remove('bc-quick-locate-target'), 2500);
+        }, 80);
     });
     document.body.appendChild(modal);
 }
@@ -4975,6 +5048,7 @@ function _showBulkCreateModal() {
                 <span style="color:#717496;font-size:10px;font-weight:600;margin-right:2px;">模版:</span>
                 <button id="bc-save-preset" class="bc-btn bc-btn-emerald bc-btn-sm">💾 保存</button>
                 <button id="bc-load-preset" class="bc-btn bc-btn-amber bc-btn-sm">📂 加载</button>
+                <button id="bc-new-empty-project" class="bc-btn bc-btn-default bc-btn-sm" title="清空当前大量制作工程；不会删除爆帖工程组合库或预设">＋ 新建空工程</button>
                 <button id="bc-reload-source" class="bc-btn bc-btn-blue bc-btn-sm" title="重新读取已添加模板对应的最新模板工程，保留当前列绑定">🔄 刷新工程</button>
                 <button id="bc-export-preset" class="bc-btn bc-btn-default bc-btn-sm">⬆ 导出</button>
                 <button id="bc-import-preset" class="bc-btn bc-btn-default bc-btn-sm">⬇ 导入</button>
@@ -5208,6 +5282,36 @@ function _showBulkCreateModal() {
             if (folder) _bcImportBackgroundFolders([folder.path]);
             return;
         }
+        if (t.classList.contains('bc-background-open-folder')) {
+            const folder = _bulkState.backgroundFolders[Number(t.dataset.fi)];
+            if (!folder?.path) return;
+            const openFolder = window.bridge?.openPath;
+            if (typeof openFolder !== 'function') { alert('当前环境不支持打开文件夹'); return; }
+            openFolder(folder.path).then(result => {
+                if (result?.success === false) alert(`无法打开背景文件夹：${result.error || '路径不存在'}`);
+            }).catch(error => alert(`无法打开背景文件夹：${error.message}`));
+            return;
+        }
+        const openGroupBackgroundFolder = t.closest?.('.bc-group-open-background-folder');
+        if (openGroupBackgroundFolder) {
+            const groupKey = openGroupBackgroundFolder.dataset.group;
+            const entry = (_bulkState.groupAssignments || []).find(item => item.key === groupKey);
+            const folderPath = entry?.backgroundFolder || '';
+            if (!folderPath) {
+                if (typeof showToast === 'function') showToast('请先为该任务组选择背景文件夹', 'info');
+                else alert('请先选择背景文件夹');
+                return;
+            }
+            const openFolder = window.bridge?.openPath;
+            if (typeof openFolder !== 'function') {
+                alert('当前环境不支持打开文件夹');
+                return;
+            }
+            openFolder(folderPath).then(result => {
+                if (result?.success === false) alert(`无法打开背景文件夹：${result.error || '路径不存在'}`);
+            }).catch(error => alert(`无法打开背景文件夹：${error.message}`));
+            return;
+        }
         const thumbBtn = t.closest?.('.bc-bg-folder-thumb');
         if (thumbBtn) {
             const folder = _bulkState.backgroundFolders[Number(thumbBtn.dataset.fi)];
@@ -5294,7 +5398,36 @@ function _showBulkCreateModal() {
         if (t.id === 'bc-rebind-tpl') { if (confirm('按当前列名重新自动绑定所有模板字段？')) _bcAutoRebindAllTemplates(); return; }
         if (t.id === 'bc-save-preset') { _bcSavePreset(); return; }
         if (t.id === 'bc-load-preset') { _bcLoadPreset(); return; }
-        if (t.classList.contains('bc-viral-group-save')) { _bcSaveViralGroupPreset(t.dataset.group); return; }
+        if (t.id === 'bc-new-empty-project') { _bcCreateEmptyProject(); return; }
+        if (t.classList.contains('bc-viral-group-save')) {
+            const button = t;
+            if (button.disabled) return;
+            const originalText = button.textContent;
+            button.disabled = true;
+            button.textContent = '⏳ 保存中…';
+            _bcSaveViralGroupPreset(button.dataset.group).then(name => {
+                if (!name) { button.textContent = originalText; button.disabled = false; return; }
+                button.textContent = '✓ 已保存';
+                button.title = `已保存为爆帖工程组合「${name}」`;
+                button.style.background = 'rgba(34,197,94,.18)';
+                button.style.borderColor = 'rgba(74,222,128,.65)';
+                button.style.color = '#bbf7d0';
+                setTimeout(() => {
+                    if (!button.isConnected) return;
+                    button.textContent = originalText;
+                    button.title = '把当前这个任务组完整保存为独立的爆帖工程组合，不影响原有预设';
+                    button.style.background = '';
+                    button.style.borderColor = '';
+                    button.style.color = '';
+                    button.disabled = false;
+                }, 3000);
+            }).catch(error => {
+                button.textContent = originalText;
+                button.disabled = false;
+                alert(`保存爆帖工程组合失败：${error.message}`);
+            });
+            return;
+        }
         if (t.id === 'bc-reload-source') { _bcReloadLoadedTemplates(); return; }
         if (t.id === 'bc-export-preset') { _bcExportPreset(); return; }
         if (t.id === 'bc-import-preset') { _bcImportPreset(); return; }

@@ -29,6 +29,41 @@ function cleanText(text) {
     return cleaned;
 }
 
+/**
+ * 旧缓存中可能保存了 Deepgram 的裸词时间线（word），但全文使用的是带标点的
+ * transcript。对齐器按字符把时间线映射回全文，二者少一个标点都会报长度不一致。
+ * 当两套词序完全一致时，用全文的对应词补回标点；词数或词序有任何差异则不猜测。
+ */
+function repairTimelinePunctuation(generationSubtitleArray, generationSubtitleText) {
+    if (!Array.isArray(generationSubtitleArray) || !String(generationSubtitleText || '').trim()) return false;
+    const timelineWords = generationSubtitleArray.flatMap(sentence => Array.isArray(sentence?.words) ? sentence.words : []);
+    const transcriptWords = String(generationSubtitleText).trim().match(/\S+/g) || [];
+    if (!timelineWords.length || timelineWords.length !== transcriptWords.length) return false;
+
+    const comparable = value => String(value || '')
+        .normalize('NFKC')
+        .toLocaleLowerCase()
+        .replace(/[\s\p{P}\p{S}_]+/gu, '');
+    if (!timelineWords.every((word, index) => comparable(word?.word) === comparable(transcriptWords[index]))) return false;
+
+    let changed = false;
+    timelineWords.forEach((word, index) => {
+        const repaired = transcriptWords[index];
+        if (word.word !== repaired) {
+            word.word = repaired;
+            changed = true;
+        }
+    });
+    return changed;
+}
+
+/** 以逐词时间线重建文本。时间轴映射必须以此文本为基准，不能依赖服务返回的摘要全文。 */
+function buildTimelineText(generationSubtitleArray) {
+    if (!Array.isArray(generationSubtitleArray)) return '';
+    const words = generationSubtitleArray.flatMap(sentence => Array.isArray(sentence?.words) ? sentence.words : []);
+    return words.map(word => String(word?.word || '').trim()).filter(Boolean).join(wordSplitBy.en);
+}
+
 // ==================== 核心对齐算法 ====================
 
 /**
@@ -548,6 +583,20 @@ function audioSubtitleSearchDifferentStrong(
     sourceSrtPath = null, fcpxmlPath = null,
     ignoreMismatch = false
 ) {
+    // 新请求已在转录适配层优先使用带标点的词；这里兼容此前已写入磁盘的缓存，
+    // 免得用户必须清理每条音频的缓存才能重新对齐。
+    if (repairTimelinePunctuation(generationSubtitleArray, generationSubtitleText)) {
+        console.log('[字幕对齐] 已从完整转写文本补回缓存时间线的标点');
+    }
+    // 不同平台、旧缓存和少数接口响应会出现“全文”与逐词时间线不完全一致。
+    // 后续字符→时间映射实际只认逐词时间线；若继续以全文的长度为准，会在
+    // processDiffsWithAudioPositionsStrong 中把正常任务误报为“长度不同”。
+    // 改用时间线重建文本后，真实听写差异仍由下方相似度校验拦截。
+    const timelineText = buildTimelineText(generationSubtitleArray);
+    if (timelineText && cleanText(timelineText).length !== cleanText(generationSubtitleText).length) {
+        console.warn(`[字幕对齐] 全文与逐词时间线长度不一致，改用时间线文本（${cleanText(generationSubtitleText).length} → ${cleanText(timelineText).length}）`);
+        generationSubtitleText = timelineText;
+    }
     // 构建纯文本（不含结构信息）
     let sourceTextWithNoInfo = '';
     for (const content of sourceTextWithInfo.contents) {

@@ -724,6 +724,9 @@ function _initReelsModule() {
                 const segIdx = clip._segIdx != null ? clip._segIdx : clipIdx;
                 if (segIdx >= 0 && segIdx < task.segments.length) {
                     const seg = task.segments[segIdx];
+                    // 用户拖动过字幕时间后，后续自动剪辑成片同步不得再静默用
+                    // 新 SRT 覆盖当前字幕。
+                    task._manualSubtitleEdits = true;
                     // 更新段落时间
                     seg.start = clip.start;
                     seg.end = clip.end;
@@ -972,6 +975,8 @@ function _initReelsModule() {
             const segIdx = (clip && clip._segIdx != null) ? clip._segIdx : clipIdx;
             if (segIdx >= 0 && segIdx < task.segments.length) {
                 const seg = task.segments[segIdx];
+                // 文字、富文本样式或逐字范围一旦由用户改过，就以 Reels 当前稿为准。
+                task._manualSubtitleEdits = true;
                 syncEditedSubtitleSegment(seg, newText);
                 // 保存富文本样式范围
                 if (newRanges && newRanges.length > 0) {
@@ -7347,6 +7352,9 @@ window.reelsCreateTaskFromAutoEditResult = reelsCreateTaskFromAutoEditResult;
 // 自动剪辑二次导出时，不新建 Reels 任务：仅替换该任务的成片和 SRT，
 // 所有用户在 Reels 内追加的覆层、贴纸、BGM、字幕样式与画面设置均保留。
 async function reelsUpdateTaskFromAutoEditResult(autoEditResult = {}, opts = {}) {
+    // 更新旧任务是显式操作。任何后台导出、自动恢复或列表重绘都不得调用
+    // 这条路径覆盖现有 Reels 成片和字幕。
+    if (opts.userInitiated !== true) throw new Error('旧 Reels 任务只能由用户手动更新');
     const videoPath = autoEditResult.output_path || autoEditResult.outputPath || '';
     const srtPath = autoEditResult.srt_path || autoEditResult.srtPath || '';
     if (!videoPath || !srtPath) throw new Error('缺少重新导出的自动剪辑成片或字幕');
@@ -7358,14 +7366,22 @@ async function reelsUpdateTaskFromAutoEditResult(autoEditResult = {}, opts = {})
 
     if (typeof _setTaskSingleBackground === 'function') _setTaskSingleBackground(task, videoPath, { clearBgSrcUrl: true });
     else { task.bgPath = videoPath; task.videoPath = videoPath; task.bgSrcUrl = null; task.srcUrl = null; }
-    task.srtPath = srtPath;
+    const preserveManualSubtitles = task._manualSubtitleEdits === true && opts.replaceSubtitles !== true;
+    if (!preserveManualSubtitles) {
+        task.srtPath = srtPath;
+        task._manualSubtitleEdits = false;
+    }
     task.aligned = true;
     task._autoEditSource = true;
-    let srtContent = autoEditResult.srt_content || '';
-    if (!srtContent && window.electronAPI?.readFileText) srtContent = await window.electronAPI.readFileText(srtPath);
-    if (srtContent && typeof parseSRT === 'function') {
-        const raw = parseSRT(srtContent).map(segment => ({ ...segment, _timeUnit: 'sec' }));
-        task.segments = window.ReelsSubtitleProcessor ? ReelsSubtitleProcessor.srtToSegmentsWithWords(raw) : raw;
+    if (!preserveManualSubtitles) {
+        let srtContent = autoEditResult.srt_content || '';
+        if (!srtContent && window.electronAPI?.readFileText) srtContent = await window.electronAPI.readFileText(srtPath);
+        if (srtContent && typeof parseSRT === 'function') {
+            const raw = parseSRT(srtContent).map(segment => ({ ...segment, _timeUnit: 'sec' }));
+            task.segments = window.ReelsSubtitleProcessor ? ReelsSubtitleProcessor.srtToSegmentsWithWords(raw) : raw;
+        }
+    } else {
+        task.autoEditProject = { ...task.autoEditProject, pendingSrtPath: srtPath };
     }
     const duration = Number(autoEditResult.output_duration ?? autoEditResult.outputDuration ?? autoEditResult.duration)
         || Number(await window.electronAPI?.getMediaDuration?.(videoPath)) || 0;
@@ -7376,7 +7392,8 @@ async function reelsUpdateTaskFromAutoEditResult(autoEditResult = {}, opts = {})
     }
     task.autoEditProject = {
         ...task.autoEditProject,
-        outputPath: videoPath, srtPath,
+        outputPath: videoPath, srtPath: preserveManualSubtitles ? task.autoEditProject.srtPath : srtPath,
+        latestAutoEditSrtPath: srtPath,
         analysisProjectPath: analysisPath || task.autoEditProject.analysisProjectPath,
         analysisReportPath: autoEditResult.report_path || autoEditResult.reportPath || task.autoEditProject.analysisReportPath,
         analysisOutputDir: autoEditResult.output_dir || autoEditResult.outputDir || task.autoEditProject.analysisOutputDir,
@@ -7388,6 +7405,7 @@ async function reelsUpdateTaskFromAutoEditResult(autoEditResult = {}, opts = {})
     if (typeof _renderTaskList === 'function') _renderTaskList();
     if (typeof reelsSelectTask === 'function') reelsSelectTask(index);
     if (typeof _batchAutoSave === 'function') _batchAutoSave({ skipSync: true });
+    task._lastAutoEditSubtitlePreserved = preserveManualSubtitles;
     return task;
 }
 window.reelsUpdateTaskFromAutoEditResult = reelsUpdateTaskFromAutoEditResult;
@@ -7396,12 +7414,12 @@ async function reelsRefreshAutoEditTask(index) {
     const task = _reelsState.tasks[index];
     if (!task?.autoEditProject) return;
     try {
-        await reelsUpdateTaskFromAutoEditResult({
+        const updated = await reelsUpdateTaskFromAutoEditResult({
             output_path: task.autoEditProject.outputPath || task.bgPath,
             srt_path: task.autoEditProject.srtPath || task.srtPath,
             project_path: task.autoEditProject.analysisProjectPath,
-        }, { taskId: task.id });
-        showToast?.('已更新自动剪辑成片与字幕；Reels 覆层、贴纸、BGM 和样式已保留', 'success');
+        }, { taskId: task.id, replaceSubtitles: true, userInitiated: true });
+        showToast?.('已更新自动剪辑成片与最新字幕；Reels 覆层、贴纸、BGM 和字幕样式已保留', 'success');
     } catch (error) {
         showToast?.(`更新自动剪辑任务失败：${error.message || error}`, 'error');
     }
@@ -8851,7 +8869,7 @@ function _renderTaskList() {
                 <span class="reels-task-name" style="font-size:12px; font-weight:${selected ? '600' : '400'}; color:${selected ? '#fff' : 'var(--text-primary)'}; ${taskNameStyle}">${escapeTaskText(shortName)}</span>${versionBadge}
                 ${alphaIcon}
                 ${ovPreview}
-                ${task.autoEditProject ? `<button class="btn" style="padding:1px 4px;font-size:10px;border:none;background:transparent;color:#86efac;" onclick="event.stopPropagation(); reelsRefreshAutoEditTask(${i})" title="读取此自动剪辑任务最新导出的成片和 SRT；保留 Reels 覆层、贴纸、BGM 与样式">🔄</button>` : ''}
+                ${task.autoEditProject ? `<button class="btn" style="padding:1px 5px;font-size:10px;border:1px solid rgba(134,239,172,.35);background:rgba(74,222,128,.08);color:#86efac;" onclick="event.stopPropagation(); reelsRefreshAutoEditTask(${i})" title="手动用自动剪辑最新成片和字幕更新这条旧任务">更新旧任务</button>` : ''}
                 <span style="font-size:10px; white-space:nowrap; opacity:0.8; margin-left:auto;">${statusText}</span>
                 <button class="btn reels-task-duplicate-btn" style="padding:1px 4px; font-size:10px; opacity:0.65; border:none; background:transparent; color:#a78bfa; cursor:pointer;" onclick="event.stopPropagation(); reelsDuplicateTask(${i})" title="复制此任务为新版本副本">📋</button>
                 <button class="btn" style="padding:1px 4px; font-size:10px; opacity:0.5; border:none; background:transparent; color:var(--text-secondary);" onclick="event.stopPropagation(); reelsRemoveTask(${i})" title="删除">✕</button>
@@ -13323,7 +13341,7 @@ document.addEventListener('DOMContentLoaded', () => {
 // ═══════════════════════════════════════════════════════
 
 /**
- * 智能重分段：按当前样式参数（字体大小、换行宽度等）重新分段所有任务的字幕。
+ * 智能重分段：按当前样式参数（字体大小、换行宽度等）重新分段当前任务的字幕。
  * 效果：自动调整每条字幕的文本量，确保不溢出预览区域。
  */
 function reelsResegment() {
@@ -13331,25 +13349,27 @@ function reelsResegment() {
         alert('字幕处理器未加载');
         return;
     }
+    const task = _reelsState.tasks[_reelsState.selectedIdx];
+    if (!task?.segments?.length) {
+        alert('当前选中任务没有可处理的字幕（请先选择一条带 SRT 的任务）');
+        return;
+    }
     const videoW = _reelsState.targetWidth || 1080;
-    let totalProcessed = 0;
-
-
-    for (const task of _reelsState.tasks) {
-        if (!task.segments || task.segments.length === 0) continue;
-        const style = _resolveSubtitleStyleForTask(task);
-        const result = ReelsSubtitleProcessor.smartSegmentation(task.segments, style, videoW);
-        if (result && result.length > 0) {
-            task.segments = result;
-            totalProcessed++;
-        }
+    const style = _resolveSubtitleStyleForTask(task);
+    const result = ReelsSubtitleProcessor.smartSegmentation(task.segments, style, videoW);
+    if (!result || result.length === 0) {
+        alert('当前字幕无法进行智能分段');
+        return;
     }
+    task.segments = result;
+    // 智能分段属于用户在 Reels 中对字幕的实际编辑。后续手动“更新旧任务”
+    // 只更新成片、保留这份已分段字幕，除非用户明确选择替换。
+    task._manualSubtitleEdits = true;
+    task._subtitleEditSource = 'smart_resegment';
     _renderTaskList();
-    if (totalProcessed > 0) {
-        alert(`✅ 已智能重分段 ${totalProcessed} 个任务的字幕`);
-    } else {
-        alert('没有可处理的字幕（请先添加带SRT的任务）');
-    }
+    if (typeof _batchAutoSave === 'function') _batchAutoSave({ skipSync: true });
+    if (typeof reelsSaveHistory === 'function') reelsSaveHistory();
+    alert(`✅ 已智能重分段当前任务「${task.baseName || task.fileName || '未命名任务'}」的字幕\n\n已保存为手动字幕调整；以后更新旧任务时会默认保留。`);
 }
 
 /**

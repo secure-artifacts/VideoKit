@@ -1962,8 +1962,11 @@ async function routeAPI(endpoint, data, progressSender = null, sender = null) {
             const logDir = settingsService.getSecureTmpDir('videokit_log');
             fs.mkdirSync(logDir, { recursive: true });
             const audioCacheKey = buildAudioCacheKey(audioPath);
-            const jsonPath = path.join(logDir, `${currentLanguage}_${fileName}_${audioCacheKey}_audio_text_whittime.json`);
-            const txtPath = path.join(logDir, `${currentLanguage}_${fileName}_${audioCacheKey}_finally.txt`);
+            // 字幕对齐缓存按首选平台隔离；切换平台后不应静默复用旧平台转录。
+            const cacheProvider = String(transcriptionConfig.primary || 'auto').toLowerCase().replace(/[^a-z0-9_-]/g, '');
+            const cacheVersion = `v2_${cacheProvider || 'auto'}`;
+            const jsonPath = path.join(logDir, `${currentLanguage}_${fileName}_${audioCacheKey}_${cacheVersion}_audio_text_whittime.json`);
+            const txtPath = path.join(logDir, `${currentLanguage}_${fileName}_${audioCacheKey}_${cacheVersion}_finally.txt`);
             const forceTranscribe = data.force === true || data.force === 'true';
             console.log(`[字幕对齐] 音频: ${audioPath}`);
             console.log(`[字幕对齐] 转录缓存: ${path.basename(jsonPath)}`);

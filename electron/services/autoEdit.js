@@ -1151,9 +1151,14 @@ async function transcribeClip(clipPath, language, transcriptionConfig, cacheDir,
 
     fs.mkdirSync(cacheDir, { recursive: true });
     const stat = fs.statSync(clipPath);
+    // 缓存必须与首选平台绑定。否则从 Deepgram 切到 Groq/Gladia 后会继续
+    // 命中旧平台的结果，表面看起来像“切换平台没有生效”。v2 同时隔离旧格式缓存。
+    const cacheProvider = Array.isArray(transcriptionConfig)
+        ? 'gladia-legacy'
+        : String(transcriptionConfig?.primary || 'auto').toLowerCase().replace(/[^a-z0-9_-]/g, '');
     const cacheKey = crypto
         .createHash('sha1')
-        .update(`${clipPath}|${stat.size}|${Math.floor(stat.mtimeMs)}`)
+        .update(`v2|${cacheProvider}|${clipPath}|${stat.size}|${Math.floor(stat.mtimeMs)}`)
         .digest('hex')
         .slice(0, 12);
     const baseName = path.parse(clipPath).name.replace(/[^\w.-]+/g, '_');
@@ -1862,6 +1867,9 @@ async function autoEditByScript(opts = {}) {
                     clipStatus = 'cached';
                 }
 
+                const completedProviderLabel = isCache
+                    ? '缓存'
+                    : (({ deepgram: 'Deepgram', groq: 'Groq', gladia: 'Gladia' })[transcription.provider] || providerLabel);
                 completedCount++;
                 emitProgress({
                     percent: 8 + Math.round((completedCount / Math.max(clipCount, 1)) * 42),
@@ -1870,7 +1878,7 @@ async function autoEditByScript(opts = {}) {
                     total: clipCount,
                     active_count: Math.max(0, startedCount - completedCount),
                     queued_count: Math.max(0, clipCount - startedCount),
-                    provider_label: providerLabel,
+                    provider_label: completedProviderLabel,
                     clip_index: i,
                     clip_status: clipStatus,
                     clip_error: isFailed ? errorMsg : (isTextEmpty ? emptyMessage : null),

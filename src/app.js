@@ -16626,15 +16626,15 @@ function renderAutoEditBatchGladiaConcurrencyPlan() {
     if (primary === 'gladia') {
         const effective = Math.min(requested, keys.length);
         const wait = Math.max(0, requested - effective);
-        root.innerHTML = `<div class="ae-gladia-plan ${wait ? 'ae-gladia-plan-warn' : ''}"><strong>🔑 Gladia 并发计划</strong><span>${taskCount} 个任务 × 每任务 ${perTask} 个片段 = 需要 ${requested} 个并发槽</span><b>已配置 ${keys.length} 个 Key → 实际同时转录 ${effective} 个片段${wait ? `，${wait} 个等待 Key` : ' ✓'}</b><small>Key 请在「设置 → 云端转录服务」管理；每个运行中的片段独占 1 个 Key。</small></div>`;
+        root.innerHTML = `<div class="ae-gladia-plan ${wait ? 'ae-gladia-plan-warn' : ''}"><strong>🔑 首选 Gladia：并发计划</strong><span>${taskCount} 个任务 × 每任务 ${perTask} 个片段 = 需要 ${requested} 个并发槽</span><b>已配置 ${keys.length} 个 Key → 实际同时转录 ${effective} 个片段${wait ? `，${wait} 个等待 Key` : ' ✓'}</b><small>任务卡显示每个片段实际使用的平台；首选平台失败时，该片段会单独切换到备用平台。</small></div>`;
         return;
     }
     if (primary === 'deepgram') {
         const effective = Math.min(requested, 50);
-        root.innerHTML = `<div class="ae-gladia-plan"><strong>⚡ Deepgram 并发计划</strong><span>${taskCount} 个任务 × 每任务 ${perTask} 个片段 = 请求 ${requested} 路</span><b>Nova-3 预录音频项目上限 50 路 → 本批次 ${effective} 路</b><small>多个 Deepgram Key 不增加同一项目的并发上限。</small></div>`;
+        root.innerHTML = `<div class="ae-gladia-plan"><strong>⚡ 首选 Deepgram：并发计划</strong><span>${taskCount} 个任务 × 每任务 ${perTask} 个片段 = 请求 ${requested} 路</span><b>Nova-3 预录音频项目上限 50 路 → 本批次 ${effective} 路</b><small>任务卡显示每个片段实际使用的平台；Deepgram 失败或超时时，该片段会单独切换到备用平台。</small></div>`;
         return;
     }
-    root.innerHTML = `<div class="ae-gladia-plan ae-gladia-plan-warn"><strong>🌐 Groq 并发计划</strong><span>${taskCount} 个任务 × 每任务 ${perTask} 个片段 = 请求 ${requested} 路</span><b>建议每任务保持 3–5 路；超过后可能被限流。</b><small>若出现 429，请降低每任务片段数或同时分析任务数。</small></div>`;
+    root.innerHTML = `<div class="ae-gladia-plan ae-gladia-plan-warn"><strong>🌐 首选 Groq：并发计划</strong><span>${taskCount} 个任务 × 每任务 ${perTask} 个片段 = 请求 ${requested} 路</span><b>建议每任务保持 3–5 路；超过后可能被限流。</b><small>任务卡显示每个片段实际使用的平台；首选平台失败时会单独切换到备用平台。</small></div>`;
 }
 window.renderAutoEditBatchGladiaConcurrencyPlan = renderAutoEditBatchGladiaConcurrencyPlan;
 function renderAutoEditBatchProgressOverview() {
@@ -25951,7 +25951,7 @@ async function updateAutoEditResultInReels() {
     if (data?.analysis_only || !data?.output_path || !data?.srt_path) return showToast('请先按审核结果完成正式导出', 'warning');
     if (typeof window.reelsUpdateTaskFromAutoEditResult !== 'function') return showToast('请先打开一次批量 Reels 页面后再更新', 'warning');
     try {
-        const task = await window.reelsUpdateTaskFromAutoEditResult(data, { taskId: data.reels_task_id });
+        const task = await window.reelsUpdateTaskFromAutoEditResult(data, { taskId: data.reels_task_id, replaceSubtitles: true, userInitiated: true });
         data.reels_task_id = task.id;
         if (typeof openPanelByName === 'function') openPanelByName('batch-reels');
         showToast('已更新关联 Reels 任务；覆层、贴纸、BGM 与样式已保留', 'success');

@@ -13728,6 +13728,43 @@ function _showBatchAlignResultModal({ title, sourceInfo, rows, failDetails, foot
             </tr>
         `).join('');
 
+        // 结果总览不能只写“失败”。把转录和匹配拆开：用户需要知道是平台
+        // 没有识别到声音，还是已经识别成功、但无法把文字对应到文案。
+        const phaseRows = [];
+        (rows || []).forEach(r => {
+            phaseRows.push({
+                taskName: r.taskName,
+                recognition: '✅ 转录成功',
+                matching: r.manualConfirmed ? '✅ 文案匹配成功（人工确认）' : '✅ 文案匹配成功',
+                detail: r.matchDesc || r.label || '',
+            });
+        });
+        (failDetails || []).forEach(detail => {
+            const text = String(detail || '');
+            const separator = text.indexOf(':');
+            const taskName = separator >= 0 ? text.slice(0, separator) : '未命名任务';
+            const reason = separator >= 0 ? text.slice(separator + 1).trim() : text;
+            // 收到“字幕对齐失败/长度不同/文案不匹配”说明云端已经返回了
+            // 可用的时间词，失败发生在第二步。其他情况才归为转录未完成。
+            const recognitionSucceeded = /字幕对齐失败|长度不同|TEXT_MISMATCH|AUTO_SOURCE_MATCH|原文与 SRT 不一致|匹配度/.test(reason);
+            phaseRows.push({
+                taskName,
+                recognition: recognitionSucceeded ? '✅ 转录成功' : '❌ 转录失败',
+                matching: recognitionSucceeded ? '❌ 文案匹配/对齐失败' : '— 未执行匹配',
+                detail: reason,
+            });
+        });
+        const phaseSummary = phaseRows.length ? `
+            <div style="margin-bottom:14px;border:1px solid #d8dde6;border-radius:8px;overflow:hidden;background:#fff;">
+                <div style="padding:9px 12px;background:#eef2f7;font-size:13px;font-weight:700;">本次处理结果</div>
+                ${phaseRows.map(row => `<div style="display:grid;grid-template-columns:minmax(120px,0.75fr) minmax(130px,0.8fr) minmax(190px,1.15fr) minmax(0,2fr);gap:10px;padding:9px 12px;border-top:1px solid #e5e7eb;font-size:12px;align-items:start;">
+                    <b style="color:#374151;word-break:break-word;">${esc(row.taskName)}</b>
+                    <span style="color:${row.recognition.startsWith('✅') ? '#15803d' : '#dc2626'};font-weight:600;">${esc(row.recognition)}</span>
+                    <span style="color:${row.matching.startsWith('✅') ? '#15803d' : (row.matching.startsWith('❌') ? '#dc2626' : '#6b7280')};font-weight:600;">${esc(row.matching)}</span>
+                    <span style="color:#6b7280;word-break:break-word;">${esc(row.detail)}</span>
+                </div>`).join('')}
+            </div>` : '';
+
         const failures = (failDetails || []).length
             ? `<div style="margin-top:14px;padding:10px 12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;color:#9a3412;font-size:13px;white-space:pre-wrap;">${esc((failDetails || []).join('\n'))}</div>`
             : '';
@@ -13748,6 +13785,7 @@ function _showBatchAlignResultModal({ title, sourceInfo, rows, failDetails, foot
                     “人工确认通过”可继续预览和导出；
                     “待人工处理”表示 SRT 已保留，请核对音频、原文和 SRT 后重新对齐或人工确认。
                 </div>
+                ${phaseSummary}
                 ${(rows || []).length ? `
                     <table style="width:100%;border-collapse:collapse;table-layout:fixed;background:white;border:1px solid #d8dde6;border-radius:8px;overflow:hidden;">
                         <thead>

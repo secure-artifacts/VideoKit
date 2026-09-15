@@ -219,7 +219,7 @@ async function transcribeSegment(provider, filePath, key, language, signal, meta
     };
 
     const modelName = provider === 'deepgram' ? 'nova-3'
-        : (provider === 'groq' ? (iso === 'en' ? 'distil-whisper' : 'whisper-large-v3-turbo') : 'whisper');
+        : (provider === 'groq' ? 'whisper-large-v3-turbo' : 'whisper');
 
     const record = {
         id: recordId,
@@ -249,9 +249,11 @@ async function transcribeSegment(provider, filePath, key, language, signal, meta
         let result;
         if (provider === 'groq') {
             const form = multipart(filePath, {
-                model: iso === 'en' ? 'distil-whisper-large-v3-en' : 'whisper-large-v3-turbo',
+                // Groq 已于 2025-08-23 下线 distil-whisper-large-v3-en；
+                // Turbo 是官方推荐替代，并支持英语及多语言转录。
+                model: 'whisper-large-v3-turbo',
                 response_format: 'verbose_json',
-                timestamp_granularities: 'word',
+                'timestamp_granularities[]': 'word',
                 ...(iso ? { language: iso } : {}),
             });
             const data = parseResponse('groq', await request({
@@ -404,12 +406,18 @@ async function transcribeProvider(mediaPath, provider, keys, language, jsonPath,
                 }
             }
             if (!result) throw lastError || new Error(`${PROVIDER_LABEL[provider]} 未返回结果`);
-            const words = result.words.map(word => ({
-                word: word.word || word.punctuated_word || '',
-                start: Number(word.start || 0) + offset,
-                end: Number(word.end || 0) + offset,
-                confidence: Number(word.confidence ?? 0),
-            })).filter(word => word.word);
+            const words = result.words.map(rawWord => {
+                // Deepgram 同时返回 word（裸词）和 punctuated_word（带标点）。
+                // Groq 的 word 有时会携带前导空白。统一保留标点、移除词边界
+                // 的空白，才能让“逐词拼出的文本”和 API 返回全文一致。
+                const word = String(rawWord.punctuated_word || rawWord.word || '').trim();
+                return {
+                    word,
+                    start: Number(rawWord.start || 0) + offset,
+                    end: Number(rawWord.end || 0) + offset,
+                    confidence: Number(rawWord.confidence ?? 0),
+                };
+            }).filter(word => word.word);
             if (!result.text?.trim() || !words.length) throw new Error(`${PROVIDER_LABEL[provider]} 未返回逐词时间码`);
             utterances.push({ text: result.text, audio_start: offset, audio_end: offset + segments[index].duration, words });
             texts.push(result.text);
