@@ -26,6 +26,31 @@ function resolveCmd(cmd) {
     return cmd;
 }
 
+// execFile 的 timeout 不会响应 AbortSignal。自动剪辑点击“停止”时，必须主动
+// 结束正在跑的 FFmpeg，否则一次音频转换最长可让界面等待五分钟。
+function execFileWithSignal(command, args, options, signal) {
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        let child;
+        const finish = (fn, value) => {
+            if (settled) return;
+            settled = true;
+            signal?.removeEventListener?.('abort', abort);
+            fn(value);
+        };
+        const abort = () => {
+            try { child?.kill('SIGTERM'); } catch (_) {}
+            finish(reject, new Error('任务已停止'));
+        };
+        if (signal?.aborted) return abort();
+        child = execFile(command, args, options, (error, stdout, stderr) => {
+            if (error) return finish(reject, { error, stdout, stderr });
+            finish(resolve, { stdout, stderr });
+        });
+        signal?.addEventListener?.('abort', abort, { once: true });
+    });
+}
+
 const GLADIA_API_URL = 'https://api.gladia.io';
 
 function parseGladiaErrorText(body) {
@@ -163,7 +188,7 @@ function gladiaRequest(method, urlStr, headers, body, timeout = 120000, signal =
 /**
  * 从视频文件中提取音频（替代 Python extract_audio_from_video）
  */
-async function extractAudioFromVideo(videoPath, outputDir, audioFormat = 'wav') {
+async function extractAudioFromVideo(videoPath, outputDir, audioFormat = 'wav', signal = null) {
     const baseName = path.parse(videoPath).name;
     const audioPath = path.join(outputDir, `${baseName}.${audioFormat}`);
     fs.mkdirSync(outputDir, { recursive: true });
@@ -177,22 +202,20 @@ async function extractAudioFromVideo(videoPath, outputDir, audioFormat = 'wav') 
     }
     args.push(audioPath);
 
-    return new Promise((resolve, reject) => {
-        execFile(ffmpegPath, args, { timeout: 300000 }, (err, stdout, stderr) => {
-            if (err) {
-                console.error(`[Gladia] FFmpeg 提取音频失败:\n${stderr || err.message}`);
-                return reject(new Error(formatMediaError(stderr || err.message, {
-                    action: '提取音频',
-                    code: err.code,
-                })));
-            }
-            resolve(audioPath);
-        });
-    });
+    try {
+        await execFileWithSignal(ffmpegPath, args, { timeout: 300000 }, signal);
+        return audioPath;
+    } catch (failure) {
+        if (signal?.aborted || failure?.message === '任务已停止') throw new Error('任务已停止');
+        const err = failure?.error || failure;
+        const stderr = failure?.stderr || '';
+        console.error(`[Gladia] FFmpeg 提取音频失败:\n${stderr || err?.message}`);
+        throw new Error(formatMediaError(stderr || err?.message, { action: '提取音频', code: err?.code }));
+    }
 }
 
 /** 将任意 FFmpeg 可读的音/视频媒体标准化为语音识别用的 PCM WAV。 */
-async function normalizeMediaForTranscription(mediaPath, outputDir) {
+async function normalizeMediaForTranscription(mediaPath, outputDir, signal = null) {
     if (!mediaPath) {
         throw new Error('缺少音频或视频文件路径');
     }
@@ -210,21 +233,24 @@ async function normalizeMediaForTranscription(mediaPath, outputDir) {
         '-map', '0:a:0?', '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le',
         outputPath,
     ];
-    return new Promise((resolve, reject) => {
-        execFile(resolveCmd('ffmpeg'), args, { timeout: 300000, maxBuffer: 4 * 1024 * 1024 }, (err, _stdout, stderr) => {
-            if (err || !fs.existsSync(outputPath) || fs.statSync(outputPath).size < 44) {
-                const detail = String(stderr || err?.message || '').trim();
-                console.error(`[Gladia] 标准化音频失败:\n${detail}`);
-                if (!detail && (!fs.existsSync(outputPath) || fs.statSync(outputPath).size < 44)) {
-                    return reject(new Error(`素材「${path.basename(cleanPath)}」中未检测到有效音轨。如果该卡片是静音/无声视频，请在“人声-音频”列添加配音音频(MP3)或切换识别源为有声音的视频。`));
-                }
-                return reject(new Error(detail
-                    ? formatMediaError(detail, { action: '读取或转换音频', code: err?.code, missingLabel: '音频文件', mediaPath: cleanPath })
-                    : `读取或转换音频失败：素材「${path.basename(cleanPath)}」中没有可用音轨，或文件已损坏`));
-            }
-            resolve(outputPath);
-        });
-    });
+    try {
+        await execFileWithSignal(resolveCmd('ffmpeg'), args, { timeout: 300000, maxBuffer: 4 * 1024 * 1024 }, signal);
+    } catch (failure) {
+        if (signal?.aborted || failure?.message === '任务已停止') throw new Error('任务已停止');
+        const err = failure?.error || failure;
+        const detail = String(failure?.stderr || err?.message || '').trim();
+        console.error(`[Gladia] 标准化音频失败:\n${detail}`);
+        if (!detail && (!fs.existsSync(outputPath) || fs.statSync(outputPath).size < 44)) {
+            throw new Error(`素材「${path.basename(cleanPath)}」中未检测到有效音轨。如果该卡片是静音/无声视频，请在“人声-音频”列添加配音音频(MP3)或切换识别源为有声音的视频。`);
+        }
+        throw new Error(detail
+            ? formatMediaError(detail, { action: '读取或转换音频', code: err?.code, missingLabel: '音频文件', mediaPath: cleanPath })
+            : `读取或转换音频失败：素材「${path.basename(cleanPath)}」中没有可用音轨，或文件已损坏`);
+    }
+    if (!fs.existsSync(outputPath) || fs.statSync(outputPath).size < 44) {
+        throw new Error(`读取或转换音频失败：素材「${path.basename(cleanPath)}」中没有可用音轨，或文件已损坏`);
+    }
+    return outputPath;
 }
 
 /**
@@ -671,7 +697,7 @@ async function transcribeAudioFull(mediaPath, apiKeys, language, jsonPath, txtPa
     const tmpDir = path.join(settings.getSecureTmpDir(), `gladia_${crypto.randomUUID()}`);
     // 统一成单声道 PCM WAV，避免 AAC/FLAC/OGG/特殊 WAV 编码直接进识别端时失败。
     if (onProgress) onProgress('正在读取并转换音频');
-    const audioPath = await normalizeMediaForTranscription(mediaPath, tmpDir);
+    const audioPath = await normalizeMediaForTranscription(mediaPath, tmpDir, signal);
 
     // 切分音频
     if (onProgress) onProgress('切分音频');

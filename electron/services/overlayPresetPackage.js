@@ -58,15 +58,26 @@ async function savePresetAssets({ preset, destinationDir }) {
     const saved = clone(preset);
     const assetDir = path.join(destinationDir, `saved-overlay-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`, 'assets');
     let copied = 0;
-    for (const layer of (saved.layers || [])) {
+    const missing = [];
+    for (const [index, layer] of (saved.layers || []).entries()) {
+        if (!['image', 'video', 'audio'].includes(layer?.type)) continue;
         const source = sourcePath(layer?.content);
-        if (!source || !fs.existsSync(source) || !fs.statSync(source).isFile()) continue;
+        // data: URL 已直接存入预设，不需要额外复制。其余媒体必须能被解析为
+        // 本机文件；过去这里静默跳过，UI 却仍提示“已复制”，导致跨任务加载失效。
+        if (typeof layer?.content === 'string' && layer.content.startsWith('data:')) continue;
+        if (!source || !fs.existsSync(source) || !fs.statSync(source).isFile()) {
+            missing.push(`第 ${index + 1} 层${layer?.name ? `（${layer.name}）` : ''}：${String(layer?.content || '未指定文件')}`);
+            continue;
+        }
         await fs.promises.mkdir(assetDir, { recursive: true });
         const ext = path.extname(source), stem = path.basename(source, ext).replace(/[^\w.-]+/g, '_').slice(0, 80) || 'media';
         const target = path.join(assetDir, `${crypto.createHash('sha256').update(source).digest('hex').slice(0, 12)}_${stem}${ext}`);
         await fs.promises.copyFile(source, target);
         layer.content = pathToFileURL(target).href;
         copied++;
+    }
+    if (missing.length) {
+        throw new Error(`以下媒体无法复制到预设库，请确认原文件仍存在：\n${missing.join('\n')}`);
     }
     saved.meta = { ...(saved.meta || {}), mediaStorage: copied ? 'packaged' : 'linked', packagedMediaCount: copied };
     return { preset: saved, copied };

@@ -188,6 +188,13 @@ async function runAutoEditByScript(data = {}, progressSender = null) {
         }
     }
     const transcriptionConfig = settingsService.loadTranscriptionProviders();
+    // 自动剪辑的转录平台和片段并发仅覆盖这一次请求，不写回总设置。
+    if (['deepgram', 'groq', 'gladia'].includes(data.transcription_primary)) {
+        transcriptionConfig.primary = data.transcription_primary;
+    }
+    if (Number(data.transcription_concurrency) > 0) {
+        transcriptionConfig.concurrency = Math.min(50, Math.max(1, Math.round(Number(data.transcription_concurrency))));
+    }
 
     return await autoEditService.autoEditByScript({
         clips,
@@ -362,6 +369,14 @@ function registerAPIHandlers() {
             if (endpoint === 'media/auto-edit-cancel') {
                 const controller = activeAutoEditRequests.get(requestId);
                 if (controller) controller.abort();
+                // IPC 请求本身会等到后台清理完成才返回；先推送回执，避免用户误以为按钮没生效。
+                if (controller) {
+                    event.sender.send('auto-edit-progress', {
+                        request_id: requestId,
+                        stage: 'cancelled',
+                        message: '已收到停止指令，正在中断当前上传、识别或导出步骤…',
+                    });
+                }
                 return { success: true, data: { cancelled: Boolean(controller) } };
             }
             const isAutoEdit = endpoint === 'media/convert' && data?.mode === 'auto_edit';

@@ -5601,6 +5601,35 @@ class ReelsOverlayPanel {
         this._presetEditSourceName = '';
     }
 
+    _showPresetMediaStorageDialog(mediaCount) {
+        return new Promise((resolve) => {
+            const overlay = document.createElement('div');
+            overlay.className = 'rop-preset-media-choice-modal';
+            overlay.style.cssText = 'position:fixed;inset:0;z-index:1000000;background:rgba(0,0,0,.68);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;';
+            const box = document.createElement('div');
+            box.style.cssText = 'width:500px;max-width:92vw;box-sizing:border-box;padding:22px 24px;border-radius:12px;background:#181926;border:1px solid rgba(255,255,255,.14);box-shadow:0 20px 50px rgba(0,0,0,.65);color:#e2e8f0;';
+            box.innerHTML = `
+                <div style="font-size:16px;font-weight:700;color:#f8fafc;">保存含媒体的覆层预设</div>
+                <div style="margin-top:10px;font-size:13px;line-height:1.6;color:#cbd5e1;">检测到 <b style="color:#f8fafc;">${Number(mediaCount) || 0}</b> 个图片、视频或音频文件。请选择预设如何保存这些媒体：</div>
+                <div style="display:grid;gap:9px;margin-top:16px;">
+                    <button data-choice="packaged" style="padding:11px 13px;border-radius:8px;border:1px solid rgba(16,185,129,.45);background:rgba(16,185,129,.10);color:#d1fae5;text-align:left;cursor:pointer;"><b style="display:block;color:#34d399;">复制媒体到预设库</b><span style="font-size:12px;color:#a7f3d0;">推荐：复制一份文件，原文件移动或删除后预设仍可用。</span></button>
+                    <button data-choice="linked" style="padding:11px 13px;border-radius:8px;border:1px solid rgba(96,165,250,.38);background:rgba(59,130,246,.08);color:#dbeafe;text-align:left;cursor:pointer;"><b style="display:block;color:#93c5fd;">不复制媒体（保留原路径）</b><span style="font-size:12px;color:#bfdbfe;">不占用额外空间；原文件移动、删除或换电脑后，预设会找不到媒体。</span></button>
+                </div>
+                <div style="display:flex;justify-content:flex-end;margin-top:15px;"><button data-choice="cancel" style="padding:7px 14px;border-radius:6px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.06);color:#cbd5e1;cursor:pointer;">取消保存</button></div>`;
+            overlay.appendChild(box);
+            document.body.appendChild(overlay);
+            const finish = (choice) => {
+                window.removeEventListener('keydown', onKeyDown);
+                overlay.remove();
+                resolve(choice === 'cancel' ? null : choice);
+            };
+            const onKeyDown = (event) => { if (event.key === 'Escape') finish('cancel'); };
+            window.addEventListener('keydown', onKeyDown);
+            box.querySelectorAll('[data-choice]').forEach(button => { button.onclick = () => finish(button.dataset.choice); });
+            overlay.onclick = (event) => { if (event.target === overlay) finish('cancel'); };
+        });
+    }
+
     async _executeSavePreset(name, isUpdate = false, category = '') {
         const overlays = this.videoCanvas.overlayMgr?.overlays || [];
         // 确保被保存的所有层在内存中都有 ID
@@ -5651,8 +5680,9 @@ class ReelsOverlayPanel {
         if (thumbnail) newPreset.thumbnail = thumbnail;
         const linkedMedia = serialized.filter(layer => ['video', 'image', 'audio'].includes(layer?.type) && typeof layer.content === 'string' && !layer.content.startsWith('data:'));
         if (linkedMedia.length && window.electronAPI?.saveOverlayPresetAssets) {
-            const packageMedia = confirm(`检测到 ${linkedMedia.length} 个路径引用的媒体。\n\n确定：复制媒体到预设库，预设可长期使用且不怕原文件移动。\n取消：只保存原路径，不复制大文件。`);
-            if (packageMedia) {
+            const storageChoice = await this._showPresetMediaStorageDialog(linkedMedia.length);
+            if (!storageChoice) return;
+            if (storageChoice === 'packaged') {
                 const result = await window.electronAPI.saveOverlayPresetAssets(newPreset);
                 if (!result?.ok) { alert(`媒体保存到预设库失败：${result?.error || '未知错误'}`); return; }
                 Object.assign(newPreset, result.preset);
@@ -5853,11 +5883,21 @@ class ReelsOverlayPanel {
 
         const mgr = this.videoCanvas.overlayMgr;
         if (!mgr) return;
+        // 选择框是异步的。无论取消、按 Esc 或点击遮罩，都明确把画布恢复为
+        // 打开选择框时的状态，避免其它刷新逻辑把用户刚添加的覆层带走。
+        const previousOverlays = JSON.parse(JSON.stringify(mgr.overlays, (key, value) => key === '_allOverlays' ? undefined : value));
+        const restorePreviousOverlays = () => {
+            mgr.overlays = previousOverlays;
+            this._selectedOv = mgr.overlays[0] || null;
+            this._refreshList();
+            if (this._selectedOv) this._syncFromOverlay(this._selectedOv);
+            this.videoCanvas?.render?.();
+        };
 
         let loadMode = specificMode || 'replace';
         if (!specificMode && mgr.overlays.length > 0) {
             const choice = await this._showPresetLoadChoiceDialog(name, mgr.overlays.length, layers.length);
-            if (!choice) return;
+            if (!choice) { restorePreviousOverlays(); return; }
             loadMode = choice;
         }
 
@@ -7151,6 +7191,14 @@ class ReelsOverlayPanel {
     async _applyPresetFromGallery(presetData, mode, presetName = '') {
         const mgr = this.videoCanvas.overlayMgr;
         if (!mgr) return false;
+        const previousOverlays = JSON.parse(JSON.stringify(mgr.overlays, (key, value) => key === '_allOverlays' ? undefined : value));
+        const restorePreviousOverlays = () => {
+            mgr.overlays = previousOverlays;
+            this._selectedOv = mgr.overlays[0] || null;
+            this._refreshList();
+            if (this._selectedOv) this._syncFromOverlay(this._selectedOv);
+            this.videoCanvas?.render?.();
+        };
         
         const layers = Array.isArray(presetData) ? presetData : presetData.layers;
         if (!layers || layers.length === 0) return false;
@@ -7158,7 +7206,7 @@ class ReelsOverlayPanel {
         let loadMode = 'replace';
         if (mgr.overlays.length > 0) {
             const choice = await this._showPresetLoadChoiceDialog(presetName || '所选预设', mgr.overlays.length, layers.length);
-            if (!choice) return false;
+            if (!choice) { restorePreviousOverlays(); return false; }
             loadMode = choice;
         }
 

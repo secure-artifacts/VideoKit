@@ -13,6 +13,63 @@ const settings = require('./settings');
 
 const PROVIDER_LABEL = { deepgram: 'Deepgram', groq: 'Groq', gladia: 'Gladia' };
 
+// Gladia 的并发槽按 Key 独占。auto-edit 可同时跑多个任务，每个任务又可
+// 同时转录多个片段；只有在这里统一排队，才能避免每个任务各自开池后把同一个
+// Key 打满。一个请求占用一个 Key，直到该媒体的上传、转录和轮询全部完成。
+const activeGladiaKeys = new Set();
+const gladiaWaiters = [];
+let gladiaKeyCursor = 0;
+
+function normalizeGladiaKeys(keys = []) {
+    return [...new Set(keys.map(key => String(key || '').trim()).filter(Boolean))];
+}
+
+function chooseAvailableGladiaKey(keys) {
+    if (!keys.length) return null;
+    for (let offset = 0; offset < keys.length; offset++) {
+        const index = (gladiaKeyCursor + offset) % keys.length;
+        if (!activeGladiaKeys.has(keys[index])) {
+            gladiaKeyCursor = (index + 1) % keys.length;
+            return keys[index];
+        }
+    }
+    return null;
+}
+
+function acquireGladiaKey(keys, signal) {
+    const candidates = normalizeGladiaKeys(keys);
+    if (!candidates.length) return Promise.reject(new Error('Gladia 未配置 API Key'));
+    const available = chooseAvailableGladiaKey(candidates);
+    if (available) {
+        activeGladiaKeys.add(available);
+        return Promise.resolve({ key: available, release: () => releaseGladiaKey(available) });
+    }
+    return new Promise((resolve, reject) => {
+        const waiter = { candidates, resolve, reject, signal, abort: null };
+        waiter.abort = () => {
+            const index = gladiaWaiters.indexOf(waiter);
+            if (index >= 0) gladiaWaiters.splice(index, 1);
+            reject(new Error('任务已停止'));
+        };
+        if (signal?.aborted) return waiter.abort();
+        signal?.addEventListener?.('abort', waiter.abort, { once: true });
+        gladiaWaiters.push(waiter);
+    });
+}
+
+function releaseGladiaKey(key) {
+    activeGladiaKeys.delete(key);
+    for (let index = 0; index < gladiaWaiters.length; index++) {
+        const waiter = gladiaWaiters[index];
+        if (!waiter.candidates.includes(key)) continue;
+        gladiaWaiters.splice(index, 1);
+        waiter.signal?.removeEventListener?.('abort', waiter.abort);
+        activeGladiaKeys.add(key);
+        waiter.resolve({ key, release: () => releaseGladiaKey(key) });
+        return;
+    }
+}
+
 function request({ url, method = 'POST', headers = {}, body, timeout = 120000, signal }) {
     return new Promise((resolve, reject) => {
         const target = new URL(url);
@@ -258,6 +315,9 @@ async function transcribeSegment(provider, filePath, key, language, signal, meta
 async function transcribeProvider(mediaPath, provider, keys, language, jsonPath, txtPath, minMinutes, onProgress, signal) {
     if (!keys?.length) throw new Error(`${PROVIDER_LABEL[provider]} 未配置 API Key`);
     if (provider === 'gladia') {
+        // 不让同一 Gladia Key 同时处理两个媒体。这样“每任务 3 路 × 同时 2
+        // 个任务”在配置 6 个 Key 时恰好可以跑满 6 路，第 7 路自动排队。
+        const slot = await acquireGladiaKey(keys, signal);
         const recordId = crypto.randomUUID();
         const startTime = Date.now();
         const record = {
@@ -270,7 +330,7 @@ async function transcribeProvider(mediaPath, provider, keys, language, jsonPath,
             model: 'whisper',
             language: language || 'auto',
             fileSize: '',
-            keyPreview: keys[0] ? `${keys[0].slice(0, 4)}••••${keys[0].slice(-4)}` : '',
+            keyPreview: `${slot.key.slice(0, 4)}••••${slot.key.slice(-4)}`,
             sendTime: formatTimeWithMs(startTime),
             status: 'sending',
             durationMs: null,
@@ -283,7 +343,7 @@ async function transcribeProvider(mediaPath, provider, keys, language, jsonPath,
         addTranscriptionRecord(record);
         console.log(`[云端转录] 🚀 [Gladia] 发送请求 [${record.mediaName}] 时间: ${record.sendTime}`);
         try {
-            const result = await gladiaService.transcribeAudioFull(mediaPath, keys, language, jsonPath, txtPath, minMinutes, onProgress, signal);
+            const result = await gladiaService.transcribeAudioFull(mediaPath, [slot.key], language, jsonPath, txtPath, minMinutes, onProgress, signal);
             const durationMs = Date.now() - startTime;
             const durationSec = (durationMs / 1000).toFixed(2) + 's';
             const finishTime = formatTimeWithMs(Date.now());
@@ -312,12 +372,14 @@ async function transcribeProvider(mediaPath, provider, keys, language, jsonPath,
             });
             console.warn(`[云端转录] ❌ [Gladia] 转录失败 [${record.mediaName}] 耗时: ${durationSec} 错误: ${err.message}`);
             throw err;
+        } finally {
+            slot.release();
         }
     }
     const tmpDir = path.join(settings.getSecureTmpDir(), `transcription_${provider}_${crypto.randomUUID()}`);
     try {
         onProgress?.(`🎙️ [${PROVIDER_LABEL[provider]}] 正在提取音频...`);
-        const audioPath = await extractAudioFromVideo(mediaPath, tmpDir, 'wav');
+        const audioPath = await extractAudioFromVideo(mediaPath, tmpDir, 'wav', signal);
         // Groq's standard upload limit is 25 MB.  32 kHz mono WAV is roughly
         // 3.8 MB/minute, so cap chunks at the caller's five-minute default.
         const segments = await splitAudioOnSilence(audioPath, tmpDir, minMinutes, Math.max(1, minMinutes), 'wav');

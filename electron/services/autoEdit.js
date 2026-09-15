@@ -1794,10 +1794,25 @@ async function autoEditByScript(opts = {}) {
 
             const clipResults = new Array(clipCount);
             let completedCount = 0;
+            let startedCount = 0;
+            const providerLabel = ({ deepgram: 'Deepgram', groq: 'Groq', gladia: 'Gladia' })[transcriptionConfig?.primary] || '自动选择';
 
             await asyncPool(concurrency, Array.from({ length: clipCount }, (_, idx) => idx), async (i) => {
                 if (opts.signal?.aborted) throw new Error('任务已停止');
                 const clipPath = clips[i];
+                startedCount++;
+                emitProgress({
+                    percent: 8 + Math.round((completedCount / Math.max(clipCount, 1)) * 42),
+                    stage: 'transcribe',
+                    current: completedCount,
+                    total: clipCount,
+                    active_count: startedCount - completedCount,
+                    queued_count: Math.max(0, clipCount - startedCount),
+                    provider_label: providerLabel,
+                    clip_index: i,
+                    clip_status: 'transcribing',
+                    message: `语音识别进行中：已完成 ${completedCount}/${clipCount} · 正在识别 ${startedCount - completedCount} · 排队 ${Math.max(0, clipCount - startedCount)}`,
+                });
                 let transcription;
                 let isFailed = false;
                 let errorMsg = null;
@@ -1812,7 +1827,15 @@ async function autoEditByScript(opts = {}) {
                             clipPath, language, transcriptionConfig, cacheDir, forceThisClip,
                             manualSubtitleMap[clipPath], opts.signal, outputDir,
                             message => {
-                                // 单个片段内部消息
+                                const actualProvider = /Deepgram/i.test(message) ? 'Deepgram'
+                                    : (/Groq/i.test(message) ? 'Groq' : (/Gladia/i.test(message) ? 'Gladia' : providerLabel));
+                                emitProgress({
+                                    stage: 'transcribe', current: completedCount, total: clipCount,
+                                    active_count: Math.max(0, startedCount - completedCount),
+                                    queued_count: Math.max(0, clipCount - startedCount),
+                                    clip_index: i, clip_status: 'transcribing', provider_label: actualProvider,
+                                    message: `语音识别进行中 · 当前平台 ${actualProvider} · ${message}`,
+                                });
                             }
                         );
                     }
@@ -1845,6 +1868,9 @@ async function autoEditByScript(opts = {}) {
                     stage: 'transcribe',
                     current: completedCount,
                     total: clipCount,
+                    active_count: Math.max(0, startedCount - completedCount),
+                    queued_count: Math.max(0, clipCount - startedCount),
+                    provider_label: providerLabel,
                     clip_index: i,
                     clip_status: clipStatus,
                     clip_error: isFailed ? errorMsg : (isTextEmpty ? emptyMessage : null),
@@ -2238,6 +2264,7 @@ async function autoEditByScript(opts = {}) {
         }
 
         // === 文案匹配度检测 ===
+        emitProgress({ percent: 51, stage: 'matching', current: 0, total: plans.length, message: `正在核对 ${plans.length} 个片段与文案的匹配结果...` });
         const allClipsMatchInfo = [];
         let hasMismatch = false;
         
@@ -2312,6 +2339,7 @@ async function autoEditByScript(opts = {}) {
                     start: plan.start,
                     end: plan.end
                 });
+                emitProgress({ percent: 51 + Math.round(((i + 1) / Math.max(plans.length, 1)) * 1), stage: 'matching', current: i + 1, total: plans.length, clip_index: plan.sourceIndex, clip_status: isMismatch ? 'mismatch' : 'matched', match_result: isMismatch ? 'failed' : 'passed', message: `文案匹配 (${i + 1}/${plans.length}): ${path.basename(plan.realClipPath || plan.clipPath)} (${isMismatch ? '需审核' : '通过'})` });
             }
         } else {
             for (let i = 0; i < plans.length; i++) {
@@ -2352,12 +2380,15 @@ async function autoEditByScript(opts = {}) {
                     start: plan.start,
                     end: plan.end
                 });
+                emitProgress({ percent: 51 + Math.round(((i + 1) / Math.max(plans.length, 1)) * 1), stage: 'matching', current: i + 1, total: plans.length, clip_index: plan.sourceIndex, clip_status: isMismatch ? 'mismatch' : 'matched', match_result: isMismatch ? 'failed' : 'passed', message: `文案匹配 (${i + 1}/${plans.length}): ${path.basename(plan.realClipPath || plan.clipPath)} (${isMismatch ? '需审核' : '通过'})` });
             }
         }
 
         if (anyClipMismatch) {
             hasMismatch = true;
         }
+
+        emitProgress({ percent: 52, stage: 'matching', current: plans.length, total: plans.length, message: '文案匹配已完成，正在整理审核结果...' });
 
         console.log(`[自动剪辑] 全局文案匹配检测: 相似度为 ${globalSimPercent}% (阈值 80%), 单个片段存在不匹配: ${anyClipMismatch}, 是否触发阻断: ${hasMismatch && !ignoreMismatch}`);
 

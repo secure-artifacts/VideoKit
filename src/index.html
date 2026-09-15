@@ -2271,9 +2271,9 @@
               <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                 <button class="btn btn-secondary" onclick="selectAutoEditBatchFolders()">选择多个文件夹</button>
                 <button class="btn btn-secondary" onclick="clearAutoEditBatchTasks()">清空任务</button>
-                <label>同时分析 <input id="autoedit-batch-concurrency" type="number" class="input input-small" value="2" min="1" max="4" style="width:55px;"> 套</label>
                 <span id="autoedit-batch-summary" class="hint">0 个任务</span>
               </div>
+              <div id="autoedit-batch-progress-overview" aria-live="polite"></div>
               <div style="margin-top:10px;border:1px solid rgba(59,130,246,.45);border-radius:8px;padding:10px 12px;background:rgba(59,130,246,.08);">
                 <div style="font-weight:700;color:#bfdbfe;">📝 ① 批量粘贴每个任务的完整断行后文案</div>
                 <div class="hint" style="margin:6px 0 8px;">请粘贴已经按字幕需求断好行的文案。从 Google Sheets / Excel 直接复制：一个单元格 = 一个视频任务；单元格内的断行会完整保留。</div>
@@ -2284,6 +2284,28 @@
                 <div class="hint" style="margin:6px 0 8px;">一行一个名称，按当前任务顺序一一对应。不填则使用文件夹名；排序后名称会跟着任务移动。</div>
                 <textarea id="autoedit-batch-output-names" class="input" rows="3" style="width:100%;resize:vertical;background:var(--bg-secondary);" placeholder="在这里粘贴导出名称，例如：&#10;01-产品介绍&#10;02-使用教程" onchange="applyAutoEditBatchOutputNames(this.value)"></textarea>
               </div>
+              <details id="autoedit-batch-gladia-settings" class="ae-batch-gladia-settings">
+                <summary>⚡ 本批次转录并发设置 <span>Key 在「设置 → 云端转录服务」管理</span></summary>
+                <div class="ae-batch-gladia-settings-grid">
+                  <label>本批次使用平台
+                    <select id="autoedit-batch-transcription-primary" class="select" onchange="applyAutoEditBatchTranscriptionSettings()">
+                      <option value="deepgram">Deepgram</option><option value="groq">Groq</option><option value="gladia" selected>Gladia</option>
+                    </select>
+                  </label>
+                  <label>同时分析
+                    <select id="autoedit-batch-concurrency" class="select" onchange="renderAutoEditBatchGladiaConcurrencyPlan()">
+                      <option value="1">1 套任务</option><option value="2" selected>2 套任务</option><option value="3">3 套任务</option><option value="4">4 套任务</option>
+                    </select>
+                  </label>
+                  <label>每个任务同时识别
+                    <select id="autoedit-batch-gladia-per-task" class="select" onchange="applyAutoEditBatchTranscriptionSettings()">
+                      <option value="1">1 个片段</option><option value="2" selected>2 个片段</option><option value="3">3 个片段</option><option value="5">5 个片段</option><option value="10">10 个片段</option><option value="20">20 个片段</option><option value="30">30 个片段</option>
+                    </select>
+                  </label>
+                  <span class="ae-batch-transcription-setting-hint">切换后自动保存并应用到本批次</span>
+                </div>
+                <div id="autoedit-batch-gladia-concurrency-plan" aria-live="polite"></div>
+              </details>
               <div style="display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap;">
                 <button id="autoedit-batch-smart-pair-btn" class="btn btn-secondary" onclick="startAutoEditBatchSmartPairing()" title="根据每个文件夹的实际识别全文，在所有粘贴文案中做全局一对一匹配">🧠 智能配对</button>
                 <button id="autoedit-batch-analyze-btn" class="btn btn-primary" onclick="startAutoEditBatchAnalysis()">批量分析</button>
@@ -2350,6 +2372,16 @@
 
             <div class="form-section">
               <h4 style="margin-bottom: 12px; color: var(--text-secondary);">⚙️ 识别与裁切参数</h4>
+              <div style="display:flex;align-items:end;gap:12px;flex-wrap:wrap;margin:0 0 12px;padding:8px 0;border-bottom:1px solid var(--border-color);">
+                <strong style="font-size:12px;color:#86efac;">单套转录并发</strong>
+                <label style="display:grid;gap:4px;font-size:11px;">平台
+                  <select id="autoedit-single-transcription-primary" class="select" onchange="applyAutoEditSingleTranscriptionSettings()"><option value="deepgram">Deepgram</option><option value="groq">Groq</option><option value="gladia" selected>Gladia</option></select>
+                </label>
+                <label style="display:grid;gap:4px;font-size:11px;">同时识别片段数
+                  <select id="autoedit-single-transcription-concurrency" class="select" onchange="applyAutoEditSingleTranscriptionSettings()"><option value="1">1 个</option><option value="2" selected>2 个</option><option value="3">3 个</option><option value="5">5 个</option><option value="10">10 个</option><option value="20">20 个</option><option value="30">30 个</option></select>
+                </label>
+                <span class="hint" style="font-size:11px;">切换后自动保存；单套内多个视频会按此数并行识别。</span>
+              </div>
               <div class="param-row" style="flex-wrap: wrap; gap: 12px;">
                 <div style="flex-basis:100%;font-size:12px;color:var(--text-muted);">识别与匹配</div>
                 <div style="display: flex; align-items: center; gap: 8px;">
@@ -2492,6 +2524,7 @@
                 <div id="autoedit-progress-bar" class="progress-bar">
                   <div class="progress-bar-inner" style="width: 0%; transition: width 0.3s;"></div>
                 </div>
+                <div id="autoedit-progress-detail" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:10px;font-size:12px;"></div>
               </div>
             </div>
 
@@ -6519,23 +6552,13 @@
                 <select id="transcription-primary" class="select" style="width: 100%;" onchange="onTranscriptionPrimaryChange()">
                   <option value="deepgram">⚡ Deepgram（推荐·极速直出·自带 $200 免费额度）</option>
                   <option value="groq">🌐 Groq（基于 Whisper·每天 2000 次免费）</option>
-                  <option value="gladia">⏳ Gladia（老平台·机房故障时仅作备用）</option>
+                  <option value="gladia" selected>⏳ Gladia</option>
                 </select>
               </div>
-              <div style="width: 230px;">
-                <label style="font-weight:600;display:block;margin-bottom:6px;">片段转录并发数 (Concurrency)</label>
-                <select id="transcription-concurrency" class="select" style="width: 100%;">
-                  <option value="30">⚡ 30 并发（Deepgram 极速）</option>
-                  <option value="20" selected>⚡ 20 并发（Deepgram 推荐）</option>
-                  <option value="10">🚀 10 并发</option>
-                  <option value="5">🌐 5 并发（Groq 推荐）</option>
-                  <option value="3">🌐 3 并发</option>
-                  <option value="1">⏳ 1 并发（串行·Gladia）</option>
-                </select>
-              </div>
+              <input id="transcription-concurrency" type="hidden" value="1">
             </div>
             <div class="hint" style="font-size:12px;color:var(--text-muted);margin-bottom:12px;line-height:1.6;">
-              💡 <strong>并发说明</strong>：单个任务有多个镜头/音频切片片段时同时发起的转录请求数。选择 Deepgram 时开启 <strong>20~30 并发</strong>，30 个片段约 2~3 秒内全部齐头并进搞定！Groq 建议 3~5 并发；Gladia 建议 1。若首选故障或未配 Key，系统会自动顺位尝试后备平台。
+              💡 <strong>总设置默认 1 并发</strong>，用于 Reels 批量对齐等其他转录功能。文案自动剪辑（单套/批量）请在其页面内单独设置平台与并发，不受这里影响。若首选故障或未配 Key，系统会自动顺位尝试后备平台。
             </div>
 
             <div style="margin: 8px 0 14px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
@@ -6891,7 +6914,7 @@
           <div class="form-section">
             <h3 class="section-title">关于</h3>
             <div class="about-info">
-              <p><strong>VideoKit</strong> <span id="app-version-display">v4.4.5</span></p>
+              <p><strong>VideoKit</strong> <span id="app-version-display">v4.4.38</span></p>
               <p>视频工具包-批量：音频生成-reels视频制作-多媒体转换</p>
               <div style="margin-top: 12px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
                 <button id="check-update-btn" class="btn btn-secondary" onclick="checkAppUpdate()"

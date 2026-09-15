@@ -653,6 +653,33 @@ body > [class*="dialog-overlay"] {
 .ae-batch-review-thumb-empty,
 .ae-batch-review-thumb-failed { cursor: default; opacity: .72; }
 
+.ae-gladia-plan { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:9px; color:#bbf7d0; font-size:11px; }
+.ae-gladia-plan strong { color:#86efac; }
+.ae-gladia-plan b { color:#f0fdf4; }
+.ae-gladia-plan small { color:var(--text-secondary); width:100%; }
+.ae-gladia-plan-muted { color:var(--text-secondary); }
+.ae-gladia-plan-warn { color:#fde68a; }
+.ae-batch-gladia-settings { margin-top:10px; padding:2px 0; }
+.ae-batch-gladia-settings summary { cursor:pointer; color:#86efac; font-size:12px; font-weight:700; }
+.ae-batch-gladia-settings summary span { color:var(--text-secondary); font-weight:400; }
+.ae-batch-gladia-settings-grid { display:grid; grid-template-columns:repeat(3,minmax(160px,1fr)); gap:10px; align-items:end; margin-top:10px; }
+.ae-batch-gladia-settings-grid label { display:grid; gap:5px; color:#d1fae5; font-size:11px; }
+.ae-batch-transcription-setting-hint { color:var(--text-secondary); font-size:11px; padding-bottom:7px; }
+@media (max-width:760px) { .ae-batch-gladia-settings-grid { grid-template-columns:1fr; } }
+
+.ae-batch-progress-overview { margin-top:10px; border:1px solid rgba(96,165,250,.35); border-radius:9px; padding:10px 12px; background:rgba(15,23,42,.48); }
+.ae-batch-progress-heading { display:flex; justify-content:space-between; gap:12px; align-items:center; margin-bottom:8px; font-size:12px; color:#bfdbfe; }
+.ae-batch-progress-heading > span { color:var(--text-secondary); font-size:11px; }
+.ae-batch-progress-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+.ae-batch-progress-stage { border-left:3px solid rgba(148,163,184,.5); padding:3px 0 3px 8px; min-width:0; }
+.ae-batch-progress-stage.is-active { border-left-color:#60a5fa; animation:ae-batch-progress-pulse 1.4s ease-in-out infinite; }
+.ae-batch-progress-stage-head { display:flex; justify-content:space-between; gap:8px; font-size:11px; }
+.ae-batch-progress-track { height:5px; overflow:hidden; margin:6px 0 5px; border-radius:999px; background:rgba(255,255,255,.09); }
+.ae-batch-progress-track i { display:block; height:100%; border-radius:inherit; transition:width .25s ease; }
+.ae-batch-progress-detail { color:var(--text-secondary); font-size:10px; line-height:1.4; }
+@keyframes ae-batch-progress-pulse { 50% { background:rgba(96,165,250,.08); } }
+@media (max-width:760px) { .ae-batch-progress-grid { grid-template-columns:1fr; } }
+
 .autoedit-review-row.ae-warning-row:not(.ae-duplicate-row) {
   background-color: rgba(255, 159, 67, 0.14) !important;
   border-left: 5px solid #ff9f43 !important;

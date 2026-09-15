@@ -151,12 +151,6 @@ function normalizeProvider(value) {
 }
 
 function getEffectiveConcurrency(config) {
-    if (typeof config?.concurrency === 'number' && config.concurrency > 0) {
-        return Math.min(Math.max(1, Math.round(config.concurrency)), 50);
-    }
-    const primary = normalizeProvider(config?.primary) || 'deepgram';
-    if (primary === 'deepgram') return 20;
-    if (primary === 'groq') return 4;
     return 1;
 }
 
@@ -194,7 +188,7 @@ function loadTranscriptionProviders() {
         if (k && !mergedProviders.gladia.includes(k)) mergedProviders.gladia.push(k);
     }
 
-    const primary = normalizeProvider(foundPrimary || raw?.primary) || 'deepgram';
+    const primary = normalizeProvider(foundPrimary || raw?.primary) || 'gladia';
     const allProviders = ['deepgram', 'groq', 'gladia'];
     const others = allProviders.filter(p => p !== primary);
 
@@ -202,7 +196,7 @@ function loadTranscriptionProviders() {
         primary,
         fallback: others[0] || 'groq',
         rescue: others[1] || 'gladia',
-        concurrency: getEffectiveConcurrency({ concurrency: foundConcurrency || raw?.concurrency, primary }),
+        concurrency: 1,
         providers: {
             deepgram: { keys: mergedProviders.deepgram, source: mergedProviders.deepgram.length ? 'saved' : 'none' },
             groq: { keys: mergedProviders.groq, source: mergedProviders.groq.length ? 'saved' : 'none' },
@@ -262,13 +256,11 @@ function saveTranscriptionProviders(input = {}) {
         providers[name] = { keys: [...new Set(keys)] };
     }
 
-    const primary = normalizeProvider(input.primary) || normalizeProvider(existing.primary) || 'deepgram';
+    const primary = normalizeProvider(input.primary) || normalizeProvider(existing.primary) || 'gladia';
     const allProviders = ['deepgram', 'groq', 'gladia'];
     const others = allProviders.filter(p => p !== primary);
-    const rawConcurrency = input.concurrency !== undefined ? Number(input.concurrency) : existing.concurrency;
-    const concurrency = (typeof rawConcurrency === 'number' && !isNaN(rawConcurrency) && rawConcurrency > 0)
-        ? Math.min(Math.max(1, Math.round(rawConcurrency)), 50)
-        : (primary === 'deepgram' ? 20 : (primary === 'groq' ? 4 : 1));
+    // 总设置只服务于其他转录入口，固定串行。自动剪辑会在每次请求中单独覆盖。
+    const concurrency = 1;
 
     const payload = {
         version: 1,
@@ -279,25 +271,19 @@ function saveTranscriptionProviders(input = {}) {
         providers,
     };
 
-    // 1. Write to the unified common location
-    const commonPath = getTranscriptionSettingsPath();
-    writeJSON(commonPath, payload);
-
-    // 2. Also mirror to workspace backend directory if it exists
-    try {
-        const workspaceDir = path.join(__dirname, '..', '..', 'backend');
-        if (fs.existsSync(workspaceDir) && workspaceDir !== path.dirname(commonPath)) {
-            writeJSON(path.join(workspaceDir, 'transcription_providers.json'), payload);
-        }
-    } catch { }
+    // 保存是“权威覆盖”，必须同步所有历史候选目录。读取端会为兼容旧版合并
+    // 这些目录；若只写当前目录，已删除的旧 Key 会在下一次读取时被合并回来。
+    const candidateDirs = getAllCandidateBackendDirs();
+    for (const dir of candidateDirs) {
+        try { writeJSON(path.join(dir, 'transcription_providers.json'), payload); } catch { }
+    }
 
     // 3. Keep gladia_keys.json in sync for legacy compatibility
     try {
         const gladiaPayload = { keys: providers.gladia.keys };
         writeJSON(getGladiaKeysPath(), gladiaPayload);
-        const workspaceDir = path.join(__dirname, '..', '..', 'backend');
-        if (fs.existsSync(workspaceDir)) {
-            writeJSON(path.join(workspaceDir, 'gladia_keys.json'), gladiaPayload);
+        for (const dir of candidateDirs) {
+            try { writeJSON(path.join(dir, 'gladia_keys.json'), gladiaPayload); } catch { }
         }
     } catch { }
 
